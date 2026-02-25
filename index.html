@@ -3,8 +3,54 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Red Lantern</title>
-    <link rel="stylesheet" href="style.css" />
+    <title>Red Lantern Restaurant | Authentic Chinese & Goan Cuisine in Colva, Goa</title>
+    <meta
+      name="description"
+      content="Red Lantern Restaurant in Colva, South Goa — authentic Chinese & Goan cuisine in a cozy open-air garden setting. Dine in or order online."
+    />
+    <meta name="theme-color" content="#de2a2a" />
+    <link rel="icon" type="image/png" href="images/Redlanternlogo.png" />
+    <link rel="apple-touch-icon" href="images/Redlanternlogo.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Manrope:wght@300;400;600;700&display=swap"
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Red Lantern Restaurant" />
+    <meta property="og:title" content="Red Lantern Restaurant | Colva, Goa" />
+    <meta
+      property="og:description"
+      content="Authentic Chinese & Goan cuisine in a cozy open-air garden setting in South Goa."
+    />
+    <meta property="og:image" content="images/Redlanternlogo.png" />
+    <meta property="og:locale" content="en_IN" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="Red Lantern Restaurant" />
+    <meta
+      name="twitter:description"
+      content="Authentic Chinese & Goan cuisine in Colva, South Goa."
+    />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "Restaurant",
+        "name": "Red Lantern Restaurant",
+        "telephone": "+919922853605",
+        "servesCuisine": ["Chinese", "Goan", "Seafood"],
+        "address": {
+          "@type": "PostalAddress",
+          "streetAddress": "Near Chinchmorod Vanelim",
+          "addressLocality": "Colva",
+          "addressRegion": "Goa",
+          "addressCountry": "IN"
+        },
+        "openingHours": "Mo-Su 12:00-00:00",
+        "image": ["images/Redlanternlogo.png"]
+      }
+    </script>
+    <link rel="stylesheet" href="style.min.css" />
   </head>
   <body>
     <header class="site-header">
@@ -20,8 +66,8 @@
         <a href="menu.html">Menu</a>
         <a href="#about">About</a>
         <a href="#contact">Contact</a>
-        <a class="call-button" href="tel:+917744888888">
-          <span class="call-icon">☎</span>
+        <a class="call-button" href="tel:+919922853605">
+          <svg class="call-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
           Call Us
         </a>
       </nav>
@@ -52,15 +98,23 @@
 
       <section class="info-bar">
         <div class="info-item">
-          <span class="info-icon">📍</span>
+          <svg class="info-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+            <circle cx="12" cy="10" r="3"/>
+          </svg>
           <span>Near Chinchmorod Vanelim, Colva</span>
         </div>
         <div class="info-item">
-          <span class="info-icon">🕛</span>
+          <svg class="info-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/>
+            <polyline points="12 6 12 12 16 14"/>
+          </svg>
           <span>Open Daily: 12:00 PM - 12:00 AM</span>
         </div>
         <div class="info-item">
-          <span class="info-icon">★</span>
+          <svg class="info-icon" viewBox="0 0 24 24" fill="currentColor">
+            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+          </svg>
           <span>Highly Rated on Zomato &amp; Swiggy</span>
         </div>
       </section>
@@ -163,10 +217,10 @@
 
       <footer id="contact" class="site-footer">
         <div class="footer-brand">
-          <div class="footer-logo">Red Lantern</div>
+          <img class="footer-brand-logo" src="images/Redlanternlogo.png" alt="Red Lantern" />
           <p>
-            The Hidden Gem of South Goa. Experience authentic Chinese &amp; Goan
-            cuisine in our cozy, open-air garden setting.
+            The Hidden Gem of South Goa.<br>
+            Experience authentic Chinese &amp; Goan cuisine in our cozy, open-air garden setting.
           </p>
         </div>
         <div class="footer-links">
@@ -178,9 +232,18 @@
         </div>
         <div class="footer-contact">
           <h3>Contact Us</h3>
-          <p>Near Chinchmorod Vanelim, Colva, Goa</p>
-          <p>+91 99228 53605</p>
-          <p>Open Daily 12:00 PM - 12:00 AM</p>
+          <div class="footer-contact-item">
+            <span class="footer-contact-icon">📍</span>
+            <span>Near Chinchmorod Vanelim, Colva, Goa</span>
+          </div>
+          <div class="footer-contact-item">
+            <span class="footer-contact-icon">📞</span>
+            <span>+91 99228 53605</span>
+          </div>
+          <div class="footer-contact-item">
+            <span class="footer-contact-icon">🕐</span>
+            <span>Open Daily<br>12:00 PM - 12:00 AM</span>
+          </div>
         </div>
         <div class="footer-order">
           <h3>Order Online</h3>
@@ -190,5 +253,7 @@
       </footer>
       <div class="footer-bottom">© 2026 Red Lantern Restaurant. All rights reserved.</div>
     </main>
+
+    <script src="reviews.js" defer></script>
   </body>
 </html>
