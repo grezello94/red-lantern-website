@@ -56,6 +56,11 @@
       .editor-toolbar button { padding: 6px 10px; background: transparent; border: 1px solid transparent; border-radius: 4px; cursor: pointer; font-weight: 700; color: #374151; font-size: 14px; transition: all 0.15s; }
       .editor-toolbar button:hover { background: #f3f4f6; border-color: #d1d5db; }
       .rich-text-editor textarea { border: none; border-radius: 0; width: 100%; padding: 12px; background: transparent; outline: none; resize: vertical; box-shadow: none; font-family: inherit; line-height: 1.6; }
+      .growth-list { display: grid; gap: 12px; }
+      .growth-item { border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px 16px; background: #fff; }
+      .growth-item strong { display: block; color: #111827; margin-bottom: 4px; }
+      .growth-item span { color: #6b7280; font-size: 14px; line-height: 1.5; }
+      .growth-tag { display: inline-flex; align-items: center; margin-top: 8px; padding: 3px 8px; border-radius: 999px; background: #fee2e2; color: #b91c1c; font-size: 12px; font-weight: 800; text-transform: uppercase; }
     </style>
   </head>
   <body>
@@ -71,6 +76,8 @@
         
         <div class="nav-category">Global Elements</div>
         <div class="nav-item" data-target="tab-footer">Footer & Settings</div>
+        <div class="nav-category">Growth</div>
+        <div class="nav-item" data-target="tab-growth">Growth Ideas</div>
       </nav>
     </aside>
 
@@ -93,19 +100,19 @@
               <div class="form-group">
                 <label for="heroTitle">Main Headline</label>
                 <span class="help-text">Large text over the background image.</span>
-                <input type="text" id="heroTitle" value="The Hidden Gem of South Goa">
+                <input type="text" id="heroTitle" name="heroTitle" value="The Hidden Gem of South Goa">
               </div>
               <div class="form-group">
                 <label for="heroSubtitle">Subtitle text</label>
                 <span class="help-text">Smaller text below the main headline.</span>
-                <textarea id="heroSubtitle" rows="2">Authentic Chinese & Goan Cuisine in a Cozy Open-Air Garden Setting</textarea>
+                <textarea id="heroSubtitle" name="heroSubtitle" rows="2">Authentic Chinese & Goan Cuisine in a Cozy Open-Air Garden Setting</textarea>
               </div>
             </div>
             <div class="form-grid full">
               <div class="form-group">
                 <label>Background Image</label>
                 <span class="help-text">The main image spanning the top of the homepage.</span>
-                <input type="file" accept="image/*">
+                <input type="file" name="heroImage" accept="image/*">
                 <img src="images/IMG_5908.PNG" class="image-preview" alt="Current Hero Image">
               </div>
             </div>
@@ -117,19 +124,19 @@
               <div class="form-group">
                 <label>Section Title</label>
                 <span class="help-text">Heading next to the image.</span>
-                <input type="text" value="Welcome to Red Lantern Restaurant">
+                <input type="text" name="welcomeTitle" value="Welcome to Red Lantern Restaurant">
               </div>
               <div class="form-group">
                 <label>Side Image</label>
                 <span class="help-text">The square image displayed next to the text.</span>
-                <input type="file" accept="image/*">
+                <input type="file" name="welcomeImage" accept="image/*">
               </div>
             </div>
             <div class="form-grid full">
               <div class="form-group">
                 <label>Welcome Paragraphs</label>
                 <span class="help-text">The introductory text about your restaurant.</span>
-                <textarea rows="4">Nestled in the heart of Colva, our cozy open-air garden restaurant offers an unforgettable dining experience under the warm glow of traditional red lanterns...</textarea>
+                <textarea name="welcomeText" rows="4">Nestled in the heart of Colva, our cozy open-air garden restaurant offers an unforgettable dining experience under the warm glow of traditional red lanterns...</textarea>
               </div>
             </div>
           </div>
@@ -139,16 +146,21 @@
             <div class="form-grid">
               <div class="form-group">
                 <label>Feature 1 Title</label>
-                <input type="text" value="Award-Winning Cuisine">
-                <textarea rows="2" style="margin-top: 8px;">Authentic Chinese & Goan dishes that keep guests coming back.</textarea>
+                <input type="text" name="featureOneTitle" value="Award-Winning Cuisine">
+                <textarea name="featureOneText" rows="2" style="margin-top: 8px;">Authentic Chinese & Goan dishes that keep guests coming back.</textarea>
               </div>
-              <div class="form-group">
-                <label>Feature 2 Title</label>
-                <input type="text" value="Family-Friendly">
-                <textarea rows="2" style="margin-top: 8px;">Perfect spot for families and groups in a cozy atmosphere.</textarea>
-              </div>
-            </div>
-          </div>
+	              <div class="form-group">
+	                <label>Feature 2 Title</label>
+	                <input type="text" name="featureTwoTitle" value="Family-Friendly">
+	                <textarea name="featureTwoText" rows="2" style="margin-top: 8px;">Perfect spot for families and groups in a cozy atmosphere.</textarea>
+	              </div>
+	              <div class="form-group">
+	                <label>Feature 3 Title</label>
+	                <input type="text" name="featureThreeTitle" value="Budget-Friendly">
+	                <textarea name="featureThreeText" rows="2" style="margin-top: 8px;">High-quality food at prices that won't break the bank.</textarea>
+	              </div>
+	            </div>
+	          </div>
 
           <div class="card">
             <h2>Curated Google Reviews (Testimonials)</h2>
@@ -189,11 +201,11 @@
             <div class="form-grid">
               <div class="form-group">
                 <label>Section Title</label>
-                <input type="text" value="Latest from Our Journal">
+                <input type="text" name="blogSectionTitle" value="Latest from Our Journal">
               </div>
               <div class="form-group">
                 <label>Section Subtitle</label>
-                <input type="text" value="Stories, recipes, and local guides from South Goa.">
+                <input type="text" name="blogSectionSubtitle" value="Stories, recipes, and local guides from South Goa.">
               </div>
             </div>
           </div>
@@ -214,6 +226,26 @@
 
         <form action="/api/update-menu" method="POST" enctype="multipart/form-data">
           <div class="card">
+            <h2>Menu Header</h2>
+            <div class="form-grid">
+              <div class="form-group">
+                <label>Page Title</label>
+                <input type="text" name="menuPageTitle" value="Our Menu">
+              </div>
+              <div class="form-group">
+                <label>Page Subtitle</label>
+                <input type="text" name="menuPageSubtitle" value="Explore our diverse selection of authentic Chinese and Goan dishes, crafted with love and the finest ingredients">
+              </div>
+            </div>
+            <div class="form-grid full">
+              <div class="form-group">
+                <label>Menu Note</label>
+                <textarea name="menuNote" rows="2">Menu availability may vary. Please call us for pricing and daily specials.</textarea>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
             <h2>Top Dishes / Menu Highlights</h2>
             <span class="help-text" style="margin-bottom: 24px; font-size: 14px;">Add your signature dishes here. These will be displayed with their images prominently on your Menu section.</span>
             
@@ -229,11 +261,19 @@
                     <label>Dish Name</label>
                     <input type="text" name="dishName[]" value="Crispy Chilli Baby Corn">
                   </div>
-                  <div class="form-group">
-                    <label>Price</label>
-                    <input type="text" name="dishPrice[]" value="₹220">
-                  </div>
-                </div>
+	                  <div class="form-group">
+	                    <label>Price</label>
+	                    <input type="text" name="dishPrice[]" value="₹220">
+	                  </div>
+	                  <div class="form-group">
+	                    <label>Category</label>
+	                    <input type="text" name="dishCategory[]" value="Signature Dishes">
+	                  </div>
+	                  <div class="form-group">
+	                    <label>Badge</label>
+	                    <input type="text" name="dishBadge[]" value="Popular">
+	                  </div>
+	                </div>
                 <div class="form-grid full" style="margin-bottom: 30px;">
                   <div class="form-group">
                     <label>Description</label>
@@ -258,11 +298,19 @@
                     <label>Dish Name</label>
                     <input type="text" name="dishName[]" value="Golden Fried Prawns">
                   </div>
-                  <div class="form-group">
-                    <label>Price</label>
-                    <input type="text" name="dishPrice[]" value="₹350">
-                  </div>
-                </div>
+	                  <div class="form-group">
+	                    <label>Price</label>
+	                    <input type="text" name="dishPrice[]" value="₹350">
+	                  </div>
+	                  <div class="form-group">
+	                    <label>Category</label>
+	                    <input type="text" name="dishCategory[]" value="Signature Dishes">
+	                  </div>
+	                  <div class="form-group">
+	                    <label>Badge</label>
+	                    <input type="text" name="dishBadge[]" value="Popular">
+	                  </div>
+	                </div>
                 <div class="form-grid full" style="margin-bottom: 30px;">
                   <div class="form-group">
                     <label>Description</label>
@@ -301,17 +349,17 @@
               <div class="form-group">
                 <label>Banner Title</label>
                 <span class="help-text">e.g., "Our Story"</span>
-                <input type="text" value="Our Story">
+                <input type="text" name="aboutHeroTitle" value="Our Story">
               </div>
               <div class="form-group">
                 <label>Banner Subtitle</label>
-                <input type="text" value="Discover the passion and history behind Red Lantern's authentic flavors.">
+                <input type="text" name="aboutHeroSubtitle" value="Discover the passion and history behind Red Lantern's authentic flavors.">
               </div>
             </div>
             <div class="form-grid full">
               <div class="form-group">
                 <label>Banner Background Image</label>
-                <input type="file" accept="image/*">
+                <input type="file" name="aboutHeroImage" accept="image/*">
               </div>
             </div>
           </div>
@@ -321,17 +369,17 @@
             <div class="form-grid full">
               <div class="form-group">
                 <label>Story Headline</label>
-                <input type="text" value="A Legacy of Taste in South Goa">
+                <input type="text" name="aboutStoryTitle" value="A Legacy of Taste in South Goa">
               </div>
               <div class="form-group">
                 <label>Story Content</label>
                 <span class="help-text">Write paragraphs separating ideas with line breaks.</span>
-                <textarea rows="6">Founded with a deep love for rich, bold flavors, Red Lantern began as a small family kitchen. Today, it stands as a beloved culinary landmark in Colva...</textarea>
+                <textarea name="aboutStoryText" rows="6">Founded with a deep love for rich, bold flavors, Red Lantern began as a small family kitchen. Today, it stands as a beloved culinary landmark in Colva...</textarea>
               </div>
               <div class="form-group">
                 <label>Story Image</label>
                 <span class="help-text">Image displayed beside the story text.</span>
-                <input type="file" accept="image/*">
+                <input type="file" name="aboutStoryImage" accept="image/*">
               </div>
             </div>
           </div>
@@ -356,11 +404,11 @@
             <div class="form-grid">
               <div class="form-group">
                 <label>Page Title</label>
-                <input type="text" value="Red Lantern Journal">
+                <input type="text" name="blogPageTitle" value="Red Lantern Journal">
               </div>
               <div class="form-group">
                 <label>Page Subtitle</label>
-                <input type="text" value="Stories, recipes, and local guides from South Goa.">
+                <input type="text" name="blogPageSubtitle" value="Stories, recipes, and local guides from South Goa.">
               </div>
             </div>
           </div>
@@ -441,21 +489,21 @@
               <div class="form-group">
                 <label>Physical Address</label>
                 <span class="help-text">Shows on the contact page and global footer.</span>
-                <textarea rows="2">Near Chinchmorod Vanelim, Colva, Goa, 403708</textarea>
+                <textarea name="address" rows="2">Near Chinchmorod Vanelim, Colva, Goa, 403708</textarea>
               </div>
               <div class="form-group">
                 <label>Opening Hours</label>
                 <span class="help-text">e.g., Open Daily: 12:00 PM - 12:00 AM</span>
-                <textarea rows="2">Open Daily: 12:00 PM - 12:00 AM</textarea>
+                <textarea name="hours" rows="2">Open Daily: 12:00 PM - 12:00 AM</textarea>
               </div>
               <div class="form-group">
                 <label>Phone Number</label>
                 <span class="help-text">Used for display and clickable "Call Us" buttons.</span>
-                <input type="text" value="+91 99228 53605">
+                <input type="text" name="phone" value="+91 99228 53605">
               </div>
               <div class="form-group">
                 <label>Email Address</label>
-                <input type="text" value="reservations@redlantern.com">
+                <input type="text" name="email" value="reservations@redlantern.com">
               </div>
             </div>
           </div>
@@ -466,7 +514,7 @@
               <div class="form-group">
                 <label>Google Maps Embed URL</label>
                 <span class="help-text">Go to Google Maps -> Share -> Embed a Map -> Copy the "src" link inside the iframe.</span>
-                <input type="url" value="https://www.google.com/maps/embed?pb=...">
+                <input type="url" name="mapEmbedUrl" value="https://www.google.com/maps/embed?pb=...">
               </div>
             </div>
           </div>
@@ -492,24 +540,162 @@
               <div class="form-group">
                 <label>Footer Brand Description</label>
                 <span class="help-text">The short blurb below the logo in the footer.</span>
-                <textarea rows="2">The Hidden Gem of South Goa. Experience authentic Chinese & Goan cuisine in our cozy, open-air garden setting.</textarea>
+                <textarea name="footerDescription" rows="2">The Hidden Gem of South Goa. Experience authentic Chinese & Goan cuisine in our cozy, open-air garden setting.</textarea>
               </div>
             </div>
             <div class="form-grid">
               <div class="form-group">
                 <label>Zomato Order Link</label>
                 <span class="help-text">Where the "Order on Zomato" buttons link to.</span>
-                <input type="url" value="https://zomato.com/your-restaurant">
+                <input type="url" name="zomatoUrl" value="https://zomato.com/your-restaurant">
               </div>
               <div class="form-group">
                 <label>Swiggy Order Link</label>
                 <span class="help-text">Where the "Order on Swiggy" buttons link to.</span>
-                <input type="url" value="https://swiggy.com/your-restaurant">
-              </div>
-            </div>
-          </div>
-          <button type="submit" class="btn-save">Publish Global Changes</button>
+                <input type="url" name="swiggyUrl" value="https://swiggy.com/your-restaurant">
+	              </div>
+	            </div>
+	          </div>
+	          <div class="card">
+	            <h2>SEO Defaults</h2>
+	            <div class="form-grid">
+	              <div class="form-group">
+	                <label>Website URL</label>
+	                <input type="url" name="siteUrl" value="https://redlantern.example">
+	              </div>
+	              <div class="form-group">
+	                <label>Default SEO Title</label>
+	                <input type="text" name="seoTitle" value="Red Lantern Restaurant | Authentic Chinese & Goan Food in Colva">
+	              </div>
+	            </div>
+	            <div class="form-grid full">
+	              <div class="form-group">
+	                <label>Default SEO Description</label>
+	                <textarea name="seoDescription" rows="2">Visit Red Lantern Restaurant in Colva, Goa for authentic Chinese and Goan cuisine in a cozy open-air garden setting.</textarea>
+	              </div>
+	            </div>
+	            <div class="form-grid">
+	              <div class="form-group">
+	                <label>SEO Focus Keywords</label>
+	                <textarea name="seoKeywords" rows="3">best restaurant in Colva, Chinese food in Colva, seafood restaurant in South Goa, family restaurant in Goa, restaurants near Colva Beach</textarea>
+	              </div>
+	              <div class="form-group">
+	                <label>Open Graph Image URL</label>
+	                <input type="url" name="ogImage" value="images/Redlanternlogo.png">
+	              </div>
+	            </div>
+	            <div class="form-grid">
+	              <div class="form-group">
+	                <label>Instagram URL</label>
+	                <input type="url" name="instagramUrl" placeholder="https://www.instagram.com/your-page">
+	              </div>
+	              <div class="form-group">
+	                <label>Google Business Profile URL</label>
+	                <input type="url" name="googleBusinessUrl" placeholder="https://g.page/r/...">
+	              </div>
+	            </div>
+	          </div>
+
+	          <div class="card">
+	            <h2>Ads & Tracking</h2>
+	            <span class="help-text" style="margin-bottom: 16px;">Paste these when you create Google Analytics, Google Ads, or Meta ads. Leave blank until then.</span>
+	            <div class="form-grid">
+	              <div class="form-group">
+	                <label>GA4 Measurement ID</label>
+	                <input type="text" name="gaMeasurementId" placeholder="G-XXXXXXXXXX">
+	              </div>
+	              <div class="form-group">
+	                <label>Google Ads ID</label>
+	                <input type="text" name="googleAdsId" placeholder="AW-123456789">
+	              </div>
+	            </div>
+	            <div class="form-grid">
+	              <div class="form-group">
+	                <label>Call Conversion Label</label>
+	                <input type="text" name="googleCallConversionLabel" placeholder="abcDEFghijk">
+	              </div>
+	              <div class="form-group">
+	                <label>Order Click Conversion Label</label>
+	                <input type="text" name="googleOrderConversionLabel" placeholder="abcDEFghijk">
+	              </div>
+	            </div>
+	            <div class="form-grid">
+	              <div class="form-group">
+	                <label>Directions Conversion Label</label>
+	                <input type="text" name="googleDirectionsConversionLabel" placeholder="abcDEFghijk">
+	              </div>
+	              <div class="form-group">
+	                <label>Meta Pixel ID</label>
+	                <input type="text" name="metaPixelId" placeholder="123456789012345">
+	              </div>
+	            </div>
+	          </div>
+
+	          <div class="card">
+	            <h2>Market Research Inputs</h2>
+	            <span class="help-text" style="margin-bottom: 16px;">The Growth Ideas tab uses these to suggest blogs, landing pages, and campaigns.</span>
+	            <div class="form-grid">
+	              <div class="form-group">
+	                <label>Target Locations</label>
+	                <textarea name="targetLocations" rows="3">Colva, Colva Beach, South Goa, Benaulim, Betalbatim, Majorda, Goa tourists</textarea>
+	              </div>
+	              <div class="form-group">
+	                <label>Target Food Searches</label>
+	                <textarea name="targetCuisines" rows="3">Chinese food, Goan seafood, family restaurant, dinner in Colva, restaurants near Colva Beach, budget friendly restaurant</textarea>
+	              </div>
+	            </div>
+	            <div class="form-grid full">
+	              <div class="form-group">
+	                <label>Competitors To Watch</label>
+	                <textarea name="competitorNames" rows="3">Kentuckee Seafood Restaurant, Silver Spoon Beach Shack, Manisha Seafood, Sea Side Bistro, Blue Heaven Restaurant & Bar, Wow! Momo, Clove Restaurant</textarea>
+	              </div>
+	            </div>
+	            <div class="form-grid full">
+	              <div class="form-group">
+	                <label>Research Notes</label>
+	                <textarea name="competitorResearchNotes" rows="4">Watch competitors ranking for Colva Beach, seafood, Goan food, Chinese food, family dining, offers, opening hours, ratings, photos, and delivery/order links.</textarea>
+	              </div>
+	            </div>
+	          </div>
+	          <button type="submit" class="btn-save">Publish Global Changes</button>
         </form>
+      </div>
+
+      <!-- GROWTH / SEO IDEAS TAB -->
+      <div id="tab-growth" class="tab-content">
+        <header class="header">
+          <div>
+            <h1>Growth Ideas</h1>
+            <p>AI-style SEO, content, and ad ideas based on your current website data.</p>
+          </div>
+          <button class="logout-btn">Log Out</button>
+        </header>
+
+        <div class="card">
+          <h2>Visibility Score</h2>
+          <p id="growth-score" style="font-size: 38px; font-weight: 800; color: #d62828; margin: 8px 0;">Checking...</p>
+          <span class="help-text">This is a practical readiness score for SEO and advertising setup.</span>
+        </div>
+
+        <div class="card">
+          <h2>Priority Actions</h2>
+          <div id="growth-actions" class="growth-list"></div>
+        </div>
+
+        <div class="card">
+          <h2>Blog & Content Ideas</h2>
+          <div id="growth-blog-ideas" class="growth-list"></div>
+        </div>
+
+        <div class="card">
+          <h2>Ad Campaign Ideas</h2>
+          <div id="growth-ad-ideas" class="growth-list"></div>
+        </div>
+
+        <div class="card">
+          <h2>Local SEO Checklist</h2>
+          <div id="growth-checklist" class="growth-list"></div>
+        </div>
       </div>
 
     </main>
@@ -553,11 +739,19 @@
                 <label>Dish Name</label>
                 <input type="text" name="dishName[]" placeholder="e.g. Spring Rolls">
               </div>
-              <div class="form-group">
-                <label>Price</label>
-                <input type="text" name="dishPrice[]" placeholder="e.g. ₹200">
-              </div>
-            </div>
+	              <div class="form-group">
+	                <label>Price</label>
+	                <input type="text" name="dishPrice[]" placeholder="e.g. ₹200">
+	              </div>
+	              <div class="form-group">
+	                <label>Category</label>
+	                <input type="text" name="dishCategory[]" placeholder="e.g. Chinese Specialties">
+	              </div>
+	              <div class="form-group">
+	                <label>Badge</label>
+	                <input type="text" name="dishBadge[]" placeholder="e.g. Popular">
+	              </div>
+	            </div>
             <div class="form-grid full" style="margin-bottom: 30px;">
               <div class="form-group">
                 <label>Description</label>
@@ -617,13 +811,23 @@
                 <input type="file" name="blogImage[]" accept="image/*">
               </div>
             </div>
-            <div class="form-grid full">
-              <div class="form-group">
-                <label>Short Description / Excerpt</label>
-                <textarea name="blogExcerpt[]" rows="2" placeholder="Write a short summary..."></textarea>
-              </div>
-            </div>
-            <div class="form-grid full" style="margin-bottom: 30px;">
+	            <div class="form-grid full">
+	              <div class="form-group">
+	                <label>Short Description / Excerpt</label>
+	                <textarea name="blogExcerpt[]" rows="2" placeholder="Write a short summary..."></textarea>
+	              </div>
+	            </div>
+	            <div class="form-grid">
+	              <div class="form-group">
+	                <label>SEO Title</label>
+	                <input type="text" name="blogSeoTitle[]" placeholder="Search result title">
+	              </div>
+	              <div class="form-group">
+	                <label>SEO Description</label>
+	                <textarea name="blogSeoDescription[]" rows="2" placeholder="Search result description"></textarea>
+	              </div>
+	            </div>
+	            <div class="form-grid full" style="margin-bottom: 30px;">
               <div class="form-group">
                 <label>Full Article Content (SEO Optimized)</label>
                 <span class="help-text">Write your full post. Use headings (H2) for keywords and add hyperlinks to boost your SEO ranking.</span>
@@ -701,5 +905,6 @@
         });
       }
     </script>
+    <script src="admin-cms.js" defer></script>
   </body>
 </html>
