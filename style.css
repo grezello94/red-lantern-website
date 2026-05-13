@@ -332,6 +332,17 @@ a {
   border-radius: 18px;
   overflow: hidden;
   box-shadow: 0 16px 30px rgba(27, 20, 16, 0.12);
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+}
+
+.blog-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 22px 36px rgba(27, 20, 16, 0.18);
+}
+
+.blog-card a {
+  display: block;
+  height: 100%;
 }
 
 .blog-thumb {
@@ -369,6 +380,167 @@ a {
   color: #8a6f5e;
   font-size: 12px;
   font-weight: 600;
+}
+
+.latest-blogs {
+  background: #fff;
+  text-align: center;
+  padding-top: 90px;
+}
+
+.latest-blogs h2 {
+  font-family: "Playfair Display", serif;
+  font-size: clamp(26px, 3vw, 36px);
+  color: #2b2018;
+  margin-bottom: 10px;
+}
+
+.latest-blogs p {
+  color: #5d4b3e;
+}
+
+.latest-blogs .blog-grid {
+  padding-bottom: 40px;
+  text-align: left;
+}
+
+.latest-blogs-action {
+  padding-bottom: 90px;
+}
+
+.blog-post-main {
+  padding-top: 130px;
+  padding-bottom: 90px;
+  background: #fdfcfb;
+}
+
+.blog-post-article {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 0 5vw;
+}
+
+.blog-post-header {
+  text-align: center;
+  margin-bottom: 40px;
+}
+
+.blog-post-header h1 {
+  font-family: "Playfair Display", serif;
+  font-size: clamp(32px, 5vw, 48px);
+  color: #2b2018;
+  margin-bottom: 16px;
+  line-height: 1.2;
+}
+
+.blog-post-hero {
+  height: min(400px, 50vh);
+  border-radius: 20px;
+  background-image: url("https://images.unsplash.com/photo-1466978913421-dad2ebd01d17?auto=format&fit=crop&w=1200&q=80");
+  background-size: cover;
+  background-position: center;
+  margin-bottom: 50px;
+  box-shadow: 0 16px 30px rgba(0, 0, 0, 0.1);
+}
+
+.blog-post-content {
+  font-size: 18px;
+  color: #3b3028;
+  line-height: 1.8;
+}
+
+.blog-post-content p {
+  margin-bottom: 24px;
+}
+
+.blog-post-content h2 {
+  font-family: "Playfair Display", serif;
+  font-size: 28px;
+  color: #2b2018;
+  margin-top: 40px;
+  margin-bottom: 16px;
+}
+
+.about-page-main,
+.contact-page-main {
+  padding-top: 88px;
+}
+
+.about-hero {
+  background-image:
+    linear-gradient(rgba(4, 4, 8, 0.65), rgba(4, 4, 8, 0.65)),
+    url("images/red lanten home.jpg");
+  background-size: cover;
+  background-position: center;
+  padding: 120px 10vw;
+  text-align: center;
+  color: #fff;
+}
+
+.about-hero h1 {
+  font-family: "Playfair Display", serif;
+  font-size: clamp(36px, 5vw, 56px);
+  margin-bottom: 16px;
+}
+
+.about-hero p {
+  font-size: clamp(16px, 2vw, 20px);
+  color: rgba(255, 255, 255, 0.9);
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+.about-media-1 {
+  background-image: url("https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=900&q=80");
+}
+
+.contact-hero {
+  padding: 100px 10vw;
+}
+
+.contact-section {
+  padding: 90px 10vw;
+  background: #fff;
+}
+
+.contact-grid {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr;
+  gap: 60px;
+  max-width: 1200px;
+  margin: 0 auto;
+  align-items: center;
+}
+
+.contact-details h2 {
+  font-family: "Playfair Display", serif;
+  font-size: clamp(26px, 3vw, 36px);
+  margin-bottom: 24px;
+  color: #2b2018;
+}
+
+.contact-info-group {
+  margin-bottom: 24px;
+}
+
+.contact-info-group h3 {
+  font-family: "Playfair Display", serif;
+  font-size: 20px;
+  color: var(--brand-red);
+  margin-bottom: 8px;
+}
+
+.contact-info-group p {
+  color: #4a3d33;
+  line-height: 1.5;
+}
+
+.contact-map iframe {
+  width: 100%;
+  height: 450px;
+  border: 0;
+  border-radius: 16px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
 }
 
 .menu-page {
@@ -1141,6 +1313,15 @@ a {
 
   .blog-grid {
     grid-template-columns: 1fr;
+  }
+
+  .contact-grid {
+    grid-template-columns: 1fr;
+    gap: 40px;
+  }
+
+  .contact-map iframe {
+    height: 350px;
   }
 
   .menu-page {

@@ -1,0 +1,705 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Admin Dashboard - Red Lantern</title>
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body { font-family: 'Manrope', sans-serif; background: #f4f4f5; display: flex; min-height: 100vh; color: #111827; }
+      
+      /* Sidebar Styles */
+      .sidebar { width: 280px; background: #111827; color: #fff; padding: 24px 0; display: flex; flex-direction: column; position: fixed; height: 100vh; overflow-y: auto;}
+      .sidebar-brand { font-size: 20px; font-weight: 700; padding: 0 24px 32px; color: #f59f9f; border-bottom: 1px solid #374151; margin-bottom: 24px; }
+      .nav-item { padding: 14px 24px; color: #d1d5db; text-decoration: none; display: block; font-weight: 600; transition: background 0.2s; cursor: pointer; border-left: 4px solid transparent; }
+      .nav-item:hover { background: #1f2937; color: #fff; }
+      .nav-item.active { background: #1f2937; color: #fff; border-left-color: #d62828; }
+      .nav-category { padding: 0 24px; margin: 20px 0 8px; font-size: 12px; text-transform: uppercase; color: #9ca3af; letter-spacing: 0.05em; font-weight: 700; }
+      
+      /* Main Content Styles */
+      .main-content { flex: 1; padding: 40px 60px; margin-left: 280px; max-width: 1200px; }
+      .header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 30px; padding-bottom: 20px; border-bottom: 1px solid #e5e7eb; }
+      .header h1 { font-size: 32px; font-family: "Playfair Display", serif; color: #111827; }
+      .header p { color: #6b7280; font-size: 15px; margin-top: 4px; }
+      .logout-btn { padding: 10px 20px; background: #fff; color: #374151; border: 1px solid #d1d5db; border-radius: 6px; cursor: pointer; font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+      
+      /* Dashboard Cards */
+      .card { background: #fff; border-radius: 12px; padding: 32px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03); margin-bottom: 32px; border: 1px solid #f3f4f6; }
+      .card h2 { font-size: 20px; margin-bottom: 24px; color: #1f2937; display: flex; align-items: center; gap: 8px; }
+      .card h2::before { content: ""; display: block; width: 12px; height: 12px; background: #d62828; border-radius: 50%; }
+      
+      /* Form Styles */
+      .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 24px; }
+      .form-grid.full { grid-template-columns: 1fr; }
+      .form-group { margin-bottom: 0; }
+      .form-group label { display: block; font-weight: 700; margin-bottom: 4px; font-size: 14px; color: #374151; }
+      .help-text { display: block; font-size: 12px; color: #6b7280; margin-bottom: 8px; line-height: 1.4; }
+      .form-group input[type="text"], .form-group input[type="url"], .form-group textarea { width: 100%; padding: 12px; border: 1px solid #d1d5db; border-radius: 8px; font-family: inherit; background: #f9fafb; transition: border 0.2s; }
+      .form-group input:focus, .form-group textarea:focus { outline: none; border-color: #d62828; background: #fff; box-shadow: 0 0 0 3px rgba(214, 40, 40, 0.1); }
+      .form-group input[type="file"] { display: block; margin-top: 8px; }
+      
+      .btn-save { background: #d62828; color: #fff; border: none; padding: 14px 28px; border-radius: 8px; font-weight: 700; font-size: 16px; cursor: pointer; transition: all 0.2s; width: 100%; display: block; margin-top: 20px; }
+      .btn-save:hover { background: #b11d1d; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(214, 40, 40, 0.2); }
+
+      .image-preview { margin-top: 12px; width: 100%; height: 140px; object-fit: cover; border-radius: 8px; border: 2px dashed #d1d5db; padding: 2px; }
+      
+      /* Tab functionality */
+      .tab-content { display: none; animation: fadeIn 0.3s ease; }
+      .tab-content.active { display: block; }
+      @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+      
+      /* Rich Text Editor Mock Styles */
+      .rich-text-editor { border: 1px solid #d1d5db; border-radius: 8px; overflow: hidden; background: #f9fafb; margin-top: 8px; transition: border 0.2s; }
+      .rich-text-editor:focus-within { border-color: #d62828; box-shadow: 0 0 0 3px rgba(214, 40, 40, 0.1); background: #fff; }
+      .editor-toolbar { padding: 8px; border-bottom: 1px solid #d1d5db; background: #fff; display: flex; gap: 6px; flex-wrap: wrap; }
+      .editor-toolbar button { padding: 6px 10px; background: transparent; border: 1px solid transparent; border-radius: 4px; cursor: pointer; font-weight: 700; color: #374151; font-size: 14px; transition: all 0.15s; }
+      .editor-toolbar button:hover { background: #f3f4f6; border-color: #d1d5db; }
+      .rich-text-editor textarea { border: none; border-radius: 0; width: 100%; padding: 12px; background: transparent; outline: none; resize: vertical; box-shadow: none; font-family: inherit; line-height: 1.6; }
+    </style>
+  </head>
+  <body>
+    <aside class="sidebar">
+      <div class="sidebar-brand">Red Lantern Admin</div>
+      <nav>
+        <div class="nav-category">Pages</div>
+        <div class="nav-item active" data-target="tab-home">Home Page</div>
+        <div class="nav-item" data-target="tab-menu">Menu Page</div>
+        <div class="nav-item" data-target="tab-about">About Page</div>
+        <div class="nav-item" data-target="tab-blogs">Blogs Page</div>
+        <div class="nav-item" data-target="tab-contact">Contact Page</div>
+        
+        <div class="nav-category">Global Elements</div>
+        <div class="nav-item" data-target="tab-footer">Footer & Settings</div>
+      </nav>
+    </aside>
+
+    <main class="main-content">
+      
+      <!-- HOME PAGE TAB -->
+      <div id="tab-home" class="tab-content active">
+        <header class="header">
+          <div>
+            <h1>Home Page Editor</h1>
+            <p>Customize the content, images, and text shown on index.html</p>
+          </div>
+          <button class="logout-btn">Log Out</button>
+        </header>
+
+        <form action="/api/update-home" method="POST" enctype="multipart/form-data">
+          <div class="card">
+            <h2>Hero Section (Top Banner)</h2>
+            <div class="form-grid">
+              <div class="form-group">
+                <label for="heroTitle">Main Headline</label>
+                <span class="help-text">Large text over the background image.</span>
+                <input type="text" id="heroTitle" value="The Hidden Gem of South Goa">
+              </div>
+              <div class="form-group">
+                <label for="heroSubtitle">Subtitle text</label>
+                <span class="help-text">Smaller text below the main headline.</span>
+                <textarea id="heroSubtitle" rows="2">Authentic Chinese & Goan Cuisine in a Cozy Open-Air Garden Setting</textarea>
+              </div>
+            </div>
+            <div class="form-grid full">
+              <div class="form-group">
+                <label>Background Image</label>
+                <span class="help-text">The main image spanning the top of the homepage.</span>
+                <input type="file" accept="image/*">
+                <img src="images/IMG_5908.PNG" class="image-preview" alt="Current Hero Image">
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <h2>Welcome / About Snapshot</h2>
+            <div class="form-grid">
+              <div class="form-group">
+                <label>Section Title</label>
+                <span class="help-text">Heading next to the image.</span>
+                <input type="text" value="Welcome to Red Lantern Restaurant">
+              </div>
+              <div class="form-group">
+                <label>Side Image</label>
+                <span class="help-text">The square image displayed next to the text.</span>
+                <input type="file" accept="image/*">
+              </div>
+            </div>
+            <div class="form-grid full">
+              <div class="form-group">
+                <label>Welcome Paragraphs</label>
+                <span class="help-text">The introductory text about your restaurant.</span>
+                <textarea rows="4">Nestled in the heart of Colva, our cozy open-air garden restaurant offers an unforgettable dining experience under the warm glow of traditional red lanterns...</textarea>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <h2>Why Choose Us (3 Features)</h2>
+            <div class="form-grid">
+              <div class="form-group">
+                <label>Feature 1 Title</label>
+                <input type="text" value="Award-Winning Cuisine">
+                <textarea rows="2" style="margin-top: 8px;">Authentic Chinese & Goan dishes that keep guests coming back.</textarea>
+              </div>
+              <div class="form-group">
+                <label>Feature 2 Title</label>
+                <input type="text" value="Family-Friendly">
+                <textarea rows="2" style="margin-top: 8px;">Perfect spot for families and groups in a cozy atmosphere.</textarea>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <h2>Curated Google Reviews (Testimonials)</h2>
+            <span class="help-text" style="margin-bottom: 24px; font-size: 14px;">Manually add your favorite 5-star Google Reviews here. This ensures only the best, positive reviews are displayed on your website!</span>
+            
+            <div id="reviews-container">
+              <!-- Review 1 -->
+              <div class="review-entry">
+                <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #f3f4f6; margin: 10px 0 16px; padding-bottom: 8px;">
+                  <h3 style="font-size: 16px; color: #d62828; margin: 0;">Review 1</h3>
+                  <button type="button" class="remove-review-btn" style="color: #ef4444; background: none; border: none; cursor: pointer; font-size: 14px; font-weight: 700;">Remove</button>
+                </div>
+                <div class="form-grid">
+                  <div class="form-group">
+                    <label>Reviewer Name</label>
+                    <input type="text" name="reviewName[]" value="Happy Customer">
+                  </div>
+                  <div class="form-group">
+                    <label>Star Rating</label>
+                    <input type="text" name="reviewStars[]" value="★★★★★">
+                  </div>
+                </div>
+                <div class="form-grid full" style="margin-bottom: 30px;">
+                  <div class="form-group">
+                    <label>Review Text</label>
+                    <textarea name="reviewText[]" rows="3">“Finally decided to give it a try and was blown away. The food is excellent... Easily one of the best budget-friendly Chinese spots in the area.”</textarea>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <button type="button" id="add-review-btn" style="background: #f9fafb; color: #374151; border: 2px dashed #d1d5db; padding: 14px; width: 100%; border-radius: 8px; font-weight: 700; cursor: pointer; margin-bottom: 20px; transition: all 0.2s;">+ Add Another Review</button>
+          </div>
+
+          <div class="card">
+            <h2>Latest Blogs Section</h2>
+            <span class="help-text" style="margin-bottom: 16px;">Controls the text above the blog preview on the home page. (Note: The actual articles shown here are automatically pulled from the ones you create in the Blogs Page tab!)</span>
+            <div class="form-grid">
+              <div class="form-group">
+                <label>Section Title</label>
+                <input type="text" value="Latest from Our Journal">
+              </div>
+              <div class="form-group">
+                <label>Section Subtitle</label>
+                <input type="text" value="Stories, recipes, and local guides from South Goa.">
+              </div>
+            </div>
+          </div>
+
+          <button type="submit" class="btn-save">Publish Changes to Home Page</button>
+        </form>
+      </div>
+
+      <!-- MENU PAGE TAB -->
+      <div id="tab-menu" class="tab-content">
+        <header class="header">
+          <div>
+            <h1>Menu Page Editor</h1>
+            <p>Manage your top dishes, descriptions, and mouth-watering photos.</p>
+          </div>
+          <button class="logout-btn">Log Out</button>
+        </header>
+
+        <form action="/api/update-menu" method="POST" enctype="multipart/form-data">
+          <div class="card">
+            <h2>Top Dishes / Menu Highlights</h2>
+            <span class="help-text" style="margin-bottom: 24px; font-size: 14px;">Add your signature dishes here. These will be displayed with their images prominently on your Menu section.</span>
+            
+            <div id="dishes-container">
+              <!-- Dish 1 -->
+              <div class="dish-entry">
+                <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #f3f4f6; margin: 10px 0 16px; padding-bottom: 8px;">
+                  <h3 style="font-size: 16px; color: #d62828; margin: 0;">Dish Item 1</h3>
+                  <button type="button" class="remove-dish-btn" style="color: #ef4444; background: none; border: none; cursor: pointer; font-size: 14px; font-weight: 700;">Remove</button>
+                </div>
+                <div class="form-grid">
+                  <div class="form-group">
+                    <label>Dish Name</label>
+                    <input type="text" name="dishName[]" value="Crispy Chilli Baby Corn">
+                  </div>
+                  <div class="form-group">
+                    <label>Price</label>
+                    <input type="text" name="dishPrice[]" value="₹220">
+                  </div>
+                </div>
+                <div class="form-grid full" style="margin-bottom: 30px;">
+                  <div class="form-group">
+                    <label>Description</label>
+                    <textarea name="dishDesc[]" rows="2">Tossed in our signature spicy and tangy sauce.</textarea>
+                  </div>
+                  <div class="form-group">
+                    <label>Dish Photo</label>
+                    <span class="help-text">Upload a high-quality photo of this dish.</span>
+                    <input type="file" name="dishPhoto[]" accept="image/*">
+                  </div>
+                </div>
+              </div>
+
+              <!-- Dish 2 -->
+              <div class="dish-entry">
+                <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #f3f4f6; margin: 10px 0 16px; padding-bottom: 8px;">
+                  <h3 style="font-size: 16px; color: #d62828; margin: 0;">Dish Item 2</h3>
+                  <button type="button" class="remove-dish-btn" style="color: #ef4444; background: none; border: none; cursor: pointer; font-size: 14px; font-weight: 700;">Remove</button>
+                </div>
+                <div class="form-grid">
+                  <div class="form-group">
+                    <label>Dish Name</label>
+                    <input type="text" name="dishName[]" value="Golden Fried Prawns">
+                  </div>
+                  <div class="form-group">
+                    <label>Price</label>
+                    <input type="text" name="dishPrice[]" value="₹350">
+                  </div>
+                </div>
+                <div class="form-grid full" style="margin-bottom: 30px;">
+                  <div class="form-group">
+                    <label>Description</label>
+                    <textarea name="dishDesc[]" rows="2">Fresh Goan prawns, crispy fried to perfection.</textarea>
+                  </div>
+                  <div class="form-group">
+                    <label>Dish Photo</label>
+                    <span class="help-text">Upload a high-quality photo of this dish.</span>
+                    <input type="file" name="dishPhoto[]" accept="image/*">
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <button type="button" id="add-dish-btn" style="background: #f9fafb; color: #374151; border: 2px dashed #d1d5db; padding: 14px; width: 100%; border-radius: 8px; font-weight: 700; cursor: pointer; margin-bottom: 20px; transition: all 0.2s;">+ Add Another Dish</button>
+          </div>
+
+          <button type="submit" class="btn-save">Publish Changes to Menu</button>
+        </form>
+      </div>
+
+      <!-- ABOUT PAGE TAB -->
+      <div id="tab-about" class="tab-content">
+        <header class="header">
+          <div>
+            <h1>About Page Editor</h1>
+            <p>Tell your restaurant's story on about.html</p>
+          </div>
+          <button class="logout-btn">Log Out</button>
+        </header>
+
+        <form action="/api/update-about" method="POST" enctype="multipart/form-data">
+          <div class="card">
+            <h2>About Hero Banner</h2>
+            <div class="form-grid">
+              <div class="form-group">
+                <label>Banner Title</label>
+                <span class="help-text">e.g., "Our Story"</span>
+                <input type="text" value="Our Story">
+              </div>
+              <div class="form-group">
+                <label>Banner Subtitle</label>
+                <input type="text" value="Discover the passion and history behind Red Lantern's authentic flavors.">
+              </div>
+            </div>
+            <div class="form-grid full">
+              <div class="form-group">
+                <label>Banner Background Image</label>
+                <input type="file" accept="image/*">
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <h2>The Story / Legacy Section</h2>
+            <div class="form-grid full">
+              <div class="form-group">
+                <label>Story Headline</label>
+                <input type="text" value="A Legacy of Taste in South Goa">
+              </div>
+              <div class="form-group">
+                <label>Story Content</label>
+                <span class="help-text">Write paragraphs separating ideas with line breaks.</span>
+                <textarea rows="6">Founded with a deep love for rich, bold flavors, Red Lantern began as a small family kitchen. Today, it stands as a beloved culinary landmark in Colva...</textarea>
+              </div>
+              <div class="form-group">
+                <label>Story Image</label>
+                <span class="help-text">Image displayed beside the story text.</span>
+                <input type="file" accept="image/*">
+              </div>
+            </div>
+          </div>
+
+          <button type="submit" class="btn-save">Publish Changes to About Page</button>
+        </form>
+      </div>
+
+      <!-- BLOGS PAGE TAB -->
+      <div id="tab-blogs" class="tab-content">
+        <header class="header">
+          <div>
+            <h1>Blogs Page Editor</h1>
+            <p>Manage your SEO-driving blog posts and articles.</p>
+          </div>
+          <button class="logout-btn">Log Out</button>
+        </header>
+
+        <form action="/api/update-blogs" method="POST" enctype="multipart/form-data">
+          <div class="card">
+            <h2>Blog Header</h2>
+            <div class="form-grid">
+              <div class="form-group">
+                <label>Page Title</label>
+                <input type="text" value="Red Lantern Journal">
+              </div>
+              <div class="form-group">
+                <label>Page Subtitle</label>
+                <input type="text" value="Stories, recipes, and local guides from South Goa.">
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <h2>Blog Posts</h2>
+            <span class="help-text" style="margin-bottom: 24px; font-size: 14px;">Add your articles here to drive SEO traffic to your website.</span>
+            
+            <div id="blogs-container">
+              <!-- Blog 1 -->
+              <div class="blog-entry">
+                <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #f3f4f6; margin: 10px 0 16px; padding-bottom: 8px;">
+                  <h3 style="font-size: 16px; color: #d62828; margin: 0;">Blog Post 1</h3>
+                  <button type="button" class="remove-blog-btn" style="color: #ef4444; background: none; border: none; cursor: pointer; font-size: 14px; font-weight: 700;">Remove</button>
+                </div>
+                <div class="form-grid full">
+                  <div class="form-group">
+                    <label>Article Title</label>
+                    <input type="text" name="blogTitle[]" value="Best Chinese Dishes to Try in Colva">
+                  </div>
+                </div>
+                <div class="form-grid">
+                  <div class="form-group">
+                    <label>Publish Date & Read Time</label>
+                    <input type="text" name="blogMeta[]" value="February 6, 2026 · 4 min read">
+                  </div>
+                  <div class="form-group">
+                    <label>Thumbnail Image</label>
+                    <input type="file" name="blogImage[]" accept="image/*">
+                  </div>
+                </div>
+                <div class="form-grid full">
+                  <div class="form-group">
+                    <label>Short Description / Excerpt</label>
+                    <textarea name="blogExcerpt[]" rows="2">A quick guide to our must-try classics and why locals love them.</textarea>
+                  </div>
+                </div>
+                <div class="form-grid full" style="margin-bottom: 30px;">
+                  <div class="form-group">
+                    <label>Full Article Content (SEO Optimized)</label>
+                    <span class="help-text">Write your full post. Use headings (H2) for keywords and add hyperlinks to boost your SEO ranking.</span>
+                    <div class="rich-text-editor">
+                      <div class="editor-toolbar">
+                        <button type="button" title="Bold"><strong>B</strong></button>
+                        <button type="button" title="Italic"><em>I</em></button>
+                        <button type="button" title="Heading 2">H2 (Subheading)</button>
+                        <button type="button" title="Paragraph">¶ (Paragraph)</button>
+                        <button type="button" title="Insert Link">🔗 Add Link</button>
+                      </div>
+                      <textarea name="blogContent[]" rows="8" placeholder="Write your full article here..."></textarea>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <button type="button" id="add-blog-btn" style="background: #f9fafb; color: #374151; border: 2px dashed #d1d5db; padding: 14px; width: 100%; border-radius: 8px; font-weight: 700; cursor: pointer; margin-bottom: 20px; transition: all 0.2s;">+ Add Another Blog Post</button>
+          </div>
+
+          <button type="submit" class="btn-save">Publish Changes to Blogs</button>
+        </form>
+      </div>
+
+      <!-- CONTACT PAGE TAB -->
+      <div id="tab-contact" class="tab-content">
+        <header class="header">
+          <div>
+            <h1>Contact Page Editor</h1>
+            <p>Update your location, hours, and map on contact.html</p>
+          </div>
+          <button class="logout-btn">Log Out</button>
+        </header>
+
+        <form action="/api/update-contact" method="POST">
+          <div class="card">
+            <h2>Contact Details</h2>
+            <div class="form-grid">
+              <div class="form-group">
+                <label>Physical Address</label>
+                <span class="help-text">Shows on the contact page and global footer.</span>
+                <textarea rows="2">Near Chinchmorod Vanelim, Colva, Goa, 403708</textarea>
+              </div>
+              <div class="form-group">
+                <label>Opening Hours</label>
+                <span class="help-text">e.g., Open Daily: 12:00 PM - 12:00 AM</span>
+                <textarea rows="2">Open Daily: 12:00 PM - 12:00 AM</textarea>
+              </div>
+              <div class="form-group">
+                <label>Phone Number</label>
+                <span class="help-text">Used for display and clickable "Call Us" buttons.</span>
+                <input type="text" value="+91 99228 53605">
+              </div>
+              <div class="form-group">
+                <label>Email Address</label>
+                <input type="text" value="reservations@redlantern.com">
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <h2>Google Maps Integration</h2>
+            <div class="form-grid full">
+              <div class="form-group">
+                <label>Google Maps Embed URL</label>
+                <span class="help-text">Go to Google Maps -> Share -> Embed a Map -> Copy the "src" link inside the iframe.</span>
+                <input type="url" value="https://www.google.com/maps/embed?pb=...">
+              </div>
+            </div>
+          </div>
+
+          <button type="submit" class="btn-save">Publish Changes to Contact Page</button>
+        </form>
+      </div>
+
+      <!-- FOOTER / GLOBAL TAB -->
+      <div id="tab-footer" class="tab-content">
+        <header class="header">
+          <div>
+            <h1>Footer & Global Settings</h1>
+            <p>Update elements that appear at the bottom of every page.</p>
+          </div>
+          <button class="logout-btn">Log Out</button>
+        </header>
+
+        <form action="/api/update-global" method="POST">
+          <div class="card">
+            <h2>Footer Content</h2>
+            <div class="form-grid full">
+              <div class="form-group">
+                <label>Footer Brand Description</label>
+                <span class="help-text">The short blurb below the logo in the footer.</span>
+                <textarea rows="2">The Hidden Gem of South Goa. Experience authentic Chinese & Goan cuisine in our cozy, open-air garden setting.</textarea>
+              </div>
+            </div>
+            <div class="form-grid">
+              <div class="form-group">
+                <label>Zomato Order Link</label>
+                <span class="help-text">Where the "Order on Zomato" buttons link to.</span>
+                <input type="url" value="https://zomato.com/your-restaurant">
+              </div>
+              <div class="form-group">
+                <label>Swiggy Order Link</label>
+                <span class="help-text">Where the "Order on Swiggy" buttons link to.</span>
+                <input type="url" value="https://swiggy.com/your-restaurant">
+              </div>
+            </div>
+          </div>
+          <button type="submit" class="btn-save">Publish Global Changes</button>
+        </form>
+      </div>
+
+    </main>
+
+    <!-- Simple JS to handle tab switching -->
+    <script>
+      const navItems = document.querySelectorAll('.nav-item');
+      const tabContents = document.querySelectorAll('.tab-content');
+
+      navItems.forEach(item => {
+        item.addEventListener('click', () => {
+          // Remove active class from all tabs and buttons
+          navItems.forEach(nav => nav.classList.remove('active'));
+          tabContents.forEach(tab => tab.classList.remove('active'));
+          
+          // Add active class to clicked item
+          item.classList.add('active');
+          
+          // Show corresponding tab
+          const targetId = item.getAttribute('data-target');
+          document.getElementById(targetId).classList.add('active');
+        });
+      });
+
+      // Dynamic Menu Items Logic
+      const addDishBtn = document.getElementById('add-dish-btn');
+      const dishesContainer = document.getElementById('dishes-container');
+
+      if(addDishBtn && dishesContainer) {
+        addDishBtn.addEventListener('click', () => {
+          const dishCount = dishesContainer.querySelectorAll('.dish-entry').length + 1;
+          const newDish = document.createElement('div');
+          newDish.className = 'dish-entry';
+          newDish.innerHTML = `
+            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #f3f4f6; margin: 10px 0 16px; padding-bottom: 8px;">
+              <h3 style="font-size: 16px; color: #d62828; margin: 0;">Dish Item ${dishCount}</h3>
+              <button type="button" class="remove-dish-btn" style="color: #ef4444; background: none; border: none; cursor: pointer; font-size: 14px; font-weight: 700;">Remove</button>
+            </div>
+            <div class="form-grid">
+              <div class="form-group">
+                <label>Dish Name</label>
+                <input type="text" name="dishName[]" placeholder="e.g. Spring Rolls">
+              </div>
+              <div class="form-group">
+                <label>Price</label>
+                <input type="text" name="dishPrice[]" placeholder="e.g. ₹200">
+              </div>
+            </div>
+            <div class="form-grid full" style="margin-bottom: 30px;">
+              <div class="form-group">
+                <label>Description</label>
+                <textarea name="dishDesc[]" rows="2" placeholder="Describe the dish..."></textarea>
+              </div>
+              <div class="form-group">
+                <label>Dish Photo</label>
+                <span class="help-text">Upload a high-quality photo of this dish.</span>
+                <input type="file" name="dishPhoto[]" accept="image/*">
+              </div>
+            </div>
+          `;
+          dishesContainer.appendChild(newDish);
+        });
+
+        // Event delegation to handle removing dishes
+        dishesContainer.addEventListener('click', (e) => {
+          if(e.target.classList.contains('remove-dish-btn')) {
+            e.target.closest('.dish-entry').remove();
+            // Re-number remaining items so they stay in order
+            const entries = dishesContainer.querySelectorAll('.dish-entry');
+            entries.forEach((entry, index) => {
+              const heading = entry.querySelector('h3');
+              if (heading) heading.textContent = 'Dish Item ' + (index + 1);
+            });
+          }
+        });
+      }
+
+      // Dynamic Blog Posts Logic
+      const addBlogBtn = document.getElementById('add-blog-btn');
+      const blogsContainer = document.getElementById('blogs-container');
+
+      if(addBlogBtn && blogsContainer) {
+        addBlogBtn.addEventListener('click', () => {
+          const blogCount = blogsContainer.querySelectorAll('.blog-entry').length + 1;
+          const newBlog = document.createElement('div');
+          newBlog.className = 'blog-entry';
+          newBlog.innerHTML = `
+            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #f3f4f6; margin: 10px 0 16px; padding-bottom: 8px;">
+              <h3 style="font-size: 16px; color: #d62828; margin: 0;">Blog Post ${blogCount}</h3>
+              <button type="button" class="remove-blog-btn" style="color: #ef4444; background: none; border: none; cursor: pointer; font-size: 14px; font-weight: 700;">Remove</button>
+            </div>
+            <div class="form-grid full">
+              <div class="form-group">
+                <label>Article Title</label>
+                <input type="text" name="blogTitle[]" placeholder="e.g. Top 5 Goan Seafood Dishes">
+              </div>
+            </div>
+            <div class="form-grid">
+              <div class="form-group">
+                <label>Publish Date & Read Time</label>
+                <input type="text" name="blogMeta[]" placeholder="e.g. March 10, 2026 · 3 min read">
+              </div>
+              <div class="form-group">
+                <label>Thumbnail Image</label>
+                <input type="file" name="blogImage[]" accept="image/*">
+              </div>
+            </div>
+            <div class="form-grid full">
+              <div class="form-group">
+                <label>Short Description / Excerpt</label>
+                <textarea name="blogExcerpt[]" rows="2" placeholder="Write a short summary..."></textarea>
+              </div>
+            </div>
+            <div class="form-grid full" style="margin-bottom: 30px;">
+              <div class="form-group">
+                <label>Full Article Content (SEO Optimized)</label>
+                <span class="help-text">Write your full post. Use headings (H2) for keywords and add hyperlinks to boost your SEO ranking.</span>
+                <div class="rich-text-editor">
+                  <div class="editor-toolbar">
+                    <button type="button" title="Bold"><strong>B</strong></button>
+                    <button type="button" title="Italic"><em>I</em></button>
+                    <button type="button" title="Heading 2">H2 (Subheading)</button>
+                    <button type="button" title="Paragraph">¶ (Paragraph)</button>
+                    <button type="button" title="Insert Link">🔗 Add Link</button>
+                  </div>
+                  <textarea name="blogContent[]" rows="8" placeholder="Write your full article here..."></textarea>
+                </div>
+              </div>
+            </div>
+          `;
+          blogsContainer.appendChild(newBlog);
+        });
+
+        blogsContainer.addEventListener('click', (e) => {
+          if(e.target.classList.contains('remove-blog-btn')) {
+            e.target.closest('.blog-entry').remove();
+            const entries = blogsContainer.querySelectorAll('.blog-entry');
+            entries.forEach((entry, index) => {
+              const heading = entry.querySelector('h3');
+              if (heading) heading.textContent = 'Blog Post ' + (index + 1);
+            });
+          }
+        });
+      }
+
+      // Dynamic Reviews Logic
+      const addReviewBtn = document.getElementById('add-review-btn');
+      const reviewsContainer = document.getElementById('reviews-container');
+
+      if(addReviewBtn && reviewsContainer) {
+        addReviewBtn.addEventListener('click', () => {
+          const reviewCount = reviewsContainer.querySelectorAll('.review-entry').length + 1;
+          const newReview = document.createElement('div');
+          newReview.className = 'review-entry';
+          newReview.innerHTML = `
+            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #f3f4f6; margin: 10px 0 16px; padding-bottom: 8px;">
+              <h3 style="font-size: 16px; color: #d62828; margin: 0;">Review ${reviewCount}</h3>
+              <button type="button" class="remove-review-btn" style="color: #ef4444; background: none; border: none; cursor: pointer; font-size: 14px; font-weight: 700;">Remove</button>
+            </div>
+            <div class="form-grid">
+              <div class="form-group">
+                <label>Reviewer Name</label>
+                <input type="text" name="reviewName[]" placeholder="e.g. John Doe">
+              </div>
+              <div class="form-group">
+                <label>Star Rating</label>
+                <input type="text" name="reviewStars[]" value="★★★★★">
+              </div>
+            </div>
+            <div class="form-grid full" style="margin-bottom: 30px;">
+              <div class="form-group">
+                <label>Review Text</label>
+                <textarea name="reviewText[]" rows="3" placeholder="Paste the glowing Google review here..."></textarea>
+              </div>
+            </div>
+          `;
+          reviewsContainer.appendChild(newReview);
+        });
+
+        reviewsContainer.addEventListener('click', (e) => {
+          if(e.target.classList.contains('remove-review-btn')) {
+            e.target.closest('.review-entry').remove();
+            const entries = reviewsContainer.querySelectorAll('.review-entry');
+            entries.forEach((entry, index) => {
+              const heading = entry.querySelector('h3');
+              if (heading) heading.textContent = 'Review ' + (index + 1);
+            });
+          }
+        });
+      }
+    </script>
+  </body>
+</html>
