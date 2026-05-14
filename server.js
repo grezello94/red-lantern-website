@@ -8,6 +8,17 @@ const app = express();
 const port = process.env.PORT || 3001;
 const uploadsDir = path.join(__dirname, 'uploads');
 
+const envPath = path.join(__dirname, '.env');
+if (fs.existsSync(envPath)) {
+  fs.readFileSync(envPath, 'utf8')
+    .split(/\r?\n/)
+    .forEach((line) => {
+      const match = line.match(/^\s*([\w.-]+)\s*=\s*(.*)?\s*$/);
+      if (!match || process.env[match[1]]) return;
+      process.env[match[1]] = String(match[2] || '').replace(/^["']|["']$/g, '');
+    });
+}
+
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
@@ -225,6 +236,224 @@ function normalizeSection(section, body, files) {
   return body;
 }
 
+async function getAllContent() {
+  const entries = await Promise.all(Object.keys(collections).map(async (section) => [section, await getSection(section)]));
+  return Object.fromEntries(entries);
+}
+
+function trimForPrompt(content) {
+  const global = content.global || {};
+  const contact = content.contact || {};
+  const menu = content.menu || {};
+  const blogs = content.blogs || {};
+
+  return {
+    business: {
+      name: 'Red Lantern Restaurant',
+      location: contact.address || 'Colva, South Goa',
+      hours: contact.hours || '',
+      phone: contact.phone || '',
+      website: global.siteUrl || '',
+      orderLinks: {
+        zomato: global.zomatoUrl || '',
+        swiggy: global.swiggyUrl || ''
+      }
+    },
+    seo: {
+      title: global.seoTitle || '',
+      description: global.seoDescription || '',
+      keywords: global.seoKeywords || '',
+      targetLocations: global.targetLocations || '',
+      targetSearches: global.targetCuisines || '',
+      competitors: global.competitorNames || '',
+      researchNotes: global.competitorResearchNotes || ''
+    },
+    menu: {
+      pageTitle: menu.pageTitle || '',
+      pageSubtitle: menu.pageSubtitle || '',
+      dishes: (menu.dishes || []).slice(0, 20).map((dish) => ({
+        name: dish.name || '',
+        category: dish.category || '',
+        badge: dish.badge || '',
+        description: dish.description || ''
+      }))
+    },
+    blogs: {
+      count: (blogs.posts || []).length,
+      posts: (blogs.posts || []).slice(0, 12).map((post) => ({
+        title: post.title || '',
+        slug: post.slug || '',
+        excerpt: post.excerpt || '',
+        seoTitle: post.seoTitle || '',
+        seoDescription: post.seoDescription || ''
+      }))
+    }
+  };
+}
+
+function parseAiJson(text) {
+  const cleaned = String(text || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/```$/i, '').trim();
+  return JSON.parse(cleaned);
+}
+
+async function generateAiGrowthPlan(content) {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    const error = new Error('Missing OPENAI_API_KEY. Add it to a local .env file or server environment to enable real AI growth ideas.');
+    error.statusCode = 503;
+    throw error;
+  }
+
+  const model = process.env.OPENAI_GROWTH_MODEL || 'gpt-5';
+  const today = new Date().toISOString().slice(0, 10);
+  const response = await fetch('https://api.openai.com/v1/responses', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model,
+      reasoning: { effort: 'low' },
+      tools: [{
+        type: 'web_search',
+        user_location: {
+          type: 'approximate',
+          country: 'IN',
+          city: 'Colva',
+          region: 'Goa',
+          timezone: 'Asia/Kolkata'
+        }
+      }],
+      tool_choice: 'auto',
+      include: ['web_search_call.action.sources'],
+      max_output_tokens: 2200,
+      text: {
+        format: {
+          type: 'json_schema',
+          name: 'restaurant_growth_plan',
+          strict: true,
+          schema: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              summary: { type: 'string' },
+              trendSignals: {
+                type: 'array',
+                minItems: 3,
+                maxItems: 6,
+                items: {
+                  type: 'object',
+                  additionalProperties: false,
+                  properties: {
+                    title: { type: 'string' },
+                    detail: { type: 'string' },
+                    priority: { type: 'string' }
+                  },
+                  required: ['title', 'detail', 'priority']
+                }
+              },
+              priorityActions: {
+                type: 'array',
+                minItems: 5,
+                maxItems: 8,
+                items: {
+                  type: 'object',
+                  additionalProperties: false,
+                  properties: {
+                    title: { type: 'string' },
+                    detail: { type: 'string' },
+                    impact: { type: 'string' }
+                  },
+                  required: ['title', 'detail', 'impact']
+                }
+              },
+              seoWinningMoves: {
+                type: 'array',
+                minItems: 5,
+                maxItems: 8,
+                items: {
+                  type: 'object',
+                  additionalProperties: false,
+                  properties: {
+                    title: { type: 'string' },
+                    detail: { type: 'string' },
+                    searchTarget: { type: 'string' }
+                  },
+                  required: ['title', 'detail', 'searchTarget']
+                }
+              },
+              contentIdeas: {
+                type: 'array',
+                minItems: 5,
+                maxItems: 8,
+                items: {
+                  type: 'object',
+                  additionalProperties: false,
+                  properties: {
+                    title: { type: 'string' },
+                    searchIntent: { type: 'string' },
+                    outline: { type: 'string' },
+                    keywords: { type: 'array', items: { type: 'string' } }
+                  },
+                  required: ['title', 'searchIntent', 'outline', 'keywords']
+                }
+              },
+              adIdeas: {
+                type: 'array',
+                minItems: 3,
+                maxItems: 6,
+                items: {
+                  type: 'object',
+                  additionalProperties: false,
+                  properties: {
+                    campaign: { type: 'string' },
+                    audience: { type: 'string' },
+                    message: { type: 'string' },
+                    landingPage: { type: 'string' }
+                  },
+                  required: ['campaign', 'audience', 'message', 'landingPage']
+                }
+              },
+              missingWebsiteItems: {
+                type: 'array',
+                minItems: 3,
+                maxItems: 8,
+                items: { type: 'string' }
+              },
+              sources: {
+                type: 'array',
+                maxItems: 8,
+                items: {
+                  type: 'object',
+                  additionalProperties: false,
+                  properties: {
+                    title: { type: 'string' },
+                    url: { type: 'string' }
+                  },
+                  required: ['title', 'url']
+                }
+              }
+            },
+            required: ['summary', 'trendSignals', 'priorityActions', 'seoWinningMoves', 'contentIdeas', 'adIdeas', 'missingWebsiteItems', 'sources']
+          }
+        }
+      },
+      instructions: 'You are a senior local SEO and restaurant growth strategist. Your primary objective is to help the restaurant compete for top visibility in Google Maps/local pack and organic food searches. Use live web search when helpful. Give practical actions for ranking and conversions, but never guarantee first-page ranking. Return only valid JSON matching the schema.',
+      input: `Today is ${today}. Create a current SEO-first growth plan for this restaurant to compete for food and restaurant searches around Colva and South Goa. Prioritize: Google Business Profile/local pack visibility, high-intent landing pages, menu SEO, blog topic clusters, review strategy, competitor positioning, technical/schema improvements, and measurable conversion tracking. Use the website/CMS data below, competitor inputs, and current search/travel/food trends. Be specific and action-oriented.\n\nCMS data:\n${JSON.stringify(trimForPrompt(content), null, 2)}`
+    })
+  });
+
+  const body = await response.json();
+  if (!response.ok) {
+    const error = new Error(body.error?.message || 'OpenAI request failed.');
+    error.statusCode = response.status;
+    throw error;
+  }
+
+  return parseAiJson(body.output_text);
+}
+
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
 });
@@ -235,8 +464,7 @@ app.get('/admin', (req, res) => {
 
 app.get('/api/content', async (req, res) => {
   try {
-    const entries = await Promise.all(Object.keys(collections).map(async (section) => [section, await getSection(section)]));
-    res.json(Object.fromEntries(entries));
+    res.json(await getAllContent());
   } catch (error) {
     console.error('Firebase error:', error);
     res.status(500).json({ error: error.message });
@@ -278,6 +506,20 @@ app.get('/sitemap.xml', async (req, res) => {
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
 ${urls.map((url) => `  <url><loc>${url}</loc></url>`).join('\n')}
 </urlset>`);
+});
+
+app.post('/api/growth-ai', async (req, res) => {
+  try {
+    const content = await getAllContent();
+    const plan = await generateAiGrowthPlan(content);
+    res.json({
+      generatedAt: new Date().toISOString(),
+      plan
+    });
+  } catch (error) {
+    console.error('AI growth error:', error);
+    res.status(error.statusCode || 500).json({ error: error.message });
+  }
 });
 
 Object.keys(collections).forEach((section) => {

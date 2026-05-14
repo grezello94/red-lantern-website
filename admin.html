@@ -61,6 +61,12 @@
       .growth-item strong { display: block; color: #111827; margin-bottom: 4px; }
       .growth-item span { color: #6b7280; font-size: 14px; line-height: 1.5; }
       .growth-tag { display: inline-flex; align-items: center; margin-top: 8px; padding: 3px 8px; border-radius: 999px; background: #fee2e2; color: #b91c1c; font-size: 12px; font-weight: 800; text-transform: uppercase; }
+      .growth-ai-button { background: #111827; color: #fff; border: none; padding: 12px 18px; border-radius: 8px; font-weight: 800; cursor: pointer; }
+      .growth-ai-button:disabled { opacity: 0.65; cursor: wait; }
+      .growth-ai-status { margin-top: 12px; color: #6b7280; font-size: 14px; font-weight: 700; }
+      .growth-ai-summary { color: #374151; line-height: 1.6; margin-bottom: 16px; }
+      .growth-source-link { color: #b91c1c; font-weight: 700; text-decoration: none; word-break: break-word; }
+      .growth-source-link:hover { text-decoration: underline; }
     </style>
   </head>
   <body>
@@ -666,15 +672,69 @@
         <header class="header">
           <div>
             <h1>Growth Ideas</h1>
-            <p>AI-style SEO, content, and ad ideas based on your current website data.</p>
+            <p>Live AI SEO, content, and ad ideas built to compete for food searches in Colva and South Goa.</p>
           </div>
           <button class="logout-btn">Log Out</button>
         </header>
 
         <div class="card">
+          <h2>AI Trend Scanner</h2>
+          <p class="growth-ai-summary">Generate a fresh growth plan using your Firebase content, competitor inputs, and live web search for current food and restaurant trends.</p>
+          <button type="button" id="generate-ai-growth" class="growth-ai-button">Generate AI Growth Plan</button>
+          <p id="growth-ai-status" class="growth-ai-status"></p>
+        </div>
+
+        <div id="growth-ai-results" style="display: none;">
+          <div class="card">
+            <h2>AI Summary</h2>
+            <p id="growth-ai-summary" class="growth-ai-summary"></p>
+          </div>
+
+          <div class="card">
+            <h2>Live Trend Signals</h2>
+            <div id="growth-ai-trends" class="growth-list"></div>
+          </div>
+
+          <div class="card">
+            <h2>AI Priority Actions</h2>
+            <div id="growth-ai-actions" class="growth-list"></div>
+          </div>
+
+          <div class="card">
+            <h2>AI SEO Winning Moves</h2>
+            <div id="growth-ai-seo" class="growth-list"></div>
+          </div>
+
+          <div class="card">
+            <h2>AI Content Ideas</h2>
+            <div id="growth-ai-content" class="growth-list"></div>
+          </div>
+
+          <div class="card">
+            <h2>AI Ad Ideas</h2>
+            <div id="growth-ai-ads" class="growth-list"></div>
+          </div>
+
+          <div class="card">
+            <h2>Missing Website Items</h2>
+            <div id="growth-ai-missing" class="growth-list"></div>
+          </div>
+
+          <div class="card">
+            <h2>AI Sources</h2>
+            <div id="growth-ai-sources" class="growth-list"></div>
+          </div>
+        </div>
+
+        <div class="card">
           <h2>Visibility Score</h2>
           <p id="growth-score" style="font-size: 38px; font-weight: 800; color: #d62828; margin: 8px 0;">Checking...</p>
           <span class="help-text">This is a practical readiness score for SEO and advertising setup.</span>
+        </div>
+
+        <div class="card">
+          <h2>SEO Ranking Roadmap</h2>
+          <div id="growth-seo-roadmap" class="growth-list"></div>
         </div>
 
         <div class="card">

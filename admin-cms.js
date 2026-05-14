@@ -94,6 +94,113 @@ const renderGrowthItems = (id, items) => {
   `).join('');
 };
 
+const escapeHtml = (value) => String(value || '')
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#039;');
+
+const renderAiItems = (id, items, mapper) => {
+  const container = document.getElementById(id);
+  if (!container) return;
+  container.innerHTML = (items || []).map((item) => {
+    const mapped = mapper(item);
+    return `
+      <div class="growth-item">
+        <strong>${escapeHtml(mapped.title)}</strong>
+        <span>${escapeHtml(mapped.detail)}</span>
+        ${mapped.tag ? `<div class="growth-tag">${escapeHtml(mapped.tag)}</div>` : ''}
+      </div>
+    `;
+  }).join('');
+};
+
+function renderAiGrowthPlan(plan) {
+  const results = document.getElementById('growth-ai-results');
+  const summary = document.getElementById('growth-ai-summary');
+  if (results) results.style.display = 'block';
+  if (summary) summary.textContent = plan.summary || '';
+
+  renderAiItems('growth-ai-trends', plan.trendSignals, (item) => ({
+    title: item.title,
+    detail: item.detail,
+    tag: item.priority
+  }));
+
+  renderAiItems('growth-ai-actions', plan.priorityActions, (item) => ({
+    title: item.title,
+    detail: item.detail,
+    tag: item.impact
+  }));
+
+  renderAiItems('growth-ai-seo', plan.seoWinningMoves, (item) => ({
+    title: item.title,
+    detail: item.detail,
+    tag: item.searchTarget
+  }));
+
+  renderAiItems('growth-ai-content', plan.contentIdeas, (item) => ({
+    title: item.title,
+    detail: `${item.searchIntent} ${item.outline} Keywords: ${(item.keywords || []).join(', ')}`,
+    tag: 'Content'
+  }));
+
+  renderAiItems('growth-ai-ads', plan.adIdeas, (item) => ({
+    title: item.campaign,
+    detail: `${item.audience} ${item.message} Landing page: ${item.landingPage}`,
+    tag: 'Ads'
+  }));
+
+  renderAiItems('growth-ai-missing', plan.missingWebsiteItems, (item) => ({
+    title: item,
+    detail: 'Add or improve this to strengthen local SEO and conversion.',
+    tag: 'Missing'
+  }));
+
+  const sources = document.getElementById('growth-ai-sources');
+  if (sources) {
+    sources.innerHTML = (plan.sources || []).map((source) => `
+      <div class="growth-item">
+        <strong>${escapeHtml(source.title)}</strong>
+        <a class="growth-source-link" href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(source.url)}</a>
+      </div>
+    `).join('');
+  }
+}
+
+function setupAiGrowthButton() {
+  const button = document.getElementById('generate-ai-growth');
+  const status = document.getElementById('growth-ai-status');
+  if (!button) return;
+
+  button.addEventListener('click', async () => {
+    button.disabled = true;
+    if (status) {
+      status.textContent = 'Scanning live trends and your website data...';
+      status.style.color = '#6b7280';
+    }
+
+    try {
+      const response = await fetch('/api/growth-ai', { method: 'POST' });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'AI growth scan failed.');
+      renderAiGrowthPlan(data.plan);
+      if (status) {
+        status.textContent = `AI growth plan generated at ${new Date(data.generatedAt).toLocaleString()}.`;
+        status.style.color = '#166534';
+      }
+    } catch (error) {
+      if (status) {
+        status.textContent = error.message || 'AI growth scan failed.';
+        status.style.color = '#b91c1c';
+      }
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
+
 const currentSeason = () => {
   const month = new Date().getMonth() + 1;
   if ([11, 12, 1, 2].includes(month)) return 'peak tourist season';
@@ -180,6 +287,54 @@ function buildGrowthDashboard(content = {}) {
   const secondaryLocation = targetLocations[1] || 'South Goa';
   const primaryCuisine = targetCuisines[0] || 'Chinese food';
   const secondaryCuisine = targetCuisines[1] || 'Goan seafood';
+  const seoRoadmap = [
+    {
+      title: 'Win Google Maps first',
+      detail: global.googleBusinessUrl
+        ? 'Your Google Business Profile is linked. Keep it active with weekly dish photos, fresh posts, accurate hours, menu highlights, and review replies using phrases like Chinese food in Colva and Goan seafood near Colva Beach.'
+        : 'Add your Google Business Profile URL in Footer & Settings. Then keep the profile updated weekly with photos, menu items, posts, services, attributes, and review replies.',
+      tag: 'Local Pack'
+    },
+    {
+      title: 'Build one page for each money search',
+      detail: `Create focused website sections or landing pages for searches like "${primaryCuisine} in ${primaryLocation}", "${secondaryCuisine} near ${primaryLocation}", "family restaurant in ${secondaryLocation}", and "restaurants near Colva Beach". Each page needs unique text, photos, menu links, map, phone, and ordering buttons.`,
+      tag: 'Pages'
+    },
+    {
+      title: 'Turn the menu into SEO content',
+      detail: hasMenuDepth
+        ? 'You have enough menu depth to start ranking pages around individual dishes. Add prices, original photos, descriptions, spice level, cuisine category, and internal links from blogs to each signature dish.'
+        : 'Add at least 8-12 dishes with categories, descriptions, and original photos. Google needs clear menu content to understand what food searches Red Lantern should rank for.',
+      tag: 'Menu SEO'
+    },
+    {
+      title: 'Publish blog clusters, not random posts',
+      detail: hasBlogEngine
+        ? `You have ${posts.length} blog post(s). Next, create clusters around Colva restaurants, Chinese food, Goan seafood, family dining, delivery/order searches, and tourist food guides. Link every post back to Menu and Contact.`
+        : 'Publish at least 3 starter posts: best Chinese food in Colva, Goan seafood near Colva Beach, and family restaurant in South Goa. Then expand each topic into related posts.',
+      tag: 'Content'
+    },
+    {
+      title: 'Beat competitors with comparison intent',
+      detail: competitors.length
+        ? `You are tracking ${competitors.slice(0, 4).join(', ')}. Create comparison-style content that highlights Red Lantern strengths: cuisine range, ambience, location, value, delivery links, photos, and signature dishes. Keep the tone factual, not negative.`
+        : 'Add competitor names in Market Research Inputs. The AI scanner can then generate comparison topics and ad angles against restaurants people already search for.',
+      tag: 'Competitors'
+    },
+    {
+      title: 'Improve trust signals everywhere',
+      detail: 'Add real customer reviews, restaurant photos, chef/story details, exact address, phone, map, opening hours, order links, and social profiles. These help both Google and visitors trust the business.',
+      tag: 'Trust'
+    },
+    {
+      title: 'Track what is working',
+      detail: hasAds
+        ? 'Tracking is partly configured. Use GA4/Search Console/Google Business Profile insights to watch calls, directions, menu clicks, order clicks, and the searches people use to find you.'
+        : 'Add GA4, Google Search Console, Google Business Profile insights, and ad conversion tracking before serious ad spend. Ranking work needs measurement.',
+      tag: 'Tracking'
+    }
+  ];
+
   const blogIdeas = [
     {
       title: `Best ${primaryCuisine} in ${primaryLocation}: What to Order at Red Lantern`,
@@ -261,6 +416,7 @@ function buildGrowthDashboard(content = {}) {
   }));
 
   renderGrowthItems('growth-actions', actions);
+  renderGrowthItems('growth-seo-roadmap', seoRoadmap);
   renderGrowthItems('growth-blog-ideas', blogIdeas);
   renderGrowthItems('growth-ad-ideas', adIdeas);
   renderGrowthItems('growth-checklist', checklist);
@@ -278,6 +434,8 @@ fetch('/api/content')
     buildGrowthDashboard(content);
   })
   .catch(() => {});
+
+setupAiGrowthButton();
 
 document.querySelectorAll('form[action^="/api/update-"]').forEach((form) => {
   form.addEventListener('submit', async (event) => {
