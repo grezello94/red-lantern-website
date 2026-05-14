@@ -1,5 +1,4 @@
 node_modules/
-.DS_Store
-.venv/
 .env
-firebase-key.json
+uploads/
+.netlify/firebase-key.json

@@ -230,7 +230,21 @@ function buildGrowthDashboard(content = {}) {
     .filter(Boolean).length;
 
   const scoreText = document.getElementById('growth-score');
-  if (scoreText) scoreText.textContent = `${Math.round((score / 6) * 100)}% ready`;
+  const scoreLabel = document.getElementById('growth-score-label');
+  const scorePercent = Math.round((score / 6) * 100);
+  if (scoreText) {
+    scoreText.textContent = `${scorePercent}% ready`;
+    if (score === 6) {
+      scoreText.style.color = '#166534';
+    } else {
+      scoreText.style.color = '#d62828';
+    }
+  }
+  if (scoreLabel) {
+    scoreLabel.textContent = score === 6
+      ? '✅ Green signal: all core readiness items are complete. Well done!'
+      : 'Use Refresh progress after saving content changes to update the readiness score.';
+  }
 
   const actions = [
     !hasLocalSeo && {
@@ -422,6 +436,28 @@ function buildGrowthDashboard(content = {}) {
   renderGrowthItems('growth-checklist', checklist);
 }
 
+async function refreshGrowthProgress() {
+  const button = document.getElementById('refresh-growth-progress');
+  if (button) button.disabled = true;
+  try {
+    const response = await fetch('/api/content');
+    if (!response.ok) throw new Error('Unable to refresh progress.');
+    const content = await response.json();
+    buildGrowthDashboard(content);
+  } catch (error) {
+    const scoreLabel = document.getElementById('growth-score-label');
+    if (scoreLabel) scoreLabel.textContent = error.message || 'Unable to refresh progress.';
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+function setupGrowthRefreshButton() {
+  const button = document.getElementById('refresh-growth-progress');
+  if (!button) return;
+  button.addEventListener('click', refreshGrowthProgress);
+}
+
 fetch('/api/content')
   .then((response) => response.ok ? response.json() : {})
   .then((content) => {
@@ -436,6 +472,7 @@ fetch('/api/content')
   .catch(() => {});
 
 setupAiGrowthButton();
+setupGrowthRefreshButton();
 
 document.querySelectorAll('form[action^="/api/update-"]').forEach((form) => {
   form.addEventListener('submit', async (event) => {
@@ -449,7 +486,7 @@ document.querySelectorAll('form[action^="/api/update-"]').forEach((form) => {
       });
       const text = await response.text();
       if (!response.ok) throw new Error(text);
-      setStatus(form, 'Saved. Refresh the public page to see the update.');
+      setStatus(form, 'Saved. Go to Growth Ideas and click Refresh progress to update the readiness score.');
     } catch (error) {
       setStatus(form, error.message || 'Save failed.', true);
     }

@@ -75,7 +75,7 @@ exports.handler = async (event) => {
 
     const url = new URL("https://maps.googleapis.com/maps/api/place/details/json");
     url.searchParams.set("place_id", placeId);
-    url.searchParams.set("fields", "reviews");
+    url.searchParams.set("fields", "reviews,photos");
     url.searchParams.set("reviews_sort", "newest");
     url.searchParams.set("key", GOOGLE_PLACES_API_KEY);
 
@@ -115,6 +115,10 @@ exports.handler = async (event) => {
         time: Number(r?.time) || 0,
       }));
 
+    const rawPhotos = payload?.result?.photos;
+    const photosArray = Array.isArray(rawPhotos) ? rawPhotos : [];
+    const photos = photosArray.slice(0, limit).map((p) => p.photo_reference);
+
     return {
       statusCode: 200,
       headers: {
@@ -126,6 +130,7 @@ exports.handler = async (event) => {
         placeId,
         minRating,
         reviews,
+        photos,
       }),
     };
   } catch (err) {

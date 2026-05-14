@@ -65,6 +65,10 @@
       .growth-ai-button:disabled { opacity: 0.65; cursor: wait; }
       .growth-ai-status { margin-top: 12px; color: #6b7280; font-size: 14px; font-weight: 700; }
       .growth-ai-summary { color: #374151; line-height: 1.6; margin-bottom: 16px; }
+      .growth-score-header { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; }
+      .growth-score-label { color: #4b5563; font-size: 14px; margin-bottom: 8px; }
+      .btn-refresh { background: #111827; color: #fff; border: none; padding: 10px 16px; border-radius: 8px; font-weight: 700; cursor: pointer; transition: transform 0.2s; }
+      .btn-refresh:hover { transform: translateY(-1px); }
       .growth-source-link { color: #b91c1c; font-weight: 700; text-decoration: none; word-break: break-word; }
       .growth-source-link:hover { text-decoration: underline; }
     </style>
@@ -728,7 +732,11 @@
 
         <div class="card">
           <h2>Visibility Score</h2>
-          <p id="growth-score" style="font-size: 38px; font-weight: 800; color: #d62828; margin: 8px 0;">Checking...</p>
+          <div class="growth-score-header">
+            <p id="growth-score" style="font-size: 38px; font-weight: 800; color: #d62828; margin: 8px 0;">Checking...</p>
+            <button type="button" id="refresh-growth-progress" class="btn-refresh">Refresh progress</button>
+          </div>
+          <p id="growth-score-label" class="growth-score-label">Use Refresh progress after saving content changes to update the readiness score.</p>
           <span class="help-text">This is a practical readiness score for SEO and advertising setup.</span>
         </div>
 

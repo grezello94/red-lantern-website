@@ -47,4 +47,25 @@
   }
 
   load();
+
+  // Fetch and display Google Photos
+  async function loadGooglePhotos() {
+    const photoContainer = document.getElementById("google-photos-grid");
+    if (!photoContainer) return;
+
+    try {
+      const res = await fetch(API_URL);
+      const data = await res.json();
+      
+      if (data.photos && data.photos.length > 0) {
+        photoContainer.innerHTML = data.photos.map(photoRef => `
+          <img src="/.netlify/functions/google-photo?ref=${photoRef}&maxwidth=600" alt="Restaurant photo from Google" class="google-gallery-image" />
+        `).join("");
+      }
+    } catch (error) {
+      console.error("Failed to load Google photos:", error);
+    }
+  }
+
+  loadGooglePhotos();
 })();
