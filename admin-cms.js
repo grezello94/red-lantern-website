@@ -64,10 +64,57 @@ function fillHome(home = {}) {
   ].forEach((name) => setField(name, home[name]));
 }
 
+function dishEntryMarkup(dish = {}, index = 0) {
+  return `
+    <div class="dish-entry">
+      <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #f3f4f6; margin: 10px 0 16px; padding-bottom: 8px;">
+        <h3 style="font-size: 16px; color: #d62828; margin: 0;">Dish Item ${index + 1}</h3>
+        <button type="button" class="remove-dish-btn" style="color: #ef4444; background: none; border: none; cursor: pointer; font-size: 14px; font-weight: 700;">Remove</button>
+      </div>
+      <input type="hidden" name="currentDishImage[]" value="${escapeHtml(dish.image || '')}">
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Dish Name</label>
+          <input type="text" name="dishName[]" value="${escapeHtml(dish.name || '')}" placeholder="e.g. Spring Rolls">
+        </div>
+        <div class="form-group">
+          <label>Price</label>
+          <input type="text" name="dishPrice[]" value="${escapeHtml(dish.price || '')}" placeholder="e.g. ₹200">
+        </div>
+        <div class="form-group">
+          <label>Category</label>
+          <input type="text" name="dishCategory[]" value="${escapeHtml(dish.category || 'Signature Dishes')}" placeholder="e.g. Chinese Specialties">
+        </div>
+        <div class="form-group">
+          <label>Badge</label>
+          <input type="text" name="dishBadge[]" value="${escapeHtml(dish.badge || '')}" placeholder="e.g. Popular">
+        </div>
+      </div>
+      <div class="form-grid full" style="margin-bottom: 30px;">
+        <div class="form-group">
+          <label>Description</label>
+          <textarea name="dishDesc[]" rows="2" placeholder="Describe the dish...">${escapeHtml(dish.description || '')}</textarea>
+        </div>
+        <div class="form-group">
+          <label>Dish Photo</label>
+          <span class="help-text">Upload a high-quality photo of this dish.</span>
+          <input type="file" name="dishPhoto_${index}" accept="image/*">
+          ${dish.image ? `<img src="${escapeHtml(dish.image)}" class="image-preview" alt="Current dish photo">` : ''}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function fillMenu(menu = {}) {
   setField('menuPageTitle', menu.pageTitle);
   setField('menuPageSubtitle', menu.pageSubtitle);
   setField('menuNote', menu.note);
+
+  const dishesContainer = document.getElementById('dishes-container');
+  if (dishesContainer && Array.isArray(menu.dishes) && menu.dishes.length) {
+    dishesContainer.innerHTML = menu.dishes.map((dish, index) => dishEntryMarkup(dish, index)).join('');
+  }
 }
 
 function fillBlogs(blogs = {}) {
@@ -80,6 +127,13 @@ function fillAbout(about = {}) {
   setField('aboutHeroSubtitle', about.heroSubtitle);
   setField('aboutStoryTitle', about.storyTitle);
   setField('aboutStoryText', about.storyText);
+}
+
+function indexRepeatingFileInputs(form, entrySelector, inputPrefix) {
+  form.querySelectorAll(entrySelector).forEach((entry, index) => {
+    const input = entry.querySelector(`input[type="file"][name^="${inputPrefix}"]`);
+    if (input) input.name = `${inputPrefix}_${index}`;
+  });
 }
 
 const renderGrowthItems = (id, items) => {
@@ -478,6 +532,8 @@ document.querySelectorAll('form[action^="/api/update-"]').forEach((form) => {
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     setStatus(form, 'Saving...');
+    indexRepeatingFileInputs(form, '.dish-entry', 'dishPhoto');
+    indexRepeatingFileInputs(form, '.blog-entry', 'blogImage');
 
     try {
       const response = await fetch(form.action, {

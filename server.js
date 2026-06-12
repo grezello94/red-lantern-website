@@ -2,10 +2,12 @@ const express = require('express');
 const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
+const sharp = require('sharp');
 const admin = require('firebase-admin');
 
 const app = express();
 const port = process.env.PORT || 3001;
+const host = process.env.HOST || '127.0.0.1';
 const uploadsDir = path.join(__dirname, 'uploads');
 
 const envPath = path.join(__dirname, '.env');
@@ -49,6 +51,34 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
+async function convertUploadsToWebp(req, res, next) {
+  try {
+    await Promise.all((req.files || []).map(async (file) => {
+      const isConvertible = ['image/jpeg', 'image/jpg', 'image/png'].includes(file.mimetype);
+      if (!isConvertible) return;
+
+      const parsed = path.parse(file.filename);
+      const webpFilename = `${parsed.name}.webp`;
+      const webpPath = path.join(uploadsDir, webpFilename);
+
+      await sharp(file.path)
+        .rotate()
+        .webp({ quality: 82 })
+        .toFile(webpPath);
+
+      await fs.promises.unlink(file.path);
+
+      file.filename = webpFilename;
+      file.path = webpPath;
+      file.mimetype = 'image/webp';
+      file.originalname = `${path.basename(file.originalname, path.extname(file.originalname))}.webp`;
+    }));
+    next();
+  } catch (error) {
+    next(error);
+  }
+}
+
 app.use(express.static(__dirname));
 app.use('/uploads', express.static(uploadsDir));
 app.use(express.urlencoded({ extended: true }));
@@ -77,6 +107,8 @@ const asArray = (value) => {
   return Array.isArray(value) ? value : [value];
 };
 
+const bodyValue = (body, name) => body[name] ?? body[`${name}[]`];
+
 const slugify = (value) => String(value || '')
   .toLowerCase()
   .trim()
@@ -85,13 +117,18 @@ const slugify = (value) => String(value || '')
   .replace(/^-|-$/g, '') || `post-${Date.now()}`;
 
 const firstFile = (files, name) => {
-  const file = files.find((item) => item.fieldname === name);
+  const file = files.find((item) => item.fieldname === name || item.fieldname === `${name}[]`);
   return file ? `/uploads/${file.filename}` : '';
 };
 
 const fileList = (files, name) => files
-  .filter((item) => item.fieldname === name)
+  .filter((item) => item.fieldname === name || item.fieldname === `${name}[]`)
   .map((file) => `/uploads/${file.filename}`);
+
+const indexedFile = (files, name, index) => {
+  const file = files.find((item) => item.fieldname === `${name}_${index}`);
+  return file ? `/uploads/${file.filename}` : '';
+};
 
 async function getSection(section) {
   if (!db) return {};
@@ -105,9 +142,9 @@ async function saveSection(section, data) {
 }
 
 function normalizeHome(body, files) {
-  const reviewNames = asArray(body.reviewName);
-  const reviewStars = asArray(body.reviewStars);
-  const reviewTexts = asArray(body.reviewText);
+  const reviewNames = asArray(bodyValue(body, 'reviewName'));
+  const reviewStars = asArray(bodyValue(body, 'reviewStars'));
+  const reviewTexts = asArray(bodyValue(body, 'reviewText'));
 
   return {
     heroTitle: body.heroTitle,
@@ -133,11 +170,12 @@ function normalizeHome(body, files) {
 }
 
 function normalizeMenu(body, files) {
-  const names = asArray(body.dishName);
-  const prices = asArray(body.dishPrice);
-  const descriptions = asArray(body.dishDesc);
-  const categories = asArray(body.dishCategory);
-  const badges = asArray(body.dishBadge);
+  const names = asArray(bodyValue(body, 'dishName'));
+  const prices = asArray(bodyValue(body, 'dishPrice'));
+  const descriptions = asArray(bodyValue(body, 'dishDesc'));
+  const categories = asArray(bodyValue(body, 'dishCategory'));
+  const badges = asArray(bodyValue(body, 'dishBadge'));
+  const currentImages = asArray(bodyValue(body, 'currentDishImage'));
   const uploadedPhotos = fileList(files, 'dishPhoto');
 
   return {
@@ -150,18 +188,19 @@ function normalizeMenu(body, files) {
       description: descriptions[index] || '',
       category: categories[index] || 'Signature Dishes',
       badge: badges[index] || '',
-      image: uploadedPhotos[index] || ''
+      image: indexedFile(files, 'dishPhoto', index) || uploadedPhotos[index] || currentImages[index] || ''
     })).filter((dish) => dish.name)
   };
 }
 
 function normalizeBlogs(body, files) {
-  const titles = asArray(body.blogTitle);
-  const metas = asArray(body.blogMeta);
-  const excerpts = asArray(body.blogExcerpt);
-  const contents = asArray(body.blogContent);
-  const seoTitles = asArray(body.blogSeoTitle);
-  const seoDescriptions = asArray(body.blogSeoDescription);
+  const titles = asArray(bodyValue(body, 'blogTitle'));
+  const metas = asArray(bodyValue(body, 'blogMeta'));
+  const excerpts = asArray(bodyValue(body, 'blogExcerpt'));
+  const contents = asArray(bodyValue(body, 'blogContent'));
+  const seoTitles = asArray(bodyValue(body, 'blogSeoTitle'));
+  const seoDescriptions = asArray(bodyValue(body, 'blogSeoDescription'));
+  const currentImages = asArray(bodyValue(body, 'currentBlogImage'));
   const uploadedImages = fileList(files, 'blogImage');
 
   return {
@@ -173,7 +212,7 @@ function normalizeBlogs(body, files) {
       meta: metas[index] || '',
       excerpt: excerpts[index] || '',
       content: contents[index] || '',
-      image: uploadedImages[index] || '',
+      image: indexedFile(files, 'blogImage', index) || uploadedImages[index] || currentImages[index] || '',
       seoTitle: seoTitles[index] || title,
       seoDescription: seoDescriptions[index] || excerpts[index] || ''
     })).filter((post) => post.title)
@@ -523,7 +562,7 @@ app.post('/api/growth-ai', async (req, res) => {
 });
 
 Object.keys(collections).forEach((section) => {
-  app.post(`/api/update-${section}`, upload.any(), async (req, res) => {
+  app.post(`/api/update-${section}`, upload.any(), convertUploadsToWebp, async (req, res) => {
     try {
       await saveSection(section, normalizeSection(section, req.body, req.files || []));
       res.send(`<h2>Success!</h2><p>${labels[section]} changes saved to Firebase.</p><a href="/admin">Go Back to Dashboard</a>`);
@@ -534,6 +573,10 @@ Object.keys(collections).forEach((section) => {
   });
 });
 
-app.listen(port, () => {
-  console.log(`Red Lantern backend running at http://localhost:${port}`);
+const server = app.listen(port, host, () => {
+  console.log(`Red Lantern backend running at http://${host}:${port}`);
+});
+
+server.on('error', (error) => {
+  console.error('Server error:', error);
 });
