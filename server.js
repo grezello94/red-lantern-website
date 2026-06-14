@@ -1,13 +1,6 @@
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
-const multer = require('multer');
-const { neon } = require('@neondatabase/serverless');
-const cloudinary = require('cloudinary').v2;
-
-const app = express();
-const port = process.env.PORT || 3001;
-const uploadsDir = path.join(__dirname, 'uploads');
 
 const envPath = path.join(__dirname, '.env');
 if (fs.existsSync(envPath)) {
@@ -16,9 +9,39 @@ if (fs.existsSync(envPath)) {
     .forEach((line) => {
       const match = line.match(/^\s*([\w.-]+)\s*=\s*(.*)?\s*$/);
       if (!match || process.env[match[1]]) return;
-      process.env[match[1]] = String(match[2] || '').replace(/^["']|["']$/g, '');
+      process.env[match[1]] = String(match[2] || '').replace(/^["']|["']$/g, '').trim();
     });
 }
+
+const multer = require('multer');
+const { neon } = require('@neondatabase/serverless');
+const cloudinary = require('cloudinary').v2;
+
+if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
+  cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME.trim(),
+    api_key: process.env.CLOUDINARY_API_KEY.trim(),
+    api_secret: process.env.CLOUDINARY_API_SECRET.trim(),
+    secure: true
+  });
+} else if (process.env.CLOUDINARY_URL) {
+  const cleanUrl = process.env.CLOUDINARY_URL.replace(/^["']|["']$/g, '').trim();
+  const match = cleanUrl.match(/^cloudinary:\/\/([^:]+):([^@]+)@(.+)$/);
+  if (match) {
+    cloudinary.config({
+      api_key: match[1].trim(),
+      api_secret: match[2].trim(),
+      cloud_name: match[3].trim(),
+      secure: true
+    });
+  } else {
+    console.warn("⚠️ CLOUDINARY_URL format looks incorrect. It should be: cloudinary://API_KEY:API_SECRET@CLOUD_NAME");
+  }
+}
+
+const app = express();
+const port = process.env.PORT || 3001;
+const uploadsDir = path.join(__dirname, 'uploads');
 
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
@@ -522,9 +545,13 @@ Object.keys(collections).forEach((section) => {
   app.post(`/api/update-${section}`, upload.any(), async (req, res) => {
     try {
       if (req.files && req.files.length > 0) {
-        if (!process.env.CLOUDINARY_URL) {
+        if (!process.env.CLOUDINARY_URL && !process.env.CLOUDINARY_API_KEY) {
            console.warn("Missing CLOUDINARY_URL, images will not be uploaded to cloud.");
-           throw new Error('Cloudinary is not configured. Add CLOUDINARY_URL to your .env file.');
+           throw new Error('Cloudinary is not configured. Add credentials to your .env file.');
+        }
+        const cConfig = cloudinary.config();
+        if (!cConfig.api_key) {
+           throw new Error(`Cloudinary API Key is missing! Found Cloud Name: ${cConfig.cloud_name ? 'Yes' : 'No'}.`);
         }
 
         for (const file of req.files) {
@@ -537,7 +564,14 @@ Object.keys(collections).forEach((section) => {
           
           const result = await new Promise((resolve, reject) => {
             const stream = cloudinary.uploader.upload_stream(
-              { folder: 'red_lantern_uploads', public_id: filename, resource_type: 'auto' },
+              { 
+                folder: 'red_lantern_uploads', 
+                public_id: filename, 
+                resource_type: 'auto',
+                api_key: cConfig.api_key,
+                api_secret: cConfig.api_secret,
+                cloud_name: cConfig.cloud_name
+              },
               (error, result) => {
                 if (error) reject(error);
                 else resolve(result);
