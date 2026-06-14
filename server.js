@@ -2,12 +2,11 @@ const express = require('express');
 const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
-const sharp = require('sharp');
-const admin = require('firebase-admin');
+const { neon } = require('@neondatabase/serverless');
+const cloudinary = require('cloudinary').v2;
 
 const app = express();
 const port = process.env.PORT || 3001;
-const host = process.env.HOST || '127.0.0.1';
 const uploadsDir = path.join(__dirname, 'uploads');
 
 const envPath = path.join(__dirname, '.env');
@@ -25,59 +24,15 @@ if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
-const firebaseKeyPath = path.join(__dirname, 'firebase-key.json');
-let db = null;
-
-if (fs.existsSync(firebaseKeyPath)) {
-  const serviceAccount = require(firebaseKeyPath);
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount)
-  });
-  db = admin.firestore();
+let sql = null;
+if (process.env.NEON_DATABASE_URL) {
+  sql = neon(process.env.NEON_DATABASE_URL);
 } else {
-  console.warn('Firebase key not found. Admin page will load, but saving changes is disabled.');
+  console.warn('Neon URL not found. Admin page will load, but saving changes is disabled.');
 }
 
-const storage = multer.diskStorage({
-  destination: uploadsDir,
-  filename: (req, file, callback) => {
-    const safeBase = path
-      .basename(file.originalname, path.extname(file.originalname))
-      .replace(/[^a-z0-9]+/gi, '-')
-      .replace(/^-|-$/g, '')
-      .toLowerCase();
-    callback(null, `${Date.now()}-${safeBase}${path.extname(file.originalname).toLowerCase()}`);
-  }
-});
+const storage = multer.memoryStorage();
 const upload = multer({ storage });
-
-async function convertUploadsToWebp(req, res, next) {
-  try {
-    await Promise.all((req.files || []).map(async (file) => {
-      const isConvertible = ['image/jpeg', 'image/jpg', 'image/png'].includes(file.mimetype);
-      if (!isConvertible) return;
-
-      const parsed = path.parse(file.filename);
-      const webpFilename = `${parsed.name}.webp`;
-      const webpPath = path.join(uploadsDir, webpFilename);
-
-      await sharp(file.path)
-        .rotate()
-        .webp({ quality: 82 })
-        .toFile(webpPath);
-
-      await fs.promises.unlink(file.path);
-
-      file.filename = webpFilename;
-      file.path = webpPath;
-      file.mimetype = 'image/webp';
-      file.originalname = `${path.basename(file.originalname, path.extname(file.originalname))}.webp`;
-    }));
-    next();
-  } catch (error) {
-    next(error);
-  }
-}
 
 app.use(express.static(__dirname));
 app.use('/uploads', express.static(uploadsDir));
@@ -107,8 +62,6 @@ const asArray = (value) => {
   return Array.isArray(value) ? value : [value];
 };
 
-const bodyValue = (body, name) => body[name] ?? body[`${name}[]`];
-
 const slugify = (value) => String(value || '')
   .toLowerCase()
   .trim()
@@ -117,34 +70,40 @@ const slugify = (value) => String(value || '')
   .replace(/^-|-$/g, '') || `post-${Date.now()}`;
 
 const firstFile = (files, name) => {
-  const file = files.find((item) => item.fieldname === name || item.fieldname === `${name}[]`);
-  return file ? `/uploads/${file.filename}` : '';
+  const file = files.find((item) => item.fieldname === name);
+  return file ? file.publicUrl : '';
 };
 
 const fileList = (files, name) => files
-  .filter((item) => item.fieldname === name || item.fieldname === `${name}[]`)
-  .map((file) => `/uploads/${file.filename}`);
-
-const indexedFile = (files, name, index) => {
-  const file = files.find((item) => item.fieldname === `${name}_${index}`);
-  return file ? `/uploads/${file.filename}` : '';
-};
+  .filter((item) => item.fieldname === name)
+  .map((file) => file.publicUrl);
 
 async function getSection(section) {
-  if (!db) return {};
-  const doc = await db.collection(collections[section]).doc('main').get();
-  return doc.exists ? doc.data() : {};
+  if (!sql) return {};
+  try {
+    const rows = await sql`SELECT data FROM website_content WHERE id = ${collections[section]}`;
+    return rows.length ? rows[0].data || {} : {};
+  } catch (err) {
+    console.error('Neon DB Error:', err);
+    return {};
+  }
 }
 
 async function saveSection(section, data) {
-  if (!db) throw new Error('Firebase is not configured. Add firebase-key.json to enable saving.');
-  await db.collection(collections[section]).doc('main').set(data, { merge: true });
+  if (!sql) throw new Error('Neon is not configured. Add NEON_DATABASE_URL to your .env file.');
+  const existing = await getSection(section);
+  const merged = { ...existing, ...data };
+  await sql`
+    INSERT INTO website_content (id, data) 
+    VALUES (${collections[section]}, ${merged})
+    ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data
+  `;
 }
 
 function normalizeHome(body, files) {
-  const reviewNames = asArray(bodyValue(body, 'reviewName'));
-  const reviewStars = asArray(bodyValue(body, 'reviewStars'));
-  const reviewTexts = asArray(bodyValue(body, 'reviewText'));
+  const reviewNames = asArray(body.reviewName);
+  const reviewStars = asArray(body.reviewStars);
+  const reviewTexts = asArray(body.reviewText);
 
   return {
     heroTitle: body.heroTitle,
@@ -170,12 +129,11 @@ function normalizeHome(body, files) {
 }
 
 function normalizeMenu(body, files) {
-  const names = asArray(bodyValue(body, 'dishName'));
-  const prices = asArray(bodyValue(body, 'dishPrice'));
-  const descriptions = asArray(bodyValue(body, 'dishDesc'));
-  const categories = asArray(bodyValue(body, 'dishCategory'));
-  const badges = asArray(bodyValue(body, 'dishBadge'));
-  const currentImages = asArray(bodyValue(body, 'currentDishImage'));
+  const names = asArray(body.dishName);
+  const prices = asArray(body.dishPrice);
+  const descriptions = asArray(body.dishDesc);
+  const categories = asArray(body.dishCategory);
+  const badges = asArray(body.dishBadge);
   const uploadedPhotos = fileList(files, 'dishPhoto');
 
   return {
@@ -188,19 +146,18 @@ function normalizeMenu(body, files) {
       description: descriptions[index] || '',
       category: categories[index] || 'Signature Dishes',
       badge: badges[index] || '',
-      image: indexedFile(files, 'dishPhoto', index) || uploadedPhotos[index] || currentImages[index] || ''
+      image: uploadedPhotos[index] || ''
     })).filter((dish) => dish.name)
   };
 }
 
 function normalizeBlogs(body, files) {
-  const titles = asArray(bodyValue(body, 'blogTitle'));
-  const metas = asArray(bodyValue(body, 'blogMeta'));
-  const excerpts = asArray(bodyValue(body, 'blogExcerpt'));
-  const contents = asArray(bodyValue(body, 'blogContent'));
-  const seoTitles = asArray(bodyValue(body, 'blogSeoTitle'));
-  const seoDescriptions = asArray(bodyValue(body, 'blogSeoDescription'));
-  const currentImages = asArray(bodyValue(body, 'currentBlogImage'));
+  const titles = asArray(body.blogTitle);
+  const metas = asArray(body.blogMeta);
+  const excerpts = asArray(body.blogExcerpt);
+  const contents = asArray(body.blogContent);
+  const seoTitles = asArray(body.blogSeoTitle);
+  const seoDescriptions = asArray(body.blogSeoDescription);
   const uploadedImages = fileList(files, 'blogImage');
 
   return {
@@ -212,7 +169,7 @@ function normalizeBlogs(body, files) {
       meta: metas[index] || '',
       excerpt: excerpts[index] || '',
       content: contents[index] || '',
-      image: indexedFile(files, 'blogImage', index) || uploadedImages[index] || currentImages[index] || '',
+      image: uploadedImages[index] || '',
       seoTitle: seoTitles[index] || title,
       seoDescription: seoDescriptions[index] || excerpts[index] || ''
     })).filter((post) => post.title)
@@ -505,7 +462,7 @@ app.get('/api/content', async (req, res) => {
   try {
     res.json(await getAllContent());
   } catch (error) {
-    console.error('Firebase error:', error);
+    console.error('Neon error:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -516,7 +473,7 @@ app.get('/api/content/:section', async (req, res) => {
   try {
     res.json(await getSection(req.params.section));
   } catch (error) {
-    console.error('Firebase error:', error);
+    console.error('Neon error:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -528,7 +485,7 @@ app.get('/api/blogs/:slug', async (req, res) => {
     if (!post) return res.status(404).json({ error: 'Blog post not found.' });
     res.json(post);
   } catch (error) {
-    console.error('Firebase error:', error);
+    console.error('Neon error:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -562,21 +519,49 @@ app.post('/api/growth-ai', async (req, res) => {
 });
 
 Object.keys(collections).forEach((section) => {
-  app.post(`/api/update-${section}`, upload.any(), convertUploadsToWebp, async (req, res) => {
+  app.post(`/api/update-${section}`, upload.any(), async (req, res) => {
     try {
+      if (req.files && req.files.length > 0) {
+        if (!process.env.CLOUDINARY_URL) {
+           console.warn("Missing CLOUDINARY_URL, images will not be uploaded to cloud.");
+           throw new Error('Cloudinary is not configured. Add CLOUDINARY_URL to your .env file.');
+        }
+
+        for (const file of req.files) {
+          const safeBase = path
+            .basename(file.originalname, path.extname(file.originalname))
+            .replace(/[^a-z0-9]+/gi, '-')
+            .replace(/^-|-$/g, '')
+            .toLowerCase();
+          const filename = `${Date.now()}-${safeBase}`;
+          
+          const result = await new Promise((resolve, reject) => {
+            const stream = cloudinary.uploader.upload_stream(
+              { folder: 'red_lantern_uploads', public_id: filename, resource_type: 'auto' },
+              (error, result) => {
+                if (error) reject(error);
+                else resolve(result);
+              }
+            );
+            stream.end(file.buffer);
+          });
+
+          file.publicUrl = result.secure_url;
+        }
+      }
       await saveSection(section, normalizeSection(section, req.body, req.files || []));
-      res.send(`<h2>Success!</h2><p>${labels[section]} changes saved to Firebase.</p><a href="/admin">Go Back to Dashboard</a>`);
+      res.send(`<h2>Success!</h2><p>${labels[section]} changes saved to Neon.</p><a href="/admin">Go Back to Dashboard</a>`);
     } catch (error) {
-      console.error('Firebase error:', error);
+      console.error('Save error:', error);
       res.status(500).send('Database error: ' + error.message);
     }
   });
 });
 
-const server = app.listen(port, host, () => {
-  console.log(`Red Lantern backend running at http://${host}:${port}`);
-});
+if (process.env.NODE_ENV !== 'production') {
+  app.listen(port, () => {
+    console.log(`Red Lantern backend running at http://localhost:${port}`);
+  });
+}
 
-server.on('error', (error) => {
-  console.error('Server error:', error);
-});
+module.exports = app;

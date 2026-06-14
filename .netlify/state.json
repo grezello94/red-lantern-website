@@ -1,0 +1,20 @@
+{
+	"geolocation": {
+		"data": {
+			"city": "Mormugao",
+			"country": {
+				"code": "IN",
+				"name": "India"
+			},
+			"subdivision": {
+				"code": "GA",
+				"name": "Goa"
+			},
+			"timezone": "Asia/Kolkata",
+			"latitude": 15.3911,
+			"longitude": 73.8204,
+			"postalCode": "403803"
+		},
+		"timestamp": 1778854965820
+	}
+}
