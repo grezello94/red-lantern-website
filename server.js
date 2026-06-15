@@ -52,6 +52,7 @@ if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && proce
 
 const app = express();
 const port = process.env.PORT || 3001;
+const host = process.env.HOST || '0.0.0.0';
 const uploadsDir = path.join(__dirname, 'uploads');
 
 if (!fs.existsSync(uploadsDir)) {
@@ -605,8 +606,13 @@ Object.keys(collections).forEach((section) => {
 
 // Only start server automatically if not running in a Vercel serverless environment
 if (!process.env.VERCEL) {
-  app.listen(port, () => {
-    console.log(`Red Lantern backend running at http://localhost:${port}`);
+  const server = app.listen(port, host, () => {
+    console.log(`Red Lantern backend running on ${host}:${port}`);
+  });
+
+  server.on('error', (error) => {
+    console.error('Server failed to start:', error);
+    process.exit(1);
   });
 }
 
