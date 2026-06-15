@@ -1,6 +1,11 @@
 [build]
   functions = "netlify/functions"
 
+[dev]
+  command = "npm run start"
+  targetPort = 3001
+  port = 8888
+
 [[redirects]]
   from = "/api/google-reviews"
   to = "/.netlify/functions/google-reviews"

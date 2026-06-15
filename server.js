@@ -592,7 +592,8 @@ Object.keys(collections).forEach((section) => {
   });
 });
 
-if (process.env.NODE_ENV !== 'production') {
+// Only start server automatically if not running in a Vercel serverless environment
+if (!process.env.VERCEL) {
   app.listen(port, () => {
     console.log(`Red Lantern backend running at http://localhost:${port}`);
   });
