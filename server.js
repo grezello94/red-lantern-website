@@ -15,6 +15,17 @@ if (fs.existsSync(envPath)) {
 
 const multer = require('multer');
 const { neon } = require('@neondatabase/serverless');
+
+if (process.env.CLOUDINARY_URL) {
+  const cleanCloudinaryUrl = process.env.CLOUDINARY_URL.replace(/^["']|["']$/g, '').trim();
+  if (cleanCloudinaryUrl.startsWith('cloudinary://')) {
+    process.env.CLOUDINARY_URL = cleanCloudinaryUrl;
+  } else {
+    console.warn("Invalid CLOUDINARY_URL format. It should be: cloudinary://API_KEY:API_SECRET@CLOUD_NAME");
+    delete process.env.CLOUDINARY_URL;
+  }
+}
+
 const cloudinary = require('cloudinary').v2;
 
 if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
