@@ -23,6 +23,15 @@ body {
   line-height: 1.6;
 }
 
+.cms-loading .menu-category-block,
+.cms-loading .latest-blogs .blog-grid,
+.cms-loading .blog-page > .blog-grid,
+.cms-loading .blog-post-hero,
+.cms-loading .blog-post-content,
+.cms-loading .about-page-main .welcome {
+  visibility: hidden;
+}
+
 a {
   color: inherit;
   text-decoration: none;

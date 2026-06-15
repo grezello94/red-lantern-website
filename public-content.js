@@ -419,4 +419,7 @@ fetch('/api/content')
     renderAbout(content.about);
     applyStructuredData(content);
   })
-  .catch(() => {});
+  .catch(() => {})
+  .finally(() => {
+    document.documentElement.classList.remove('cms-loading');
+  });
