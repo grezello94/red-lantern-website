@@ -528,6 +528,12 @@ fetch('/api/content')
 setupAiGrowthButton();
 setupGrowthRefreshButton();
 
+document.querySelectorAll('.logout-btn').forEach((button) => {
+  button.addEventListener('click', () => {
+    window.location.href = '/';
+  });
+});
+
 document.querySelectorAll('form[action^="/api/update-"]').forEach((form) => {
   form.addEventListener('submit', async (event) => {
     event.preventDefault();

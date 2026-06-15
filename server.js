@@ -1,6 +1,7 @@
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 
 const envPath = path.join(__dirname, '.env');
 if (fs.existsSync(envPath)) {
@@ -89,6 +90,48 @@ if (neonDatabaseUrl) {
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
+function secureCompare(a = '', b = '') {
+  const aHash = crypto.createHash('sha256').update(String(a)).digest();
+  const bHash = crypto.createHash('sha256').update(String(b)).digest();
+  return crypto.timingSafeEqual(aHash, bHash);
+}
+
+function isProtectedAdminPath(req) {
+  return req.path === '/admin'
+    || req.path === '/admin.html'
+    || req.path === '/admin-cms.js'
+    || req.path.startsWith('/api/update-')
+    || req.path === '/api/growth-ai';
+}
+
+function requireAdmin(req, res, next) {
+  if (!isProtectedAdminPath(req)) return next();
+
+  const expectedUser = process.env.ADMIN_USERNAME;
+  const expectedPass = process.env.ADMIN_PASSWORD;
+  if (!expectedUser || !expectedPass) {
+    console.error('Admin access is disabled because ADMIN_USERNAME or ADMIN_PASSWORD is missing.');
+    return res.status(503).send('Admin access is not configured.');
+  }
+
+  const header = req.headers.authorization || '';
+  const [scheme, encoded] = header.split(' ');
+  if (scheme !== 'Basic' || !encoded) {
+    res.set('WWW-Authenticate', 'Basic realm="Red Lantern Admin", charset="UTF-8"');
+    return res.status(401).send('Authentication required.');
+  }
+
+  const [username, ...passwordParts] = Buffer.from(encoded, 'base64').toString('utf8').split(':');
+  const password = passwordParts.join(':');
+  if (secureCompare(username, expectedUser) && secureCompare(password, expectedPass)) {
+    return next();
+  }
+
+  res.set('WWW-Authenticate', 'Basic realm="Red Lantern Admin", charset="UTF-8"');
+  return res.status(401).send('Invalid username or password.');
+}
+
+app.use(requireAdmin);
 app.use(express.static(__dirname));
 app.use('/uploads', express.static(uploadsDir));
 app.use(express.urlencoded({ extended: true }));
