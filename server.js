@@ -16,8 +16,18 @@ if (fs.existsSync(envPath)) {
 const multer = require('multer');
 const { neon } = require('@neondatabase/serverless');
 
+function cleanEnvUrl(name) {
+  if (!process.env[name]) return '';
+  const cleanValue = process.env[name]
+    .replace(/^["']|["']$/g, '')
+    .trim()
+    .replace(/^=+/, '');
+  process.env[name] = cleanValue;
+  return cleanValue;
+}
+
 if (process.env.CLOUDINARY_URL) {
-  const cleanCloudinaryUrl = process.env.CLOUDINARY_URL.replace(/^["']|["']$/g, '').trim();
+  const cleanCloudinaryUrl = cleanEnvUrl('CLOUDINARY_URL');
   if (cleanCloudinaryUrl.startsWith('cloudinary://')) {
     process.env.CLOUDINARY_URL = cleanCloudinaryUrl;
   } else {
@@ -60,8 +70,17 @@ if (!fs.existsSync(uploadsDir)) {
 }
 
 let sql = null;
-if (process.env.NEON_DATABASE_URL) {
-  sql = neon(process.env.NEON_DATABASE_URL);
+const neonDatabaseUrl = cleanEnvUrl('NEON_DATABASE_URL');
+if (neonDatabaseUrl) {
+  if (neonDatabaseUrl.startsWith('postgresql://') || neonDatabaseUrl.startsWith('postgres://')) {
+    try {
+      sql = neon(neonDatabaseUrl);
+    } catch (error) {
+      console.warn('Neon URL format is invalid. Admin saves are disabled until NEON_DATABASE_URL is fixed.');
+    }
+  } else {
+    console.warn('Neon URL format is invalid. It should start with postgresql:// or postgres://. Admin saves are disabled until NEON_DATABASE_URL is fixed.');
+  }
 } else {
   console.warn('Neon URL not found. Admin page will load, but saving changes is disabled.');
 }
