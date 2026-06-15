@@ -380,7 +380,7 @@ function renderMenu(menu = {}, global = {}) {
       <div class="menu-item-grid">
         ${dishes.map((dish) => `
           <article class="menu-item-card ${dish.image ? 'has-image' : ''}">
-            ${dish.image ? `<div class="menu-item-image" style="background-image:url('${dish.image}')">${dish.badge ? `<span class="dish-badge">${escapeHtml(dish.badge)}</span>` : ''}</div>` : ''}
+            ${dish.image ? `<div class="menu-item-image"><img src="${escapeHtml(dish.image)}" alt="${escapeHtml(`${dish.name} at Red Lantern Restaurant in Colva`)}" loading="lazy">${dish.badge ? `<span class="dish-badge">${escapeHtml(dish.badge)}</span>` : ''}</div>` : ''}
             <div class="menu-item-copy">
               <h3>${escapeHtml(dish.name)}</h3>
               <p>${escapeHtml(dish.description)}</p>

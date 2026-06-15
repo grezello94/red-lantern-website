@@ -691,14 +691,36 @@ app.get('/api/blogs/:slug', async (req, res) => {
   }
 });
 
+const xmlEscape = (value) => String(value || '')
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&apos;');
+
+const absoluteSiteUrl = (url, siteUrl) => {
+  try {
+    return new URL(url, siteUrl).href;
+  } catch {
+    return url;
+  }
+};
+
 app.get('/sitemap.xml', async (req, res) => {
   const global = await getSection('global');
+  const menu = await getSection('menu');
   const blogs = await getSection('blogs');
   const siteUrl = (global.siteUrl || `http://localhost:${port}`).replace(/\/$/, '');
   const today = new Date().toISOString().slice(0, 10);
+  const menuImages = (menu.dishes || [])
+    .filter((dish) => dish.image)
+    .map((dish) => ({
+      loc: absoluteSiteUrl(dish.image, siteUrl),
+      title: `${dish.name} at Red Lantern Restaurant in Colva`
+    }));
   const urls = [
-    { loc: `${siteUrl}/`, priority: '1.0', changefreq: 'weekly' },
-    { loc: `${siteUrl}/menu.html`, priority: '0.9', changefreq: 'weekly' },
+    { loc: `${siteUrl}/`, priority: '1.0', changefreq: 'weekly', images: [global.ogImage ? { loc: absoluteSiteUrl(global.ogImage, siteUrl), title: 'Red Lantern Restaurant in Colva Goa' } : null].filter(Boolean) },
+    { loc: `${siteUrl}/menu.html`, priority: '0.9', changefreq: 'weekly', images: menuImages },
     { loc: `${siteUrl}/contact.html`, priority: '0.8', changefreq: 'monthly' },
     { loc: `${siteUrl}/about.html`, priority: '0.7', changefreq: 'monthly' },
     { loc: `${siteUrl}/blogs.html`, priority: '0.7', changefreq: 'weekly' }
@@ -707,14 +729,34 @@ app.get('/sitemap.xml', async (req, res) => {
     urls.push({
       loc: `${siteUrl}/blog-post.html?slug=${encodeURIComponent(post.slug)}`,
       priority: '0.6',
-      changefreq: 'monthly'
+      changefreq: 'monthly',
+      images: post.image ? [{ loc: absoluteSiteUrl(post.image, siteUrl), title: post.title }] : []
     });
   });
 
   res.type('application/xml').send(`<?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-${urls.map((url) => `  <url><loc>${url.loc}</loc><lastmod>${today}</lastmod><changefreq>${url.changefreq}</changefreq><priority>${url.priority}</priority></url>`).join('\n')}
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
+${urls.map((url) => `  <url><loc>${xmlEscape(url.loc)}</loc><lastmod>${today}</lastmod><changefreq>${url.changefreq}</changefreq><priority>${url.priority}</priority>${(url.images || []).map((image) => `<image:image><image:loc>${xmlEscape(image.loc)}</image:loc><image:title>${xmlEscape(image.title)}</image:title></image:image>`).join('')}</url>`).join('\n')}
 </urlset>`);
+});
+
+app.get('/rss.xml', async (req, res) => {
+  const global = await getSection('global');
+  const blogs = await getSection('blogs');
+  const siteUrl = (global.siteUrl || `http://localhost:${port}`).replace(/\/$/, '');
+  const posts = blogs.posts || [];
+
+  res.type('application/rss+xml').send(`<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>${xmlEscape(blogs.pageTitle || 'Red Lantern Journal')}</title>
+    <link>${xmlEscape(`${siteUrl}/blogs.html`)}</link>
+    <description>${xmlEscape(blogs.pageSubtitle || 'Food guides, restaurant stories, and menu updates from Red Lantern Restaurant in Colva, Goa.')}</description>
+    <language>en-IN</language>
+    <lastBuildDate>${new Date().toUTCString()}</lastBuildDate>
+    ${posts.map((post) => `<item><title>${xmlEscape(post.title)}</title><link>${xmlEscape(`${siteUrl}/blog-post.html?slug=${encodeURIComponent(post.slug)}`)}</link><guid>${xmlEscape(`${siteUrl}/blog-post.html?slug=${encodeURIComponent(post.slug)}`)}</guid><description>${xmlEscape(post.seoDescription || post.excerpt || '')}</description></item>`).join('\n    ')}
+  </channel>
+</rss>`);
 });
 
 app.post('/api/growth-ai', async (req, res) => {

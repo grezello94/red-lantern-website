@@ -773,6 +773,13 @@ a {
   position: relative;
 }
 
+.menu-item-image img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
 .menu-item-image .dish-badge {
   top: 8px;
   right: 8px;

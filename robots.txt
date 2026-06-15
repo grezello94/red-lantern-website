@@ -2,3 +2,4 @@ User-agent: *
 Allow: /
 
 Sitemap: https://red-lantern-website.onrender.com/sitemap.xml
+Sitemap: https://red-lantern-website.onrender.com/rss.xml
