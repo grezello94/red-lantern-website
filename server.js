@@ -15,6 +15,7 @@ if (fs.existsSync(envPath)) {
 
 const multer = require('multer');
 const { neon } = require('@neondatabase/serverless');
+const sharp = require('sharp');
 
 function cleanEnvUrl(name) {
   if (!process.env[name]) return '';
@@ -128,9 +129,10 @@ const firstFile = (files, name) => {
   return file ? file.publicUrl : '';
 };
 
-const fileList = (files, name) => files
-  .filter((item) => item.fieldname === name)
-  .map((file) => file.publicUrl);
+const indexedFile = (files, name, index) => {
+  const file = files.find((item) => item.fieldname === `${name}_${index}`);
+  return file ? file.publicUrl : '';
+};
 
 async function getSection(section) {
   if (!sql) return {};
@@ -188,7 +190,7 @@ function normalizeMenu(body, files) {
   const descriptions = asArray(body.dishDesc);
   const categories = asArray(body.dishCategory);
   const badges = asArray(body.dishBadge);
-  const uploadedPhotos = fileList(files, 'dishPhoto');
+  const currentImages = asArray(body.currentDishImage);
 
   return {
     pageTitle: body.menuPageTitle || 'Our Menu',
@@ -200,7 +202,7 @@ function normalizeMenu(body, files) {
       description: descriptions[index] || '',
       category: categories[index] || 'Signature Dishes',
       badge: badges[index] || '',
-      image: uploadedPhotos[index] || ''
+      image: indexedFile(files, 'dishPhoto', index) || currentImages[index] || ''
     })).filter((dish) => dish.name)
   };
 }
@@ -212,7 +214,6 @@ function normalizeBlogs(body, files) {
   const contents = asArray(body.blogContent);
   const seoTitles = asArray(body.blogSeoTitle);
   const seoDescriptions = asArray(body.blogSeoDescription);
-  const uploadedImages = fileList(files, 'blogImage');
 
   return {
     pageTitle: body.blogPageTitle || 'Red Lantern Journal',
@@ -223,7 +224,7 @@ function normalizeBlogs(body, files) {
       meta: metas[index] || '',
       excerpt: excerpts[index] || '',
       content: contents[index] || '',
-      image: uploadedImages[index] || '',
+      image: indexedFile(files, 'blogImage', index) || '',
       seoTitle: seoTitles[index] || title,
       seoDescription: seoDescriptions[index] || excerpts[index] || ''
     })).filter((post) => post.title)
@@ -592,13 +593,18 @@ Object.keys(collections).forEach((section) => {
             .replace(/^-|-$/g, '')
             .toLowerCase();
           const filename = `${Date.now()}-${safeBase}`;
+          const webpBuffer = await sharp(file.buffer)
+            .rotate()
+            .webp({ quality: 82 })
+            .toBuffer();
           
           const result = await new Promise((resolve, reject) => {
             const stream = cloudinary.uploader.upload_stream(
               { 
                 folder: 'red_lantern_uploads', 
                 public_id: filename, 
-                resource_type: 'auto',
+                resource_type: 'image',
+                format: 'webp',
                 api_key: cConfig.api_key,
                 api_secret: cConfig.api_secret,
                 cloud_name: cConfig.cloud_name
@@ -608,7 +614,7 @@ Object.keys(collections).forEach((section) => {
                 else resolve(result);
               }
             );
-            stream.end(file.buffer);
+            stream.end(webpBuffer);
           });
 
           file.publicUrl = result.secure_url;
