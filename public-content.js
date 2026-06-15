@@ -47,6 +47,36 @@ function upsertMeta(selector, attributes) {
   });
 }
 
+function upsertLink(selector, attributes) {
+  let element = document.head.querySelector(selector);
+  if (!element) {
+    element = document.createElement('link');
+    document.head.appendChild(element);
+  }
+  Object.entries(attributes).forEach(([key, value]) => {
+    if (value) element.setAttribute(key, value);
+  });
+}
+
+function setPageSeo({ title, description, image, type = 'website' }, global = {}) {
+  const siteUrl = (global.siteUrl || location.origin).replace(/\/$/, '');
+  const pageUrl = absoluteUrl(location.pathname + location.search, siteUrl);
+  const pageImage = absoluteUrl(image || global.ogImage || 'images/Redlanternlogo.png', siteUrl);
+
+  if (title) document.title = title;
+  upsertLink('link[rel="canonical"]', { rel: 'canonical', href: pageUrl });
+  upsertMeta('meta[name="description"]', { name: 'description', content: description });
+  upsertMeta('meta[property="og:type"]', { property: 'og:type', content: type });
+  upsertMeta('meta[property="og:title"]', { property: 'og:title', content: title || document.title });
+  upsertMeta('meta[property="og:description"]', { property: 'og:description', content: description });
+  upsertMeta('meta[property="og:image"]', { property: 'og:image', content: pageImage });
+  upsertMeta('meta[property="og:url"]', { property: 'og:url', content: pageUrl });
+  upsertMeta('meta[name="twitter:card"]', { name: 'twitter:card', content: 'summary_large_image' });
+  upsertMeta('meta[name="twitter:title"]', { name: 'twitter:title', content: title || document.title });
+  upsertMeta('meta[name="twitter:description"]', { name: 'twitter:description', content: description });
+  upsertMeta('meta[name="twitter:image"]', { name: 'twitter:image', content: pageImage });
+}
+
 function injectScript(src, id) {
   if (!src || document.getElementById(id)) return;
   const script = document.createElement('script');
@@ -99,16 +129,20 @@ function applyContact(contact = {}) {
 }
 
 function applyGlobal(global = {}) {
-  if (global.seoTitle && currentPage() === 'index.html') document.title = global.seoTitle;
-  const description = document.querySelector('meta[name="description"]');
-  if (description && global.seoDescription && currentPage() === 'index.html') {
-    description.content = global.seoDescription;
+  if (currentPage() === 'index.html') {
+    setPageSeo({
+      title: global.seoTitle || 'Red Lantern Restaurant | Chinese & Goan Food in Colva, Goa',
+      description: global.seoDescription || 'Red Lantern Restaurant in Colva, South Goa serves authentic Chinese, Goan seafood, and family-friendly dinner specials. View the menu, call, or order online.',
+      image: global.ogImage
+    }, global);
+  } else {
+    setPageSeo({
+      title: document.title,
+      description: document.querySelector('meta[name="description"]')?.content || '',
+      image: global.ogImage
+    }, global);
   }
   if (global.seoKeywords) upsertMeta('meta[name="keywords"]', { name: 'keywords', content: global.seoKeywords });
-  if (global.seoTitle) upsertMeta('meta[property="og:title"]', { property: 'og:title', content: document.title || global.seoTitle });
-  if (global.seoDescription) upsertMeta('meta[property="og:description"]', { property: 'og:description', content: description?.content || global.seoDescription });
-  if (global.ogImage) upsertMeta('meta[property="og:image"]', { property: 'og:image', content: absoluteUrl(global.ogImage, global.siteUrl) });
-  upsertMeta('meta[property="og:url"]', { property: 'og:url', content: absoluteUrl(location.pathname + location.search, global.siteUrl) });
 
   document.querySelectorAll('.footer-brand p').forEach((item) => setText(item, global.footerDescription));
   document.querySelectorAll('a[href="#order-zomato"], a[href*="zomato.com"]').forEach((link) => {
@@ -316,8 +350,13 @@ function applyHome(home = {}, blogs = {}) {
   renderBlogCards(document.querySelector('.latest-blogs .blog-grid'), (blogs.posts || []).slice(0, 3));
 }
 
-function renderMenu(menu = {}) {
+function renderMenu(menu = {}, global = {}) {
   if (currentPage() !== 'menu.html') return;
+  setPageSeo({
+    title: `${menu.pageTitle || 'Menu'} | Red Lantern Restaurant Colva`,
+    description: menu.pageSubtitle || 'Explore Red Lantern Restaurant menu in Colva, Goa: Chinese specialties, Goan seafood, fried rice, tandoori dishes, and dinner specials.',
+    image: (menu.dishes || []).find((dish) => dish.image)?.image
+  }, global);
   setText(document.querySelector('.menu-hero h1'), menu.pageTitle);
   setText(document.querySelector('.menu-hero p'), menu.pageSubtitle);
   const container = document.querySelector('.menu-page');
@@ -373,30 +412,43 @@ function renderBlogCards(container, posts = []) {
   `).join('');
 }
 
-function renderBlogsPage(blogs = {}) {
+function renderBlogsPage(blogs = {}, global = {}) {
   if (currentPage() !== 'blogs.html') return;
+  setPageSeo({
+    title: `${blogs.pageTitle || 'Red Lantern Journal'} | Colva Food Guides`,
+    description: blogs.pageSubtitle || 'Read Red Lantern Restaurant stories, menu guides, Chinese food recommendations, and local dining tips for Colva and South Goa.',
+    image: (blogs.posts || []).find((post) => post.image)?.image
+  }, global);
   setText(document.querySelector('.blog-hero h1'), blogs.pageTitle);
   setText(document.querySelector('.blog-hero p'), blogs.pageSubtitle);
   renderBlogCards(document.querySelector('.blog-page > .blog-grid'), blogs.posts || []);
 }
 
-function renderBlogPost(blogs = {}) {
+function renderBlogPost(blogs = {}, global = {}) {
   if (currentPage() !== 'blog-post.html') return;
   const slug = getSlug();
   const post = (blogs.posts || []).find((item) => item.slug === slug) || (blogs.posts || [])[0];
   if (!post) return;
 
-  document.title = post.seoTitle || post.title;
-  const description = document.querySelector('meta[name="description"]');
-  if (description) description.content = post.seoDescription || post.excerpt || '';
+  setPageSeo({
+    title: post.seoTitle || `${post.title} | Red Lantern Journal`,
+    description: post.seoDescription || post.excerpt || '',
+    image: post.image,
+    type: 'article'
+  }, global);
   setText(document.querySelector('.blog-post-header h1'), post.title);
   setText(document.querySelector('.blog-post-header .blog-meta'), post.meta);
   if (post.image) document.querySelector('.blog-post-hero')?.style.setProperty('background-image', `url("${post.image}")`);
   setHtml(document.querySelector('.blog-post-content'), paragraphs(post.content || post.excerpt));
 }
 
-function renderAbout(about = {}) {
+function renderAbout(about = {}, global = {}) {
   if (currentPage() !== 'about.html') return;
+  setPageSeo({
+    title: `${about.heroTitle || 'About Red Lantern'} | Restaurant in Colva, Goa`,
+    description: about.heroSubtitle || 'Learn about Red Lantern Restaurant in Colva, Goa, our story, authentic Chinese and Goan flavors, and open-air dining experience.',
+    image: about.heroImage || about.storyImage
+  }, global);
   setText(document.querySelector('.about-hero h1'), about.heroTitle);
   setText(document.querySelector('.about-hero p'), about.heroSubtitle);
   setText(document.querySelector('.about-page-main .welcome-copy h2'), about.storyTitle);
@@ -413,10 +465,10 @@ fetch('/api/content')
     applyContact(content.contact);
     applyGlobal(content.global);
     applyHome(content.home, content.blogs);
-    renderMenu(content.menu);
-    renderBlogsPage(content.blogs);
-    renderBlogPost(content.blogs);
-    renderAbout(content.about);
+    renderMenu(content.menu, content.global);
+    renderBlogsPage(content.blogs, content.global);
+    renderBlogPost(content.blogs, content.global);
+    renderAbout(content.about, content.global);
     applyStructuredData(content);
   })
   .catch(() => {})

@@ -695,13 +695,25 @@ app.get('/sitemap.xml', async (req, res) => {
   const global = await getSection('global');
   const blogs = await getSection('blogs');
   const siteUrl = (global.siteUrl || `http://localhost:${port}`).replace(/\/$/, '');
-  const urls = ['/', '/menu.html', '/about.html', '/blogs.html', '/contact.html']
-    .map((url) => `${siteUrl}${url}`);
-  (blogs.posts || []).forEach((post) => urls.push(`${siteUrl}/blog-post.html?slug=${post.slug}`));
+  const today = new Date().toISOString().slice(0, 10);
+  const urls = [
+    { loc: `${siteUrl}/`, priority: '1.0', changefreq: 'weekly' },
+    { loc: `${siteUrl}/menu.html`, priority: '0.9', changefreq: 'weekly' },
+    { loc: `${siteUrl}/contact.html`, priority: '0.8', changefreq: 'monthly' },
+    { loc: `${siteUrl}/about.html`, priority: '0.7', changefreq: 'monthly' },
+    { loc: `${siteUrl}/blogs.html`, priority: '0.7', changefreq: 'weekly' }
+  ];
+  (blogs.posts || []).forEach((post) => {
+    urls.push({
+      loc: `${siteUrl}/blog-post.html?slug=${encodeURIComponent(post.slug)}`,
+      priority: '0.6',
+      changefreq: 'monthly'
+    });
+  });
 
   res.type('application/xml').send(`<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-${urls.map((url) => `  <url><loc>${url}</loc></url>`).join('\n')}
+${urls.map((url) => `  <url><loc>${url.loc}</loc><lastmod>${today}</lastmod><changefreq>${url.changefreq}</changefreq><priority>${url.priority}</priority></url>`).join('\n')}
 </urlset>`);
 });
 
