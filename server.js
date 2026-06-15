@@ -63,6 +63,7 @@ if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && proce
 }
 
 const app = express();
+app.set('trust proxy', 1);
 const port = process.env.PORT || 3001;
 const host = process.env.HOST || '0.0.0.0';
 const uploadsDir = path.join(__dirname, 'uploads');
@@ -88,7 +89,30 @@ if (neonDatabaseUrl) {
 }
 
 const storage = multer.memoryStorage();
-const upload = multer({ storage });
+const upload = multer({
+  storage,
+  limits: {
+    fileSize: 6 * 1024 * 1024,
+    files: 12
+  },
+  fileFilter: (req, file, cb) => {
+    if (!file.mimetype || !file.mimetype.startsWith('image/')) {
+      return cb(new Error('Only image uploads are allowed.'));
+    }
+    return cb(null, true);
+  }
+});
+
+function securityHeaders(req, res, next) {
+  res.set({
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+    'Referrer-Policy': 'strict-origin-when-cross-origin',
+    'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+    'Cross-Origin-Resource-Policy': 'same-origin'
+  });
+  next();
+}
 
 function secureCompare(a = '', b = '') {
   const aHash = crypto.createHash('sha256').update(String(a)).digest();
@@ -104,8 +128,43 @@ function isProtectedAdminPath(req) {
     || req.path === '/api/growth-ai';
 }
 
+const adminAttempts = new Map();
+const maxAdminFailures = 8;
+const adminLockMs = 15 * 60 * 1000;
+
+function adminAttemptKey(req) {
+  return req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
+}
+
+function isAdminLocked(req) {
+  const key = adminAttemptKey(req);
+  const entry = adminAttempts.get(key);
+  if (!entry) return false;
+  if (Date.now() > entry.lockUntil) {
+    adminAttempts.delete(key);
+    return false;
+  }
+  return entry.failures >= maxAdminFailures;
+}
+
+function recordAdminFailure(req) {
+  const key = adminAttemptKey(req);
+  const entry = adminAttempts.get(key) || { failures: 0, lockUntil: 0 };
+  entry.failures += 1;
+  if (entry.failures >= maxAdminFailures) entry.lockUntil = Date.now() + adminLockMs;
+  adminAttempts.set(key, entry);
+}
+
+function clearAdminFailures(req) {
+  adminAttempts.delete(adminAttemptKey(req));
+}
+
 function requireAdmin(req, res, next) {
   if (!isProtectedAdminPath(req)) return next();
+
+  if (isAdminLocked(req)) {
+    return res.status(429).send('Too many failed login attempts. Try again later.');
+  }
 
   const expectedUser = process.env.ADMIN_USERNAME;
   const expectedPass = process.env.ADMIN_PASSWORD;
@@ -124,18 +183,62 @@ function requireAdmin(req, res, next) {
   const [username, ...passwordParts] = Buffer.from(encoded, 'base64').toString('utf8').split(':');
   const password = passwordParts.join(':');
   if (secureCompare(username, expectedUser) && secureCompare(password, expectedPass)) {
+    clearAdminFailures(req);
     return next();
   }
 
+  recordAdminFailure(req);
   res.set('WWW-Authenticate', 'Basic realm="Red Lantern Admin", charset="UTF-8"');
   return res.status(401).send('Invalid username or password.');
 }
 
+function blockSensitiveFiles(req, res, next) {
+  let requestPath = req.path;
+  try {
+    requestPath = decodeURIComponent(req.path).replace(/\\/g, '/');
+  } catch {
+    return res.status(400).send('Bad request.');
+  }
+  const basename = path.basename(requestPath);
+  const blockedRoots = ['/.git', '/.netlify', '/.vercel', '/node_modules'];
+  const blockedFiles = new Set([
+    '.env',
+    '.env.local',
+    '.env.example',
+    '.gitignore',
+    'server.js',
+    'init-db.js',
+    'package.json',
+    'package-lock.json',
+    'deno.lock',
+    'netlify.toml',
+    'vercel.json',
+    'claude-install.ps1'
+  ]);
+
+  if (blockedRoots.some((root) => requestPath === root || requestPath.startsWith(`${root}/`))
+    || blockedFiles.has(basename)) {
+    return res.status(404).send('Not found.');
+  }
+
+  return next();
+}
+
+app.use(securityHeaders);
 app.use(requireAdmin);
-app.use(express.static(__dirname));
-app.use('/uploads', express.static(uploadsDir));
-app.use(express.urlencoded({ extended: true }));
-app.use(express.json());
+app.use(blockSensitiveFiles);
+app.use(express.static(__dirname, {
+  dotfiles: 'deny',
+  index: false,
+  maxAge: '1h'
+}));
+app.use('/uploads', express.static(uploadsDir, {
+  dotfiles: 'deny',
+  index: false,
+  maxAge: '7d'
+}));
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
+app.use(express.json({ limit: '1mb' }));
 
 const collections = {
   home: 'home_content',
