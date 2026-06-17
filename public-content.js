@@ -22,7 +22,51 @@ const paragraphs = (value) => String(value || '')
   .map((part) => `<p>${escapeHtml(part)}</p>`)
   .join('');
 
+const articleHtml = (value) => {
+  const source = String(value || '').trim();
+  if (!source) return '';
+  if (!/<\/?[a-z][\s\S]*>/i.test(source)) return paragraphs(source);
+
+  const template = document.createElement('template');
+  template.innerHTML = source;
+  const allowedTags = new Set(['A', 'BR', 'EM', 'H2', 'LI', 'OL', 'P', 'STRONG', 'UL']);
+
+  template.content.querySelectorAll('*').forEach((node) => {
+    if (!allowedTags.has(node.tagName)) {
+      node.replaceWith(document.createTextNode(node.textContent || ''));
+      return;
+    }
+
+    const href = node.tagName === 'A' ? node.getAttribute('href') || '' : '';
+    [...node.attributes].forEach((attribute) => node.removeAttribute(attribute.name));
+    if (node.tagName === 'A') {
+      const safeHref = href.startsWith('https://') || href.startsWith('http://') || href.startsWith('/');
+      if (safeHref) {
+        node.setAttribute('href', href);
+        node.setAttribute('target', '_blank');
+        node.setAttribute('rel', 'noopener noreferrer');
+      } else {
+        node.removeAttribute('href');
+      }
+    }
+  });
+
+  return template.innerHTML;
+};
+
 const getSlug = () => new URLSearchParams(window.location.search).get('slug');
+const indiaScheduleTime = (value) => {
+  if (!value) return 0;
+  const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+  if (!match) {
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? 0 : parsed;
+  }
+  const [, year, month, day, hour, minute] = match.map(Number);
+  return Date.UTC(year, month - 1, day, hour, minute) - (330 * 60 * 1000);
+};
+const publishedPosts = (posts = []) => posts.filter((post) => !post.publishAt || indiaScheduleTime(post.publishAt) <= Date.now());
+let reviewRotationTimer = null;
 const currentPage = () => {
   const file = location.pathname.split('/').pop() || 'index.html';
   return file === '' ? 'index.html' : file;
@@ -290,7 +334,8 @@ function applyStructuredData(content = {}) {
 
   if (currentPage() === 'blog-post.html') {
     const slug = getSlug();
-    const post = (blogs.posts || []).find((item) => item.slug === slug) || (blogs.posts || [])[0];
+    const posts = publishedPosts(blogs.posts || []);
+    const post = slug ? posts.find((item) => item.slug === slug) : posts[0];
     if (post) {
       upsertJsonLd('article-schema-dynamic', {
         '@context': 'https://schema.org',
@@ -336,18 +381,26 @@ function applyHome(home = {}, blogs = {}) {
 
   const reviewGrid = document.querySelector('.testimonials .card-grid');
   if (reviewGrid && Array.isArray(home.reviews) && home.reviews.length) {
-    reviewGrid.innerHTML = home.reviews.map((review) => `
-      <article class="review-card">
-        <div class="stars">${escapeHtml(review.stars || '★★★★★')}</div>
-        <p>${escapeHtml(review.text)}</p>
-        <span class="reviewer">- ${escapeHtml(review.name)}</span>
-      </article>
-    `).join('');
+    let reviewOffset = Math.floor(Date.now() / 60000) % home.reviews.length;
+    const renderReviews = () => {
+      const ordered = [...home.reviews.slice(reviewOffset), ...home.reviews.slice(0, reviewOffset)];
+      reviewGrid.innerHTML = ordered.slice(0, 3).map((review) => `
+        <article class="review-card">
+          <div class="stars">${escapeHtml(review.stars || '★★★★★')}</div>
+          <p>${escapeHtml(review.text)}</p>
+          <span class="reviewer">- ${escapeHtml(review.name)}</span>
+        </article>
+      `).join('');
+      reviewOffset = (reviewOffset + 1) % home.reviews.length;
+    };
+    renderReviews();
+    if (reviewRotationTimer) clearInterval(reviewRotationTimer);
+    if (home.reviews.length > 1) reviewRotationTimer = setInterval(renderReviews, 9000);
   }
 
   setText(document.querySelector('.latest-blogs h2'), home.blogSectionTitle);
   setText(document.querySelector('.latest-blogs > p'), home.blogSectionSubtitle);
-  renderBlogCards(document.querySelector('.latest-blogs .blog-grid'), (blogs.posts || []).slice(0, 3));
+  renderBlogCards(document.querySelector('.latest-blogs .blog-grid'), publishedPosts(blogs.posts || []).slice(0, 3));
 }
 
 function renderMenu(menu = {}, global = {}) {
@@ -417,18 +470,33 @@ function renderBlogsPage(blogs = {}, global = {}) {
   setPageSeo({
     title: `${blogs.pageTitle || 'Red Lantern Journal'} | Colva Food Guides`,
     description: blogs.pageSubtitle || 'Read Red Lantern Restaurant stories, menu guides, Chinese food recommendations, and local dining tips for Colva and South Goa.',
-    image: (blogs.posts || []).find((post) => post.image)?.image
+    image: publishedPosts(blogs.posts || []).find((post) => post.image)?.image
   }, global);
   setText(document.querySelector('.blog-hero h1'), blogs.pageTitle);
   setText(document.querySelector('.blog-hero p'), blogs.pageSubtitle);
-  renderBlogCards(document.querySelector('.blog-page > .blog-grid'), blogs.posts || []);
+  renderBlogCards(document.querySelector('.blog-page > .blog-grid'), publishedPosts(blogs.posts || []));
 }
 
 function renderBlogPost(blogs = {}, global = {}) {
   if (currentPage() !== 'blog-post.html') return;
   const slug = getSlug();
-  const post = (blogs.posts || []).find((item) => item.slug === slug) || (blogs.posts || [])[0];
-  if (!post) return;
+  const posts = publishedPosts(blogs.posts || []);
+  const post = slug ? posts.find((item) => item.slug === slug) : posts[0];
+  if (!post) {
+    setPageSeo({
+      title: 'Article Not Available | Red Lantern Journal',
+      description: 'This article is not available yet.',
+      image: global.ogImage,
+      type: 'article'
+    }, global);
+    upsertMeta('meta[name="robots"]', { name: 'robots', content: 'noindex,follow' });
+    setText(document.querySelector('.blog-post-header h1'), 'Article not available yet');
+    setText(document.querySelector('.blog-post-header .blog-meta'), '');
+    const hero = document.querySelector('.blog-post-hero');
+    if (hero) hero.style.display = 'none';
+    setHtml(document.querySelector('.blog-post-content'), '<p>This article is scheduled and will appear here when it is published.</p><p><a href="blogs.html">Back to all articles</a></p>');
+    return;
+  }
 
   setPageSeo({
     title: post.seoTitle || `${post.title} | Red Lantern Journal`,
@@ -439,7 +507,7 @@ function renderBlogPost(blogs = {}, global = {}) {
   setText(document.querySelector('.blog-post-header h1'), post.title);
   setText(document.querySelector('.blog-post-header .blog-meta'), post.meta);
   if (post.image) document.querySelector('.blog-post-hero')?.style.setProperty('background-image', `url("${post.image}")`);
-  setHtml(document.querySelector('.blog-post-content'), paragraphs(post.content || post.excerpt));
+  setHtml(document.querySelector('.blog-post-content'), articleHtml(post.content || post.excerpt));
 }
 
 function renderAbout(about = {}, global = {}) {

@@ -11,12 +11,13 @@
   "workspace": {
     "packageJson": {
       "dependencies": [
+        "npm:@neondatabase/serverless@~0.10.4",
         "npm:clean-css-cli@^5.6.3",
+        "npm:cloudinary@^2.5.1",
         "npm:express@^5.2.1",
-        "npm:firebase-admin@^13.8.0",
-        "npm:firebase@^12.12.0",
         "npm:multer@^2.1.1",
-        "npm:netlify-cli@^26.0.1"
+        "npm:netlify-cli@^26.0.1",
+        "npm:sharp@~0.35.1"
       ]
     }
   }

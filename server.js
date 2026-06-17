@@ -16,7 +16,6 @@ if (fs.existsSync(envPath)) {
 
 const multer = require('multer');
 const { neon } = require('@neondatabase/serverless');
-const sharp = require('sharp');
 
 function cleanEnvUrl(name) {
   if (!process.env[name]) return '';
@@ -124,6 +123,7 @@ function isProtectedAdminPath(req) {
   return req.path === '/admin'
     || req.path === '/admin.html'
     || req.path === '/admin-cms.js'
+    || req.path === '/api/admin/content'
     || req.path.startsWith('/api/update-')
     || req.path === '/api/growth-ai';
 }
@@ -353,13 +353,37 @@ function normalizeMenu(body, files) {
   };
 }
 
+function stripHtml(value) {
+  return String(value || '').replace(/<[^>]*>/g, ' ');
+}
+
+function readTimeMinutes(value) {
+  const words = stripHtml(value).trim().split(/\s+/).filter(Boolean).length;
+  return Math.max(1, Math.ceil(words / 200));
+}
+
+function formatBlogDate(value) {
+  const timestamp = indiaScheduleTime(value) || Date.now();
+  return new Intl.DateTimeFormat('en-IN', {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+    timeZone: 'Asia/Kolkata'
+  }).format(new Date(timestamp));
+}
+
+function blogMetaFromSchedule(publishAt, content) {
+  return `${formatBlogDate(publishAt)} · ${readTimeMinutes(content)} min read`;
+}
+
 function normalizeBlogs(body, files) {
   const titles = asArray(body.blogTitle);
-  const metas = asArray(body.blogMeta);
   const excerpts = asArray(body.blogExcerpt);
   const contents = asArray(body.blogContent);
   const seoTitles = asArray(body.blogSeoTitle);
   const seoDescriptions = asArray(body.blogSeoDescription);
+  const publishAts = asArray(body.blogPublishAt);
+  const currentImages = asArray(body.currentBlogImage);
 
   return {
     pageTitle: body.blogPageTitle || 'Red Lantern Journal',
@@ -367,10 +391,11 @@ function normalizeBlogs(body, files) {
     posts: titles.map((title, index) => ({
       title,
       slug: slugify(title),
-      meta: metas[index] || '',
+      publishAt: publishAts[index] || '',
+      meta: blogMetaFromSchedule(publishAts[index], contents[index] || excerpts[index] || ''),
       excerpt: excerpts[index] || '',
       content: contents[index] || '',
-      image: indexedFile(files, 'blogImage', index) || '',
+      image: indexedFile(files, 'blogImage', index) || currentImages[index] || '',
       seoTitle: seoTitles[index] || title,
       seoDescription: seoDescriptions[index] || excerpts[index] || ''
     })).filter((post) => post.title)
@@ -433,9 +458,35 @@ function normalizeSection(section, body, files) {
   return body;
 }
 
-async function getAllContent() {
+const indiaOffsetMinutes = 5.5 * 60;
+
+function indiaScheduleTime(value) {
+  if (!value) return 0;
+  const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+  if (!match) {
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? 0 : parsed;
+  }
+  const [, year, month, day, hour, minute] = match.map(Number);
+  return Date.UTC(year, month - 1, day, hour, minute) - (indiaOffsetMinutes * 60 * 1000);
+}
+
+function publishedPosts(posts = [], now = Date.now()) {
+  return posts.filter((post) => !post.publishAt || indiaScheduleTime(post.publishAt) <= now);
+}
+
+function filterScheduledBlogs(blogs = {}) {
+  return {
+    ...blogs,
+    posts: publishedPosts(blogs.posts || [])
+  };
+}
+
+async function getAllContent(includeScheduled = false) {
   const entries = await Promise.all(Object.keys(collections).map(async (section) => [section, await getSection(section)]));
-  return Object.fromEntries(entries);
+  const content = Object.fromEntries(entries);
+  if (!includeScheduled && content.blogs) content.blogs = filterScheduledBlogs(content.blogs);
+  return content;
 }
 
 function trimForPrompt(content) {
@@ -661,7 +712,18 @@ app.get('/admin', (req, res) => {
 
 app.get('/api/content', async (req, res) => {
   try {
+    res.set('Cache-Control', 'no-store');
     res.json(await getAllContent());
+  } catch (error) {
+    console.error('Neon error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/admin/content', async (req, res) => {
+  try {
+    res.set('Cache-Control', 'no-store');
+    res.json(await getAllContent(true));
   } catch (error) {
     console.error('Neon error:', error);
     res.status(500).json({ error: error.message });
@@ -672,7 +734,9 @@ app.get('/api/content/:section', async (req, res) => {
   if (!collections[req.params.section]) return res.status(404).json({ error: 'Unknown content section.' });
 
   try {
-    res.json(await getSection(req.params.section));
+    res.set('Cache-Control', 'no-store');
+    const section = await getSection(req.params.section);
+    res.json(req.params.section === 'blogs' ? filterScheduledBlogs(section) : section);
   } catch (error) {
     console.error('Neon error:', error);
     res.status(500).json({ error: error.message });
@@ -681,8 +745,9 @@ app.get('/api/content/:section', async (req, res) => {
 
 app.get('/api/blogs/:slug', async (req, res) => {
   try {
+    res.set('Cache-Control', 'no-store');
     const blogs = await getSection('blogs');
-    const post = (blogs.posts || []).find((item) => item.slug === req.params.slug);
+    const post = publishedPosts(blogs.posts || []).find((item) => item.slug === req.params.slug);
     if (!post) return res.status(404).json({ error: 'Blog post not found.' });
     res.json(post);
   } catch (error) {
@@ -706,11 +771,27 @@ const absoluteSiteUrl = (url, siteUrl) => {
   }
 };
 
+function publicSiteUrl(req, global = {}) {
+  const configured = String(global.siteUrl || '').trim().replace(/\/$/, '');
+  if (configured && !configured.includes('localhost')) return configured;
+
+  const hostHeader = req.headers['x-forwarded-host'] || req.headers.host;
+  const hostValue = Array.isArray(hostHeader) ? hostHeader[0] : hostHeader;
+  if (hostValue && !String(hostValue).includes('localhost')) {
+    const protoHeader = req.headers['x-forwarded-proto'];
+    const proto = Array.isArray(protoHeader) ? protoHeader[0] : protoHeader;
+    return `${proto || 'https'}://${hostValue}`.replace(/\/$/, '');
+  }
+
+  return `http://localhost:${port}`;
+}
+
 app.get('/sitemap.xml', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
   const global = await getSection('global');
   const menu = await getSection('menu');
-  const blogs = await getSection('blogs');
-  const siteUrl = (global.siteUrl || `http://localhost:${port}`).replace(/\/$/, '');
+  const blogs = filterScheduledBlogs(await getSection('blogs'));
+  const siteUrl = publicSiteUrl(req, global);
   const today = new Date().toISOString().slice(0, 10);
   const menuImages = (menu.dishes || [])
     .filter((dish) => dish.image)
@@ -741,9 +822,10 @@ ${urls.map((url) => `  <url><loc>${xmlEscape(url.loc)}</loc><lastmod>${today}</l
 });
 
 app.get('/rss.xml', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
   const global = await getSection('global');
-  const blogs = await getSection('blogs');
-  const siteUrl = (global.siteUrl || `http://localhost:${port}`).replace(/\/$/, '');
+  const blogs = filterScheduledBlogs(await getSection('blogs'));
+  const siteUrl = publicSiteUrl(req, global);
   const posts = blogs.posts || [];
 
   res.type('application/rss+xml').send(`<?xml version="1.0" encoding="UTF-8"?>
@@ -793,11 +875,6 @@ Object.keys(collections).forEach((section) => {
             .replace(/^-|-$/g, '')
             .toLowerCase();
           const filename = `${Date.now()}-${safeBase}`;
-          const webpBuffer = await sharp(file.buffer)
-            .rotate()
-            .webp({ quality: 82 })
-            .toBuffer();
-          
           const result = await new Promise((resolve, reject) => {
             const stream = cloudinary.uploader.upload_stream(
               { 
@@ -805,6 +882,14 @@ Object.keys(collections).forEach((section) => {
                 public_id: filename, 
                 resource_type: 'image',
                 format: 'webp',
+                transformation: [
+                  {
+                    width: 1600,
+                    height: 1600,
+                    crop: 'limit',
+                    quality: 'auto:good'
+                  }
+                ],
                 api_key: cConfig.api_key,
                 api_secret: cConfig.api_secret,
                 cloud_name: cConfig.cloud_name
@@ -814,7 +899,7 @@ Object.keys(collections).forEach((section) => {
                 else resolve(result);
               }
             );
-            stream.end(webpBuffer);
+            stream.end(file.buffer);
           });
 
           file.publicUrl = result.secure_url;

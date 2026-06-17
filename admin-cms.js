@@ -51,8 +51,10 @@ function fillHome(home = {}) {
   [
     'heroTitle',
     'heroSubtitle',
+    'currentHeroImage',
     'welcomeTitle',
     'welcomeText',
+    'currentWelcomeImage',
     'featureOneTitle',
     'featureOneText',
     'featureTwoTitle',
@@ -62,6 +64,12 @@ function fillHome(home = {}) {
     'blogSectionTitle',
     'blogSectionSubtitle'
   ].forEach((name) => setField(name, home[name]));
+
+  const heroPreview = document.querySelector('input[name="heroImage"]')?.closest('.form-group')?.querySelector('.image-preview');
+  if (heroPreview && home.heroImage) heroPreview.src = home.heroImage;
+
+  const welcomePreview = document.querySelector('input[name="welcomeImage"]')?.closest('.form-group')?.querySelector('.image-preview');
+  if (welcomePreview && home.welcomeImage) welcomePreview.src = home.welcomeImage;
 }
 
 function dishEntryMarkup(dish = {}, index = 0) {
@@ -106,6 +114,75 @@ function dishEntryMarkup(dish = {}, index = 0) {
   `;
 }
 
+function blogEntryMarkup(post = {}, index = 0) {
+  return `
+    <div class="blog-entry">
+      <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #f3f4f6; margin: 10px 0 16px; padding-bottom: 8px;">
+        <h3 style="font-size: 16px; color: #d62828; margin: 0;">Blog Post ${index + 1}</h3>
+        <button type="button" class="remove-blog-btn" style="color: #ef4444; background: none; border: none; cursor: pointer; font-size: 14px; font-weight: 700;">Remove</button>
+      </div>
+      <input type="hidden" name="currentBlogImage[]" value="${escapeHtml(post.image || '')}">
+      <div class="form-grid full">
+        <div class="form-group">
+          <label>Article Title</label>
+          <input type="text" name="blogTitle[]" value="${escapeHtml(post.title || '')}" placeholder="e.g. Top 5 Goan Seafood Dishes">
+        </div>
+      </div>
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Publish Date & Read Time</label>
+          <span class="help-text">Auto-generated from the schedule and article length.</span>
+          <input type="text" name="blogMeta[]" value="${escapeHtml(post.meta || '')}" placeholder="Auto-generated on save" readonly>
+        </div>
+        <div class="form-group">
+          <label>Schedule Publish Date & Time</label>
+          <span class="help-text">India time. Leave blank to publish immediately.</span>
+          <input type="datetime-local" name="blogPublishAt[]" value="${escapeHtml(post.publishAt || '')}">
+        </div>
+      </div>
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Thumbnail Image</label>
+          <input type="file" name="blogImage_${index}" accept="image/*">
+          ${post.image ? `<img src="${escapeHtml(post.image)}" class="image-preview" alt="Current blog thumbnail">` : ''}
+        </div>
+      </div>
+      <div class="form-grid full">
+        <div class="form-group">
+          <label>Short Description / Excerpt</label>
+          <textarea name="blogExcerpt[]" rows="2" placeholder="Write a short summary...">${escapeHtml(post.excerpt || '')}</textarea>
+        </div>
+      </div>
+      <div class="form-grid">
+        <div class="form-group">
+          <label>SEO Title</label>
+          <input type="text" name="blogSeoTitle[]" value="${escapeHtml(post.seoTitle || '')}" placeholder="Search result title">
+        </div>
+        <div class="form-group">
+          <label>SEO Description</label>
+          <textarea name="blogSeoDescription[]" rows="2" placeholder="Search result description">${escapeHtml(post.seoDescription || '')}</textarea>
+        </div>
+      </div>
+      <div class="form-grid full" style="margin-bottom: 30px;">
+        <div class="form-group">
+          <label>Full Article Content (SEO Optimized)</label>
+          <span class="help-text">Write your full post. Use headings (H2) for keywords and add hyperlinks to boost your SEO ranking.</span>
+          <div class="rich-text-editor">
+            <div class="editor-toolbar">
+              <button type="button" title="Bold"><strong>B</strong></button>
+              <button type="button" title="Italic"><em>I</em></button>
+              <button type="button" title="Heading 2">H2 (Subheading)</button>
+              <button type="button" title="Paragraph">¶ (Paragraph)</button>
+              <button type="button" title="Insert Link">🔗 Add Link</button>
+            </div>
+            <textarea name="blogContent[]" rows="8" placeholder="Write your full article here...">${escapeHtml(post.content || '')}</textarea>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function fillMenu(menu = {}) {
   setField('menuPageTitle', menu.pageTitle);
   setField('menuPageSubtitle', menu.pageSubtitle);
@@ -120,6 +197,11 @@ function fillMenu(menu = {}) {
 function fillBlogs(blogs = {}) {
   setField('blogPageTitle', blogs.pageTitle);
   setField('blogPageSubtitle', blogs.pageSubtitle);
+
+  const blogsContainer = document.getElementById('blogs-container');
+  if (blogsContainer && Array.isArray(blogs.posts) && blogs.posts.length) {
+    blogsContainer.innerHTML = blogs.posts.map((post, index) => blogEntryMarkup(post, index)).join('');
+  }
 }
 
 function fillAbout(about = {}) {
@@ -133,6 +215,110 @@ function indexRepeatingFileInputs(form, entrySelector, inputPrefix) {
   form.querySelectorAll(entrySelector).forEach((entry, index) => {
     const input = entry.querySelector(`input[type="file"][name^="${inputPrefix}"]`);
     if (input) input.name = `${inputPrefix}_${index}`;
+  });
+}
+
+function canvasToBlob(canvas, type, quality) {
+  return new Promise((resolve) => {
+    canvas.toBlob(resolve, type, quality);
+  });
+}
+
+async function compressImageFile(file, options = {}) {
+  if (!file || !file.type.startsWith('image/')) return file;
+  if (file.type === 'image/webp' && file.size <= (options.maxBytes || 900 * 1024)) return file;
+
+  const maxDimension = options.maxDimension || 1400;
+  const maxBytes = options.maxBytes || 900 * 1024;
+  const imageUrl = URL.createObjectURL(file);
+
+  try {
+    const image = await new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = imageUrl;
+    });
+
+    const scale = Math.min(1, maxDimension / Math.max(image.naturalWidth, image.naturalHeight));
+    const width = Math.max(1, Math.round(image.naturalWidth * scale));
+    const height = Math.max(1, Math.round(image.naturalHeight * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+
+    const context = canvas.getContext('2d', { alpha: false });
+    context.fillStyle = '#ffffff';
+    context.fillRect(0, 0, width, height);
+    context.drawImage(image, 0, 0, width, height);
+
+    let quality = 0.82;
+    let blob = await canvasToBlob(canvas, 'image/webp', quality);
+    while (blob && blob.size > maxBytes && quality > 0.52) {
+      quality -= 0.08;
+      blob = await canvasToBlob(canvas, 'image/webp', quality);
+    }
+
+    if (!blob) return file;
+    const outputName = file.name.replace(/\.[^.]+$/, '') + '.webp';
+    return new File([blob], outputName, { type: 'image/webp', lastModified: Date.now() });
+  } finally {
+    URL.revokeObjectURL(imageUrl);
+  }
+}
+
+async function buildOptimizedFormData(form) {
+  const formData = new FormData(form);
+  const fileInputs = [...form.querySelectorAll('input[type="file"]')]
+    .filter((input) => input.files && input.files.length > 0);
+
+  for (const input of fileInputs) {
+    const optimizedFile = await compressImageFile(input.files[0]);
+    formData.set(input.name, optimizedFile);
+  }
+
+  return formData;
+}
+
+function insertAroundSelection(textarea, before, after = '', fallback = '') {
+  const start = textarea.selectionStart || 0;
+  const end = textarea.selectionEnd || 0;
+  const selected = textarea.value.slice(start, end);
+  const text = selected || fallback;
+  const insert = `${before}${text}${after}`;
+  textarea.setRangeText(insert, start, end, 'end');
+  textarea.focus();
+
+  if (!selected && fallback) {
+    const selectionStart = start + before.length;
+    const selectionEnd = selectionStart + fallback.length;
+    textarea.setSelectionRange(selectionStart, selectionEnd);
+  }
+}
+
+function setupRichTextToolbar() {
+  document.addEventListener('click', (event) => {
+    const button = event.target.closest('.editor-toolbar button');
+    if (!button) return;
+
+    const editor = button.closest('.rich-text-editor');
+    const textarea = editor && editor.querySelector('textarea');
+    if (!textarea) return;
+
+    const action = button.title;
+    if (action === 'Bold') {
+      insertAroundSelection(textarea, '<strong>', '</strong>', 'bold text');
+    } else if (action === 'Italic') {
+      insertAroundSelection(textarea, '<em>', '</em>', 'italic text');
+    } else if (action === 'Heading 2') {
+      insertAroundSelection(textarea, '<h2>', '</h2>\n\n', 'Subheading');
+    } else if (action === 'Paragraph') {
+      insertAroundSelection(textarea, '<p>', '</p>\n\n', 'Paragraph text');
+    } else if (action === 'Insert Link') {
+      const url = window.prompt('Enter the link URL, including https://');
+      if (!url) return;
+      insertAroundSelection(textarea, `<a href="${escapeHtml(url)}">`, '</a>', 'link text');
+    }
   });
 }
 
@@ -494,7 +680,7 @@ async function refreshGrowthProgress() {
   const button = document.getElementById('refresh-growth-progress');
   if (button) button.disabled = true;
   try {
-    const response = await fetch('/api/content');
+    const response = await fetch('/api/admin/content');
     if (!response.ok) throw new Error('Unable to refresh progress.');
     const content = await response.json();
     buildGrowthDashboard(content);
@@ -512,7 +698,7 @@ function setupGrowthRefreshButton() {
   button.addEventListener('click', refreshGrowthProgress);
 }
 
-fetch('/api/content')
+fetch('/api/admin/content')
   .then((response) => response.ok ? response.json() : {})
   .then((content) => {
     fillHome(content.home);
@@ -527,6 +713,7 @@ fetch('/api/content')
 
 setupAiGrowthButton();
 setupGrowthRefreshButton();
+setupRichTextToolbar();
 
 document.querySelectorAll('.logout-btn').forEach((button) => {
   button.addEventListener('click', () => {
@@ -537,14 +724,16 @@ document.querySelectorAll('.logout-btn').forEach((button) => {
 document.querySelectorAll('form[action^="/api/update-"]').forEach((form) => {
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
-    setStatus(form, 'Saving...');
+    setStatus(form, 'Optimizing images...');
     indexRepeatingFileInputs(form, '.dish-entry', 'dishPhoto');
     indexRepeatingFileInputs(form, '.blog-entry', 'blogImage');
 
     try {
+      const formData = await buildOptimizedFormData(form);
+      setStatus(form, 'Saving...');
       const response = await fetch(form.action, {
         method: 'POST',
-        body: new FormData(form)
+        body: formData
       });
       const text = await response.text();
       if (!response.ok) throw new Error(text);

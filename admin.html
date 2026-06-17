@@ -122,6 +122,7 @@
               <div class="form-group">
                 <label>Background Image</label>
                 <span class="help-text">The main image spanning the top of the homepage.</span>
+                <input type="hidden" name="currentHeroImage" value="">
                 <input type="file" name="heroImage" accept="image/*">
                 <img src="images/IMG_5908.PNG" class="image-preview" alt="Current Hero Image">
               </div>
@@ -139,6 +140,7 @@
               <div class="form-group">
                 <label>Side Image</label>
                 <span class="help-text">The square image displayed next to the text.</span>
+                <input type="hidden" name="currentWelcomeImage" value="">
                 <input type="file" name="welcomeImage" accept="image/*">
               </div>
             </div>
@@ -443,10 +445,19 @@
                 <div class="form-grid">
                   <div class="form-group">
                     <label>Publish Date & Read Time</label>
-                    <input type="text" name="blogMeta[]" value="February 6, 2026 · 4 min read">
+                    <span class="help-text">Auto-generated from the schedule and article length.</span>
+                    <input type="text" name="blogMeta[]" value="February 6, 2026 · 4 min read" readonly>
                   </div>
                   <div class="form-group">
+                    <label>Schedule Publish Date & Time</label>
+                    <span class="help-text">India time. Leave blank to publish immediately.</span>
+                    <input type="datetime-local" name="blogPublishAt[]">
+                  </div>
+                </div>
+                <div class="form-grid">
+                  <div class="form-group">
                     <label>Thumbnail Image</label>
+                    <input type="hidden" name="currentBlogImage[]" value="">
                     <input type="file" name="blogImage[]" accept="image/*">
                   </div>
                 </div>
@@ -571,7 +582,7 @@
 	            <div class="form-grid">
 	              <div class="form-group">
 	                <label>Website URL</label>
-	                <input type="url" name="siteUrl" value="https://redlantern.example">
+	                <input type="url" name="siteUrl" value="https://www.redlanternrestaurant.in">
 	              </div>
 	              <div class="form-group">
 	                <label>Default SEO Title</label>
@@ -872,10 +883,19 @@
             <div class="form-grid">
               <div class="form-group">
                 <label>Publish Date & Read Time</label>
-                <input type="text" name="blogMeta[]" placeholder="e.g. March 10, 2026 · 3 min read">
+                <span class="help-text">Auto-generated from the schedule and article length.</span>
+                <input type="text" name="blogMeta[]" placeholder="Auto-generated on save" readonly>
               </div>
               <div class="form-group">
+                <label>Schedule Publish Date & Time</label>
+                <span class="help-text">India time. Leave blank to publish immediately.</span>
+                <input type="datetime-local" name="blogPublishAt[]">
+              </div>
+            </div>
+            <div class="form-grid">
+              <div class="form-group">
                 <label>Thumbnail Image</label>
+                <input type="hidden" name="currentBlogImage[]" value="">
                 <input type="file" name="blogImage[]" accept="image/*">
               </div>
             </div>
