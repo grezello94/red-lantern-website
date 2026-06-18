@@ -464,9 +464,22 @@
                 <div class="form-grid full">
                   <div class="form-group">
                     <label>Short Description / Excerpt</label>
+                    <span class="help-text">Auto-generated from the title and article. Ideal length: under 165 characters.</span>
                     <textarea name="blogExcerpt[]" rows="2">A quick guide to our must-try classics and why locals love them.</textarea>
                   </div>
                 </div>
+                <div class="form-grid">
+                  <div class="form-group">
+                    <label>SEO Title</label>
+                    <input type="text" name="blogSeoTitle[]" placeholder="Search result title">
+                  </div>
+                  <div class="form-group">
+                    <label>SEO Description</label>
+                    <span class="help-text">Auto-generated for Google. Ideal length: 140-155 characters.</span>
+                    <textarea name="blogSeoDescription[]" rows="2" placeholder="Search result description"></textarea>
+                  </div>
+                </div>
+                <button type="button" class="generate-blog-description-btn" style="background: #111827; color: #fff; border: none; padding: 10px 14px; border-radius: 8px; font-weight: 800; cursor: pointer; margin: -8px 0 24px;">Auto-generate descriptions</button>
                 <div class="form-grid full" style="margin-bottom: 30px;">
                   <div class="form-group">
                     <label>Full Article Content (SEO Optimized)</label>
@@ -902,6 +915,7 @@
 	            <div class="form-grid full">
 	              <div class="form-group">
 	                <label>Short Description / Excerpt</label>
+	                <span class="help-text">Auto-generated from the title and article. Ideal length: under 165 characters.</span>
 	                <textarea name="blogExcerpt[]" rows="2" placeholder="Write a short summary..."></textarea>
 	              </div>
 	            </div>
@@ -912,9 +926,11 @@
 	              </div>
 	              <div class="form-group">
 	                <label>SEO Description</label>
+	                <span class="help-text">Auto-generated for Google. Ideal length: 140-155 characters.</span>
 	                <textarea name="blogSeoDescription[]" rows="2" placeholder="Search result description"></textarea>
 	              </div>
 	            </div>
+              <button type="button" class="generate-blog-description-btn" style="background: #111827; color: #fff; border: none; padding: 10px 14px; border-radius: 8px; font-weight: 800; cursor: pointer; margin: -8px 0 24px;">Auto-generate descriptions</button>
 	            <div class="form-grid full" style="margin-bottom: 30px;">
               <div class="form-group">
                 <label>Full Article Content (SEO Optimized)</label>

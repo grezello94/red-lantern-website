@@ -16,6 +16,111 @@ const setStatus = (form, message, isError = false) => {
   status.style.color = isError ? '#b91c1c' : '#166534';
 };
 
+const cleanDescriptionText = (value) => {
+  const template = document.createElement('template');
+  template.innerHTML = String(value || '').replace(/<br\s*\/?>/gi, ' ');
+  return (template.content.textContent || '')
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim();
+};
+
+const trimDescription = (value, maxLength) => {
+  const text = cleanDescriptionText(value);
+  if (text.length <= maxLength) return text;
+
+  const clipped = text.slice(0, maxLength + 1);
+  const boundary = Math.max(
+    clipped.lastIndexOf('. '),
+    clipped.lastIndexOf(', '),
+    clipped.lastIndexOf(' ')
+  );
+  const trimmed = clipped.slice(0, boundary > 80 ? boundary : maxLength).replace(/[,\s.]+$/, '');
+  return `${trimmed}.`;
+};
+
+const firstUsefulSentence = (value) => {
+  const text = cleanDescriptionText(value);
+  if (!text) return '';
+  const sentences = text.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [text];
+  return cleanDescriptionText(sentences.find((sentence) => cleanDescriptionText(sentence).length >= 55) || sentences[0]);
+};
+
+const includesLocalContext = (value) => /red lantern|colva|south goa|goa/i.test(value);
+
+function generatedBlogDescriptions(title, content) {
+  const cleanTitle = cleanDescriptionText(title);
+  const lead = firstUsefulSentence(content) || cleanTitle;
+  const localPhrase = 'Red Lantern Restaurant in Colva, South Goa';
+
+  const excerptSeed = cleanTitle && lead && !lead.toLowerCase().includes(cleanTitle.toLowerCase())
+    ? `${cleanTitle}: ${lead}`
+    : lead || cleanTitle;
+  const excerpt = trimDescription(excerptSeed, 165);
+
+  const seoSeed = cleanTitle
+    ? `${cleanTitle} at ${localPhrase}. ${lead}`
+    : `${lead} at ${localPhrase}.`;
+  const seoDescription = trimDescription(
+    includesLocalContext(seoSeed) ? seoSeed : `${seoSeed} Discover Chinese and Goan food in Colva.`,
+    155
+  );
+
+  return { excerpt, seoDescription };
+}
+
+function updateBlogGeneratedDescriptions(entry, force = false) {
+  if (!entry) return;
+  const title = entry.querySelector('[name="blogTitle[]"]')?.value || '';
+  const content = entry.querySelector('[name="blogContent[]"]')?.value || '';
+  const excerptField = entry.querySelector('[name="blogExcerpt[]"]');
+  const seoField = entry.querySelector('[name="blogSeoDescription[]"]');
+  const generated = generatedBlogDescriptions(title, content);
+
+  if (excerptField && generated.excerpt) {
+    const canUpdate = force || !excerptField.value.trim() || excerptField.dataset.generated === 'true';
+    if (canUpdate) {
+      excerptField.value = generated.excerpt;
+      excerptField.dataset.generated = 'true';
+    }
+  }
+
+  if (seoField && generated.seoDescription) {
+    const canUpdate = force || !seoField.value.trim() || seoField.dataset.generated === 'true';
+    if (canUpdate) {
+      seoField.value = generated.seoDescription;
+      seoField.dataset.generated = 'true';
+    }
+  }
+}
+
+function setupBlogDescriptionGenerator() {
+  const container = document.getElementById('blogs-container');
+  if (!container) return;
+
+  container.querySelectorAll('.blog-entry').forEach((entry) => updateBlogGeneratedDescriptions(entry));
+  if (container.dataset.descriptionGeneratorReady === 'true') return;
+  container.dataset.descriptionGeneratorReady = 'true';
+
+  container.addEventListener('input', (event) => {
+    if (event.target.matches('[name="blogExcerpt[]"], [name="blogSeoDescription[]"]')) {
+      event.target.dataset.generated = 'false';
+      return;
+    }
+
+    if (event.target.matches('[name="blogTitle[]"], [name="blogContent[]"]')) {
+      updateBlogGeneratedDescriptions(event.target.closest('.blog-entry'));
+    }
+  });
+
+  container.addEventListener('click', (event) => {
+    const button = event.target.closest('.generate-blog-description-btn');
+    if (!button) return;
+    updateBlogGeneratedDescriptions(button.closest('.blog-entry'), true);
+  });
+}
+
 function fillContact(contact = {}) {
   setField('address', contact.address);
   setField('hours', contact.hours);
@@ -150,6 +255,7 @@ function blogEntryMarkup(post = {}, index = 0) {
       <div class="form-grid full">
         <div class="form-group">
           <label>Short Description / Excerpt</label>
+          <span class="help-text">Auto-generated from the title and article. Ideal length: under 165 characters.</span>
           <textarea name="blogExcerpt[]" rows="2" placeholder="Write a short summary...">${escapeHtml(post.excerpt || '')}</textarea>
         </div>
       </div>
@@ -160,9 +266,11 @@ function blogEntryMarkup(post = {}, index = 0) {
         </div>
         <div class="form-group">
           <label>SEO Description</label>
+          <span class="help-text">Auto-generated for Google. Ideal length: 140-155 characters.</span>
           <textarea name="blogSeoDescription[]" rows="2" placeholder="Search result description">${escapeHtml(post.seoDescription || '')}</textarea>
         </div>
       </div>
+      <button type="button" class="generate-blog-description-btn" style="background: #111827; color: #fff; border: none; padding: 10px 14px; border-radius: 8px; font-weight: 800; cursor: pointer; margin: -8px 0 24px;">Auto-generate descriptions</button>
       <div class="form-grid full" style="margin-bottom: 30px;">
         <div class="form-group">
           <label>Full Article Content (SEO Optimized)</label>
@@ -704,6 +812,7 @@ fetch('/api/admin/content')
     fillHome(content.home);
     fillMenu(content.menu);
     fillBlogs(content.blogs);
+    setupBlogDescriptionGenerator();
     fillAbout(content.about);
     fillContact(content.contact);
     fillGlobal(content.global);
@@ -714,6 +823,7 @@ fetch('/api/admin/content')
 setupAiGrowthButton();
 setupGrowthRefreshButton();
 setupRichTextToolbar();
+setupBlogDescriptionGenerator();
 
 document.querySelectorAll('.logout-btn').forEach((button) => {
   button.addEventListener('click', () => {
@@ -727,6 +837,9 @@ document.querySelectorAll('form[action^="/api/update-"]').forEach((form) => {
     setStatus(form, 'Optimizing images...');
     indexRepeatingFileInputs(form, '.dish-entry', 'dishPhoto');
     indexRepeatingFileInputs(form, '.blog-entry', 'blogImage');
+    if (form.matches('form[action="/api/update-blogs"]')) {
+      form.querySelectorAll('.blog-entry').forEach((entry) => updateBlogGeneratedDescriptions(entry));
+    }
 
     try {
       const formData = await buildOptimizedFormData(form);

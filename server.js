@@ -357,6 +357,64 @@ function stripHtml(value) {
   return String(value || '').replace(/<[^>]*>/g, ' ');
 }
 
+function cleanDescriptionText(value) {
+  return stripHtml(value)
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function trimDescription(value, maxLength) {
+  const text = cleanDescriptionText(value);
+  if (text.length <= maxLength) return text;
+
+  const clipped = text.slice(0, maxLength + 1);
+  const boundary = Math.max(
+    clipped.lastIndexOf('. '),
+    clipped.lastIndexOf(', '),
+    clipped.lastIndexOf(' ')
+  );
+  const trimmed = clipped.slice(0, boundary > 80 ? boundary : maxLength).replace(/[,\s.]+$/, '');
+  return `${trimmed}.`;
+}
+
+function firstUsefulSentence(value) {
+  const text = cleanDescriptionText(value);
+  if (!text) return '';
+  const sentences = text.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [text];
+  return cleanDescriptionText(sentences.find((sentence) => cleanDescriptionText(sentence).length >= 55) || sentences[0]);
+}
+
+function includesLocalContext(value) {
+  return /red lantern|colva|south goa|goa/i.test(value);
+}
+
+function generatedBlogDescriptions(title, content) {
+  const cleanTitle = cleanDescriptionText(title);
+  const lead = firstUsefulSentence(content) || cleanTitle;
+  const localPhrase = 'Red Lantern Restaurant in Colva, South Goa';
+
+  const excerptSeed = cleanTitle && lead && !lead.toLowerCase().includes(cleanTitle.toLowerCase())
+    ? `${cleanTitle}: ${lead}`
+    : lead || cleanTitle;
+  const excerpt = trimDescription(excerptSeed, 165);
+
+  const seoSeed = cleanTitle
+    ? `${cleanTitle} at ${localPhrase}. ${lead}`
+    : `${lead} at ${localPhrase}.`;
+  const seoDescription = trimDescription(
+    includesLocalContext(seoSeed) ? seoSeed : `${seoSeed} Discover Chinese and Goan food in Colva.`,
+    155
+  );
+
+  return { excerpt, seoDescription };
+}
+
 function readTimeMinutes(value) {
   const words = stripHtml(value).trim().split(/\s+/).filter(Boolean).length;
   return Math.max(1, Math.ceil(words / 200));
@@ -388,17 +446,22 @@ function normalizeBlogs(body, files) {
   return {
     pageTitle: body.blogPageTitle || 'Red Lantern Journal',
     pageSubtitle: body.blogPageSubtitle || 'Stories, recipes, and local guides from South Goa.',
-    posts: titles.map((title, index) => ({
-      title,
-      slug: slugify(title),
-      publishAt: publishAts[index] || '',
-      meta: blogMetaFromSchedule(publishAts[index], contents[index] || excerpts[index] || ''),
-      excerpt: excerpts[index] || '',
-      content: contents[index] || '',
-      image: indexedFile(files, 'blogImage', index) || currentImages[index] || '',
-      seoTitle: seoTitles[index] || title,
-      seoDescription: seoDescriptions[index] || excerpts[index] || ''
-    })).filter((post) => post.title)
+    posts: titles.map((title, index) => {
+      const content = contents[index] || '';
+      const generated = generatedBlogDescriptions(title, content || excerpts[index] || '');
+      const excerpt = cleanDescriptionText(excerpts[index]) || generated.excerpt;
+      return {
+        title,
+        slug: slugify(title),
+        publishAt: publishAts[index] || '',
+        meta: blogMetaFromSchedule(publishAts[index], content || excerpt || ''),
+        excerpt,
+        content,
+        image: indexedFile(files, 'blogImage', index) || currentImages[index] || '',
+        seoTitle: seoTitles[index] || title,
+        seoDescription: cleanDescriptionText(seoDescriptions[index]) || generated.seoDescription || excerpt
+      };
+    }).filter((post) => post.title)
   };
 }
 
