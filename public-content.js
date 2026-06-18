@@ -54,6 +54,26 @@ const articleHtml = (value) => {
   return template.innerHTML;
 };
 
+const blogArticleImageHtml = (image, title) => {
+  if (!image) return '';
+  return `<figure class="blog-inline-image"><img src="${escapeHtml(image)}" alt="${escapeHtml(title || 'Red Lantern blog photo')}" loading="lazy"></figure>`;
+};
+
+const articleHtmlWithImage = (content, image, title) => {
+  const html = articleHtml(content);
+  const imageHtml = blogArticleImageHtml(image, title);
+  if (!imageHtml) return html;
+  if (!html) return imageHtml;
+
+  const firstParagraphEnd = html.search(/<\/p>/i);
+  if (firstParagraphEnd >= 0) {
+    const insertAt = firstParagraphEnd + 4;
+    return `${html.slice(0, insertAt)}${imageHtml}${html.slice(insertAt)}`;
+  }
+
+  return `${imageHtml}${html}`;
+};
+
 const getSlug = () => new URLSearchParams(window.location.search).get('slug');
 const indiaScheduleTime = (value) => {
   if (!value) return 0;
@@ -507,7 +527,7 @@ function renderBlogPost(blogs = {}, global = {}) {
   setText(document.querySelector('.blog-post-header h1'), post.title);
   setText(document.querySelector('.blog-post-header .blog-meta'), post.meta);
   if (post.image) document.querySelector('.blog-post-hero')?.style.setProperty('background-image', `url("${post.image}")`);
-  setHtml(document.querySelector('.blog-post-content'), articleHtml(post.content || post.excerpt));
+  setHtml(document.querySelector('.blog-post-content'), articleHtmlWithImage(post.content || post.excerpt, post.articleImage, post.title));
 }
 
 function renderAbout(about = {}, global = {}) {

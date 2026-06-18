@@ -442,6 +442,7 @@ function normalizeBlogs(body, files) {
   const seoDescriptions = asArray(body.blogSeoDescription);
   const publishAts = asArray(body.blogPublishAt);
   const currentImages = asArray(body.currentBlogImage);
+  const currentArticleImages = asArray(body.currentBlogArticleImage);
 
   return {
     pageTitle: body.blogPageTitle || 'Red Lantern Journal',
@@ -458,6 +459,7 @@ function normalizeBlogs(body, files) {
         excerpt,
         content,
         image: indexedFile(files, 'blogImage', index) || currentImages[index] || '',
+        articleImage: indexedFile(files, 'blogArticleImage', index) || currentArticleImages[index] || '',
         seoTitle: seoTitles[index] || title,
         seoDescription: cleanDescriptionText(seoDescriptions[index]) || generated.seoDescription || excerpt
       };

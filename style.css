@@ -475,6 +475,19 @@ a {
   margin-bottom: 16px;
 }
 
+.blog-inline-image {
+  margin: 34px 0;
+}
+
+.blog-inline-image img {
+  display: block;
+  width: 100%;
+  max-height: 460px;
+  object-fit: cover;
+  border-radius: 18px;
+  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.14);
+}
+
 .about-page-main,
 .contact-page-main {
   padding-top: 88px;
@@ -1679,6 +1692,15 @@ a {
 
   .blog-body {
     padding: 18px 18px 22px;
+  }
+
+  .blog-inline-image {
+    margin: 26px 0;
+  }
+
+  .blog-inline-image img {
+    max-height: 320px;
+    border-radius: 14px;
   }
 
   .about-page-main,

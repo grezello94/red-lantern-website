@@ -227,6 +227,7 @@ function blogEntryMarkup(post = {}, index = 0) {
         <button type="button" class="remove-blog-btn" style="color: #ef4444; background: none; border: none; cursor: pointer; font-size: 14px; font-weight: 700;">Remove</button>
       </div>
       <input type="hidden" name="currentBlogImage[]" value="${escapeHtml(post.image || '')}">
+      <input type="hidden" name="currentBlogArticleImage[]" value="${escapeHtml(post.articleImage || '')}">
       <div class="form-grid full">
         <div class="form-group">
           <label>Article Title</label>
@@ -248,8 +249,15 @@ function blogEntryMarkup(post = {}, index = 0) {
       <div class="form-grid">
         <div class="form-group">
           <label>Thumbnail Image</label>
+          <span class="help-text">Used for the blog card and top hero image.</span>
           <input type="file" name="blogImage_${index}" accept="image/*">
           ${post.image ? `<img src="${escapeHtml(post.image)}" class="image-preview" alt="Current blog thumbnail">` : ''}
+        </div>
+        <div class="form-group">
+          <label>In-article Photo</label>
+          <span class="help-text">Optional. Appears inside the full blog article after the opening paragraph.</span>
+          <input type="file" name="blogArticleImage_${index}" accept="image/*">
+          ${post.articleImage ? `<img src="${escapeHtml(post.articleImage)}" class="image-preview" alt="Current in-article blog photo">` : ''}
         </div>
       </div>
       <div class="form-grid full">
@@ -837,6 +845,7 @@ document.querySelectorAll('form[action^="/api/update-"]').forEach((form) => {
     setStatus(form, 'Optimizing images...');
     indexRepeatingFileInputs(form, '.dish-entry', 'dishPhoto');
     indexRepeatingFileInputs(form, '.blog-entry', 'blogImage');
+    indexRepeatingFileInputs(form, '.blog-entry', 'blogArticleImage');
     if (form.matches('form[action="/api/update-blogs"]')) {
       form.querySelectorAll('.blog-entry').forEach((entry) => updateBlogGeneratedDescriptions(entry));
     }
