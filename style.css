@@ -1462,10 +1462,29 @@ a {
   .brand {
     width: 100%;
     justify-content: center;
+    max-height: 48px;
+    overflow: hidden;
+    transition: max-height 0.22s ease, opacity 0.18s ease, transform 0.22s ease;
   }
 
   .brand-logo-image {
     width: 48px;
+    transition: transform 0.22s ease;
+  }
+
+  .site-header.is-mobile-scrolled {
+    padding-top: 7px;
+  }
+
+  .site-header.is-mobile-scrolled .brand {
+    max-height: 0;
+    opacity: 0;
+    transform: translateY(-8px);
+    pointer-events: none;
+  }
+
+  .site-header.is-mobile-scrolled .brand-logo-image {
+    transform: scale(0.84);
   }
 
   .site-nav {

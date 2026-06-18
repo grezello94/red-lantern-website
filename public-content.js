@@ -140,6 +140,20 @@ function updateActiveNav() {
   });
 }
 
+function setupMobileHeaderScroll() {
+  const header = document.querySelector('.site-header');
+  if (!header) return;
+
+  const mobileQuery = window.matchMedia('(max-width: 640px)');
+  const update = () => {
+    header.classList.toggle('is-mobile-scrolled', mobileQuery.matches && window.scrollY > 12);
+  };
+
+  update();
+  window.addEventListener('scroll', update, { passive: true });
+  mobileQuery.addEventListener?.('change', update);
+}
+
 function applyContact(contact = {}) {
   setText(document.getElementById('contact-address'), contact.address);
   setText(document.getElementById('contact-phone'), contact.phone);
@@ -526,6 +540,7 @@ function renderAbout(about = {}, global = {}) {
 }
 
 updateActiveNav();
+setupMobileHeaderScroll();
 
 fetch('/api/content')
   .then((response) => response.ok ? response.json() : {})
