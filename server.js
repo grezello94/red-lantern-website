@@ -200,7 +200,7 @@ function blockSensitiveFiles(req, res, next) {
     return res.status(400).send('Bad request.');
   }
   const basename = path.basename(requestPath);
-  const blockedRoots = ['/.git', '/.netlify', '/.vercel', '/node_modules'];
+  const blockedRoots = ['/.git', '/.vercel', '/node_modules'];
   const blockedFiles = new Set([
     '.env',
     '.env.local',
@@ -210,8 +210,6 @@ function blockSensitiveFiles(req, res, next) {
     'init-db.js',
     'package.json',
     'package-lock.json',
-    'deno.lock',
-    'netlify.toml',
     'vercel.json',
     'claude-install.ps1'
   ]);
