@@ -547,7 +547,7 @@ function renderAbout(about = {}, global = {}) {
 
 updateActiveNav();
 
-fetch('/api/content')
+fetch('/api/content', { cache: 'no-store' })
   .then((response) => response.ok ? response.json() : {})
   .then((content) => {
     applyContact(content.contact);
