@@ -9,8 +9,10 @@
       content="Red Lantern Restaurant in Colva, South Goa — authentic Chinese & Goan cuisine in a cozy open-air garden setting. Dine in or order online."
     />
     <meta name="theme-color" content="#de2a2a" />
-    <link rel="icon" type="image/png" href="images/Redlanternlogo.png" />
-    <link rel="apple-touch-icon" href="images/Redlanternlogo.png" />
+    <link rel="icon" type="image/png" href="images/red-lantern-logo-600.png" />
+    <link rel="apple-touch-icon" href="images/red-lantern-logo-600.png" />
+    <link rel="preload" as="image" href="images/IMG_5908.PNG" fetchpriority="high" />
+    <link rel="preload" as="image" href="images/red-lantern-logo-600.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -24,7 +26,7 @@
       property="og:description"
       content="Authentic Chinese & Goan cuisine in a cozy open-air garden setting in South Goa."
     />
-    <meta property="og:image" content="images/Redlanternlogo.png" />
+    <meta property="og:image" content="images/red-lantern-logo-600.png" />
     <meta property="og:locale" content="en_IN" />
     <meta name="twitter:card" content="summary" />
     <meta name="twitter:title" content="Red Lantern Restaurant" />
@@ -47,18 +49,22 @@
           "addressCountry": "IN"
         },
         "openingHours": "Mo-Su 12:00-00:00",
-        "image": ["images/Redlanternlogo.png"]
+        "image": ["images/red-lantern-logo-600.png"]
       }
     </script>
-    <link rel="stylesheet" href="style.css" />
+    <link rel="stylesheet" href="style.min.css" />
   </head>
   <body>
     <header class="site-header">
       <a class="brand" href="index.html" aria-label="Red Lantern home">
         <img
           class="brand-logo-image"
-          src="images/Redlanternlogo.png"
+          src="images/red-lantern-logo-600.png"
           alt="Red Lantern logo"
+          width="600"
+          height="565"
+          decoding="async"
+          fetchpriority="high"
         />
       </a>
       <nav class="site-nav">
@@ -80,8 +86,12 @@
           <div class="hero-logo">
             <img
               class="hero-logo-image"
-              src="images/Redlanternlogo.png"
+              src="images/red-lantern-logo-600.png"
               alt="Red Lantern"
+              width="600"
+              height="565"
+              decoding="async"
+              fetchpriority="high"
             />
           </div>
           <h1>The Hidden Gem of<br />South Goa</h1>
@@ -258,7 +268,7 @@
 
       <footer id="contact" class="site-footer">
         <div class="footer-brand">
-          <img class="footer-brand-logo" src="images/Redlanternlogo.png" alt="Red Lantern" />
+          <img class="footer-brand-logo" src="images/red-lantern-logo-600.png" alt="Red Lantern" width="600" height="565" loading="lazy" decoding="async" />
           <p>
             The Hidden Gem of South Goa.<br>
             Experience authentic Chinese &amp; Goan cuisine in our cozy, open-air garden setting.

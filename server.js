@@ -1094,18 +1094,20 @@ app.post('/api/client-log', async (req, res) => {
       level,
       category,
       message: body.message || 'Browser-side website issue reported.',
-      method: req.method,
+      method: category === 'performance' ? 'PAGE' : 'BROWSER',
       path: body.path || req.headers.referer || req.path,
       durationMs: Number(body.durationMs) || null,
       ipHash: hashIp(req),
       userAgent: req.headers['user-agent'] || '',
       details: {
+        reportedVia: `${req.method} ${req.path}`,
         source: body.source || '',
         line: body.line || '',
         column: body.column || '',
         stack: String(body.stack || '').slice(0, 1200),
         href: body.href || '',
-        metric: body.metric || ''
+        metric: body.metric || '',
+        timings: body.timings || {}
       }
     });
     res.status(204).end();

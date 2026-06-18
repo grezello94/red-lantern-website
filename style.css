@@ -496,7 +496,7 @@ a {
 .about-hero {
   background-image:
     linear-gradient(rgba(4, 4, 8, 0.65), rgba(4, 4, 8, 0.65)),
-    url("images/red lanten home.jpg");
+    url("images/red-lantern-home-1400.jpg");
   background-size: cover;
   background-position: center;
   padding: 120px 10vw;
@@ -935,7 +935,7 @@ a {
   min-width: 300px;
   height: 350px;
   border-radius: 16px;
-  background-image: url("images/red lanten home.jpg");
+  background-image: url("images/red-lantern-home-1400.jpg");
   background-size: cover;
   background-position: center;
   box-shadow: 0 16px 30px rgba(0, 0, 0, 0.16);

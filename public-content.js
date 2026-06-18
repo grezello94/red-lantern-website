@@ -59,15 +59,23 @@ window.addEventListener('unhandledrejection', (event) => {
 
 window.addEventListener('load', () => {
   window.setTimeout(() => {
+    if (document.visibilityState && document.visibilityState !== 'visible') return;
     const navigation = performance.getEntriesByType?.('navigation')?.[0];
     const durationMs = Math.round(navigation?.duration || performance.now());
     if (durationMs >= 4500) {
+      const timings = navigation ? {
+        ttfb: Math.round(navigation.responseStart),
+        domContentLoaded: Math.round(navigation.domContentLoadedEventEnd),
+        load: durationMs,
+        transfer: Math.round(navigation.responseEnd - navigation.responseStart)
+      } : {};
       reportClientDiagnostic({
         category: 'performance',
         level: 'warning',
         message: `Slow page load detected: ${durationMs}ms.`,
         durationMs,
-        metric: 'page-load'
+        metric: 'page-load',
+        timings
       });
     }
   }, 0);
@@ -196,7 +204,7 @@ function upsertLink(selector, attributes) {
 function setPageSeo({ title, description, image, type = 'website' }, global = {}) {
   const siteUrl = (global.siteUrl || location.origin).replace(/\/$/, '');
   const pageUrl = absoluteUrl(location.pathname + location.search, siteUrl);
-  const pageImage = absoluteUrl(image || global.ogImage || 'images/Redlanternlogo.png', siteUrl);
+  const pageImage = absoluteUrl(image || global.ogImage || 'images/red-lantern-logo-600.png', siteUrl);
 
   if (title) document.title = title;
   upsertLink('link[rel="canonical"]', { rel: 'canonical', href: pageUrl });
@@ -364,7 +372,7 @@ function applyStructuredData(content = {}) {
     '@type': 'Restaurant',
     name: 'Red Lantern Restaurant',
     url: `${siteUrl}/`,
-    image: absoluteUrl(global.ogImage || 'images/Redlanternlogo.png', siteUrl),
+    image: absoluteUrl(global.ogImage || 'images/red-lantern-logo-600.png', siteUrl),
     telephone: contact.phone || '+91 99228 53605',
     email: contact.email,
     servesCuisine: ['Chinese', 'Goan', 'Seafood'],
@@ -433,7 +441,7 @@ function applyStructuredData(content = {}) {
         '@type': 'BlogPosting',
         headline: post.title,
         description: post.seoDescription || post.excerpt,
-        image: post.image ? absoluteUrl(post.image, siteUrl) : absoluteUrl(global.ogImage || 'images/Redlanternlogo.png', siteUrl),
+        image: post.image ? absoluteUrl(post.image, siteUrl) : absoluteUrl(global.ogImage || 'images/red-lantern-logo-600.png', siteUrl),
         author: {
           '@type': 'Organization',
           name: 'Red Lantern Restaurant'
@@ -443,7 +451,7 @@ function applyStructuredData(content = {}) {
           name: 'Red Lantern Restaurant',
           logo: {
             '@type': 'ImageObject',
-            url: absoluteUrl('images/Redlanternlogo.png', siteUrl)
+            url: absoluteUrl('images/red-lantern-logo-600.png', siteUrl)
           }
         },
         mainEntityOfPage: `${siteUrl}/blog-post.html?slug=${post.slug}`
