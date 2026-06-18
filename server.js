@@ -87,6 +87,105 @@ if (neonDatabaseUrl) {
   console.warn('Neon URL not found. Admin page will load, but saving changes is disabled.');
 }
 
+let diagnosticsTablePromise = null;
+const slowRequestMs = Number(process.env.SLOW_REQUEST_MS || 3500);
+
+function clientIp(req) {
+  const forwarded = req.headers['x-forwarded-for'];
+  const value = Array.isArray(forwarded) ? forwarded[0] : forwarded;
+  return String(value || req.ip || req.socket.remoteAddress || 'unknown').split(',')[0].trim();
+}
+
+function hashIp(req) {
+  return crypto.createHash('sha256').update(clientIp(req)).digest('hex').slice(0, 16);
+}
+
+function diagnosticSolution(category, message = '') {
+  const text = String(message).toLowerCase();
+  if (category === 'security') return 'Check the request path and IP hash. If repeated, keep admin credentials strong and consider blocking the source in Vercel Firewall.';
+  if (category === 'auth') return 'Confirm ADMIN_USERNAME and ADMIN_PASSWORD in Vercel Environment Variables. If failures repeat, rotate the admin password.';
+  if (category === 'cms-save' && text.includes('cloudinary')) return 'Check CLOUDINARY_URL or Cloudinary API credentials in Vercel, then redeploy and try the image upload again.';
+  if (category === 'cms-save' && (text.includes('neon') || text.includes('database'))) return 'Check NEON_DATABASE_URL in Vercel and confirm the Neon database is active.';
+  if (category === 'performance') return 'Open Vercel Observability for this path, check database/API calls, and reduce image or payload size if this repeats.';
+  if (category === 'frontend') return 'Open the listed page in the browser, reproduce the action, and check the script/file named in the log details.';
+  if (category === 'server') return 'Check the exact route and stack/location in this log, then inspect the matching server route in server.js.';
+  return 'Review the route, message, and details below. If repeated, fix the referenced page or server route first.';
+}
+
+function diagnosticLocation(category, pathValue = '', details = {}) {
+  if (details.location) return details.location;
+  if (category === 'frontend') return details.source || pathValue || 'Browser page';
+  if (category === 'cms-save') return `Admin CMS save route: ${pathValue || '/api/update-*'}`;
+  if (category === 'auth') return 'Admin authentication middleware';
+  if (category === 'security') return 'Request security middleware';
+  if (category === 'performance') return `Slow route: ${pathValue || 'unknown'}`;
+  return pathValue || 'Server';
+}
+
+async function ensureDiagnosticsTable() {
+  if (!sql) return false;
+  if (!diagnosticsTablePromise) {
+    diagnosticsTablePromise = sql`
+      CREATE TABLE IF NOT EXISTS website_diagnostics (
+        id BIGSERIAL PRIMARY KEY,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        level TEXT NOT NULL,
+        category TEXT NOT NULL,
+        message TEXT NOT NULL,
+        solution TEXT,
+        location TEXT,
+        method TEXT,
+        path TEXT,
+        status_code INTEGER,
+        duration_ms INTEGER,
+        ip_hash TEXT,
+        user_agent TEXT,
+        details JSONB NOT NULL DEFAULT '{}'::jsonb
+      );
+    `;
+  }
+  await diagnosticsTablePromise;
+  return true;
+}
+
+async function writeDiagnostic(event = {}) {
+  if (!sql) return;
+  try {
+    await ensureDiagnosticsTable();
+    const details = event.details || {};
+    const category = event.category || 'server';
+    const message = String(event.message || 'Website diagnostic event').slice(0, 500);
+    const pathValue = event.path || '';
+    await sql`
+      INSERT INTO website_diagnostics (
+        level, category, message, solution, location, method, path, status_code,
+        duration_ms, ip_hash, user_agent, details
+      ) VALUES (
+        ${event.level || 'info'},
+        ${category},
+        ${message},
+        ${event.solution || diagnosticSolution(category, message)},
+        ${event.location || diagnosticLocation(category, pathValue, details)},
+        ${event.method || null},
+        ${pathValue || null},
+        ${event.statusCode || null},
+        ${event.durationMs || null},
+        ${event.ipHash || null},
+        ${event.userAgent || null},
+        ${details}
+      )
+    `;
+  } catch (error) {
+    console.error('Diagnostic log error:', error.message);
+  }
+}
+
+function logDiagnostic(event) {
+  writeDiagnostic(event).catch((error) => {
+    console.error('Diagnostic log error:', error.message);
+  });
+}
+
 const storage = multer.memoryStorage();
 const upload = multer({
   storage,
@@ -124,6 +223,8 @@ function isProtectedAdminPath(req) {
     || req.path === '/admin.html'
     || req.path === '/admin-cms.js'
     || req.path === '/api/admin/content'
+    || req.path === '/api/admin/logs'
+    || req.path === '/api/admin/health'
     || req.path.startsWith('/api/update-')
     || req.path === '/api/growth-ai';
 }
@@ -163,6 +264,17 @@ function requireAdmin(req, res, next) {
   if (!isProtectedAdminPath(req)) return next();
 
   if (isAdminLocked(req)) {
+    logDiagnostic({
+      level: 'error',
+      category: 'auth',
+      message: 'Admin login temporarily locked after repeated failures.',
+      method: req.method,
+      path: req.path,
+      statusCode: 429,
+      ipHash: hashIp(req),
+      userAgent: req.headers['user-agent'] || '',
+      details: { failures: maxAdminFailures }
+    });
     return res.status(429).send('Too many failed login attempts. Try again later.');
   }
 
@@ -170,6 +282,16 @@ function requireAdmin(req, res, next) {
   const expectedPass = process.env.ADMIN_PASSWORD;
   if (!expectedUser || !expectedPass) {
     console.error('Admin access is disabled because ADMIN_USERNAME or ADMIN_PASSWORD is missing.');
+    logDiagnostic({
+      level: 'error',
+      category: 'auth',
+      message: 'Admin access is disabled because ADMIN_USERNAME or ADMIN_PASSWORD is missing.',
+      method: req.method,
+      path: req.path,
+      statusCode: 503,
+      ipHash: hashIp(req),
+      userAgent: req.headers['user-agent'] || ''
+    });
     return res.status(503).send('Admin access is not configured.');
   }
 
@@ -188,8 +310,52 @@ function requireAdmin(req, res, next) {
   }
 
   recordAdminFailure(req);
+  logDiagnostic({
+    level: 'warning',
+    category: 'auth',
+    message: 'Failed admin login attempt.',
+    method: req.method,
+    path: req.path,
+    statusCode: 401,
+    ipHash: hashIp(req),
+    userAgent: req.headers['user-agent'] || '',
+    details: { username: username ? 'provided' : 'missing' }
+  });
   res.set('WWW-Authenticate', 'Basic realm="Red Lantern Admin", charset="UTF-8"');
   return res.status(401).send('Invalid username or password.');
+}
+
+function requestDiagnostics(req, res, next) {
+  const started = Date.now();
+  res.on('finish', () => {
+    const durationMs = Date.now() - started;
+    if (res.statusCode >= 500) {
+      logDiagnostic({
+        level: 'error',
+        category: 'server',
+        message: `Server returned ${res.statusCode} for ${req.method} ${req.path}.`,
+        method: req.method,
+        path: req.path,
+        statusCode: res.statusCode,
+        durationMs,
+        ipHash: hashIp(req),
+        userAgent: req.headers['user-agent'] || ''
+      });
+    } else if (durationMs >= slowRequestMs && !req.path.startsWith('/api/admin/logs')) {
+      logDiagnostic({
+        level: 'warning',
+        category: 'performance',
+        message: `Slow request: ${req.method} ${req.path} took ${durationMs}ms.`,
+        method: req.method,
+        path: req.path,
+        statusCode: res.statusCode,
+        durationMs,
+        ipHash: hashIp(req),
+        userAgent: req.headers['user-agent'] || ''
+      });
+    }
+  });
+  next();
 }
 
 function blockSensitiveFiles(req, res, next) {
@@ -216,6 +382,16 @@ function blockSensitiveFiles(req, res, next) {
 
   if (blockedRoots.some((root) => requestPath === root || requestPath.startsWith(`${root}/`))
     || blockedFiles.has(basename)) {
+    logDiagnostic({
+      level: 'warning',
+      category: 'security',
+      message: `Blocked request for sensitive file or folder: ${requestPath}`,
+      method: req.method,
+      path: requestPath,
+      statusCode: 404,
+      ipHash: hashIp(req),
+      userAgent: req.headers['user-agent'] || ''
+    });
     return res.status(404).send('Not found.');
   }
 
@@ -223,6 +399,7 @@ function blockSensitiveFiles(req, res, next) {
 }
 
 app.use(securityHeaders);
+app.use(requestDiagnostics);
 app.use(requireAdmin);
 app.use(blockSensitiveFiles);
 app.use(express.static(__dirname, {
@@ -779,6 +956,17 @@ app.get('/api/content', async (req, res) => {
     res.json(await getAllContent());
   } catch (error) {
     console.error('Neon error:', error);
+    logDiagnostic({
+      level: 'error',
+      category: 'server',
+      message: `Public content API failed: ${error.message}`,
+      method: req.method,
+      path: req.path,
+      statusCode: 500,
+      ipHash: hashIp(req),
+      userAgent: req.headers['user-agent'] || '',
+      details: { stack: error.stack }
+    });
     res.status(500).json({ error: error.message });
   }
 });
@@ -789,7 +977,141 @@ app.get('/api/admin/content', async (req, res) => {
     res.json(await getAllContent(true));
   } catch (error) {
     console.error('Neon error:', error);
+    logDiagnostic({
+      level: 'error',
+      category: 'server',
+      message: `Admin content API failed: ${error.message}`,
+      method: req.method,
+      path: req.path,
+      statusCode: 500,
+      ipHash: hashIp(req),
+      userAgent: req.headers['user-agent'] || '',
+      details: { stack: error.stack }
+    });
     res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/admin/logs', async (req, res) => {
+  try {
+    res.set('Cache-Control', 'no-store');
+    if (!sql) return res.status(503).json({ error: 'Neon is not configured, so diagnostics logs cannot be stored.' });
+    const limit = Math.min(Math.max(Number(req.query.limit || 80), 1), 200);
+    await ensureDiagnosticsTable();
+    const rows = await sql`
+      SELECT id, created_at, level, category, message, solution, location, method, path,
+             status_code, duration_ms, ip_hash, user_agent, details
+      FROM website_diagnostics
+      ORDER BY created_at DESC
+      LIMIT ${limit}
+    `;
+    res.json({ logs: rows });
+  } catch (error) {
+    console.error('Diagnostics read error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/admin/logs', async (req, res) => {
+  try {
+    if (!sql) return res.status(503).json({ error: 'Neon is not configured, so diagnostics logs cannot be cleared.' });
+    await ensureDiagnosticsTable();
+    await sql`DELETE FROM website_diagnostics`;
+    await writeDiagnostic({
+      level: 'info',
+      category: 'admin',
+      message: 'Diagnostics log was cleared from the admin dashboard.',
+      method: req.method,
+      path: req.path,
+      ipHash: hashIp(req),
+      userAgent: req.headers['user-agent'] || ''
+    });
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Diagnostics clear error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/admin/health', async (req, res) => {
+  const checks = {
+    server: { ok: true, message: 'Server function responded.' },
+    database: { ok: false, message: 'Not checked.' },
+    cloudinary: { ok: false, message: 'Not checked.' },
+    environment: { ok: false, message: 'Not checked.' }
+  };
+
+  try {
+    if (!sql) {
+      checks.database.message = 'NEON_DATABASE_URL is missing or invalid.';
+    } else {
+      await sql`SELECT 1`;
+      checks.database = { ok: true, message: 'Neon database responded.' };
+    }
+
+    const cloudinaryConfig = cloudinary.config();
+    checks.cloudinary = cloudinaryConfig.cloud_name && cloudinaryConfig.api_key
+      ? { ok: true, message: 'Cloudinary credentials are configured.' }
+      : { ok: false, message: 'Cloudinary credentials are missing. Image uploads may fail.' };
+
+    checks.environment = process.env.ADMIN_USERNAME && process.env.ADMIN_PASSWORD
+      ? { ok: true, message: 'Admin credentials are configured.' }
+      : { ok: false, message: 'ADMIN_USERNAME or ADMIN_PASSWORD is missing.' };
+
+    const ok = Object.values(checks).every((check) => check.ok);
+    res.status(ok ? 200 : 503).json({
+      ok,
+      checkedAt: new Date().toISOString(),
+      checks
+    });
+  } catch (error) {
+    logDiagnostic({
+      level: 'error',
+      category: 'server',
+      message: `Health check failed: ${error.message}`,
+      method: req.method,
+      path: req.path,
+      statusCode: 500,
+      ipHash: hashIp(req),
+      userAgent: req.headers['user-agent'] || '',
+      details: { stack: error.stack }
+    });
+    res.status(500).json({
+      ok: false,
+      checkedAt: new Date().toISOString(),
+      checks,
+      error: error.message
+    });
+  }
+});
+
+app.post('/api/client-log', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const category = body.category === 'performance' ? 'performance' : 'frontend';
+    const level = body.level === 'warning' || category === 'performance' ? 'warning' : 'error';
+    await writeDiagnostic({
+      level,
+      category,
+      message: body.message || 'Browser-side website issue reported.',
+      method: req.method,
+      path: body.path || req.headers.referer || req.path,
+      durationMs: Number(body.durationMs) || null,
+      ipHash: hashIp(req),
+      userAgent: req.headers['user-agent'] || '',
+      details: {
+        source: body.source || '',
+        line: body.line || '',
+        column: body.column || '',
+        stack: String(body.stack || '').slice(0, 1200),
+        href: body.href || '',
+        metric: body.metric || ''
+      }
+    });
+    res.status(204).end();
+  } catch (error) {
+    console.error('Client log error:', error);
+    res.status(204).end();
   }
 });
 
@@ -802,6 +1124,17 @@ app.get('/api/content/:section', async (req, res) => {
     res.json(req.params.section === 'blogs' ? filterScheduledBlogs(section) : section);
   } catch (error) {
     console.error('Neon error:', error);
+    logDiagnostic({
+      level: 'error',
+      category: 'server',
+      message: `Content API failed for ${req.params.section}: ${error.message}`,
+      method: req.method,
+      path: req.path,
+      statusCode: 500,
+      ipHash: hashIp(req),
+      userAgent: req.headers['user-agent'] || '',
+      details: { stack: error.stack }
+    });
     res.status(500).json({ error: error.message });
   }
 });
@@ -815,6 +1148,17 @@ app.get('/api/blogs/:slug', async (req, res) => {
     res.json(post);
   } catch (error) {
     console.error('Neon error:', error);
+    logDiagnostic({
+      level: 'error',
+      category: 'server',
+      message: `Blog API failed for ${req.params.slug}: ${error.message}`,
+      method: req.method,
+      path: req.path,
+      statusCode: 500,
+      ipHash: hashIp(req),
+      userAgent: req.headers['user-agent'] || '',
+      details: { stack: error.stack }
+    });
     res.status(500).json({ error: error.message });
   }
 });
@@ -914,6 +1258,17 @@ app.post('/api/growth-ai', async (req, res) => {
     });
   } catch (error) {
     console.error('AI growth error:', error);
+    logDiagnostic({
+      level: 'error',
+      category: 'server',
+      message: `AI growth plan failed: ${error.message}`,
+      method: req.method,
+      path: req.path,
+      statusCode: error.statusCode || 500,
+      ipHash: hashIp(req),
+      userAgent: req.headers['user-agent'] || '',
+      details: { stack: error.stack }
+    });
     res.status(error.statusCode || 500).json({ error: error.message });
   }
 });
@@ -969,12 +1324,59 @@ Object.keys(collections).forEach((section) => {
         }
       }
       await saveSection(section, normalizeSection(section, req.body, req.files || []));
+      logDiagnostic({
+        level: 'info',
+        category: 'cms-save',
+        message: `${labels[section]} changes saved successfully.`,
+        method: req.method,
+        path: req.path,
+        statusCode: 200,
+        ipHash: hashIp(req),
+        userAgent: req.headers['user-agent'] || '',
+        details: {
+          section,
+          uploadedFiles: (req.files || []).length
+        }
+      });
       res.send(`<h2>Success!</h2><p>${labels[section]} changes saved to Neon.</p><a href="/admin">Go Back to Dashboard</a>`);
     } catch (error) {
       console.error('Save error:', error);
+      logDiagnostic({
+        level: 'error',
+        category: 'cms-save',
+        message: `${labels[section]} save failed: ${error.message}`,
+        method: req.method,
+        path: req.path,
+        statusCode: 500,
+        ipHash: hashIp(req),
+        userAgent: req.headers['user-agent'] || '',
+        details: {
+          section,
+          uploadedFiles: (req.files || []).length,
+          stack: error.stack
+        }
+      });
       res.status(500).send('Database error: ' + error.message);
     }
   });
+});
+
+app.use((error, req, res, next) => {
+  if (!error) return next();
+  console.error('Unhandled request error:', error);
+  logDiagnostic({
+    level: 'error',
+    category: 'server',
+    message: `Unhandled request error: ${error.message}`,
+    method: req.method,
+    path: req.path,
+    statusCode: error.status || 500,
+    ipHash: hashIp(req),
+    userAgent: req.headers['user-agent'] || '',
+    details: { stack: error.stack }
+  });
+  if (res.headersSent) return next(error);
+  res.status(error.status || 500).send(error.message || 'Server error.');
 });
 
 // Only start server automatically if not running in a Vercel serverless environment

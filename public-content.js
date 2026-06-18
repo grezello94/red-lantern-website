@@ -2,6 +2,77 @@ const setText = (element, value) => {
   if (element && value) element.textContent = value;
 };
 
+function reportClientDiagnostic(payload) {
+  try {
+    const body = JSON.stringify({
+      path: window.location.pathname,
+      href: window.location.href,
+      ...payload
+    });
+    if (navigator.sendBeacon) {
+      navigator.sendBeacon('/api/client-log', new Blob([body], { type: 'application/json' }));
+      return;
+    }
+    fetch('/api/client-log', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+      keepalive: true
+    }).catch(() => {});
+  } catch {
+    // Logging must never affect the visitor experience.
+  }
+}
+
+window.addEventListener('error', (event) => {
+  const target = event.target;
+  if (target && target !== window && (target.src || target.href)) {
+    reportClientDiagnostic({
+      category: 'frontend',
+      level: 'error',
+      message: `Asset failed to load: ${target.src || target.href}`,
+      source: target.tagName || 'asset'
+    });
+    return;
+  }
+
+  reportClientDiagnostic({
+    category: 'frontend',
+    level: 'error',
+    message: event.message || 'Browser script error.',
+    source: event.filename || 'browser',
+    line: event.lineno || '',
+    column: event.colno || '',
+    stack: event.error?.stack || ''
+  });
+}, true);
+
+window.addEventListener('unhandledrejection', (event) => {
+  reportClientDiagnostic({
+    category: 'frontend',
+    level: 'error',
+    message: event.reason?.message || 'Browser promise failed.',
+    source: 'browser promise',
+    stack: event.reason?.stack || String(event.reason || '')
+  });
+});
+
+window.addEventListener('load', () => {
+  window.setTimeout(() => {
+    const navigation = performance.getEntriesByType?.('navigation')?.[0];
+    const durationMs = Math.round(navigation?.duration || performance.now());
+    if (durationMs >= 4500) {
+      reportClientDiagnostic({
+        category: 'performance',
+        level: 'warning',
+        message: `Slow page load detected: ${durationMs}ms.`,
+        durationMs,
+        metric: 'page-load'
+      });
+    }
+  }, 0);
+});
+
 const setHtml = (element, value) => {
   if (element && value) element.innerHTML = value;
 };

@@ -16,6 +16,50 @@ const setStatus = (form, message, isError = false) => {
   status.style.color = isError ? '#b91c1c' : '#166534';
 };
 
+function reportClientDiagnostic(payload) {
+  try {
+    const body = JSON.stringify({
+      path: window.location.pathname,
+      href: window.location.href,
+      ...payload
+    });
+    if (navigator.sendBeacon) {
+      navigator.sendBeacon('/api/client-log', new Blob([body], { type: 'application/json' }));
+      return;
+    }
+    fetch('/api/client-log', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+      keepalive: true
+    }).catch(() => {});
+  } catch {
+    // Diagnostics must never interrupt the admin UI.
+  }
+}
+
+window.addEventListener('error', (event) => {
+  reportClientDiagnostic({
+    category: 'frontend',
+    level: 'error',
+    message: event.message || 'Admin browser script error.',
+    source: event.filename || 'admin browser',
+    line: event.lineno || '',
+    column: event.colno || '',
+    stack: event.error?.stack || ''
+  });
+});
+
+window.addEventListener('unhandledrejection', (event) => {
+  reportClientDiagnostic({
+    category: 'frontend',
+    level: 'error',
+    message: event.reason?.message || 'Admin browser promise failed.',
+    source: 'admin browser promise',
+    stack: event.reason?.stack || String(event.reason || '')
+  });
+});
+
 const cleanDescriptionText = (value) => {
   const template = document.createElement('template');
   template.innerHTML = String(value || '').replace(/<br\s*\/?>/gi, ' ');
@@ -814,6 +858,134 @@ function setupGrowthRefreshButton() {
   button.addEventListener('click', refreshGrowthProgress);
 }
 
+let diagnosticsLogs = [];
+
+function formatLogTime(value) {
+  if (!value) return '';
+  return new Intl.DateTimeFormat('en-IN', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+    timeZone: 'Asia/Kolkata'
+  }).format(new Date(value));
+}
+
+function renderHealth(data = {}) {
+  const grid = document.getElementById('health-grid');
+  const status = document.getElementById('health-status');
+  if (!grid) return;
+  const checks = data.checks || {};
+  const entries = Object.entries(checks);
+  grid.innerHTML = entries.length ? entries.map(([name, check]) => `
+    <div class="health-item ${check.ok ? 'ok' : 'bad'}">
+      <strong>${check.ok ? 'Ready' : 'Needs attention'}: ${escapeHtml(name)}</strong>
+      <span>${escapeHtml(check.message || '')}</span>
+    </div>
+  `).join('') : '<p class="log-status">No health data available.</p>';
+  if (status) status.textContent = data.checkedAt
+    ? `${data.ok ? 'Healthy' : 'Needs attention'} · ${formatLogTime(data.checkedAt)}`
+    : 'Health check unavailable.';
+}
+
+async function refreshHealth() {
+  const status = document.getElementById('health-status');
+  if (status) status.textContent = 'Checking...';
+  try {
+    const response = await fetch('/api/admin/health', { cache: 'no-store' });
+    const data = await response.json();
+    renderHealth(data);
+  } catch (error) {
+    if (status) status.textContent = error.message || 'Health check failed.';
+    reportClientDiagnostic({
+      category: 'frontend',
+      level: 'error',
+      message: `Admin health check UI failed: ${error.message}`,
+      source: 'admin-cms.js refreshHealth',
+      stack: error.stack || ''
+    });
+  }
+}
+
+function renderLogs() {
+  const list = document.getElementById('logs-list');
+  const status = document.getElementById('logs-status');
+  const filter = document.getElementById('log-level-filter')?.value || 'all';
+  if (!list) return;
+  const logs = filter === 'all' ? diagnosticsLogs : diagnosticsLogs.filter((log) => log.level === filter);
+  if (status) status.textContent = `${logs.length} shown · ${diagnosticsLogs.length} loaded`;
+  if (!logs.length) {
+    list.innerHTML = '<p class="log-status">No logs for this filter. Nice and quiet.</p>';
+    return;
+  }
+
+  list.innerHTML = logs.map((log) => {
+    const details = log.details && Object.keys(log.details).length
+      ? JSON.stringify(log.details, null, 2)
+      : '';
+    return `
+      <article class="log-entry ${escapeHtml(log.level || 'info')}">
+        <div class="log-entry-header">
+          <h3>${escapeHtml(log.message || 'Website event')}</h3>
+          <span class="log-badge ${escapeHtml(log.level || 'info')}">${escapeHtml(log.level || 'info')}</span>
+        </div>
+        <div class="log-meta">
+          <span><strong>When:</strong> ${escapeHtml(formatLogTime(log.created_at))}</span>
+          <span><strong>Type:</strong> ${escapeHtml(log.category || '')}</span>
+          <span><strong>Where:</strong> ${escapeHtml(log.location || log.path || '')}</span>
+          <span><strong>Route:</strong> ${escapeHtml([log.method, log.path].filter(Boolean).join(' '))}</span>
+          <span><strong>Status:</strong> ${escapeHtml(log.status_code || '')}</span>
+          <span><strong>Load time:</strong> ${log.duration_ms ? `${escapeHtml(log.duration_ms)}ms` : ''}</span>
+          <span><strong>IP hash:</strong> ${escapeHtml(log.ip_hash || '')}</span>
+        </div>
+        <div class="log-solution"><strong>Suggested fix:</strong> ${escapeHtml(log.solution || 'Review this event and the details below.')}</div>
+        ${details ? `<pre class="log-details">${escapeHtml(details)}</pre>` : ''}
+      </article>
+    `;
+  }).join('');
+}
+
+async function refreshLogs() {
+  const status = document.getElementById('logs-status');
+  if (status) status.textContent = 'Loading logs...';
+  try {
+    const response = await fetch('/api/admin/logs?limit=100', { cache: 'no-store' });
+    if (!response.ok) throw new Error('Unable to load diagnostics logs.');
+    const data = await response.json();
+    diagnosticsLogs = data.logs || [];
+    renderLogs();
+  } catch (error) {
+    if (status) status.textContent = error.message || 'Unable to load logs.';
+    reportClientDiagnostic({
+      category: 'frontend',
+      level: 'error',
+      message: `Admin logs UI failed: ${error.message}`,
+      source: 'admin-cms.js refreshLogs',
+      stack: error.stack || ''
+    });
+  }
+}
+
+async function clearLogs() {
+  const status = document.getElementById('logs-status');
+  if (!window.confirm('Clear all diagnostics logs?')) return;
+  if (status) status.textContent = 'Clearing logs...';
+  try {
+    const response = await fetch('/api/admin/logs', { method: 'DELETE' });
+    if (!response.ok) throw new Error('Unable to clear diagnostics logs.');
+    await refreshLogs();
+  } catch (error) {
+    if (status) status.textContent = error.message || 'Unable to clear logs.';
+  }
+}
+
+function setupDiagnosticsDashboard() {
+  document.getElementById('refresh-health')?.addEventListener('click', refreshHealth);
+  document.getElementById('refresh-logs')?.addEventListener('click', refreshLogs);
+  document.getElementById('clear-logs')?.addEventListener('click', clearLogs);
+  document.getElementById('log-level-filter')?.addEventListener('change', renderLogs);
+  refreshHealth();
+  refreshLogs();
+}
+
 fetch('/api/admin/content')
   .then((response) => response.ok ? response.json() : {})
   .then((content) => {
@@ -830,6 +1002,7 @@ fetch('/api/admin/content')
 
 setupAiGrowthButton();
 setupGrowthRefreshButton();
+setupDiagnosticsDashboard();
 setupRichTextToolbar();
 setupBlogDescriptionGenerator();
 

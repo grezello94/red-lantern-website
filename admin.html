@@ -71,6 +71,33 @@
       .btn-refresh:hover { transform: translateY(-1px); }
       .growth-source-link { color: #b91c1c; font-weight: 700; text-decoration: none; word-break: break-word; }
       .growth-source-link:hover { text-decoration: underline; }
+      .log-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+      .log-filter { padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 8px; background: #fff; font: inherit; font-weight: 700; color: #374151; }
+      .log-status { color: #6b7280; font-size: 14px; font-weight: 700; }
+      .health-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+      .health-item { border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px; background: #f9fafb; }
+      .health-item strong { display: block; margin-bottom: 4px; color: #111827; }
+      .health-item span { color: #6b7280; font-size: 13px; line-height: 1.5; }
+      .health-item.ok { border-color: #bbf7d0; background: #f0fdf4; }
+      .health-item.bad { border-color: #fecaca; background: #fef2f2; }
+      .log-list { display: grid; gap: 14px; }
+      .log-entry { border: 1px solid #e5e7eb; border-left: 5px solid #6b7280; border-radius: 8px; padding: 16px; background: #fff; }
+      .log-entry.error { border-left-color: #dc2626; background: #fff7f7; }
+      .log-entry.warning { border-left-color: #f59e0b; background: #fffbeb; }
+      .log-entry.info { border-left-color: #2563eb; }
+      .log-entry-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+      .log-entry h3 { font-size: 16px; color: #111827; margin: 0; line-height: 1.4; }
+      .log-badge { display: inline-flex; align-items: center; border-radius: 999px; padding: 4px 9px; font-size: 11px; font-weight: 900; text-transform: uppercase; background: #e5e7eb; color: #374151; white-space: nowrap; }
+      .log-badge.error { background: #fee2e2; color: #991b1b; }
+      .log-badge.warning { background: #fef3c7; color: #92400e; }
+      .log-badge.info { background: #dbeafe; color: #1e40af; }
+      .log-meta { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 16px; color: #4b5563; font-size: 13px; margin: 10px 0; }
+      .log-meta span { word-break: break-word; }
+      .log-solution { padding: 12px; border-radius: 8px; background: #fff; border: 1px solid #e5e7eb; color: #374151; line-height: 1.5; font-size: 14px; }
+      .log-details { margin-top: 10px; color: #4b5563; font-size: 12px; white-space: pre-wrap; word-break: break-word; }
+      @media (max-width: 900px) {
+        .health-grid, .log-meta { grid-template-columns: 1fr; }
+      }
     </style>
   </head>
   <body>
@@ -88,6 +115,8 @@
         <div class="nav-item" data-target="tab-footer">Footer & Settings</div>
         <div class="nav-category">Growth</div>
         <div class="nav-item" data-target="tab-growth">Growth Ideas</div>
+        <div class="nav-category">System</div>
+        <div class="nav-item" data-target="tab-logs">Site Logs</div>
       </nav>
     </aside>
 
@@ -794,6 +823,42 @@
         <div class="card">
           <h2>Local SEO Checklist</h2>
           <div id="growth-checklist" class="growth-list"></div>
+        </div>
+      </div>
+
+      <!-- SITE LOGS TAB -->
+      <div id="tab-logs" class="tab-content">
+        <header class="header">
+          <div>
+            <h1>Site Logs</h1>
+            <p>See website errors, suspicious activity, slow requests, and practical fixes.</p>
+          </div>
+          <button class="logout-btn">Log Out</button>
+        </header>
+
+        <div class="card">
+          <h2>Health Check</h2>
+          <div class="log-toolbar">
+            <button type="button" id="refresh-health" class="btn-refresh">Refresh health</button>
+            <span id="health-status" class="log-status">Checking...</span>
+          </div>
+          <div id="health-grid" class="health-grid"></div>
+        </div>
+
+        <div class="card">
+          <h2>Diagnostics Log</h2>
+          <div class="log-toolbar">
+            <button type="button" id="refresh-logs" class="btn-refresh">Refresh logs</button>
+            <button type="button" id="clear-logs" class="logout-btn">Clear logs</button>
+            <select id="log-level-filter" class="log-filter" aria-label="Filter logs">
+              <option value="all">All logs</option>
+              <option value="error">Errors only</option>
+              <option value="warning">Warnings only</option>
+              <option value="info">Info only</option>
+            </select>
+            <span id="logs-status" class="log-status">Loading...</span>
+          </div>
+          <div id="logs-list" class="log-list"></div>
         </div>
       </div>
 
