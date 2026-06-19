@@ -1307,7 +1307,8 @@ Object.keys(collections).forEach((section) => {
                     width: 1600,
                     height: 1600,
                     crop: 'limit',
-                    quality: 'auto:good'
+                    quality: 'auto:best',
+                    fetch_format: 'webp'
                   }
                 ],
                 api_key: cConfig.api_key,

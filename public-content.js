@@ -204,7 +204,7 @@ function upsertLink(selector, attributes) {
 function setPageSeo({ title, description, image, type = 'website' }, global = {}) {
   const siteUrl = (global.siteUrl || location.origin).replace(/\/$/, '');
   const pageUrl = absoluteUrl(location.pathname + location.search, siteUrl);
-  const pageImage = absoluteUrl(image || global.ogImage || 'images/red-lantern-logo-600.png', siteUrl);
+  const pageImage = absoluteUrl(image || global.ogImage || 'images/red-lantern-logo-600.webp', siteUrl);
 
   if (title) document.title = title;
   upsertLink('link[rel="canonical"]', { rel: 'canonical', href: pageUrl });
@@ -372,7 +372,7 @@ function applyStructuredData(content = {}) {
     '@type': 'Restaurant',
     name: 'Red Lantern Restaurant',
     url: `${siteUrl}/`,
-    image: absoluteUrl(global.ogImage || 'images/red-lantern-logo-600.png', siteUrl),
+    image: absoluteUrl(global.ogImage || 'images/red-lantern-logo-600.webp', siteUrl),
     telephone: contact.phone || '+91 99228 53605',
     email: contact.email,
     servesCuisine: ['Chinese', 'Goan', 'Seafood'],
@@ -441,7 +441,7 @@ function applyStructuredData(content = {}) {
         '@type': 'BlogPosting',
         headline: post.title,
         description: post.seoDescription || post.excerpt,
-        image: post.image ? absoluteUrl(post.image, siteUrl) : absoluteUrl(global.ogImage || 'images/red-lantern-logo-600.png', siteUrl),
+        image: post.image ? absoluteUrl(post.image, siteUrl) : absoluteUrl(global.ogImage || 'images/red-lantern-logo-600.webp', siteUrl),
         author: {
           '@type': 'Organization',
           name: 'Red Lantern Restaurant'
@@ -451,7 +451,7 @@ function applyStructuredData(content = {}) {
           name: 'Red Lantern Restaurant',
           logo: {
             '@type': 'ImageObject',
-            url: absoluteUrl('images/red-lantern-logo-600.png', siteUrl)
+            url: absoluteUrl('images/red-lantern-logo-600.webp', siteUrl)
           }
         },
         mainEntityOfPage: `${siteUrl}/blog-post.html?slug=${post.slug}`
