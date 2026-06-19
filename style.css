@@ -1316,6 +1316,25 @@ a {
     font-size: 14px;
   }
 
+  .site-nav .call-button {
+    position: fixed;
+    right: 18px;
+    bottom: calc(18px + env(safe-area-inset-bottom));
+    z-index: 40;
+    width: 56px;
+    height: 56px;
+    padding: 0;
+    border-radius: 999px;
+    font-size: 0;
+    min-width: 0;
+    box-shadow: 0 18px 34px rgba(222, 42, 42, 0.34);
+  }
+
+  .site-nav .call-button .call-icon {
+    width: 23px;
+    height: 23px;
+  }
+
   .hero {
     min-height: 100svh;
     padding: 124px 6vw 66px;
