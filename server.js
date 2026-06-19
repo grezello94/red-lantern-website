@@ -402,6 +402,35 @@ app.use(securityHeaders);
 app.use(requestDiagnostics);
 app.use(requireAdmin);
 app.use(blockSensitiveFiles);
+
+const cleanPageRoutes = new Map([
+  ['/home', 'index.html'],
+  ['/menu', 'menu.html'],
+  ['/about', 'about.html'],
+  ['/blogs', 'blogs.html'],
+  ['/contact', 'contact.html'],
+  ['/blog', 'blog-post.html']
+]);
+
+const legacyPageRedirects = new Map([
+  ['/index.html', '/home'],
+  ['/menu.html', '/menu'],
+  ['/about.html', '/about'],
+  ['/blogs.html', '/blogs'],
+  ['/contact.html', '/contact']
+]);
+
+app.use((req, res, next) => {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+  if (req.path === '/') return res.redirect(301, '/home');
+  if (req.path === '/blog-post.html') {
+    const slug = String(req.query.slug || '').trim();
+    return res.redirect(301, slug ? `/blog/${encodeURIComponent(slug)}` : '/blog');
+  }
+  if (legacyPageRedirects.has(req.path)) return res.redirect(301, legacyPageRedirects.get(req.path));
+  return next();
+});
+
 app.use(express.static(__dirname, {
   dotfiles: 'deny',
   index: false,
@@ -942,12 +971,18 @@ async function generateAiGrowthPlan(content) {
   return parseAiJson(body.output_text);
 }
 
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'index.html'));
-});
-
 app.get('/admin', (req, res) => {
   res.sendFile(path.join(__dirname, 'admin.html'));
+});
+
+cleanPageRoutes.forEach((file, route) => {
+  app.get(route, (req, res) => {
+    res.sendFile(path.join(__dirname, file));
+  });
+});
+
+app.get('/blog/:slug', (req, res) => {
+  res.sendFile(path.join(__dirname, 'blog-post.html'));
 });
 
 app.get('/api/content', async (req, res) => {
@@ -1209,15 +1244,15 @@ app.get('/sitemap.xml', async (req, res) => {
       title: `${dish.name} at Red Lantern Restaurant in Colva`
     }));
   const urls = [
-    { loc: `${siteUrl}/`, priority: '1.0', changefreq: 'weekly', images: [global.ogImage ? { loc: absoluteSiteUrl(global.ogImage, siteUrl), title: 'Red Lantern Restaurant in Colva Goa' } : null].filter(Boolean) },
-    { loc: `${siteUrl}/menu.html`, priority: '0.9', changefreq: 'weekly', images: menuImages },
-    { loc: `${siteUrl}/contact.html`, priority: '0.8', changefreq: 'monthly' },
-    { loc: `${siteUrl}/about.html`, priority: '0.7', changefreq: 'monthly' },
-    { loc: `${siteUrl}/blogs.html`, priority: '0.7', changefreq: 'weekly' }
+    { loc: `${siteUrl}/home`, priority: '1.0', changefreq: 'weekly', images: [global.ogImage ? { loc: absoluteSiteUrl(global.ogImage, siteUrl), title: 'Red Lantern Restaurant in Colva Goa' } : null].filter(Boolean) },
+    { loc: `${siteUrl}/menu`, priority: '0.9', changefreq: 'weekly', images: menuImages },
+    { loc: `${siteUrl}/contact`, priority: '0.8', changefreq: 'monthly' },
+    { loc: `${siteUrl}/about`, priority: '0.7', changefreq: 'monthly' },
+    { loc: `${siteUrl}/blogs`, priority: '0.7', changefreq: 'weekly' }
   ];
   (blogs.posts || []).forEach((post) => {
     urls.push({
-      loc: `${siteUrl}/blog-post.html?slug=${encodeURIComponent(post.slug)}`,
+      loc: `${siteUrl}/blog/${encodeURIComponent(post.slug)}`,
       priority: '0.6',
       changefreq: 'monthly',
       images: post.image ? [{ loc: absoluteSiteUrl(post.image, siteUrl), title: post.title }] : []
@@ -1241,11 +1276,11 @@ app.get('/rss.xml', async (req, res) => {
 <rss version="2.0">
   <channel>
     <title>${xmlEscape(blogs.pageTitle || 'Red Lantern Journal')}</title>
-    <link>${xmlEscape(`${siteUrl}/blogs.html`)}</link>
+    <link>${xmlEscape(`${siteUrl}/blogs`)}</link>
     <description>${xmlEscape(blogs.pageSubtitle || 'Food guides, restaurant stories, and menu updates from Red Lantern Restaurant in Colva, Goa.')}</description>
     <language>en-IN</language>
     <lastBuildDate>${new Date().toUTCString()}</lastBuildDate>
-    ${posts.map((post) => `<item><title>${xmlEscape(post.title)}</title><link>${xmlEscape(`${siteUrl}/blog-post.html?slug=${encodeURIComponent(post.slug)}`)}</link><guid>${xmlEscape(`${siteUrl}/blog-post.html?slug=${encodeURIComponent(post.slug)}`)}</guid><description>${xmlEscape(post.seoDescription || post.excerpt || '')}</description></item>`).join('\n    ')}
+    ${posts.map((post) => `<item><title>${xmlEscape(post.title)}</title><link>${xmlEscape(`${siteUrl}/blog/${encodeURIComponent(post.slug)}`)}</link><guid>${xmlEscape(`${siteUrl}/blog/${encodeURIComponent(post.slug)}`)}</guid><description>${xmlEscape(post.seoDescription || post.excerpt || '')}</description></item>`).join('\n    ')}
   </channel>
 </rss>`);
 });

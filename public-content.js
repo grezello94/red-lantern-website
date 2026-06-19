@@ -153,7 +153,29 @@ const articleHtmlWithImage = (content, image, title) => {
   return `${imageHtml}${html}`;
 };
 
-const getSlug = () => new URLSearchParams(window.location.search).get('slug');
+const cleanPageMap = {
+  '/': 'index.html',
+  '/home': 'index.html',
+  '/menu': 'menu.html',
+  '/about': 'about.html',
+  '/blogs': 'blogs.html',
+  '/contact': 'contact.html',
+  '/blog': 'blog-post.html'
+};
+
+const pageFromPath = (path = '') => {
+  const normalized = (`/${String(path).replace(/^https?:\/\/[^/]+/i, '').split('?')[0].split('#')[0].replace(/^\/+/, '')}`).replace(/\/+$/, '') || '/';
+  if (normalized.startsWith('/blog/')) return 'blog-post.html';
+  return cleanPageMap[normalized] || normalized.split('/').pop() || 'index.html';
+};
+
+const getSlug = () => {
+  const querySlug = new URLSearchParams(window.location.search).get('slug');
+  if (querySlug) return querySlug;
+  const pathParts = location.pathname.split('/').filter(Boolean);
+  if (pathParts[0] === 'blog' && pathParts[1]) return decodeURIComponent(pathParts.slice(1).join('/'));
+  return null;
+};
 const indiaScheduleTime = (value) => {
   if (!value) return 0;
   const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
@@ -167,8 +189,7 @@ const indiaScheduleTime = (value) => {
 const publishedPosts = (posts = []) => posts.filter((post) => !post.publishAt || indiaScheduleTime(post.publishAt) <= Date.now());
 let reviewRotationTimer = null;
 const currentPage = () => {
-  const file = location.pathname.split('/').pop() || 'index.html';
-  return file === '' ? 'index.html' : file;
+  return pageFromPath(location.pathname);
 };
 const absoluteUrl = (url, siteUrl = location.origin) => {
   if (!url) return '';
@@ -234,7 +255,7 @@ function updateActiveNav() {
   const activePage = page === 'blog-post.html' ? 'blogs.html' : page;
 
   document.querySelectorAll('.site-nav a:not(.call-button)').forEach((link) => {
-    const linkPage = (link.getAttribute('href') || '').split('#')[0] || 'index.html';
+    const linkPage = pageFromPath((link.getAttribute('href') || '/home').split('#')[0]);
     link.classList.toggle('is-active', linkPage === activePage);
   });
 }
@@ -337,13 +358,13 @@ function setupTracking(global = {}) {
   document.querySelectorAll('a[href*="zomato"], a[href*="swiggy"]').forEach((link) => {
     link.addEventListener('click', () => track('order_click', global.googleOrderConversionLabel));
   });
-  document.querySelectorAll('a[href*="google.com/maps"], a[href*="maps.app.goo.gl"], a[href*="contact.html"]').forEach((link) => {
+  document.querySelectorAll('a[href*="google.com/maps"], a[href*="maps.app.goo.gl"], a[href*="contact.html"], a[href*="/contact"]').forEach((link) => {
     link.addEventListener('click', () => track('directions_click', global.googleDirectionsConversionLabel));
   });
-  document.querySelectorAll('a[href*="menu.html"]').forEach((link) => {
+  document.querySelectorAll('a[href*="menu.html"], a[href*="/menu"]').forEach((link) => {
     link.addEventListener('click', () => track('menu_click'));
   });
-  document.querySelectorAll('a[href*="blogs.html"], a[href*="blog-post.html"]').forEach((link) => {
+  document.querySelectorAll('a[href*="blogs.html"], a[href*="blog-post.html"], a[href*="/blogs"], a[href*="/blog"]').forEach((link) => {
     link.addEventListener('click', () => track('blog_click'));
   });
 }
@@ -371,7 +392,7 @@ function applyStructuredData(content = {}) {
     '@context': 'https://schema.org',
     '@type': 'Restaurant',
     name: 'Red Lantern Restaurant',
-    url: `${siteUrl}/`,
+    url: `${siteUrl}/home`,
     image: absoluteUrl(global.ogImage || 'images/red-lantern-logo-600.webp', siteUrl),
     telephone: contact.phone || '+91 99228 53605',
     email: contact.email,
@@ -385,7 +406,7 @@ function applyStructuredData(content = {}) {
       addressCountry: 'IN'
     },
     openingHours: contact.hours,
-    hasMenu: `${siteUrl}/menu.html`,
+    hasMenu: `${siteUrl}/menu`,
     acceptsReservations: true,
     keywords: global.seoKeywords,
     sameAs,
@@ -454,7 +475,7 @@ function applyStructuredData(content = {}) {
             url: absoluteUrl('images/red-lantern-logo-600.webp', siteUrl)
           }
         },
-        mainEntityOfPage: `${siteUrl}/blog-post.html?slug=${post.slug}`
+        mainEntityOfPage: `${siteUrl}/blog/${encodeURIComponent(post.slug)}`
       });
     }
   }
@@ -552,7 +573,7 @@ function renderBlogCards(container, posts = []) {
   if (!container || !posts.length) return;
   container.innerHTML = posts.map((post, index) => `
     <article class="blog-card">
-      <a href="blog-post.html?slug=${encodeURIComponent(post.slug)}">
+      <a href="/blog/${encodeURIComponent(post.slug)}">
         ${post.image ? `<div class="blog-thumb" style="background-image:url('${post.image}')"></div>` : `<div class="blog-thumb ${index === 1 ? 'blog-thumb-alt' : index === 2 ? 'blog-thumb-third' : ''}"></div>`}
         <div class="blog-body">
           <h2>${escapeHtml(post.title)}</h2>
@@ -593,7 +614,7 @@ function renderBlogPost(blogs = {}, global = {}) {
     setText(document.querySelector('.blog-post-header .blog-meta'), '');
     const hero = document.querySelector('.blog-post-hero');
     if (hero) hero.style.display = 'none';
-    setHtml(document.querySelector('.blog-post-content'), '<p>This article is scheduled and will appear here when it is published.</p><p><a href="blogs.html">Back to all articles</a></p>');
+    setHtml(document.querySelector('.blog-post-content'), '<p>This article is scheduled and will appear here when it is published.</p><p><a href="/blogs">Back to all articles</a></p>');
     return;
   }
 
