@@ -118,8 +118,13 @@ a {
   box-shadow: 0 14px 28px rgba(15, 23, 42, 0.18);
 }
 
+.mobile-call-fab {
+  display: none;
+}
+
 .site-nav a:focus-visible,
-.call-button:focus-visible {
+.call-button:focus-visible,
+.mobile-call-fab:focus-visible {
   outline: 3px solid rgba(244, 166, 42, 0.45);
   outline-offset: 3px;
   border-radius: 14px;
@@ -1310,27 +1315,33 @@ a {
     font-size: 13px;
   }
 
+  .site-nav .call-button {
+    display: none;
+  }
+
   .call-button {
     height: 42px;
     padding: 0 16px;
     font-size: 14px;
   }
 
-  .site-nav .call-button {
+  .mobile-call-fab {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     position: fixed;
     right: 18px;
     bottom: calc(18px + env(safe-area-inset-bottom));
-    z-index: 40;
+    z-index: 60;
     width: 56px;
     height: 56px;
-    padding: 0;
     border-radius: 999px;
-    font-size: 0;
-    min-width: 0;
+    background: var(--brand-red);
+    color: #fff;
     box-shadow: 0 18px 34px rgba(222, 42, 42, 0.34);
   }
 
-  .site-nav .call-button .call-icon {
+  .mobile-call-fab .call-icon {
     width: 23px;
     height: 23px;
   }
@@ -1518,25 +1529,6 @@ a {
   .site-nav a:not(.call-button):hover,
   .site-nav .is-active {
     background: rgba(222, 42, 42, 0.08);
-  }
-
-  .site-nav .call-button {
-    position: fixed;
-    right: 18px;
-    bottom: calc(18px + env(safe-area-inset-bottom));
-    z-index: 40;
-    width: 56px;
-    height: 56px;
-    padding: 0;
-    border-radius: 999px;
-    font-size: 0;
-    min-width: 0;
-    box-shadow: 0 18px 34px rgba(222, 42, 42, 0.34);
-  }
-
-  .call-button .call-icon {
-    width: 23px;
-    height: 23px;
   }
 
   .hero {
