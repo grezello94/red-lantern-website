@@ -39,22 +39,21 @@ a {
 
 .site-header {
   position: fixed;
-  inset: 14px clamp(16px, 3vw, 42px) auto clamp(16px, 3vw, 42px);
-  height: clamp(58px, 5.2vw, 64px);
+  inset: 18px clamp(20px, 4vw, 64px) auto clamp(20px, 4vw, 64px);
+  height: clamp(58px, 5vw, 68px);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 clamp(16px, 3vw, 38px);
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.54), rgba(255, 255, 255, 0.26));
-  color: var(--ink);
-  backdrop-filter: blur(16px) saturate(1.35);
-  -webkit-backdrop-filter: blur(16px) saturate(1.35);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.78),
-    0 14px 38px rgba(15, 23, 42, 0.12);
+  padding: 0;
+  background: transparent;
+  color: #fff;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.55);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
   z-index: 10;
-  border: 1px solid rgba(255, 255, 255, 0.42);
-  border-radius: 16px;
+  border: 0;
+  border-radius: 0;
 }
 
 .brand {
@@ -63,32 +62,46 @@ a {
 }
 
 .brand-logo-image {
-  width: clamp(74px, 6.1vw, 88px);
+  width: clamp(78px, 6.4vw, 96px);
   height: auto;
   display: block;
+  filter: drop-shadow(0 8px 18px rgba(0, 0, 0, 0.45));
 }
 
 .site-nav {
   display: flex;
   align-items: center;
   gap: clamp(16px, 2.4vw, 28px);
-  font-weight: 600;
-  color: #374151;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.86);
   font-size: clamp(14px, 1vw, 16px);
 }
 
 .site-nav a {
-  padding: 6px 0;
+  padding: 8px 0;
   position: relative;
-  transition: color 0.2s ease;
+  transition: color 0.2s ease, text-shadow 0.2s ease;
 }
 
 .site-nav a:not(.call-button):hover {
-  color: var(--brand-red);
+  color: #fff;
+  text-shadow: 0 0 18px rgba(255, 255, 255, 0.45);
 }
 
 .site-nav .is-active {
   color: var(--brand-red);
+}
+
+.site-nav .is-active::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -8px;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--brand-red);
+  box-shadow: 0 0 12px rgba(222, 42, 42, 0.55);
 }
 
 .call-button {
@@ -1316,6 +1329,8 @@ a {
     border: 0;
     border-bottom: 1px solid rgba(15, 23, 42, 0.06);
     border-radius: 0 0 18px 18px;
+    color: var(--ink);
+    text-shadow: none;
   }
 
   .site-nav {
@@ -1324,9 +1339,16 @@ a {
     justify-content: center;
     gap: 16px;
     font-size: 13px;
+    color: #374151;
+    font-weight: 600;
+    text-shadow: none;
   }
 
   .site-nav .call-button {
+    display: none;
+  }
+
+  .site-nav .is-active::after {
     display: none;
   }
 
