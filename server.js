@@ -434,12 +434,20 @@ app.use((req, res, next) => {
 app.use(express.static(__dirname, {
   dotfiles: 'deny',
   index: false,
-  maxAge: '1h'
+  maxAge: '1h',
+  setHeaders: (res, filePath) => {
+    if (/\.(?:avif|webp|png|jpe?g|gif|svg|ico)$/i.test(filePath)) {
+      res.set('Cache-Control', 'public, max-age=604800, immutable');
+    } else if (/\.(?:css|js)$/i.test(filePath)) {
+      res.set('Cache-Control', 'public, max-age=3600, stale-while-revalidate=86400');
+    }
+  }
 }));
 app.use('/uploads', express.static(uploadsDir, {
   dotfiles: 'deny',
   index: false,
-  maxAge: '7d'
+  maxAge: '7d',
+  immutable: true
 }));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 app.use(express.json({ limit: '1mb' }));
@@ -461,6 +469,13 @@ const labels = {
   contact: 'Contact Page',
   global: 'Global Settings'
 };
+
+let publicContentCache = null;
+const publicContentCacheMs = Number(process.env.PUBLIC_CONTENT_CACHE_MS || 60000);
+
+function clearPublicContentCache() {
+  publicContentCache = null;
+}
 
 const asArray = (value) => {
   if (value === undefined || value === null) return [];
@@ -758,6 +773,17 @@ async function getAllContent(includeScheduled = false) {
   return content;
 }
 
+async function getCachedPublicContent() {
+  const now = Date.now();
+  if (publicContentCache && now - publicContentCache.createdAt < publicContentCacheMs) {
+    return publicContentCache.content;
+  }
+
+  const content = await getAllContent();
+  publicContentCache = { content, createdAt: now };
+  return content;
+}
+
 function trimForPrompt(content) {
   const global = content.global || {};
   const contact = content.contact || {};
@@ -987,8 +1013,8 @@ app.get('/blog/:slug', (req, res) => {
 
 app.get('/api/content', async (req, res) => {
   try {
-    res.set('Cache-Control', 'no-store');
-    res.json(await getAllContent());
+    res.set('Cache-Control', 'public, max-age=60, s-maxage=300, stale-while-revalidate=600');
+    res.json(await getCachedPublicContent());
   } catch (error) {
     console.error('Neon error:', error);
     logDiagnostic({
@@ -1156,7 +1182,7 @@ app.get('/api/content/:section', async (req, res) => {
   if (!collections[req.params.section]) return res.status(404).json({ error: 'Unknown content section.' });
 
   try {
-    res.set('Cache-Control', 'no-store');
+    res.set('Cache-Control', 'public, max-age=60, s-maxage=300, stale-while-revalidate=600');
     const section = await getSection(req.params.section);
     res.json(req.params.section === 'blogs' ? filterScheduledBlogs(section) : section);
   } catch (error) {
@@ -1362,6 +1388,7 @@ Object.keys(collections).forEach((section) => {
         }
       }
       await saveSection(section, normalizeSection(section, req.body, req.files || []));
+      clearPublicContentCache();
       logDiagnostic({
         level: 'info',
         category: 'cms-save',

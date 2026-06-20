@@ -62,7 +62,7 @@ window.addEventListener('load', () => {
     if (document.visibilityState && document.visibilityState !== 'visible') return;
     const navigation = performance.getEntriesByType?.('navigation')?.[0];
     const durationMs = Math.round(navigation?.duration || performance.now());
-    if (durationMs >= 4500) {
+    if (durationMs >= 9000) {
       const timings = navigation ? {
         ttfb: Math.round(navigation.responseStart),
         domContentLoaded: Math.round(navigation.domContentLoadedEventEnd),
@@ -647,7 +647,7 @@ function renderAbout(about = {}, global = {}) {
 
 updateActiveNav();
 
-fetch('/api/content', { cache: 'no-store' })
+fetch('/api/content')
   .then((response) => response.ok ? response.json() : {})
   .then((content) => {
     applyContact(content.contact);
