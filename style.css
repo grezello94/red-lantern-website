@@ -39,19 +39,20 @@ a {
 
 .site-header {
   position: fixed;
-  inset: 0 0 auto 0;
-  height: clamp(64px, 6.2vw, 72px);
+  inset: 14px clamp(16px, 3vw, 42px) auto clamp(16px, 3vw, 42px);
+  height: clamp(64px, 5.8vw, 70px);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 clamp(16px, 4vw, 56px);
-  background: rgba(255, 255, 255, 0.72);
+  padding: 0 clamp(16px, 3vw, 38px);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.76), rgba(255, 255, 255, 0.5));
   color: var(--ink);
-  backdrop-filter: blur(18px) saturate(1.15);
-  -webkit-backdrop-filter: blur(18px) saturate(1.15);
-  box-shadow: 0 12px 34px rgba(15, 23, 42, 0.08);
+  backdrop-filter: blur(22px) saturate(1.25);
+  -webkit-backdrop-filter: blur(22px) saturate(1.25);
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.14);
   z-index: 10;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.42);
+  border: 1px solid rgba(255, 255, 255, 0.58);
+  border-radius: 18px;
 }
 
 .brand {
@@ -1301,13 +1302,18 @@ a {
 
 @media (max-width: 960px) {
   .site-header {
+    inset: 0 0 auto 0;
     height: auto;
     padding: 9px 18px 11px;
     flex-wrap: wrap;
     gap: 8px;
     background: rgba(255, 255, 255, 0.96);
     backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
     box-shadow: 0 14px 34px rgba(15, 23, 42, 0.1);
+    border: 0;
+    border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+    border-radius: 0 0 18px 18px;
   }
 
   .site-nav {
