@@ -859,6 +859,7 @@ function setupGrowthRefreshButton() {
 }
 
 let diagnosticsLogs = [];
+const selectedLogIds = new Set();
 
 function formatLogTime(value) {
   if (!value) return '';
@@ -867,6 +868,90 @@ function formatLogTime(value) {
     timeStyle: 'short',
     timeZone: 'Asia/Kolkata'
   }).format(new Date(value));
+}
+
+function getVisibleLogs() {
+  const filter = document.getElementById('log-level-filter')?.value || 'all';
+  return filter === 'all' ? diagnosticsLogs : diagnosticsLogs.filter((log) => log.level === filter);
+}
+
+function getLogId(log) {
+  return String(log.id || `${log.created_at}-${log.message}`);
+}
+
+function logRoute(log) {
+  return [log.method, log.path].filter(Boolean).join(' ');
+}
+
+function formatLogForCopy(log) {
+  const details = log.details && Object.keys(log.details).length
+    ? JSON.stringify(log.details, null, 2)
+    : '';
+
+  return [
+    `Message: ${log.message || 'Website event'}`,
+    `Level: ${log.level || 'info'}`,
+    `When: ${formatLogTime(log.created_at)}`,
+    `Type: ${log.category || ''}`,
+    `Where: ${log.location || log.path || ''}`,
+    `Route: ${logRoute(log)}`,
+    `Status: ${log.status_code || ''}`,
+    `Load time: ${log.duration_ms ? `${log.duration_ms}ms` : ''}`,
+    `IP hash: ${log.ip_hash || ''}`,
+    `Suggested fix: ${log.solution || 'Review this event and the details below.'}`,
+    details ? `Details:\n${details}` : ''
+  ].filter(Boolean).join('\n');
+}
+
+async function copyTextToClipboard(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.left = '-9999px';
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand('copy');
+  textarea.remove();
+}
+
+function updateLogCopyStatus(message) {
+  const status = document.getElementById('log-copy-status');
+  if (!status) return;
+  status.textContent = message || `${selectedLogIds.size} selected`;
+}
+
+function pruneSelectedLogs() {
+  const loadedIds = new Set(diagnosticsLogs.map(getLogId));
+  [...selectedLogIds].forEach((id) => {
+    if (!loadedIds.has(id)) selectedLogIds.delete(id);
+  });
+}
+
+async function copyLogs(logs) {
+  if (!logs.length) {
+    updateLogCopyStatus('Select at least one log to copy.');
+    return;
+  }
+
+  try {
+    await copyTextToClipboard(logs.map(formatLogForCopy).join('\n\n---\n\n'));
+    updateLogCopyStatus(`Copied ${logs.length} log${logs.length === 1 ? '' : 's'}.`);
+  } catch (error) {
+    updateLogCopyStatus('Copy failed. Select the text and try again.');
+    reportClientDiagnostic({
+      category: 'frontend',
+      level: 'error',
+      message: `Admin log copy failed: ${error.message}`,
+      source: 'admin-cms.js copyLogs',
+      stack: error.stack || ''
+    });
+  }
 }
 
 function renderHealth(data = {}) {
@@ -908,10 +993,11 @@ async function refreshHealth() {
 function renderLogs() {
   const list = document.getElementById('logs-list');
   const status = document.getElementById('logs-status');
-  const filter = document.getElementById('log-level-filter')?.value || 'all';
   if (!list) return;
-  const logs = filter === 'all' ? diagnosticsLogs : diagnosticsLogs.filter((log) => log.level === filter);
+  pruneSelectedLogs();
+  const logs = getVisibleLogs();
   if (status) status.textContent = `${logs.length} shown · ${diagnosticsLogs.length} loaded`;
+  updateLogCopyStatus();
   if (!logs.length) {
     list.innerHTML = '<p class="log-status">No logs for this filter. Nice and quiet.</p>';
     return;
@@ -921,17 +1007,26 @@ function renderLogs() {
     const details = log.details && Object.keys(log.details).length
       ? JSON.stringify(log.details, null, 2)
       : '';
+    const logId = getLogId(log);
+    const isSelected = selectedLogIds.has(logId);
     return `
-      <article class="log-entry ${escapeHtml(log.level || 'info')}">
+      <article class="log-entry ${escapeHtml(log.level || 'info')} ${isSelected ? 'selected' : ''}" data-log-id="${escapeHtml(logId)}">
         <div class="log-entry-header">
           <h3>${escapeHtml(log.message || 'Website event')}</h3>
-          <span class="log-badge ${escapeHtml(log.level || 'info')}">${escapeHtml(log.level || 'info')}</span>
+          <div class="log-entry-actions">
+            <label class="log-select">
+              <input type="checkbox" class="log-select-input" ${isSelected ? 'checked' : ''}>
+              Select
+            </label>
+            <button type="button" class="log-copy-btn copy-single-log">Copy</button>
+            <span class="log-badge ${escapeHtml(log.level || 'info')}">${escapeHtml(log.level || 'info')}</span>
+          </div>
         </div>
         <div class="log-meta">
           <span><strong>When:</strong> ${escapeHtml(formatLogTime(log.created_at))}</span>
           <span><strong>Type:</strong> ${escapeHtml(log.category || '')}</span>
           <span><strong>Where:</strong> ${escapeHtml(log.location || log.path || '')}</span>
-          <span><strong>Route:</strong> ${escapeHtml([log.method, log.path].filter(Boolean).join(' '))}</span>
+          <span><strong>Route:</strong> ${escapeHtml(logRoute(log))}</span>
           <span><strong>Status:</strong> ${escapeHtml(log.status_code || '')}</span>
           <span><strong>Load time:</strong> ${log.duration_ms ? `${escapeHtml(log.duration_ms)}ms` : ''}</span>
           <span><strong>IP hash:</strong> ${escapeHtml(log.ip_hash || '')}</span>
@@ -951,6 +1046,7 @@ async function refreshLogs() {
     if (!response.ok) throw new Error('Unable to load diagnostics logs.');
     const data = await response.json();
     diagnosticsLogs = data.logs || [];
+    pruneSelectedLogs();
     renderLogs();
   } catch (error) {
     if (status) status.textContent = error.message || 'Unable to load logs.';
@@ -971,6 +1067,7 @@ async function clearLogs() {
   try {
     const response = await fetch('/api/admin/logs', { method: 'DELETE' });
     if (!response.ok) throw new Error('Unable to clear diagnostics logs.');
+    selectedLogIds.clear();
     await refreshLogs();
   } catch (error) {
     if (status) status.textContent = error.message || 'Unable to clear logs.';
@@ -982,6 +1079,36 @@ function setupDiagnosticsDashboard() {
   document.getElementById('refresh-logs')?.addEventListener('click', refreshLogs);
   document.getElementById('clear-logs')?.addEventListener('click', clearLogs);
   document.getElementById('log-level-filter')?.addEventListener('change', renderLogs);
+  document.getElementById('select-visible-logs')?.addEventListener('click', () => {
+    getVisibleLogs().forEach((log) => selectedLogIds.add(getLogId(log)));
+    renderLogs();
+  });
+  document.getElementById('clear-selected-logs')?.addEventListener('click', () => {
+    selectedLogIds.clear();
+    renderLogs();
+  });
+  document.getElementById('copy-selected-logs')?.addEventListener('click', () => {
+    const logs = diagnosticsLogs.filter((log) => selectedLogIds.has(getLogId(log)));
+    copyLogs(logs);
+  });
+  document.getElementById('logs-list')?.addEventListener('change', (event) => {
+    const checkbox = event.target.closest('.log-select-input');
+    if (!checkbox) return;
+    const entry = checkbox.closest('.log-entry');
+    const logId = entry?.dataset.logId;
+    if (!logId) return;
+    if (checkbox.checked) selectedLogIds.add(logId);
+    else selectedLogIds.delete(logId);
+    entry.classList.toggle('selected', checkbox.checked);
+    updateLogCopyStatus();
+  });
+  document.getElementById('logs-list')?.addEventListener('click', (event) => {
+    const button = event.target.closest('.copy-single-log');
+    if (!button) return;
+    const logId = button.closest('.log-entry')?.dataset.logId;
+    const log = diagnosticsLogs.find((item) => getLogId(item) === logId);
+    if (log) copyLogs([log]);
+  });
   refreshHealth();
   refreshLogs();
 }
@@ -1006,7 +1133,7 @@ setupDiagnosticsDashboard();
 setupRichTextToolbar();
 setupBlogDescriptionGenerator();
 
-document.querySelectorAll('.logout-btn').forEach((button) => {
+document.querySelectorAll('.logout-btn:not(#clear-logs)').forEach((button) => {
   button.addEventListener('click', () => {
     window.location.href = '/';
   });

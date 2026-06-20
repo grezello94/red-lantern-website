@@ -74,6 +74,12 @@
       .log-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
       .log-filter { padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 8px; background: #fff; font: inherit; font-weight: 700; color: #374151; }
       .log-status { color: #6b7280; font-size: 14px; font-weight: 700; }
+      .log-copy-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px; margin-bottom: 14px; border: 1px solid #e5e7eb; border-radius: 8px; background: #f9fafb; }
+      .log-copy-btn { border: 1px solid #d1d5db; background: #fff; color: #374151; padding: 9px 12px; border-radius: 7px; cursor: pointer; font: inherit; font-size: 13px; font-weight: 800; }
+      .log-copy-btn:hover { border-color: #9ca3af; background: #f3f4f6; }
+      .log-copy-btn.primary { border-color: #111827; background: #111827; color: #fff; }
+      .log-copy-btn.primary:hover { background: #1f2937; }
+      .log-copy-status { color: #6b7280; font-size: 13px; font-weight: 700; }
       .health-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
       .health-item { border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px; background: #f9fafb; }
       .health-item strong { display: block; margin-bottom: 4px; color: #111827; }
@@ -82,10 +88,14 @@
       .health-item.bad { border-color: #fecaca; background: #fef2f2; }
       .log-list { display: grid; gap: 14px; }
       .log-entry { border: 1px solid #e5e7eb; border-left: 5px solid #6b7280; border-radius: 8px; padding: 16px; background: #fff; }
+      .log-entry.selected { box-shadow: 0 0 0 2px rgba(17, 24, 39, 0.14); }
       .log-entry.error { border-left-color: #dc2626; background: #fff7f7; }
       .log-entry.warning { border-left-color: #f59e0b; background: #fffbeb; }
       .log-entry.info { border-left-color: #2563eb; }
       .log-entry-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+      .log-entry-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+      .log-select { display: inline-flex; align-items: center; gap: 6px; color: #374151; font-size: 13px; font-weight: 800; cursor: pointer; }
+      .log-select input { width: 16px; height: 16px; accent-color: #111827; }
       .log-entry h3 { font-size: 16px; color: #111827; margin: 0; line-height: 1.4; }
       .log-badge { display: inline-flex; align-items: center; border-radius: 999px; padding: 4px 9px; font-size: 11px; font-weight: 900; text-transform: uppercase; background: #e5e7eb; color: #374151; white-space: nowrap; }
       .log-badge.error { background: #fee2e2; color: #991b1b; }
@@ -857,6 +867,12 @@
               <option value="info">Info only</option>
             </select>
             <span id="logs-status" class="log-status">Loading...</span>
+          </div>
+          <div class="log-copy-toolbar">
+            <button type="button" id="select-visible-logs" class="log-copy-btn">Select shown</button>
+            <button type="button" id="clear-selected-logs" class="log-copy-btn">Clear selection</button>
+            <button type="button" id="copy-selected-logs" class="log-copy-btn primary">Copy selected</button>
+            <span id="log-copy-status" class="log-copy-status">0 selected</span>
           </div>
           <div id="logs-list" class="log-list"></div>
         </div>
