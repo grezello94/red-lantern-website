@@ -166,9 +166,10 @@ a {
 }
 
 .hero-logo-image {
-  width: min(170px, 42vw);
+  width: min(230px, 50vw);
   height: auto;
   display: block;
+  filter: drop-shadow(0 14px 24px rgba(0, 0, 0, 0.32));
 }
 
 .hero h1 {
@@ -195,6 +196,7 @@ a {
   flex-wrap: wrap;
   justify-content: center;
   gap: 10px;
+  margin-bottom: 26px;
 }
 
 .btn {
@@ -229,12 +231,11 @@ a {
 }
 
 .scroll-cue {
-  position: absolute;
-  left: 50%;
-  bottom: 24px;
-  transform: translateX(-50%);
+  position: static;
+  transform: none;
   display: flex;
   justify-content: center;
+  margin-top: 4px;
 }
 
 .scroll-pill {
@@ -1558,8 +1559,8 @@ a {
   }
 
   .hero-logo-image {
-    width: min(122px, 34vw);
-    filter: drop-shadow(0 10px 18px rgba(0, 0, 0, 0.34));
+    width: min(190px, 58vw);
+    filter: drop-shadow(0 12px 22px rgba(0, 0, 0, 0.38));
   }
 
   .hero-actions {
@@ -1568,6 +1569,7 @@ a {
     gap: 8px;
     width: min(100%, 360px);
     margin-inline: auto;
+    margin-bottom: 16px;
   }
 
   .hero h1 {
@@ -1621,7 +1623,8 @@ a {
   }
 
   .scroll-cue {
-    display: none;
+    display: flex;
+    margin-top: 0;
   }
 
   .info-bar {
