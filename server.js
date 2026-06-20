@@ -623,9 +623,10 @@ function generatedBlogDescriptions(title, content) {
     : lead || cleanTitle;
   const excerpt = trimDescription(excerptSeed, 165);
 
-  const seoSeed = cleanTitle
-    ? `${cleanTitle} at ${localPhrase}. ${lead}`
-    : `${lead} at ${localPhrase}.`;
+  const leadHasTitle = cleanTitle && lead.toLowerCase().includes(cleanTitle.toLowerCase());
+  const seoSeed = lead && !leadHasTitle
+    ? `${lead} Visit ${localPhrase} for Chinese and Goan food in Colva.`
+    : `${cleanTitle || lead} at ${localPhrase}.`;
   const seoDescription = trimDescription(
     includesLocalContext(seoSeed) ? seoSeed : `${seoSeed} Discover Chinese and Goan food in Colva.`,
     155
@@ -1007,8 +1008,39 @@ cleanPageRoutes.forEach((file, route) => {
   });
 });
 
-app.get('/blog/:slug', (req, res) => {
-  res.sendFile(path.join(__dirname, 'blog-post.html'));
+function escapeHtmlAttribute(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function injectBlogMeta(html, post = {}, global = {}) {
+  const title = escapeHtmlAttribute(post.seoTitle || post.title || 'Red Lantern Journal');
+  const description = escapeHtmlAttribute(post.seoDescription || post.excerpt || global.seoDescription || 'Read food guides and restaurant stories from Red Lantern Restaurant in Colva, Goa.');
+  const image = escapeHtmlAttribute(post.image || global.ogImage || '/images/red-lantern-logo-600.webp');
+
+  return html
+    .replace(/<title>[\s\S]*?<\/title>/i, `<title>${title}</title>`)
+    .replace(/<meta name="description" content="[^"]*"\s*\/?>/i, `<meta name="description" content="${description}" />`)
+    .replace('</head>', `    <meta property="og:title" content="${title}" />\n    <meta property="og:description" content="${description}" />\n    <meta property="og:image" content="${image}" />\n    <meta name="twitter:title" content="${title}" />\n    <meta name="twitter:description" content="${description}" />\n    <meta name="twitter:image" content="${image}" />\n  </head>`);
+}
+
+app.get('/blog/:slug', async (req, res) => {
+  try {
+    const [blogs, global] = await Promise.all([getSection('blogs'), getSection('global')]);
+    const post = publishedPosts(blogs.posts || []).find((item) => item.slug === req.params.slug);
+    if (!post) return res.sendFile(path.join(__dirname, 'blog-post.html'));
+
+    const html = fs.readFileSync(path.join(__dirname, 'blog-post.html'), 'utf8');
+    res.set('Content-Type', 'text/html; charset=utf-8');
+    res.send(injectBlogMeta(html, post, global));
+  } catch (error) {
+    console.error('Blog meta render error:', error);
+    res.sendFile(path.join(__dirname, 'blog-post.html'));
+  }
 });
 
 app.get('/api/content', async (req, res) => {

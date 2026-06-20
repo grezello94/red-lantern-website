@@ -103,9 +103,10 @@ function generatedBlogDescriptions(title, content) {
     : lead || cleanTitle;
   const excerpt = trimDescription(excerptSeed, 165);
 
-  const seoSeed = cleanTitle
-    ? `${cleanTitle} at ${localPhrase}. ${lead}`
-    : `${lead} at ${localPhrase}.`;
+  const leadHasTitle = cleanTitle && lead.toLowerCase().includes(cleanTitle.toLowerCase());
+  const seoSeed = lead && !leadHasTitle
+    ? `${lead} Visit ${localPhrase} for Chinese and Goan food in Colva.`
+    : `${cleanTitle || lead} at ${localPhrase}.`;
   const seoDescription = trimDescription(
     includesLocalContext(seoSeed) ? seoSeed : `${seoSeed} Discover Chinese and Goan food in Colva.`,
     155
@@ -317,9 +318,9 @@ function blogEntryMarkup(post = {}, index = 0) {
           <input type="text" name="blogSeoTitle[]" value="${escapeHtml(post.seoTitle || '')}" placeholder="Search result title">
         </div>
         <div class="form-group">
-          <label>SEO Description</label>
-          <span class="help-text">Auto-generated for Google. Ideal length: 140-155 characters.</span>
-          <textarea name="blogSeoDescription[]" rows="2" placeholder="Search result description">${escapeHtml(post.seoDescription || '')}</textarea>
+          <label>Meta Description</label>
+          <span class="help-text">Shown in Google and page meta tags. Auto-generate it or write your own. Ideal length: 140-155 characters.</span>
+          <textarea name="blogSeoDescription[]" rows="2" placeholder="Meta description for Google">${escapeHtml(post.seoDescription || '')}</textarea>
         </div>
       </div>
       <button type="button" class="generate-blog-description-btn" style="background: #111827; color: #fff; border: none; padding: 10px 14px; border-radius: 8px; font-weight: 800; cursor: pointer; margin: -8px 0 24px;">Auto-generate descriptions</button>

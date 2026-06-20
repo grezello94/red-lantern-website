@@ -226,18 +226,19 @@ function setPageSeo({ title, description, image, type = 'website' }, global = {}
   const siteUrl = (global.siteUrl || location.origin).replace(/\/$/, '');
   const pageUrl = absoluteUrl(location.pathname + location.search, siteUrl);
   const pageImage = absoluteUrl(image || global.ogImage || 'images/red-lantern-logo-600.webp', siteUrl);
+  const pageDescription = description || global.seoDescription || document.querySelector('meta[name="description"]')?.content || '';
 
   if (title) document.title = title;
   upsertLink('link[rel="canonical"]', { rel: 'canonical', href: pageUrl });
-  upsertMeta('meta[name="description"]', { name: 'description', content: description });
+  upsertMeta('meta[name="description"]', { name: 'description', content: pageDescription });
   upsertMeta('meta[property="og:type"]', { property: 'og:type', content: type });
   upsertMeta('meta[property="og:title"]', { property: 'og:title', content: title || document.title });
-  upsertMeta('meta[property="og:description"]', { property: 'og:description', content: description });
+  upsertMeta('meta[property="og:description"]', { property: 'og:description', content: pageDescription });
   upsertMeta('meta[property="og:image"]', { property: 'og:image', content: pageImage });
   upsertMeta('meta[property="og:url"]', { property: 'og:url', content: pageUrl });
   upsertMeta('meta[name="twitter:card"]', { name: 'twitter:card', content: 'summary_large_image' });
   upsertMeta('meta[name="twitter:title"]', { name: 'twitter:title', content: title || document.title });
-  upsertMeta('meta[name="twitter:description"]', { name: 'twitter:description', content: description });
+  upsertMeta('meta[name="twitter:description"]', { name: 'twitter:description', content: pageDescription });
   upsertMeta('meta[name="twitter:image"]', { name: 'twitter:image', content: pageImage });
 }
 
