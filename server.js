@@ -654,6 +654,104 @@ function blogMetaFromSchedule(publishAt, content) {
   return `${formatBlogDate(publishAt)} · ${readTimeMinutes(content)} min read`;
 }
 
+function googleBusinessConfig() {
+  const resourceId = (value, prefix) => String(value || '').trim().replace(new RegExp(`^${prefix}/`, 'i'), '');
+  return {
+    accountId: resourceId(process.env.GOOGLE_BUSINESS_ACCOUNT_ID, 'accounts'),
+    locationId: resourceId(process.env.GOOGLE_BUSINESS_LOCATION_ID, 'locations'),
+    clientId: String(process.env.GOOGLE_BUSINESS_OAUTH_CLIENT_ID || '').trim(),
+    clientSecret: String(process.env.GOOGLE_BUSINESS_OAUTH_CLIENT_SECRET || '').trim(),
+    refreshToken: String(process.env.GOOGLE_BUSINESS_OAUTH_REFRESH_TOKEN || '').trim(),
+    syncLimit: Math.min(Math.max(Number(process.env.GOOGLE_REVIEWS_SYNC_LIMIT || 30), 1), 100)
+  };
+}
+
+function assertGoogleBusinessConfig(config) {
+  const missing = Object.entries({
+    GOOGLE_BUSINESS_ACCOUNT_ID: config.accountId,
+    GOOGLE_BUSINESS_LOCATION_ID: config.locationId,
+    GOOGLE_BUSINESS_OAUTH_CLIENT_ID: config.clientId,
+    GOOGLE_BUSINESS_OAUTH_CLIENT_SECRET: config.clientSecret,
+    GOOGLE_BUSINESS_OAUTH_REFRESH_TOKEN: config.refreshToken
+  }).filter(([, value]) => !value).map(([name]) => name);
+
+  if (missing.length) {
+    const error = new Error(`Google Business Profile sync is not configured. Missing: ${missing.join(', ')}`);
+    error.statusCode = 503;
+    throw error;
+  }
+}
+
+async function googleBusinessAccessToken(config) {
+  const response = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: config.clientId,
+      client_secret: config.clientSecret,
+      refresh_token: config.refreshToken,
+      grant_type: 'refresh_token'
+    })
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error_description || data.error || 'Google OAuth token refresh failed.');
+  return data.access_token;
+}
+
+function normalizeGoogleReview(review = {}) {
+  const reviewer = review.reviewer || {};
+  const text = cleanDescriptionText(review.comment || '');
+  return {
+    name: reviewer.displayName || 'Google reviewer',
+    stars: '★★★★★',
+    text,
+    googleReviewName: review.name || '',
+    googleReviewId: review.reviewId || '',
+    googleCreateTime: review.createTime || '',
+    googleUpdateTime: review.updateTime || ''
+  };
+}
+
+async function fetchFiveStarGoogleReviews() {
+  const config = googleBusinessConfig();
+  assertGoogleBusinessConfig(config);
+  const accessToken = await googleBusinessAccessToken(config);
+  const reviews = [];
+  let pageToken = '';
+
+  do {
+    const url = new URL(`https://mybusiness.googleapis.com/v4/accounts/${encodeURIComponent(config.accountId)}/locations/${encodeURIComponent(config.locationId)}/reviews`);
+    url.searchParams.set('pageSize', '50');
+    if (pageToken) url.searchParams.set('pageToken', pageToken);
+
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${accessToken}` }
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error?.message || 'Google Business Profile reviews request failed.');
+
+    reviews.push(...(data.reviews || [])
+      .filter((review) => review.starRating === 'FIVE')
+      .map(normalizeGoogleReview)
+      .filter((review) => review.text));
+    pageToken = data.nextPageToken || '';
+  } while (pageToken && reviews.length < config.syncLimit);
+
+  return reviews.slice(0, config.syncLimit);
+}
+
+function mergeReviews(existingReviews = [], googleReviews = []) {
+  const seen = new Set();
+  const merged = [];
+  [...googleReviews, ...existingReviews].forEach((review) => {
+    const key = review.googleReviewName || `${cleanDescriptionText(review.name)}:${cleanDescriptionText(review.text).slice(0, 120)}`;
+    if (!review.text || seen.has(key)) return;
+    seen.add(key);
+    merged.push(review);
+  });
+  return merged;
+}
+
 function normalizeBlogs(body, files) {
   const titles = asArray(body.blogTitle);
   const excerpts = asArray(body.blogExcerpt);
@@ -1082,6 +1180,55 @@ app.get('/api/admin/content', async (req, res) => {
       details: { stack: error.stack }
     });
     res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/admin/google-reviews/sync', async (req, res) => {
+  try {
+    res.set('Cache-Control', 'no-store');
+    const googleReviews = await fetchFiveStarGoogleReviews();
+    const home = await getSection('home');
+    const existingReviews = Array.isArray(home.reviews) ? home.reviews : [];
+    const existingKeys = new Set(existingReviews.map((review) => review.googleReviewName || `${cleanDescriptionText(review.name)}:${cleanDescriptionText(review.text).slice(0, 120)}`));
+    const importedCount = googleReviews.filter((review) => !existingKeys.has(review.googleReviewName || `${cleanDescriptionText(review.name)}:${cleanDescriptionText(review.text).slice(0, 120)}`)).length;
+    const reviews = mergeReviews(existingReviews, googleReviews);
+
+    await saveSection('home', { reviews });
+    clearPublicContentCache();
+    logDiagnostic({
+      level: 'info',
+      category: 'cms-save',
+      message: `Synced ${importedCount} new 5-star Google reviews.`,
+      method: req.method,
+      path: req.path,
+      statusCode: 200,
+      ipHash: hashIp(req),
+      userAgent: req.headers['user-agent'] || '',
+      details: {
+        importedCount,
+        totalFiveStar: reviews.length
+      }
+    });
+
+    res.json({
+      importedCount,
+      totalFiveStar: reviews.length,
+      reviews
+    });
+  } catch (error) {
+    console.error('Google reviews sync error:', error);
+    logDiagnostic({
+      level: 'error',
+      category: 'server',
+      message: `Google reviews sync failed: ${error.message}`,
+      method: req.method,
+      path: req.path,
+      statusCode: error.statusCode || 500,
+      ipHash: hashIp(req),
+      userAgent: req.headers['user-agent'] || '',
+      details: { stack: error.stack }
+    });
+    res.status(error.statusCode || 500).json({ error: error.message });
   }
 });
 

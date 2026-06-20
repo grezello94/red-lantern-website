@@ -220,6 +220,41 @@ function fillHome(home = {}) {
 
   const welcomePreview = document.querySelector('input[name="welcomeImage"]')?.closest('.form-group')?.querySelector('.image-preview');
   if (welcomePreview && home.welcomeImage) welcomePreview.src = home.welcomeImage;
+
+  renderHomeReviewEntries(home.reviews);
+}
+
+function reviewEntryMarkup(review = {}, index = 0) {
+  return `
+    <div class="review-entry">
+      <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #f3f4f6; margin: 10px 0 16px; padding-bottom: 8px;">
+        <h3 style="font-size: 16px; color: #d62828; margin: 0;">Review ${index + 1}</h3>
+        <button type="button" class="remove-review-btn" style="color: #ef4444; background: none; border: none; cursor: pointer; font-size: 14px; font-weight: 700;">Remove</button>
+      </div>
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Reviewer Name</label>
+          <input type="text" name="reviewName[]" value="${escapeHtml(review.name || '')}" placeholder="e.g. John Doe">
+        </div>
+        <div class="form-group">
+          <label>Star Rating</label>
+          <input type="text" name="reviewStars[]" value="${escapeHtml(review.stars || '★★★★★')}">
+        </div>
+      </div>
+      <div class="form-grid full" style="margin-bottom: 30px;">
+        <div class="form-group">
+          <label>Review Text</label>
+          <textarea name="reviewText[]" rows="3" placeholder="Paste the glowing Google review here...">${escapeHtml(review.text || '')}</textarea>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderHomeReviewEntries(reviews = []) {
+  const reviewsContainer = document.getElementById('reviews-container');
+  if (!reviewsContainer || !Array.isArray(reviews) || !reviews.length) return;
+  reviewsContainer.innerHTML = reviews.map((review, index) => reviewEntryMarkup(review, index)).join('');
 }
 
 function dishEntryMarkup(dish = {}, index = 0) {
@@ -1114,6 +1149,39 @@ function setupDiagnosticsDashboard() {
   refreshLogs();
 }
 
+function setupGoogleReviewsSync() {
+  const button = document.getElementById('sync-google-reviews');
+  const status = document.getElementById('google-reviews-sync-status');
+  if (!button) return;
+
+  button.addEventListener('click', async () => {
+    button.disabled = true;
+    if (status) {
+      status.textContent = 'Fetching 5-star Google reviews...';
+      status.style.color = '#6b7280';
+    }
+
+    try {
+      const response = await fetch('/api/admin/google-reviews/sync', { method: 'POST' });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to sync Google reviews.');
+
+      renderHomeReviewEntries(data.reviews || []);
+      if (status) {
+        status.textContent = `Synced ${data.importedCount} new 5-star review${data.importedCount === 1 ? '' : 's'} (${data.totalFiveStar} total 5-star saved). Click Publish Changes to Home Page if you edit them.`;
+        status.style.color = '#166534';
+      }
+    } catch (error) {
+      if (status) {
+        status.textContent = error.message || 'Unable to sync Google reviews.';
+        status.style.color = '#b91c1c';
+      }
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
+
 fetch('/api/admin/content')
   .then((response) => response.ok ? response.json() : {})
   .then((content) => {
@@ -1131,6 +1199,7 @@ fetch('/api/admin/content')
 setupAiGrowthButton();
 setupGrowthRefreshButton();
 setupDiagnosticsDashboard();
+setupGoogleReviewsSync();
 setupRichTextToolbar();
 setupBlogDescriptionGenerator();
 
