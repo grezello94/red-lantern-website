@@ -38,7 +38,7 @@ a {
 }
 
 .site-header {
-  position: fixed;
+  position: absolute;
   inset: 18px clamp(20px, 4vw, 64px) auto clamp(20px, 4vw, 64px);
   height: clamp(58px, 5vw, 68px);
   display: flex;
