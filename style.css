@@ -45,11 +45,13 @@ a {
   align-items: center;
   justify-content: space-between;
   padding: 0 clamp(16px, 4vw, 56px);
-  background: #ffffff;
+  background: rgba(255, 255, 255, 0.72);
   color: var(--ink);
-  box-shadow: 0 1px 0 rgba(15, 23, 42, 0.08);
+  backdrop-filter: blur(18px) saturate(1.15);
+  -webkit-backdrop-filter: blur(18px) saturate(1.15);
+  box-shadow: 0 12px 34px rgba(15, 23, 42, 0.08);
   z-index: 10;
-  border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.42);
 }
 
 .brand {
