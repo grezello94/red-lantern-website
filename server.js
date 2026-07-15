@@ -1494,13 +1494,22 @@ app.get('/api/admin/qr/:mode', async (req, res) => {
   try {
     const permanentQrBaseUrl = String(process.env.AIR_MENU_QR_BASE_URL || 'https://www.redlanternrestaurant.in').replace(/\/$/, '');
     const target = `${permanentQrBaseUrl}/scan/${mode}`;
-    const svg = await QRCode.toString(target, {
+    const qrSvg = await QRCode.toString(target, {
       type: 'svg',
       errorCorrectionLevel: 'H',
       margin: 2,
       color: { dark: '#17120f', light: '#ffffff' },
       width: 720
     });
+    const centerLabel = [
+      '<g aria-label="Scan for Menu">',
+      '<rect x="17.25" y="17.25" width="10.5" height="10.5" rx="1.2" fill="#ffffff" stroke="#dc2626" stroke-width="0.45"/>',
+      '<text x="22.5" y="20.8" text-anchor="middle" fill="#111827" font-family="Arial, Helvetica, sans-serif" font-size="2.15" font-weight="800" letter-spacing="0.12">SCAN</text>',
+      '<text x="22.5" y="23.1" text-anchor="middle" fill="#dc2626" font-family="Arial, Helvetica, sans-serif" font-size="1.35" font-weight="800" letter-spacing="0.08">FOR</text>',
+      '<text x="22.5" y="25.85" text-anchor="middle" fill="#111827" font-family="Arial, Helvetica, sans-serif" font-size="2.15" font-weight="800" letter-spacing="0.08">MENU</text>',
+      '</g>'
+    ].join('');
+    const svg = qrSvg.replace('</svg>', `${centerLabel}</svg>`);
     res.set({
       'Content-Type': 'image/svg+xml; charset=utf-8',
       'Content-Disposition': `inline; filename="red-lantern-${mode}-menu-qr.svg"`,
