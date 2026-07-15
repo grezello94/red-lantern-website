@@ -1,5 +1,8 @@
 User-agent: *
 Allow: /
+Disallow: /air-menu
+Disallow: /scan/
+Disallow: /api/air-menu
 
 Sitemap: https://www.redlanternrestaurant.in/sitemap.xml
 Sitemap: https://www.redlanternrestaurant.in/rss.xml

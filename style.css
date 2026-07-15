@@ -39,26 +39,11 @@ a {
 
 .site-header {
   position: absolute;
-  inset: 0 0 auto 0;
-  height: clamp(64px, 6.2vw, 72px);
+  inset: 18px clamp(20px, 4vw, 64px) auto clamp(20px, 4vw, 64px);
+  height: clamp(58px, 5vw, 68px);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 clamp(16px, 4vw, 56px);
-  background: rgba(255, 255, 255, 0.96);
-  color: var(--ink);
-  text-shadow: none;
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  box-shadow: 0 1px 0 rgba(15, 23, 42, 0.08);
-  z-index: 10;
-  border-bottom: 1px solid rgba(15, 23, 42, 0.06);
-  border-radius: 0;
-}
-
-.home-page .site-header {
-  inset: 18px clamp(20px, 4vw, 64px) auto clamp(20px, 4vw, 64px);
-  height: clamp(58px, 5vw, 68px);
   padding: 0;
   background: transparent;
   color: #fff;
@@ -66,7 +51,9 @@ a {
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
   box-shadow: none;
+  z-index: 10;
   border: 0;
+  border-radius: 0;
 }
 
 .brand {
@@ -75,13 +62,9 @@ a {
 }
 
 .brand-logo-image {
-  width: clamp(82px, 6.8vw, 98px);
+  width: clamp(78px, 6.4vw, 96px);
   height: auto;
   display: block;
-}
-
-.home-page .brand-logo-image {
-  width: clamp(78px, 6.4vw, 96px);
   filter: drop-shadow(0 8px 18px rgba(0, 0, 0, 0.45));
 }
 
@@ -89,31 +72,18 @@ a {
   display: flex;
   align-items: center;
   gap: clamp(16px, 2.4vw, 28px);
-  font-weight: 600;
-  color: #374151;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.86);
   font-size: clamp(14px, 1vw, 16px);
 }
 
-.home-page .site-nav {
-  font-weight: 700;
-  color: rgba(255, 255, 255, 0.86);
-}
-
 .site-nav a {
-  padding: 6px 0;
+  padding: 8px 0;
   position: relative;
   transition: color 0.2s ease, text-shadow 0.2s ease;
 }
 
 .site-nav a:not(.call-button):hover {
-  color: var(--brand-red);
-}
-
-.home-page .site-nav a {
-  padding: 8px 0;
-}
-
-.home-page .site-nav a:not(.call-button):hover {
   color: #fff;
   text-shadow: 0 0 18px rgba(255, 255, 255, 0.45);
 }
@@ -1363,33 +1333,12 @@ a {
     text-shadow: none;
   }
 
-  .home-page .site-header {
-    inset: 0 0 auto 0;
-    height: auto;
-    padding: 9px 18px 11px;
-    background: rgba(255, 255, 255, 0.96);
-    backdrop-filter: blur(14px);
-    -webkit-backdrop-filter: blur(14px);
-    box-shadow: 0 14px 34px rgba(15, 23, 42, 0.1);
-    border: 0;
-    border-bottom: 1px solid rgba(15, 23, 42, 0.06);
-    border-radius: 0 0 18px 18px;
-    color: var(--ink);
-    text-shadow: none;
-  }
-
   .site-nav {
     width: 100%;
     flex-wrap: wrap;
     justify-content: center;
     gap: 16px;
     font-size: 13px;
-    color: #374151;
-    font-weight: 600;
-    text-shadow: none;
-  }
-
-  .home-page .site-nav {
     color: #374151;
     font-weight: 600;
     text-shadow: none;

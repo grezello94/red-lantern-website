@@ -2,6 +2,8 @@ const express = require('express');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const { pathToFileURL } = require('url');
+const QRCode = require('qrcode');
 
 const envPath = path.join(__dirname, '.env');
 if (fs.existsSync(envPath)) {
@@ -201,6 +203,16 @@ const upload = multer({
   }
 });
 
+const menuFileUpload = multer({
+  storage,
+  limits: { fileSize: 20 * 1024 * 1024, files: 1 },
+  fileFilter: (req, file, cb) => {
+    const extension = path.extname(file.originalname).toLowerCase();
+    const isMenuFile = extension === '.pdf' || extension === '.csv';
+    cb(isMenuFile ? null : new Error('Please upload a PDF or CSV file.'), isMenuFile);
+  }
+});
+
 function securityHeaders(req, res, next) {
   res.set({
     'X-Content-Type-Options': 'nosniff',
@@ -225,6 +237,9 @@ function isProtectedAdminPath(req) {
     || req.path === '/api/admin/content'
     || req.path === '/api/admin/logs'
     || req.path === '/api/admin/health'
+    || req.path.startsWith('/api/admin/qr/')
+    || req.path === '/api/admin/air-menu/extract'
+    || req.path === '/api/admin/air-menu/dietary'
     || req.path.startsWith('/api/update-')
     || req.path === '/api/growth-ai';
 }
@@ -423,6 +438,7 @@ const legacyPageRedirects = new Map([
 app.use((req, res, next) => {
   if (req.method !== 'GET' && req.method !== 'HEAD') return next();
   if (req.path === '/') return res.redirect(301, '/home');
+  if (req.path === '/air-menu.html') return res.redirect(302, '/menu');
   if (req.path === '/blog-post.html') {
     const slug = String(req.query.slug || '').trim();
     return res.redirect(301, slug ? `/blog/${encodeURIComponent(slug)}` : '/blog');
@@ -455,6 +471,7 @@ app.use(express.json({ limit: '1mb' }));
 const collections = {
   home: 'home_content',
   menu: 'menu_content',
+  airMenu: 'air_menu_content',
   about: 'about_content',
   blogs: 'blogs_content',
   contact: 'contact_content',
@@ -464,6 +481,7 @@ const collections = {
 const labels = {
   home: 'Home Page',
   menu: 'Menu Page',
+  airMenu: 'Air Menu',
   about: 'About Page',
   blogs: 'Blogs Page',
   contact: 'Contact Page',
@@ -570,6 +588,65 @@ function normalizeMenu(body, files) {
       image: indexedFile(files, 'dishPhoto', index) || currentImages[index] || ''
     })).filter((dish) => dish.name)
   };
+}
+
+function normalizeAirMenu(body) {
+  const names = asArray(body.airItemName);
+  const prices = asArray(body.airItemPrice);
+  const fullPrices = asArray(body.airItemFullPrice);
+  const halfPrices = asArray(body.airItemHalfPrice);
+  const categories = asArray(body.airItemCategory);
+  const types = asArray(body.airItemType);
+  const descriptions = asArray(body.airItemDescription);
+  const dietaryValues = asArray(body.airItemDietary);
+  const bestSellers = asArray(body.airItemBestSeller);
+  const mustHaves = asArray(body.airItemMustHave);
+  let categoryVisibility = {};
+  try {
+    const parsed = JSON.parse(body.airCategoryVisibility || '{}');
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) categoryVisibility = parsed;
+  } catch {
+    categoryVisibility = {};
+  }
+  return {
+    pageTitle: body.airMenuTitle || 'Our Menu',
+    pageSubtitle: body.airMenuSubtitle || 'Explore our freshly prepared food and beverages.',
+    note: body.airMenuNote || 'Availability may vary. Please ask our team about today’s specials.',
+    tableLive: body.airTableLive === 'on',
+    cardLive: body.airCardLive === 'on',
+    showTablePrices: body.airShowTablePrices === 'on',
+    showCardPrices: body.airShowCardPrices === 'on',
+    cardCallEnabled: body.airCardCallEnabled === 'on',
+    cardOrderPhone: String(body.airCardOrderPhone || '').trim(),
+    categoryVisibility,
+    sourceFileName: body.airSourceFileName || '',
+    items: dedupeMenuItems(names.map((name, index) => ({
+      name: String(name || '').trim(),
+      price: String(prices[index] || '').trim(),
+      fullPrice: String(fullPrices[index] || '').trim(),
+      halfPrice: String(halfPrices[index] || '').trim(),
+      category: String(categories[index] || 'Menu').trim() || 'Menu',
+      type: types[index] === 'beverage' ? 'beverage' : 'food',
+      description: String(descriptions[index] || '').trim(),
+      dietary: dietaryValues[index] === 'nonveg' ? 'nonveg' : dietaryValues[index] === 'veg' ? 'veg' : '',
+      bestSeller: bestSellers[index] === 'true',
+      mustHave: mustHaves[index] === 'true'
+    })).filter((item) => item.name))
+  };
+}
+
+function menuItemKey(item = {}) {
+  return `${String(item.category || 'menu').toLowerCase().replace(/[^a-z0-9]/g, '')}::${String(item.name || '').toLowerCase().replace(/[^a-z0-9]/g, '')}`;
+}
+
+function dedupeMenuItems(items = []) {
+  const seen = new Set();
+  return items.filter((item) => {
+    const key = menuItemKey(item);
+    if (!item.name || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function stripHtml(value) {
@@ -834,6 +911,7 @@ function normalizeContact(body) {
 function normalizeSection(section, body, files) {
   if (section === 'home') return normalizeHome(body, files);
   if (section === 'menu') return normalizeMenu(body, files);
+  if (section === 'airMenu') return normalizeAirMenu(body);
   if (section === 'blogs') return normalizeBlogs(body, files);
   if (section === 'about') return normalizeAbout(body, files);
   if (section === 'global') return normalizeGlobal(body);
@@ -865,10 +943,11 @@ function filterScheduledBlogs(blogs = {}) {
   };
 }
 
-async function getAllContent(includeScheduled = false) {
+async function getAllContent(includeScheduled = false, includePrivate = false) {
   const entries = await Promise.all(Object.keys(collections).map(async (section) => [section, await getSection(section)]));
   const content = Object.fromEntries(entries);
   if (!includeScheduled && content.blogs) content.blogs = filterScheduledBlogs(content.blogs);
+  if (!includePrivate) delete content.airMenu;
   return content;
 }
 
@@ -1100,6 +1179,339 @@ app.get('/admin', (req, res) => {
   res.sendFile(path.join(__dirname, 'admin.html'));
 });
 
+const airMenuLifetimeMs = 2 * 60 * 60 * 1000;
+const airMenuSecret = process.env.AIR_MENU_SECRET || process.env.ADMIN_PASSWORD || 'red-lantern-local-air-menu';
+
+function airMenuSignature(mode, expires) {
+  return crypto.createHmac('sha256', airMenuSecret)
+    .update(`${mode}:${expires}`)
+    .digest('base64url');
+}
+
+function validAirMenuAccess(mode, expires, signature) {
+  if (!['table', 'card'].includes(mode)) return false;
+  const expiresAt = Number(expires);
+  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) return false;
+  return secureCompare(signature, airMenuSignature(mode, expiresAt));
+}
+
+function likelyMenuCategory(line) {
+  if (!line || line.length < 2 || line.length > 55 || /\d/.test(line)) return false;
+  const letters = line.replace(/[^a-z]/gi, '');
+  if (letters.length < 2) return false;
+  const upper = line.replace(/[^A-Z]/g, '').length / letters.length;
+  return upper > 0.65 || /^(starters?|soups?|salads?|mains?|desserts?|beverages?|drinks?|rice|noodles|breads?|seafood|chicken|mutton|vegetarian|non.?veg)/i.test(line);
+}
+
+function airMenuItemType(category, name) {
+  return /beverage|drink|mocktail|cocktail|juice|shake|lassi|tea|coffee|beer|wine|spirit|whisky|rum|vodka|gin|water|soda/i.test(`${category} ${name}`)
+    ? 'beverage'
+    : 'food';
+}
+
+function inferMenuCategory(name, suppliedCategory = '') {
+  const item = String(name || '').toLowerCase();
+  const supplied = String(suppliedCategory || '').trim();
+  const generic = !supplied || /^(menu|other|others|misc|miscellaneous|food|items?|uncategorized)$/i.test(supplied);
+  if (!generic) return supplied;
+
+  const categoryRules = [
+    ['Hot Beverages', /\b(tea|coffee|espresso|cappuccino|latte|hot chocolate)\b/],
+    ['Mocktails & Cold Beverages', /\b(mocktail|mojito|juice|shake|lassi|soda|soft drink|coke|sprite|fanta|water|lime|lemonade|iced tea|cold coffee)\b/],
+    ['Alcoholic Beverages', /\b(beer|wine|whisky|whiskey|rum|vodka|gin|brandy|tequila|cocktail)\b/],
+    ['Soups', /\b(soup|broth|shorba)\b/],
+    ['Salads', /\b(salad|coleslaw)\b/],
+    ['Desserts', /\b(ice cream|brownie|cake|pudding|custard|gulab|dessert|sweet|mousse|caramel|falooda|kulfi)\b/],
+    ['Rice & Biryani', /\b(rice|biryani|pulao|pilaf)\b/],
+    ['Noodles', /\b(noodle|chow ?mein|hakka|mein|chopsuey|chop suey)\b/],
+    ['Breads', /\b(naan|roti|paratha|kulcha|bread|pav|chapati)\b/],
+    ['Starters & Snacks', /\b(starter|spring roll|manchurian|kebab|kabab|tikka|lollipop|pakora|crispy|cutlet|samosa|wings|snack)\b/],
+    ['Seafood', /\b(fish|prawn|shrimp|squid|calamari|crab|lobster|seafood|kingfish|pomfret|rawas)\b/],
+    ['Chicken', /\b(chicken|murgh)\b/],
+    ['Mutton & Lamb', /\b(mutton|lamb|goat|keema)\b/],
+    ['Egg Dishes', /\b(egg|omelette|omelet)\b/],
+    ['Vegetarian Mains', /\b(paneer|mushroom|baby corn|gobi|cauliflower|vegetable|veg\b|dal\b|chana|rajma|aloo|potato)\b/]
+  ];
+  const match = categoryRules.find(([, pattern]) => pattern.test(item));
+  return match ? match[0] : 'Main Course';
+}
+
+function parseMenuText(rawText) {
+  const lines = String(rawText || '').split(/\r?\n/)
+    .map((line) => line.replace(/[|•·]+/g, ' ').replace(/\.{2,}/g, ' ').replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+  const items = [];
+  let category = 'Menu';
+  const priceAtEnd = /^(.{2,}?)\s+(?:(₹|Rs\.?|INR)\s*)?(\d{2,5}(?:\.\d{1,2})?)\s*\/?-?$/i;
+
+  lines.forEach((line) => {
+    if (likelyMenuCategory(line)) { category = line.replace(/[:\-]+$/, '').trim(); return; }
+    const match = line.match(priceAtEnd);
+    if (!match) return;
+    let name = match[1].replace(/^[\d.)\-\s]+/, '').replace(/\s+\d{1,2}\s*$/, '').trim();
+    if (name.length < 2 || /^(page|phone|tel|gst|tax|total|subtotal)$/i.test(name)) return;
+    const currency = match[2] || '₹';
+    let price = `${/^rs/i.test(currency) ? '₹' : currency}${match[3]}`;
+    let halfPrice = '';
+    let fullPrice = '';
+    const precedingPrice = name.match(/\s(?:₹|Rs\.?|INR)?\s*(\d{2,5}(?:\.\d{1,2})?)\s*$/i);
+    if (precedingPrice) {
+      name = name.slice(0, precedingPrice.index).trim();
+      halfPrice = `₹${precedingPrice[1]}`;
+      fullPrice = price;
+      price = '';
+    }
+    const resolvedCategory = inferMenuCategory(name, category);
+    items.push({ name, price, halfPrice, fullPrice, category: resolvedCategory, type: airMenuItemType(resolvedCategory, name), description: '', dietary: '', bestSeller: false, mustHave: false });
+  });
+
+  return items.filter((item, index) => !items.slice(0, index).some((prior) =>
+    prior.name.toLowerCase() === item.name.toLowerCase() && prior.price === item.price && prior.category.toLowerCase() === item.category.toLowerCase()));
+}
+
+function parseCsvRows(text) {
+  const rows = [];
+  let row = [];
+  let field = '';
+  let quoted = false;
+  const source = String(text || '').replace(/^\uFEFF/, '');
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index];
+    if (character === '"') {
+      if (quoted && source[index + 1] === '"') { field += '"'; index += 1; }
+      else quoted = !quoted;
+    } else if (character === ',' && !quoted) {
+      row.push(field.trim()); field = '';
+    } else if ((character === '\n' || character === '\r') && !quoted) {
+      if (character === '\r' && source[index + 1] === '\n') index += 1;
+      row.push(field.trim()); field = '';
+      if (row.some(Boolean)) rows.push(row);
+      row = [];
+    } else field += character;
+  }
+  row.push(field.trim());
+  if (row.some(Boolean)) rows.push(row);
+  return rows;
+}
+
+function extractAirMenuFromCsv(file) {
+  const rows = parseCsvRows(file.buffer.toString('utf8'));
+  if (!rows.length) return { items: [], extractionMethod: 'csv', pageCount: 0 };
+  const normalizedHeaders = rows[0].map((value) => value.toLowerCase().replace(/[^a-z0-9]/g, ''));
+  const findHeader = (names) => normalizedHeaders.findIndex((header) => names.includes(header));
+  let nameIndex = findHeader(['item', 'itemname', 'name', 'dish', 'dishname', 'menuitem', 'product']);
+  let priceIndex = findHeader(['price', 'rate', 'amount', 'cost', 'mrp']);
+  let fullPriceIndex = findHeader(['fullprice', 'full', 'fullrate', 'pricefull']);
+  let halfPriceIndex = findHeader(['halfprice', 'half', 'halfrate', 'pricehalf']);
+  let categoryIndex = findHeader(['category', 'section', 'group', 'menucategory', 'course']);
+  let typeIndex = findHeader(['type', 'itemtype', 'foodtype', 'kind']);
+  let descriptionIndex = findHeader(['description', 'details', 'itemdescription', 'desc', 'ingredients']);
+  let dietaryIndex = findHeader(['dietary', 'diet', 'vegornonveg', 'vegnonveg', 'foodpreference']);
+  let bestSellerIndex = findHeader(['bestseller', 'bestselling', 'popular', 'isbestSeller']);
+  let mustHaveIndex = findHeader(['musthave', 'musttry', 'recommended', 'chefchoice']);
+  const hasHeaders = nameIndex >= 0 || priceIndex >= 0 || fullPriceIndex >= 0 || halfPriceIndex >= 0 || categoryIndex >= 0 || typeIndex >= 0 || descriptionIndex >= 0 || dietaryIndex >= 0 || bestSellerIndex >= 0 || mustHaveIndex >= 0;
+  if (nameIndex < 0) nameIndex = 0;
+  if (priceIndex < 0) priceIndex = 1;
+  if (categoryIndex < 0) categoryIndex = 2;
+  const dataRows = hasHeaders ? rows.slice(1) : rows;
+
+  const items = dataRows.map((columns) => {
+    const name = String(columns[nameIndex] || '').trim();
+    const rawPrice = String(columns[priceIndex] || '').trim();
+    const rawFullPrice = fullPriceIndex >= 0 ? String(columns[fullPriceIndex] || '').trim() : '';
+    const rawHalfPrice = halfPriceIndex >= 0 ? String(columns[halfPriceIndex] || '').trim() : '';
+    const suppliedCategory = String(columns[categoryIndex] || '').trim();
+    const suppliedType = String(columns[typeIndex] || '').toLowerCase();
+    const price = rawPrice && !/[₹$€£]|\b(?:rs|inr)\b/i.test(rawPrice) ? `₹${rawPrice}` : rawPrice.replace(/^rs\.?\s*/i, '₹');
+    const formatImportedPrice = (value) => value && !/[₹$€£]|\b(?:rs|inr)\b/i.test(value) ? `₹${value}` : value.replace(/^rs\.?\s*/i, '₹');
+    return {
+      name,
+      price,
+      fullPrice: formatImportedPrice(rawFullPrice),
+      halfPrice: formatImportedPrice(rawHalfPrice),
+      category: inferMenuCategory(name, suppliedCategory),
+      type: /beverage|drink/i.test(suppliedType) ? 'beverage' : /food/i.test(suppliedType) ? 'food' : airMenuItemType(inferMenuCategory(name, suppliedCategory), name),
+      description: descriptionIndex >= 0 ? String(columns[descriptionIndex] || '').trim() : '',
+      dietary: dietaryIndex >= 0 && /non[\s-]?veg/i.test(String(columns[dietaryIndex] || '')) ? 'nonveg' : dietaryIndex >= 0 && /veg/i.test(String(columns[dietaryIndex] || '')) ? 'veg' : '',
+      bestSeller: bestSellerIndex >= 0 && /^(1|true|yes|y|checked|best seller|popular)$/i.test(String(columns[bestSellerIndex] || '').trim()),
+      mustHave: mustHaveIndex >= 0 && /^(1|true|yes|y|checked|must have|must try|recommended)$/i.test(String(columns[mustHaveIndex] || '').trim())
+    };
+  }).filter((item) => item.name);
+
+  return { items: dedupeMenuItems(items), extractionMethod: 'csv', pageCount: 0 };
+}
+
+async function extractAirMenuFromPdf(file) {
+  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const { createCanvas } = require('@napi-rs/canvas');
+  const standardFontDataUrl = `${pathToFileURL(path.join(__dirname, 'node_modules/pdfjs-dist/standard_fonts')).href}/`;
+  const pdf = await pdfjs.getDocument({ data: new Uint8Array(file.buffer), disableWorker: true, standardFontDataUrl }).promise;
+  const pageCount = Math.min(pdf.numPages, 20);
+  const pageTexts = [];
+
+  for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
+    const page = await pdf.getPage(pageNumber);
+    const content = await page.getTextContent();
+    pageTexts.push(content.items.map((item) => `${item.str}${item.hasEOL ? '\n' : ' '}`).join('').trim());
+  }
+
+  let extractionMethod = 'embedded-text';
+  let rawText = pageTexts.join('\n');
+  let items = parseMenuText(rawText);
+
+  if (items.length < 3) {
+    const { createWorker, OEM } = require('tesseract.js');
+    const language = require('@tesseract.js-data/eng');
+    const worker = await createWorker(language.code, OEM.LSTM_ONLY, {
+      langPath: language.langPath,
+      gzip: language.gzip,
+      logger: () => {}
+    });
+    const ocrPages = [];
+    try {
+      for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
+        const page = await pdf.getPage(pageNumber);
+        const viewport = page.getViewport({ scale: 2 });
+        const canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height));
+        await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+        const result = await worker.recognize(canvas.toBuffer('image/png'));
+        ocrPages.push(result.data.text || '');
+      }
+    } finally {
+      await worker.terminate();
+    }
+    extractionMethod = 'ocr';
+    rawText = ocrPages.join('\n');
+    items = parseMenuText(rawText);
+  }
+
+  return { items, extractionMethod, pageCount, rawText };
+}
+
+app.get('/scan/:mode', async (req, res) => {
+  const mode = req.params.mode;
+  if (!['table', 'card'].includes(mode)) return res.redirect(302, '/menu');
+  const menu = await getSection('airMenu');
+  if ((mode === 'table' && menu.tableLive === false) || (mode === 'card' && menu.cardLive === false)) {
+    return res.redirect(302, 'https://www.redlanternrestaurant.in/menu');
+  }
+  const expires = Date.now() + airMenuLifetimeMs;
+  const signature = airMenuSignature(mode, expires);
+  res.set('Cache-Control', 'no-store');
+  return res.redirect(302, `/air-menu?mode=${mode}&expires=${expires}&signature=${encodeURIComponent(signature)}`);
+});
+
+app.get('/air-menu', (req, res) => {
+  if (!validAirMenuAccess(req.query.mode, req.query.expires, req.query.signature)) {
+    return res.redirect(302, 'https://www.redlanternrestaurant.in/menu');
+  }
+  res.set('Cache-Control', 'no-store');
+  return res.sendFile(path.join(__dirname, 'air-menu.html'));
+});
+
+app.get('/api/air-menu', async (req, res) => {
+  if (!validAirMenuAccess(req.query.mode, req.query.expires, req.query.signature)) {
+    return res.status(410).json({ expired: true, redirect: 'https://www.redlanternrestaurant.in/menu' });
+  }
+  const menu = await getSection('airMenu');
+  const dishes = Array.isArray(menu.items) ? menu.items : [];
+  const isCard = req.query.mode === 'card';
+  const isLive = isCard ? menu.cardLive !== false : menu.tableLive !== false;
+  if (!isLive) return res.status(410).json({ unavailable: true, redirect: 'https://www.redlanternrestaurant.in/menu' });
+  const visibility = menu.categoryVisibility && typeof menu.categoryVisibility === 'object' ? menu.categoryVisibility : {};
+  const visibleDishes = dishes.filter((dish) => {
+    const setting = visibility[dish.category];
+    if (setting && setting[isCard ? 'card' : 'table'] === false) return false;
+    if (isCard && !setting && /alcohol|beer|wine|whisky|whiskey|rum|vodka|gin|brandy|tequila|cocktail/i.test(dish.category || '')) return false;
+    return true;
+  });
+  res.set('Cache-Control', 'no-store');
+  res.json({
+    pageTitle: menu.pageTitle || 'Our Menu',
+    pageSubtitle: menu.pageSubtitle || '',
+    note: menu.note || '',
+    showPrices: isCard ? menu.showCardPrices === true : menu.showTablePrices !== false,
+    cardCallEnabled: isCard && menu.cardCallEnabled === true,
+    cardOrderPhone: isCard ? String(menu.cardOrderPhone || '') : '',
+    mode: req.query.mode,
+    expires: Number(req.query.expires),
+    dishes: visibleDishes
+  });
+});
+
+app.post('/api/admin/air-menu/extract', menuFileUpload.single('menuFile'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Choose a menu PDF or CSV file first.' });
+    const extension = path.extname(req.file.originalname).toLowerCase();
+    const extraction = extension === '.csv' ? extractAirMenuFromCsv(req.file) : await extractAirMenuFromPdf(req.file);
+    res.set('Cache-Control', 'no-store');
+    res.json({
+      fileName: req.file.originalname,
+      itemCount: extraction.items.length,
+      items: extraction.items,
+      extractionMethod: extraction.extractionMethod,
+      pageCount: extraction.pageCount,
+      warning: extraction.items.length ? '' : extension === '.csv'
+        ? 'No menu rows were found. Check that the CSV contains item/name and price columns.'
+        : 'OCR found text, but no item/price pairs were recognised. Add items manually or try a clearer PDF.'
+    });
+  } catch (error) {
+    logDiagnostic({
+      level: 'error', category: 'cms-save', message: `Air Menu PDF extraction failed: ${error.message}`,
+      method: req.method, path: req.path, statusCode: error.statusCode || 500,
+      ipHash: hashIp(req), userAgent: req.headers['user-agent'] || ''
+    });
+    res.status(error.statusCode || 500).json({ error: error.message });
+  }
+});
+
+app.post('/api/admin/air-menu/dietary', async (req, res) => {
+  try {
+    const name = String(req.body.name || '').trim();
+    const category = String(req.body.category || '').trim();
+    const dietary = req.body.dietary === 'nonveg' ? 'nonveg' : req.body.dietary === 'veg' ? 'veg' : '';
+    if (!name) return res.status(400).json({ error: 'Item name is required.' });
+    const menu = await getSection('airMenu');
+    let updated = false;
+    const targetKey = menuItemKey({ name, category });
+    menu.items = (menu.items || []).map((item) => {
+      if (menuItemKey(item) !== targetKey) return item;
+      updated = true;
+      return { ...item, dietary };
+    });
+    if (!updated) return res.status(404).json({ error: 'Publish the Air Menu once before using instant dietary updates.' });
+    await saveSection('airMenu', menu);
+    clearPublicContentCache();
+    res.json({ saved: true, dietary });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/admin/qr/:mode', async (req, res) => {
+  const mode = req.params.mode;
+  if (!['table', 'card'].includes(mode)) return res.status(404).end();
+  try {
+    const permanentQrBaseUrl = String(process.env.AIR_MENU_QR_BASE_URL || 'https://www.redlanternrestaurant.in').replace(/\/$/, '');
+    const target = `${permanentQrBaseUrl}/scan/${mode}`;
+    const svg = await QRCode.toString(target, {
+      type: 'svg',
+      errorCorrectionLevel: 'H',
+      margin: 2,
+      color: { dark: '#17120f', light: '#ffffff' },
+      width: 720
+    });
+    res.set({
+      'Content-Type': 'image/svg+xml; charset=utf-8',
+      'Content-Disposition': `inline; filename="red-lantern-${mode}-menu-qr.svg"`,
+      'Cache-Control': 'no-store'
+    });
+    res.send(svg);
+  } catch (error) {
+    res.status(500).send('Unable to generate QR code.');
+  }
+});
+
 cleanPageRoutes.forEach((file, route) => {
   app.get(route, (req, res) => {
     res.sendFile(path.join(__dirname, file));
@@ -1165,7 +1577,7 @@ app.get('/api/content', async (req, res) => {
 app.get('/api/admin/content', async (req, res) => {
   try {
     res.set('Cache-Control', 'no-store');
-    res.json(await getAllContent(true));
+    res.json(await getAllContent(true, true));
   } catch (error) {
     console.error('Neon error:', error);
     logDiagnostic({
@@ -1358,7 +1770,7 @@ app.post('/api/client-log', async (req, res) => {
 });
 
 app.get('/api/content/:section', async (req, res) => {
-  if (!collections[req.params.section]) return res.status(404).json({ error: 'Unknown content section.' });
+  if (!collections[req.params.section] || req.params.section === 'airMenu') return res.status(404).json({ error: 'Unknown content section.' });
 
   try {
     res.set('Cache-Control', 'public, max-age=60, s-maxage=300, stale-while-revalidate=600');

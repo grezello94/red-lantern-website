@@ -35,7 +35,7 @@
       .form-group { margin-bottom: 0; }
       .form-group label { display: block; font-weight: 700; margin-bottom: 4px; font-size: 14px; color: #374151; }
       .help-text { display: block; font-size: 12px; color: #6b7280; margin-bottom: 8px; line-height: 1.4; }
-      .form-group input[type="text"], .form-group input[type="url"], .form-group textarea { width: 100%; padding: 12px; border: 1px solid #d1d5db; border-radius: 8px; font-family: inherit; background: #f9fafb; transition: border 0.2s; }
+      .form-group input[type="text"], .form-group input[type="url"], .form-group input[type="tel"], .form-group textarea, .form-group select { width: 100%; padding: 12px; border: 1px solid #d1d5db; border-radius: 8px; font-family: inherit; background: #f9fafb; transition: border 0.2s; }
       .form-group input:focus, .form-group textarea:focus { outline: none; border-color: #d62828; background: #fff; box-shadow: 0 0 0 3px rgba(214, 40, 40, 0.1); }
       .form-group input[type="file"] { display: block; margin-top: 8px; }
       
@@ -43,11 +43,49 @@
       .btn-save:hover { background: #b11d1d; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(214, 40, 40, 0.2); }
 
       .image-preview { margin-top: 12px; width: 100%; height: 140px; object-fit: cover; border-radius: 8px; border: 2px dashed #d1d5db; padding: 2px; }
+      .switch-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 16px; border: 1px solid #e5e7eb; border-radius: 10px; background: #f9fafb; }
+      .switch-row input { width: 22px; height: 22px; accent-color: #d62828; }
+      .qr-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+      .qr-card { text-align: center; padding: 20px; border: 1px solid #e5e7eb; border-radius: 12px; background: #f9fafb; }
+      .qr-card img { display: block; width: min(100%, 260px); margin: 14px auto; border-radius: 8px; background: #fff; }
+      .qr-download { display: inline-block; padding: 10px 16px; border-radius: 7px; color: #fff; background: #111827; text-decoration: none; font-size: 13px; font-weight: 800; }
+      .qr-target { display:block; margin:0 auto 12px; color:#6b7280; font-size:11px; word-break:break-all; }
+      .add-menu-item-btn { width: 100%; padding: 14px; border: 2px dashed #d1d5db; border-radius: 8px; background: #f9fafb; color: #374151; cursor: pointer; font: inherit; font-weight: 800; }
+      .air-sheet-wrap { margin-bottom: 16px; overflow: auto; border: 1px solid #dfe3e8; border-radius: 10px; background: #fff; }
+      .air-sheet { width: 100%; min-width: 1580px; border-collapse: collapse; table-layout: fixed; }
+      .air-sheet th { position: sticky; top: 0; z-index: 1; padding: 11px 10px; border-right: 1px solid #dfe3e8; border-bottom: 2px solid #cfd5dd; background: #f3f4f6; color: #1f2937; text-align: left; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .03em; }
+      .air-sheet th:nth-child(1) { width: 17%; } .air-sheet th:nth-child(2), .air-sheet th:nth-child(3), .air-sheet th:nth-child(4) { width: 7%; } .air-sheet th:nth-child(5) { width: 14%; } .air-sheet th:nth-child(6) { width: 9%; } .air-sheet th:nth-child(7) { width: 12%; text-align:center; } .air-sheet th:nth-child(8) { width: 20%; } .air-sheet th:nth-child(9), .air-sheet th:nth-child(10) { width: 6%; text-align:center; } .air-sheet th:nth-child(11) { width:48px; }
+      .air-sheet th span { color: #6b7280; font-weight: 600; text-transform: none; }
+      .air-sheet td { padding: 0; border-right: 1px solid #e5e7eb; border-bottom: 1px solid #e5e7eb; vertical-align: top; }
+      .air-sheet tr:last-child td { border-bottom: 0; }
+      .air-sheet input, .air-sheet select { width: 100%; min-height: 44px; padding: 10px; border: 0; border-radius: 0; outline: 0; background: #fff; font: 600 13px Manrope, sans-serif; }
+      .air-sheet input:focus, .air-sheet select:focus { position: relative; box-shadow: inset 0 0 0 2px #2563eb; background: #eff6ff; }
+      .air-sheet .sheet-check { display: flex; align-items: center; justify-content: center; min-height: 44px; }
+      .air-sheet .sheet-check input[type="checkbox"] { width: 19px; min-height: 19px; height: 19px; accent-color: #d62828; }
+      .dietary-picker { display:flex; align-items:center; justify-content:center; gap:7px; min-height:44px; }
+      .dietary-choice { display:inline-flex; align-items:center; cursor:pointer; }
+      .dietary-choice input { position:absolute; opacity:0; pointer-events:none; }
+      .dietary-mark { display:inline-grid; width:25px; height:25px; place-items:center; border:2px solid currentColor; background:#fff; }
+      .dietary-mark::after { content:""; display:block; }
+      .dietary-choice.veg { color:#14a44d; } .dietary-choice.nonveg { color:#d52b36; }
+      .dietary-choice.veg .dietary-mark::after { width:13px; height:13px; border-radius:50%; background:currentColor; }
+      .dietary-choice.nonveg .dietary-mark::after { width:0; height:0; border-left:7px solid transparent; border-right:7px solid transparent; border-bottom:14px solid currentColor; }
+      .dietary-choice input:not(:checked) + .dietary-mark { opacity:.28; filter:grayscale(1); }
+      .dietary-choice input:focus-visible + .dietary-mark { outline:3px solid rgba(37,99,235,.25); outline-offset:2px; }
+      .air-sheet .remove-air-item { width: 100%; min-height: 44px; border: 0; background: #fff; color: #dc2626; cursor: pointer; font-size: 18px; font-weight: 900; }
+      .air-sheet .remove-air-item:hover { background: #fef2f2; }
+      .air-empty { padding: 24px; margin-bottom: 16px; border: 2px dashed #e5e7eb; border-radius: 8px; color: #6b7280; text-align: center; }
+      .category-control-list { display: grid; gap: 10px; }
+      .category-control-row { display: grid; grid-template-columns: minmax(180px, 1fr) auto auto; align-items: center; gap: 24px; padding: 14px 16px; border: 1px solid #e5e7eb; border-radius: 9px; background: #f9fafb; }
+      .category-control-row strong { color: #1f2937; }
+      .category-control-row label { display: inline-flex; align-items: center; gap: 7px; color: #4b5563; font-size: 13px; font-weight: 800; }
+      .category-control-row input { width: 18px; height: 18px; accent-color: #d62828; }
       
       /* Tab functionality */
       .tab-content { display: none; animation: fadeIn 0.3s ease; }
       .tab-content.active { display: block; }
       @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+      @media (max-width: 760px) { .sidebar { position: static; width: 100%; height: auto; } body { display: block; } .main-content { margin-left: 0; padding: 24px 16px; } .form-grid, .qr-grid { grid-template-columns: 1fr; } .category-control-row { grid-template-columns: 1fr; gap: 10px; } }
       
       /* Rich Text Editor Mock Styles */
       .rich-text-editor { border: 1px solid #d1d5db; border-radius: 8px; overflow: hidden; background: #f9fafb; margin-top: 8px; transition: border 0.2s; }
@@ -117,6 +155,7 @@
         <div class="nav-category">Pages</div>
         <div class="nav-item active" data-target="tab-home">Home Page</div>
         <div class="nav-item" data-target="tab-menu">Menu Page</div>
+        <div class="nav-item" data-target="tab-air-menu">Air Menu</div>
         <div class="nav-item" data-target="tab-about">About Page</div>
         <div class="nav-item" data-target="tab-blogs">Blogs Page</div>
         <div class="nav-item" data-target="tab-contact">Contact Page</div>
@@ -382,6 +421,80 @@
           </div>
 
           <button type="submit" class="btn-save">Publish Changes to Menu</button>
+        </form>
+      </div>
+
+      <!-- AIR MENU TAB -->
+      <div id="tab-air-menu" class="tab-content">
+        <header class="header">
+          <div>
+            <h1>Air Menu</h1>
+            <p>A separate QR-only menu. Import a PDF or CSV, review the extraction, then publish.</p>
+          </div>
+          <button class="logout-btn">Log Out</button>
+        </header>
+
+        <div class="card">
+          <h2>Import Menu PDF or CSV</h2>
+          <p class="help-text" style="font-size:14px; margin-bottom:16px;">PDF files use embedded text or local OCR. CSV files support common columns such as Item Name, Price, Category, and Type. No OpenAI account or external AI service is used.</p>
+          <div class="form-group">
+            <label for="air-menu-file">Menu PDF or CSV</label>
+            <input id="air-menu-file" type="file" accept="application/pdf,.pdf,text/csv,.csv">
+          </div>
+          <button type="button" id="extract-air-menu" class="growth-ai-button" style="margin-top:16px;">Import & Extract Menu</button>
+          <p id="air-extract-status" class="growth-ai-status"></p>
+        </div>
+
+        <form action="/api/update-airMenu" method="POST">
+          <div class="card">
+            <h2>Air Menu Settings</h2>
+            <input type="hidden" name="airSourceFileName">
+            <div class="form-grid">
+              <div class="form-group"><label>Page Title</label><input type="text" name="airMenuTitle" value="Our Menu"></div>
+              <div class="form-group"><label>Page Subtitle</label><input type="text" name="airMenuSubtitle" value="Explore our freshly prepared food and beverages."></div>
+            </div>
+            <div class="form-grid full"><div class="form-group"><label>Menu Note</label><textarea name="airMenuNote" rows="2">Availability may vary. Please ask our team about today’s specials.</textarea></div></div>
+            <input type="hidden" name="airCategoryVisibility" value="{}">
+            <div class="form-grid">
+              <div class="switch-row"><div><strong>Table menu live</strong><span class="help-text" style="margin:4px 0 0;">Allow the in-store table QR to open.</span></div><input type="checkbox" name="airTableLive" checked></div>
+              <div class="switch-row"><div><strong>Business card menu live</strong><span class="help-text" style="margin:4px 0 0;">Allow the visiting-card QR to open.</span></div><input type="checkbox" name="airCardLive" checked></div>
+              <div class="switch-row"><div><strong>Show table prices</strong><span class="help-text" style="margin:4px 0 0;">Show prices only on the in-store Air Menu.</span></div><input type="checkbox" name="airShowTablePrices" checked></div>
+              <div class="switch-row"><div><strong>Show business card prices</strong><span class="help-text" style="margin:4px 0 0;">Show prices on the visiting-card menu.</span></div><input type="checkbox" name="airShowCardPrices"></div>
+            </div>
+            <div class="form-grid">
+              <div class="form-group"><label>Business Card Order Phone</label><span class="help-text">Include country code, for example +91 98765 43210.</span><input type="tel" name="airCardOrderPhone" placeholder="+91 98765 43210"></div>
+              <div class="switch-row"><div><strong>Call to Place Order</strong><span class="help-text" style="margin:4px 0 0;">Show a direct Phone app button only on the Business Card QR menu.</span></div><input type="checkbox" name="airCardCallEnabled"></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <h2>Air Menu Spreadsheet</h2>
+            <span class="help-text" style="margin-bottom:18px;">Use Price for single-price items. For portioned items, fill Half Price and/or Full Price and leave Price blank. Duplicate item/category combinations are removed automatically.</span>
+            <div class="air-sheet-wrap">
+              <table class="air-sheet">
+                <thead><tr><th>Item Name</th><th>Price</th><th>Full Price</th><th>Half Price</th><th>Category</th><th>Type</th><th>Veg / Non-Veg</th><th>Description <span>(optional)</span></th><th>Best Seller</th><th>Must Have</th><th></th></tr></thead>
+                <tbody id="air-items-container"></tbody>
+              </table>
+            </div>
+            <p id="air-sheet-status" class="growth-ai-status" style="margin:0 0 12px;"></p>
+            <button type="button" id="add-air-item" class="add-menu-item-btn">+ Add Menu Item</button>
+          </div>
+
+          <div class="card">
+            <h2>Category Visibility</h2>
+            <span class="help-text" style="margin-bottom:18px;">Expose or hide each category independently on the Table and Business Card QR menus. Alcohol is hidden from the business-card menu by default.</span>
+            <div id="air-category-controls" class="category-control-list"></div>
+          </div>
+
+          <div class="card">
+            <h2>QR Codes</h2>
+            <span class="help-text" style="margin-bottom:20px;">Every scan starts a new two-hour session. The printed QR codes never need replacing.</span>
+            <div class="qr-grid">
+              <div class="qr-card"><strong>Table QR Code</strong><span class="help-text">Shows food and beverages.</span><img src="/api/admin/qr/table" alt="Table menu QR code"><code class="qr-target">redlanternrestaurant.in/scan/table</code><a class="qr-download" href="/api/admin/qr/table" download="red-lantern-table-menu-qr.svg">Download Table QR</a></div>
+              <div class="qr-card"><strong>Business Card QR Code</strong><span class="help-text">Shows the configured visiting-card menu.</span><img src="/api/admin/qr/card" alt="Business card food menu QR code"><code class="qr-target">redlanternrestaurant.in/scan/card</code><a class="qr-download" href="/api/admin/qr/card" download="red-lantern-business-card-menu-qr.svg">Download Card QR</a></div>
+            </div>
+          </div>
+          <button type="submit" class="btn-save">Publish Air Menu</button>
         </form>
       </div>
 
@@ -1106,6 +1219,6 @@
         });
       }
     </script>
-    <script src="admin-cms.js" defer></script>
+    <script src="admin-cms.js?v=20260715-12" defer></script>
   </body>
 </html>

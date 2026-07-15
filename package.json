@@ -26,11 +26,16 @@
   },
   "homepage": "https://github.com/grezello94/red-lantern-website#readme",
   "dependencies": {
+    "@napi-rs/canvas": "^0.1.80",
     "@neondatabase/serverless": "^0.10.4",
+    "@tesseract.js-data/eng": "^1.0.0",
     "cloudinary": "^2.5.1",
     "express": "^5.2.1",
     "multer": "^2.1.1",
-    "sharp": "^0.35.1"
+    "pdfjs-dist": "^5.4.149",
+    "qrcode": "^1.5.4",
+    "sharp": "^0.35.1",
+    "tesseract.js": "^6.0.1"
   },
   "devDependencies": {
     "clean-css-cli": "^5.6.3"

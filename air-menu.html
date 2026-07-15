@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex, nofollow, noarchive">
+    <meta name="theme-color" content="#6f1718">
+    <title>Air Menu | Red Lantern Restaurant</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=Playfair+Display:wght@700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="air-menu.css?v=20260715-12">
+  </head>
+  <body>
+    <div id="privacy-shield" class="privacy-shield" aria-hidden="true"><span>Protected Red Lantern Menu</span></div>
+    <div id="session-watermark" class="session-watermark" aria-hidden="true"></div>
+    <header class="menu-header">
+      <img src="/images/red-lantern-logo-600.webp" alt="Red Lantern Restaurant" class="logo">
+      <div>
+        <p class="eyebrow" id="menu-kind">Table menu</p>
+        <h1 id="menu-title">Red Lantern</h1>
+        <p id="menu-subtitle">Fresh ingredients · Exceptional taste</p>
+      </div>
+    </header>
+
+    <main>
+      <div class="menu-tools">
+        <label class="search-box">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 21-4.4-4.4m2.4-5.1a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0Z"/></svg>
+          <input id="menu-search" type="search" placeholder="Search dishes, drinks or categories" autocomplete="off">
+        </label>
+        <nav id="category-nav" class="category-nav" aria-label="Menu categories"></nav>
+      </div>
+      <div id="menu-content" aria-live="polite"><p class="loading">Preparing the menu…</p></div>
+      <p id="menu-note" class="menu-note"></p>
+    </main>
+
+    <button type="button" id="open-order-summary" class="order-fab" hidden><span>View selections</span><strong id="order-count">0</strong></button>
+    <dialog id="order-summary" class="order-dialog">
+      <div class="order-dialog-head"><div><p>Your selection</p><h2>Order Summary</h2></div><button type="button" id="close-order-summary" aria-label="Close">×</button></div>
+      <div id="order-summary-items" class="order-summary-items"></div>
+      <div class="order-summary-actions">
+        <button type="button" id="copy-order">Copy Summary</button>
+        <a id="share-whatsapp" class="card-order-action" href="#" target="_blank" rel="noopener">Send to WhatsApp</a>
+        <a id="call-to-order" class="call-order card-order-action" href="#" hidden>Call to Place Order</a>
+        <button type="button" id="clear-order" class="clear-order">Clear Selection</button>
+      </div>
+      <p id="order-action-status" class="order-action-status"></p>
+    </dialog>
+
+    <footer><span>Red Lantern Restaurant · Colva, South Goa</span><span class="access-pill">Session: <strong id="time-left">2 hours</strong></span></footer>
+    <script src="air-menu.js?v=20260715-12" defer></script>
+  </body>
+</html>

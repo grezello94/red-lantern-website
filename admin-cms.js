@@ -383,11 +383,268 @@ function fillMenu(menu = {}) {
   setField('menuPageTitle', menu.pageTitle);
   setField('menuPageSubtitle', menu.pageSubtitle);
   setField('menuNote', menu.note);
-
   const dishesContainer = document.getElementById('dishes-container');
   if (dishesContainer && Array.isArray(menu.dishes) && menu.dishes.length) {
     dishesContainer.innerHTML = menu.dishes.map((dish, index) => dishEntryMarkup(dish, index)).join('');
   }
+}
+
+function cleanAirSheetText(value, isCategory = false) {
+  let text = String(value || '').replace(/[.…·]{2,}/g, ' ').replace(/\s+/g, ' ').trim();
+  if (isCategory) text = text.replace(/^[^a-z0-9(]+/i, '').trim();
+  return text;
+}
+
+function airItemMarkup(item = {}, index = 0) {
+  return `
+    <tr class="air-item-entry" data-row="${index}">
+      <td><input type="text" name="airItemName[]" value="${escapeHtml(cleanAirSheetText(item.name))}" placeholder="Item name" required></td>
+      <td><input type="text" name="airItemPrice[]" value="${escapeHtml(item.price || '')}" placeholder="₹250"></td>
+      <td><input type="text" name="airItemFullPrice[]" value="${escapeHtml(item.fullPrice || '')}" placeholder="₹450"></td>
+      <td><input type="text" name="airItemHalfPrice[]" value="${escapeHtml(item.halfPrice || '')}" placeholder="₹280"></td>
+      <td><input type="text" name="airItemCategory[]" value="${escapeHtml(cleanAirSheetText(item.category || 'Menu', true))}" placeholder="Category" required></td>
+      <td><select name="airItemType[]"><option value="food" ${item.type !== 'beverage' ? 'selected' : ''}>Food</option><option value="beverage" ${item.type === 'beverage' ? 'selected' : ''}>Beverage</option></select></td>
+      <td><div class="dietary-picker"><input type="hidden" name="airItemDietary[]" value="${item.dietary || ''}"><label class="dietary-choice veg" title="Veg"><input type="checkbox" data-dietary="veg" ${item.dietary === 'veg' ? 'checked' : ''}><span class="dietary-mark"></span></label><label class="dietary-choice nonveg" title="Non-Veg"><input type="checkbox" data-dietary="nonveg" ${item.dietary === 'nonveg' ? 'checked' : ''}><span class="dietary-mark"></span></label></div></td>
+      <td><input type="text" name="airItemDescription[]" value="${escapeHtml(item.description || '')}" placeholder="Optional description"></td>
+      <td><label class="sheet-check"><input type="hidden" name="airItemBestSeller[]" value="${item.bestSeller ? 'true' : 'false'}"><input type="checkbox" data-item-flag="bestSeller" ${item.bestSeller ? 'checked' : ''} aria-label="Best Seller"></label></td>
+      <td><label class="sheet-check"><input type="hidden" name="airItemMustHave[]" value="${item.mustHave ? 'true' : 'false'}"><input type="checkbox" data-item-flag="mustHave" ${item.mustHave ? 'checked' : ''} aria-label="Must Have"></label></td>
+      <td><button type="button" class="remove-air-item" aria-label="Remove row">×</button></td>
+    </tr>`;
+}
+
+let airCategoryVisibility = {};
+
+function isAlcoholCategory(category) {
+  return /alcohol|beer|wine|whisky|whiskey|rum|vodka|gin|brandy|tequila|cocktail/i.test(category);
+}
+
+function syncAirCategoryVisibility() {
+  const hidden = document.querySelector('[name="airCategoryVisibility"]');
+  if (hidden) hidden.value = JSON.stringify(airCategoryVisibility);
+}
+
+function renderAirCategoryControls(items = []) {
+  const container = document.getElementById('air-category-controls');
+  if (!container) return;
+  const categories = [...new Set(items.map((item) => item.category || 'Menu'))];
+  categories.forEach((category) => {
+    if (!airCategoryVisibility[category]) {
+      airCategoryVisibility[category] = { table: true, card: !isAlcoholCategory(category) };
+    }
+  });
+  container.innerHTML = categories.length ? categories.map((category) => {
+    const setting = airCategoryVisibility[category];
+    return `<div class="category-control-row" data-category="${escapeHtml(category)}">
+      <strong>${escapeHtml(category)}</strong>
+      <label><input type="checkbox" data-view="table" ${setting.table !== false ? 'checked' : ''}> Table QR</label>
+      <label><input type="checkbox" data-view="card" ${setting.card !== false ? 'checked' : ''}> Business Card QR</label>
+    </div>`;
+  }).join('') : '<p class="air-empty">Add or import menu items to configure category visibility.</p>';
+  syncAirCategoryVisibility();
+}
+
+function renderAirItems(items = []) {
+  const container = document.getElementById('air-items-container');
+  if (!container) return;
+  container.innerHTML = items.map((item, index) => airItemMarkup(item, index)).join('');
+  if (!items.length) container.innerHTML = '<tr class="air-empty-row"><td colspan="11"><p class="air-empty">Upload a CSV, paste from Excel, or add your first menu item.</p></td></tr>';
+  renderAirCategoryControls(items);
+}
+
+function airSheetItems() {
+  return [...document.querySelectorAll('#air-items-container .air-item-entry')].map((row) => ({
+    name: row.querySelector('[name="airItemName[]"]')?.value.trim() || '',
+    price: row.querySelector('[name="airItemPrice[]"]')?.value.trim() || '',
+    fullPrice: row.querySelector('[name="airItemFullPrice[]"]')?.value.trim() || '',
+    halfPrice: row.querySelector('[name="airItemHalfPrice[]"]')?.value.trim() || '',
+    category: row.querySelector('[name="airItemCategory[]"]')?.value.trim() || 'Menu',
+    type: row.querySelector('[name="airItemType[]"]')?.value === 'beverage' ? 'beverage' : 'food',
+    dietary: row.querySelector('[name="airItemDietary[]"]')?.value || '',
+    description: row.querySelector('[name="airItemDescription[]"]')?.value.trim() || '',
+    bestSeller: row.querySelector('[data-item-flag="bestSeller"]')?.checked || false,
+    mustHave: row.querySelector('[data-item-flag="mustHave"]')?.checked || false
+  })).filter((item) => item.name);
+}
+
+function dedupeAirSheetItems(items = []) {
+  const seen = new Set();
+  return items.filter((item) => {
+    const key = `${item.category}::${item.name}`.toLowerCase().replace(/[^a-z0-9:]/g, '');
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function fillAirMenu(menu = {}) {
+  setField('airMenuTitle', menu.pageTitle);
+  setField('airMenuSubtitle', menu.pageSubtitle);
+  setField('airMenuNote', menu.note);
+  setField('airSourceFileName', menu.sourceFileName);
+  setField('airCardOrderPhone', menu.cardOrderPhone);
+  const toggles = {
+    airTableLive: menu.tableLive !== false,
+    airCardLive: menu.cardLive !== false,
+    airShowTablePrices: menu.showTablePrices !== false,
+    airShowCardPrices: menu.showCardPrices === true,
+    airCardCallEnabled: menu.cardCallEnabled === true
+  };
+  Object.entries(toggles).forEach(([name, checked]) => {
+    const field = document.querySelector(`[name="${name}"]`);
+    if (field) field.checked = checked;
+  });
+  airCategoryVisibility = menu.categoryVisibility && typeof menu.categoryVisibility === 'object' ? { ...menu.categoryVisibility } : {};
+  renderAirItems(Array.isArray(menu.items) ? menu.items : []);
+}
+
+function setupAirMenuEditor() {
+  const container = document.getElementById('air-items-container');
+  const addButton = document.getElementById('add-air-item');
+  const extractButton = document.getElementById('extract-air-menu');
+  const categoryControls = document.getElementById('air-category-controls');
+  if (!container) return;
+
+  addButton?.addEventListener('click', () => {
+    container.querySelector('.air-empty-row')?.remove();
+    container.insertAdjacentHTML('beforeend', airItemMarkup({}, container.querySelectorAll('.air-item-entry').length));
+    container.querySelector('.air-item-entry:last-child [name="airItemName[]"]')?.focus();
+  });
+
+  container.addEventListener('click', (event) => {
+    if (!event.target.matches('.remove-air-item')) return;
+    event.target.closest('.air-item-entry')?.remove();
+    if (!container.querySelector('.air-item-entry')) renderAirItems([]);
+    else renderAirCategoryControls([...container.querySelectorAll('.air-item-entry')].map((entry) => ({
+      category: entry.querySelector('[name="airItemCategory[]"]')?.value.trim() || 'Menu'
+    })));
+  });
+
+  container.addEventListener('input', () => {
+    const items = [...container.querySelectorAll('.air-item-entry')].map((entry) => ({
+      category: entry.querySelector('[name="airItemCategory[]"]')?.value.trim() || 'Menu'
+    }));
+    renderAirCategoryControls(items);
+  });
+
+  container.addEventListener('change', async (event) => {
+    const dietary = event.target.closest('[data-dietary]');
+    if (dietary) {
+      const picker = dietary.closest('.dietary-picker');
+      const hidden = picker?.querySelector('[name="airItemDietary[]"]');
+      if (dietary.checked) picker.querySelectorAll('[data-dietary]').forEach((choice) => { if (choice !== dietary) choice.checked = false; });
+      if (hidden) hidden.value = dietary.checked ? dietary.dataset.dietary : '';
+      const row = dietary.closest('.air-item-entry');
+      const status = document.getElementById('air-sheet-status');
+      const payload = {
+        name: row?.querySelector('[name="airItemName[]"]')?.value.trim() || '',
+        category: row?.querySelector('[name="airItemCategory[]"]')?.value.trim() || 'Menu',
+        dietary: hidden?.value || ''
+      };
+      if (status) { status.textContent = 'Saving dietary selection…'; status.style.color = '#6b7280'; }
+      try {
+        const response = await fetch('/api/admin/air-menu/dietary', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || 'Unable to save selection.');
+        if (status) { status.textContent = `${payload.name}: ${payload.dietary === 'nonveg' ? 'Non-Veg' : payload.dietary === 'veg' ? 'Veg' : 'dietary selection cleared'} saved live.`; status.style.color = '#166534'; }
+      } catch (error) {
+        if (status) { status.textContent = error.message; status.style.color = '#b91c1c'; }
+      }
+      return;
+    }
+    const flag = event.target.closest('[data-item-flag]');
+    if (!flag) return;
+    const hidden = flag.closest('.sheet-check')?.querySelector('input[type="hidden"]');
+    if (hidden) hidden.value = flag.checked ? 'true' : 'false';
+  });
+
+  container.addEventListener('paste', (event) => {
+    const target = event.target.closest('input, select');
+    const clipboard = event.clipboardData?.getData('text/plain') || '';
+    if (!target || (!clipboard.includes('\t') && !clipboard.includes('\n'))) return;
+    event.preventDefault();
+    const pastedRows = clipboard.replace(/\r/g, '').split('\n').filter((row) => row.trim()).map((row) => row.split('\t'));
+    const fields = ['airItemName[]', 'airItemPrice[]', 'airItemFullPrice[]', 'airItemHalfPrice[]', 'airItemCategory[]', 'airItemType[]', 'dietary', 'airItemDescription[]', 'bestSeller', 'mustHave'];
+    const startColumn = Math.max(0, Math.min(9, target.closest('td')?.cellIndex || 0));
+    let tableRows = [...container.querySelectorAll('.air-item-entry')];
+    const startRow = Math.max(0, tableRows.indexOf(target.closest('.air-item-entry')));
+    container.querySelector('.air-empty-row')?.remove();
+
+    pastedRows.forEach((cells, rowOffset) => {
+      while (tableRows.length <= startRow + rowOffset) {
+        container.insertAdjacentHTML('beforeend', airItemMarkup({}, tableRows.length));
+        tableRows = [...container.querySelectorAll('.air-item-entry')];
+      }
+      const row = tableRows[startRow + rowOffset];
+      cells.slice(0, 10 - startColumn).forEach((value, columnOffset) => {
+        const fieldName = fields[startColumn + columnOffset];
+        if (fieldName === 'dietary') {
+          const dietaryValue = /non[\s-]?veg/i.test(value) ? 'nonveg' : /veg/i.test(value) ? 'veg' : '';
+          const checkbox = row.querySelector(`[data-dietary="${dietaryValue}"]`);
+          if (checkbox) { checkbox.checked = true; checkbox.dispatchEvent(new Event('change', { bubbles:true })); }
+          return;
+        }
+        if (fieldName === 'bestSeller' || fieldName === 'mustHave') {
+          const checkbox = row.querySelector(`[data-item-flag="${fieldName}"]`);
+          const checked = /^(1|true|yes|y|checked|best seller|must have|must try|popular)$/i.test(value.trim());
+          if (checkbox) { checkbox.checked = checked; checkbox.dispatchEvent(new Event('change', { bubbles: true })); }
+          return;
+        }
+        const field = row.querySelector(`[name="${fieldName}"]`);
+        if (!field) return;
+        const cleanValue = value.trim();
+        field.value = fieldName === 'airItemType[]'
+          ? (/beverage|drink/i.test(cleanValue) ? 'beverage' : 'food')
+          : cleanValue;
+      });
+    });
+
+    renderAirItems(dedupeAirSheetItems(airSheetItems()));
+  });
+
+  categoryControls?.addEventListener('change', (event) => {
+    const checkbox = event.target.closest('input[data-view]');
+    if (!checkbox) return;
+    const category = checkbox.closest('[data-category]')?.dataset.category;
+    if (!category) return;
+    airCategoryVisibility[category] ||= { table: true, card: !isAlcoholCategory(category) };
+    airCategoryVisibility[category][checkbox.dataset.view] = checkbox.checked;
+    syncAirCategoryVisibility();
+  });
+
+  extractButton?.addEventListener('click', async () => {
+    const fileInput = document.getElementById('air-menu-file');
+    const status = document.getElementById('air-extract-status');
+    const file = fileInput?.files?.[0];
+    if (!file) { status.textContent = 'Choose a PDF or CSV file first.'; status.style.color = '#b91c1c'; return; }
+    extractButton.disabled = true;
+    status.textContent = file.name.toLowerCase().endsWith('.csv')
+      ? 'Reading CSV rows and organising menu items…'
+      : 'Scanning the PDF and organising menu items… This can take a few minutes for image-only PDFs.';
+    status.style.color = '#6b7280';
+    try {
+      const data = new FormData();
+      data.append('menuFile', file);
+      const response = await fetch('/api/admin/air-menu/extract', { method: 'POST', body: data });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'PDF analysis failed.');
+      const importedItems = dedupeAirSheetItems(result.items || []);
+      const importedCategories = new Set(importedItems.map((item) => cleanAirSheetText(item.category || 'Menu', true).toLowerCase()));
+      const preservedItems = airSheetItems().filter((item) => !importedCategories.has(cleanAirSheetText(item.category, true).toLowerCase()));
+      renderAirItems(dedupeAirSheetItems([...preservedItems, ...importedItems]));
+      setField('airSourceFileName', result.fileName || file.name);
+      const method = result.extractionMethod === 'ocr' ? 'local OCR' : result.extractionMethod === 'csv' ? 'CSV columns' : 'embedded PDF text';
+      const sourceDetail = result.extractionMethod === 'csv' ? '' : ` from ${result.pageCount} page${result.pageCount === 1 ? '' : 's'}`;
+      status.textContent = result.warning || `Updated ${importedCategories.size} categor${importedCategories.size === 1 ? 'y' : 'ies'} with ${importedItems.length} unique items${sourceDetail} using ${method}. Other categories were preserved.`;
+      status.style.color = result.warning ? '#92400e' : '#166534';
+    } catch (error) {
+      status.textContent = error.message || 'PDF analysis failed.';
+      status.style.color = '#b91c1c';
+    } finally {
+      extractButton.disabled = false;
+    }
+  });
 }
 
 function fillBlogs(blogs = {}) {
@@ -1187,6 +1444,7 @@ fetch('/api/admin/content')
   .then((content) => {
     fillHome(content.home);
     fillMenu(content.menu);
+    fillAirMenu(content.airMenu);
     fillBlogs(content.blogs);
     setupBlogDescriptionGenerator();
     fillAbout(content.about);
@@ -1202,6 +1460,7 @@ setupDiagnosticsDashboard();
 setupGoogleReviewsSync();
 setupRichTextToolbar();
 setupBlogDescriptionGenerator();
+setupAirMenuEditor();
 
 document.querySelectorAll('.logout-btn:not(#clear-logs)').forEach((button) => {
   button.addEventListener('click', () => {
