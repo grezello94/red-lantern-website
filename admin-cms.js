@@ -412,10 +412,27 @@ function airItemMarkup(item = {}, index = 0) {
     </tr>`;
 }
 
+function airBarItemMarkup(item = {}, index = 0) {
+  return `
+    <tr class="air-bar-item-entry" data-row="${index}">
+      <td><input type="text" name="airBarItemName[]" value="${escapeHtml(cleanAirSheetText(item.name))}" placeholder="Item name" required></td>
+      <td><input type="text" name="airBarItemPrice[]" value="${escapeHtml(item.price || '')}" placeholder="₹250"></td>
+      <td><input type="text" name="airBarItem30mlPrice[]" value="${escapeHtml(item.price30ml || '')}" placeholder="₹180"></td>
+      <td><input type="text" name="airBarItem60mlPrice[]" value="${escapeHtml(item.price60ml || '')}" placeholder="₹320"></td>
+      <td><input type="text" name="airBarItem90mlPrice[]" value="${escapeHtml(item.price90ml || '')}" placeholder="Optional"></td>
+      <td><input type="text" name="airBarItem180mlPrice[]" value="${escapeHtml(item.price180ml || '')}" placeholder="Optional"></td>
+      <td><input type="text" name="airBarItemCategory[]" value="${escapeHtml(cleanAirSheetText(item.category || 'Bar Menu', true))}" placeholder="Whisky, Beer…" required></td>
+      <td><select name="airBarItemType[]"><option value="beverage" ${item.type !== 'food' ? 'selected' : ''}>Beverage</option><option value="food" ${item.type === 'food' ? 'selected' : ''}>Food</option></select></td>
+      <td><input type="text" name="airBarItemDescription[]" value="${escapeHtml(item.description || '')}" placeholder="Optional description"></td>
+      <td><label class="sheet-check"><input type="hidden" name="airBarItemBestSeller[]" value="${item.bestSeller ? 'true' : 'false'}"><input type="checkbox" data-bar-item-flag="bestSeller" ${item.bestSeller ? 'checked' : ''} aria-label="Best Seller"></label></td>
+      <td><button type="button" class="remove-air-bar-item remove-air-item" aria-label="Remove bar row">×</button></td>
+    </tr>`;
+}
+
 let airCategoryVisibility = {};
 
 function isAlcoholCategory(category) {
-  return /alcohol|beer|wine|whisky|whiskey|rum|vodka|gin|brandy|tequila|cocktail/i.test(category);
+  return /\b(bar menu|alcohol|spirits?|feni|beer|wine|whisky|whiskey|scotch|bourbon|rum|vodka|gin|brandy|cognac|liqueur|tequila|cocktail)\b/i.test(category);
 }
 
 function syncAirCategoryVisibility() {
@@ -427,9 +444,10 @@ function renderAirCategoryControls(items = []) {
   const container = document.getElementById('air-category-controls');
   if (!container) return;
   const categories = [...new Set(items.map((item) => item.category || 'Menu'))];
+  const barCategories = new Set(items.filter((item) => item.isBar).map((item) => item.category || 'Bar Menu'));
   categories.forEach((category) => {
     if (!airCategoryVisibility[category]) {
-      airCategoryVisibility[category] = { table: true, card: !isAlcoholCategory(category) };
+      airCategoryVisibility[category] = { table: true, card: !barCategories.has(category) && !isAlcoholCategory(category) };
     }
   });
   container.innerHTML = categories.length ? categories.map((category) => {
@@ -448,7 +466,7 @@ function renderAirItems(items = []) {
   if (!container) return;
   container.innerHTML = items.map((item, index) => airItemMarkup(item, index)).join('');
   if (!items.length) container.innerHTML = '<tr class="air-empty-row"><td colspan="11"><p class="air-empty">Upload a CSV, paste from Excel, or add your first menu item.</p></td></tr>';
-  renderAirCategoryControls(items);
+  renderAirCategoryControls([...items, ...airBarSheetItems()]);
 }
 
 function airSheetItems() {
@@ -466,6 +484,30 @@ function airSheetItems() {
   })).filter((item) => item.name);
 }
 
+function airBarSheetItems() {
+  return [...document.querySelectorAll('#air-bar-items-container .air-bar-item-entry')].map((row) => ({
+    name: row.querySelector('[name="airBarItemName[]"]')?.value.trim() || '',
+    price: row.querySelector('[name="airBarItemPrice[]"]')?.value.trim() || '',
+    price30ml: row.querySelector('[name="airBarItem30mlPrice[]"]')?.value.trim() || '',
+    price60ml: row.querySelector('[name="airBarItem60mlPrice[]"]')?.value.trim() || '',
+    price90ml: row.querySelector('[name="airBarItem90mlPrice[]"]')?.value.trim() || '',
+    price180ml: row.querySelector('[name="airBarItem180mlPrice[]"]')?.value.trim() || '',
+    category: row.querySelector('[name="airBarItemCategory[]"]')?.value.trim() || 'Bar Menu',
+    type: row.querySelector('[name="airBarItemType[]"]')?.value === 'food' ? 'food' : 'beverage',
+    description: row.querySelector('[name="airBarItemDescription[]"]')?.value.trim() || '',
+    bestSeller: row.querySelector('[data-bar-item-flag="bestSeller"]')?.checked || false,
+    isBar: true
+  })).filter((item) => item.name);
+}
+
+function renderAirBarItems(items = []) {
+  const container = document.getElementById('air-bar-items-container');
+  if (!container) return;
+  container.innerHTML = items.map((item, index) => airBarItemMarkup(item, index)).join('');
+  if (!items.length) container.innerHTML = '<tr class="air-empty-row"><td colspan="11"><p class="air-empty">Upload a Bar Menu file, paste spreadsheet rows, or add the first bar item.</p></td></tr>';
+  renderAirCategoryControls([...airSheetItems(), ...items]);
+}
+
 function dedupeAirSheetItems(items = []) {
   const seen = new Set();
   return items.filter((item) => {
@@ -481,6 +523,7 @@ function fillAirMenu(menu = {}) {
   setField('airMenuSubtitle', menu.pageSubtitle);
   setField('airMenuNote', menu.note);
   setField('airSourceFileName', menu.sourceFileName);
+  setField('airBarSourceFileName', menu.barSourceFileName);
   setField('airCardOrderPhone', menu.cardOrderPhone);
   const toggles = {
     airTableLive: menu.tableLive !== false,
@@ -495,6 +538,7 @@ function fillAirMenu(menu = {}) {
   });
   airCategoryVisibility = menu.categoryVisibility && typeof menu.categoryVisibility === 'object' ? { ...menu.categoryVisibility } : {};
   renderAirItems(Array.isArray(menu.items) ? menu.items : []);
+  renderAirBarItems(Array.isArray(menu.barItems) ? menu.barItems : []);
 }
 
 function setupAirMenuEditor() {
@@ -516,14 +560,14 @@ function setupAirMenuEditor() {
     if (!container.querySelector('.air-item-entry')) renderAirItems([]);
     else renderAirCategoryControls([...container.querySelectorAll('.air-item-entry')].map((entry) => ({
       category: entry.querySelector('[name="airItemCategory[]"]')?.value.trim() || 'Menu'
-    })));
+    })).concat(airBarSheetItems()));
   });
 
   container.addEventListener('input', () => {
     const items = [...container.querySelectorAll('.air-item-entry')].map((entry) => ({
       category: entry.querySelector('[name="airItemCategory[]"]')?.value.trim() || 'Menu'
     }));
-    renderAirCategoryControls(items);
+    renderAirCategoryControls([...items, ...airBarSheetItems()]);
   });
 
   container.addEventListener('change', async (event) => {
@@ -617,10 +661,10 @@ function setupAirMenuEditor() {
     const fileInput = document.getElementById('air-menu-file');
     const status = document.getElementById('air-extract-status');
     const file = fileInput?.files?.[0];
-    if (!file) { status.textContent = 'Choose a PDF or CSV file first.'; status.style.color = '#b91c1c'; return; }
+    if (!file) { status.textContent = 'Choose a PDF, CSV, or XLSX file first.'; status.style.color = '#b91c1c'; return; }
     extractButton.disabled = true;
-    status.textContent = file.name.toLowerCase().endsWith('.csv')
-      ? 'Reading CSV rows and organising menu items…'
+    status.textContent = /\.(csv|xlsx)$/i.test(file.name)
+      ? 'Reading spreadsheet rows and organising menu items…'
       : 'Scanning the PDF and organising menu items… This can take a few minutes for image-only PDFs.';
     status.style.color = '#6b7280';
     try {
@@ -634,12 +678,104 @@ function setupAirMenuEditor() {
       const preservedItems = airSheetItems().filter((item) => !importedCategories.has(cleanAirSheetText(item.category, true).toLowerCase()));
       renderAirItems(dedupeAirSheetItems([...preservedItems, ...importedItems]));
       setField('airSourceFileName', result.fileName || file.name);
-      const method = result.extractionMethod === 'ocr' ? 'local OCR' : result.extractionMethod === 'csv' ? 'CSV columns' : 'embedded PDF text';
-      const sourceDetail = result.extractionMethod === 'csv' ? '' : ` from ${result.pageCount} page${result.pageCount === 1 ? '' : 's'}`;
+      const method = result.extractionMethod === 'ocr' ? 'local OCR' : result.extractionMethod === 'csv' ? 'CSV columns' : result.extractionMethod === 'xlsx' ? 'XLSX columns' : 'embedded PDF text';
+      const sourceDetail = /^(csv|xlsx)$/.test(result.extractionMethod) ? '' : ` from ${result.pageCount} page${result.pageCount === 1 ? '' : 's'}`;
       status.textContent = result.warning || `Updated ${importedCategories.size} categor${importedCategories.size === 1 ? 'y' : 'ies'} with ${importedItems.length} unique items${sourceDetail} using ${method}. Other categories were preserved.`;
       status.style.color = result.warning ? '#92400e' : '#166534';
     } catch (error) {
       status.textContent = error.message || 'PDF analysis failed.';
+      status.style.color = '#b91c1c';
+    } finally {
+      extractButton.disabled = false;
+    }
+  });
+}
+
+function setupAirBarMenuEditor() {
+  const container = document.getElementById('air-bar-items-container');
+  const addButton = document.getElementById('add-air-bar-item');
+  const extractButton = document.getElementById('extract-air-bar-menu');
+  if (!container) return;
+
+  const refreshCategories = () => renderAirCategoryControls([...airSheetItems(), ...airBarSheetItems()]);
+  addButton?.addEventListener('click', () => {
+    container.querySelector('.air-empty-row')?.remove();
+    container.insertAdjacentHTML('beforeend', airBarItemMarkup({}, container.querySelectorAll('.air-bar-item-entry').length));
+    container.querySelector('.air-bar-item-entry:last-child [name="airBarItemName[]"]')?.focus();
+    refreshCategories();
+  });
+
+  container.addEventListener('click', (event) => {
+    if (!event.target.matches('.remove-air-bar-item')) return;
+    event.target.closest('.air-bar-item-entry')?.remove();
+    if (!container.querySelector('.air-bar-item-entry')) renderAirBarItems([]);
+    refreshCategories();
+  });
+  container.addEventListener('input', refreshCategories);
+  container.addEventListener('change', (event) => {
+    const flag = event.target.closest('[data-bar-item-flag]');
+    if (!flag) return;
+    const hidden = flag.closest('.sheet-check')?.querySelector('input[type="hidden"]');
+    if (hidden) hidden.value = flag.checked ? 'true' : 'false';
+  });
+
+  container.addEventListener('paste', (event) => {
+    const target = event.target.closest('input, select');
+    const clipboard = event.clipboardData?.getData('text/plain') || '';
+    if (!target || (!clipboard.includes('\t') && !clipboard.includes('\n'))) return;
+    event.preventDefault();
+    const pastedRows = clipboard.replace(/\r/g, '').split('\n').filter((row) => row.trim()).map((row) => row.split('\t'));
+    const fields = ['airBarItemName[]', 'airBarItemPrice[]', 'airBarItem30mlPrice[]', 'airBarItem60mlPrice[]', 'airBarItem90mlPrice[]', 'airBarItem180mlPrice[]', 'airBarItemCategory[]', 'airBarItemType[]', 'airBarItemDescription[]', 'bestSeller'];
+    const startColumn = Math.max(0, Math.min(9, target.closest('td')?.cellIndex || 0));
+    let tableRows = [...container.querySelectorAll('.air-bar-item-entry')];
+    const startRow = Math.max(0, tableRows.indexOf(target.closest('.air-bar-item-entry')));
+    container.querySelector('.air-empty-row')?.remove();
+    pastedRows.forEach((cells, rowOffset) => {
+      while (tableRows.length <= startRow + rowOffset) {
+        container.insertAdjacentHTML('beforeend', airBarItemMarkup({}, tableRows.length));
+        tableRows = [...container.querySelectorAll('.air-bar-item-entry')];
+      }
+      const row = tableRows[startRow + rowOffset];
+      cells.slice(0, 10 - startColumn).forEach((value, columnOffset) => {
+        const fieldName = fields[startColumn + columnOffset];
+        if (fieldName === 'bestSeller') {
+          const checkbox = row.querySelector('[data-bar-item-flag="bestSeller"]');
+          checkbox.checked = /^(1|true|yes|y|checked|best seller|popular)$/i.test(value.trim());
+          checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+          return;
+        }
+        const field = row.querySelector(`[name="${fieldName}"]`);
+        if (!field) return;
+        field.value = fieldName === 'airBarItemType[]' ? (/food/i.test(value) ? 'food' : 'beverage') : value.trim();
+      });
+    });
+    renderAirBarItems(dedupeAirSheetItems(airBarSheetItems()));
+  });
+
+  extractButton?.addEventListener('click', async () => {
+    const fileInput = document.getElementById('air-bar-menu-file');
+    const status = document.getElementById('air-bar-extract-status');
+    const file = fileInput?.files?.[0];
+    if (!file) { status.textContent = 'Choose a Bar Menu PDF, CSV, or XLSX file first.'; status.style.color = '#b91c1c'; return; }
+    extractButton.disabled = true;
+    status.textContent = /\.(csv|xlsx)$/i.test(file.name) ? 'Reading Bar Menu spreadsheet…' : 'Scanning the Bar Menu PDF with local OCR…';
+    status.style.color = '#6b7280';
+    try {
+      const data = new FormData();
+      data.append('menuFile', file);
+      const response = await fetch('/api/admin/air-menu/extract-bar', { method: 'POST', body: data });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Bar Menu extraction failed.');
+      const importedItems = dedupeAirSheetItems(result.items || []);
+      const importedCategories = new Set(importedItems.map((item) => cleanAirSheetText(item.category || 'Bar Menu', true).toLowerCase()));
+      const preservedItems = airBarSheetItems().filter((item) => !importedCategories.has(cleanAirSheetText(item.category, true).toLowerCase()));
+      renderAirBarItems(dedupeAirSheetItems([...preservedItems, ...importedItems]));
+      setField('airBarSourceFileName', result.fileName || file.name);
+      const method = result.extractionMethod === 'ocr' ? 'local OCR' : result.extractionMethod === 'xlsx' ? 'XLSX columns' : result.extractionMethod === 'csv' ? 'CSV columns' : 'embedded PDF text';
+      status.textContent = result.warning || `Updated ${importedCategories.size} bar categor${importedCategories.size === 1 ? 'y' : 'ies'} with ${importedItems.length} unique items using ${method}. Other bar categories were preserved.`;
+      status.style.color = result.warning ? '#92400e' : '#166534';
+    } catch (error) {
+      status.textContent = error.message || 'Bar Menu extraction failed.';
       status.style.color = '#b91c1c';
     } finally {
       extractButton.disabled = false;
@@ -1461,6 +1597,7 @@ setupGoogleReviewsSync();
 setupRichTextToolbar();
 setupBlogDescriptionGenerator();
 setupAirMenuEditor();
+setupAirBarMenuEditor();
 
 document.querySelectorAll('.logout-btn:not(#clear-logs)').forEach((button) => {
   button.addEventListener('click', () => {

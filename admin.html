@@ -55,6 +55,8 @@
       .air-sheet { width: 100%; min-width: 1580px; border-collapse: collapse; table-layout: fixed; }
       .air-sheet th { position: sticky; top: 0; z-index: 1; padding: 11px 10px; border-right: 1px solid #dfe3e8; border-bottom: 2px solid #cfd5dd; background: #f3f4f6; color: #1f2937; text-align: left; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .03em; }
       .air-sheet th:nth-child(1) { width: 17%; } .air-sheet th:nth-child(2), .air-sheet th:nth-child(3), .air-sheet th:nth-child(4) { width: 7%; } .air-sheet th:nth-child(5) { width: 14%; } .air-sheet th:nth-child(6) { width: 9%; } .air-sheet th:nth-child(7) { width: 12%; text-align:center; } .air-sheet th:nth-child(8) { width: 20%; } .air-sheet th:nth-child(9), .air-sheet th:nth-child(10) { width: 6%; text-align:center; } .air-sheet th:nth-child(11) { width:48px; }
+      .bar-sheet { min-width: 1720px; }
+      .bar-sheet th:nth-child(1) { width:16%; } .bar-sheet th:nth-child(2), .bar-sheet th:nth-child(3), .bar-sheet th:nth-child(4), .bar-sheet th:nth-child(5), .bar-sheet th:nth-child(6) { width:7%; } .bar-sheet th:nth-child(7) { width:14%; text-align:left; } .bar-sheet th:nth-child(8) { width:9%; } .bar-sheet th:nth-child(9) { width:20%; } .bar-sheet th:nth-child(10) { width:7%; text-align:center; } .bar-sheet th:nth-child(11) { width:48px; }
       .air-sheet th span { color: #6b7280; font-weight: 600; text-transform: none; }
       .air-sheet td { padding: 0; border-right: 1px solid #e5e7eb; border-bottom: 1px solid #e5e7eb; vertical-align: top; }
       .air-sheet tr:last-child td { border-bottom: 0; }
@@ -429,26 +431,38 @@
         <header class="header">
           <div>
             <h1>Air Menu</h1>
-            <p>A separate QR-only menu. Import a PDF or CSV, review the extraction, then publish.</p>
+            <p>A separate QR-only food and bar menu. Import files, review the spreadsheets, then publish.</p>
           </div>
           <button class="logout-btn">Log Out</button>
         </header>
 
         <div class="card">
-          <h2>Import Menu PDF or CSV</h2>
-          <p class="help-text" style="font-size:14px; margin-bottom:16px;">PDF files use embedded text or local OCR. CSV files support common columns such as Item Name, Price, Category, and Type. No OpenAI account or external AI service is used.</p>
+          <h2>Import Menu PDF, CSV or XLSX</h2>
+          <p class="help-text" style="font-size:14px; margin-bottom:16px;">PDF files use embedded text or local OCR. CSV and XLSX files support common food-menu columns. No OpenAI account or external AI service is used.</p>
           <div class="form-group">
-            <label for="air-menu-file">Menu PDF or CSV</label>
-            <input id="air-menu-file" type="file" accept="application/pdf,.pdf,text/csv,.csv">
+            <label for="air-menu-file">Menu PDF, CSV or XLSX</label>
+            <input id="air-menu-file" type="file" accept="application/pdf,.pdf,text/csv,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.xlsx">
           </div>
           <button type="button" id="extract-air-menu" class="growth-ai-button" style="margin-top:16px;">Import & Extract Menu</button>
           <p id="air-extract-status" class="growth-ai-status"></p>
+        </div>
+
+        <div class="card">
+          <h2>Import Bar Menu</h2>
+          <p class="help-text" style="font-size:14px; margin-bottom:16px;">Upload a separate PDF, CSV or XLSX bar list. Recommended headings: Item Name, Price, 30 ML, 60 ML, 90 ML, 180 ML, Category, Type, Description, Best Seller.</p>
+          <div class="form-group">
+            <label for="air-bar-menu-file">Bar Menu PDF, CSV or XLSX</label>
+            <input id="air-bar-menu-file" type="file" accept="application/pdf,.pdf,text/csv,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.xlsx">
+          </div>
+          <button type="button" id="extract-air-bar-menu" class="growth-ai-button" style="margin-top:16px;">Import & Extract Bar Menu</button>
+          <p id="air-bar-extract-status" class="growth-ai-status"></p>
         </div>
 
         <form action="/api/update-airMenu" method="POST">
           <div class="card">
             <h2>Air Menu Settings</h2>
             <input type="hidden" name="airSourceFileName">
+            <input type="hidden" name="airBarSourceFileName">
             <div class="form-grid">
               <div class="form-group"><label>Page Title</label><input type="text" name="airMenuTitle" value="Our Menu"></div>
               <div class="form-group"><label>Page Subtitle</label><input type="text" name="airMenuSubtitle" value="Explore our freshly prepared food and beverages."></div>
@@ -465,6 +479,19 @@
               <div class="form-group"><label>Business Card Order Phone</label><span class="help-text">Include country code, for example +91 98765 43210.</span><input type="tel" name="airCardOrderPhone" placeholder="+91 98765 43210"></div>
               <div class="switch-row"><div><strong>Call to Place Order</strong><span class="help-text" style="margin:4px 0 0;">Show a direct Phone app button only on the Business Card QR menu.</span></div><input type="checkbox" name="airCardCallEnabled"></div>
             </div>
+          </div>
+
+          <div class="card">
+            <h2>Bar Menu Spreadsheet</h2>
+            <span class="help-text" style="margin-bottom:18px;">Use Price for bottles or single-price drinks. Add 30 ML and 60 ML prices where applicable; 90 ML and 180 ML are optional. Duplicate item/category combinations are removed automatically.</span>
+            <div class="air-sheet-wrap">
+              <table class="air-sheet bar-sheet">
+                <thead><tr><th>Item Name</th><th>Price</th><th>30 ML</th><th>60 ML</th><th>90 ML <span>(optional)</span></th><th>180 ML <span>(optional)</span></th><th>Category</th><th>Type</th><th>Description <span>(optional)</span></th><th>Best Seller</th><th></th></tr></thead>
+                <tbody id="air-bar-items-container"></tbody>
+              </table>
+            </div>
+            <p id="air-bar-sheet-status" class="growth-ai-status" style="margin:0 0 12px;"></p>
+            <button type="button" id="add-air-bar-item" class="add-menu-item-btn">+ Add Bar Item</button>
           </div>
 
           <div class="card">
@@ -1219,6 +1246,6 @@
         });
       }
     </script>
-    <script src="admin-cms.js?v=20260715-12" defer></script>
+    <script src="admin-cms.js?v=20260716-13" defer></script>
   </body>
 </html>

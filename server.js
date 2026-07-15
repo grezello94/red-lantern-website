@@ -4,6 +4,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const { pathToFileURL } = require('url');
 const QRCode = require('qrcode');
+const ExcelJS = require('exceljs');
 
 const envPath = path.join(__dirname, '.env');
 if (fs.existsSync(envPath)) {
@@ -208,8 +209,8 @@ const menuFileUpload = multer({
   limits: { fileSize: 20 * 1024 * 1024, files: 1 },
   fileFilter: (req, file, cb) => {
     const extension = path.extname(file.originalname).toLowerCase();
-    const isMenuFile = extension === '.pdf' || extension === '.csv';
-    cb(isMenuFile ? null : new Error('Please upload a PDF or CSV file.'), isMenuFile);
+    const isMenuFile = extension === '.pdf' || extension === '.csv' || extension === '.xlsx';
+    cb(isMenuFile ? null : new Error('Please upload a PDF, CSV, or XLSX file.'), isMenuFile);
   }
 });
 
@@ -601,6 +602,16 @@ function normalizeAirMenu(body) {
   const dietaryValues = asArray(body.airItemDietary);
   const bestSellers = asArray(body.airItemBestSeller);
   const mustHaves = asArray(body.airItemMustHave);
+  const barNames = asArray(body.airBarItemName);
+  const barPrices = asArray(body.airBarItemPrice);
+  const bar30mlPrices = asArray(body.airBarItem30mlPrice);
+  const bar60mlPrices = asArray(body.airBarItem60mlPrice);
+  const bar90mlPrices = asArray(body.airBarItem90mlPrice);
+  const bar180mlPrices = asArray(body.airBarItem180mlPrice);
+  const barCategories = asArray(body.airBarItemCategory);
+  const barTypes = asArray(body.airBarItemType);
+  const barDescriptions = asArray(body.airBarItemDescription);
+  const barBestSellers = asArray(body.airBarItemBestSeller);
   let categoryVisibility = {};
   try {
     const parsed = JSON.parse(body.airCategoryVisibility || '{}');
@@ -620,6 +631,7 @@ function normalizeAirMenu(body) {
     cardOrderPhone: String(body.airCardOrderPhone || '').trim(),
     categoryVisibility,
     sourceFileName: body.airSourceFileName || '',
+    barSourceFileName: body.airBarSourceFileName || '',
     items: dedupeMenuItems(names.map((name, index) => ({
       name: String(name || '').trim(),
       price: String(prices[index] || '').trim(),
@@ -631,6 +643,21 @@ function normalizeAirMenu(body) {
       dietary: dietaryValues[index] === 'nonveg' ? 'nonveg' : dietaryValues[index] === 'veg' ? 'veg' : '',
       bestSeller: bestSellers[index] === 'true',
       mustHave: mustHaves[index] === 'true'
+    })).filter((item) => item.name)),
+    barItems: dedupeMenuItems(barNames.map((name, index) => ({
+      name: String(name || '').trim(),
+      price: String(barPrices[index] || '').trim(),
+      price30ml: String(bar30mlPrices[index] || '').trim(),
+      price60ml: String(bar60mlPrices[index] || '').trim(),
+      price90ml: String(bar90mlPrices[index] || '').trim(),
+      price180ml: String(bar180mlPrices[index] || '').trim(),
+      category: String(barCategories[index] || 'Bar Menu').trim() || 'Bar Menu',
+      type: barTypes[index] === 'food' ? 'food' : 'beverage',
+      description: String(barDescriptions[index] || '').trim(),
+      dietary: '',
+      bestSeller: barBestSellers[index] === 'true',
+      mustHave: false,
+      isBar: true
     })).filter((item) => item.name))
   };
 }
@@ -1341,6 +1368,194 @@ function extractAirMenuFromCsv(file) {
   return { items: dedupeMenuItems(items), extractionMethod: 'csv', pageCount: 0 };
 }
 
+function spreadsheetCellText(value) {
+  if (value === null || value === undefined) return '';
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  if (typeof value !== 'object') return String(value).trim();
+  if (value.result !== undefined) return spreadsheetCellText(value.result);
+  if (Array.isArray(value.richText)) return value.richText.map((part) => part.text || '').join('').trim();
+  if (value.text !== undefined) return String(value.text).trim();
+  return String(value).trim();
+}
+
+async function workbookRows(file) {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(file.buffer);
+  const worksheet = workbook.worksheets[0];
+  if (!worksheet) return [];
+  const rows = [];
+  worksheet.eachRow({ includeEmpty: false }, (row) => {
+    const values = row.values.slice(1).map(spreadsheetCellText);
+    if (values.some(Boolean)) rows.push(values);
+  });
+  return rows;
+}
+
+function rowsAsCsv(rows) {
+  return rows.map((row) => row.map((value) => `"${String(value || '').replace(/"/g, '""')}"`).join(',')).join('\n');
+}
+
+async function extractAirMenuFromXlsx(file) {
+  const extraction = extractAirMenuFromCsv({ buffer: Buffer.from(rowsAsCsv(await workbookRows(file))) });
+  return { ...extraction, extractionMethod: 'xlsx' };
+}
+
+function formatImportedPrice(value) {
+  const clean = String(value || '').trim();
+  if (!clean) return '';
+  return !/[₹$€£]|\b(?:rs|inr)\b/i.test(clean) ? `₹${clean}` : clean.replace(/^rs\.?\s*/i, '₹');
+}
+
+function extractBarMenuFromRows(rows, extractionMethod = 'csv') {
+  if (!rows.length) return { items: [], extractionMethod, pageCount: 0 };
+  const headers = rows[0].map((value) => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, ''));
+  const findHeader = (names) => headers.findIndex((header) => names.includes(header));
+  let nameIndex = findHeader(['item', 'itemname', 'name', 'drink', 'drinkname', 'brand', 'product']);
+  let priceIndex = findHeader(['price', 'rate', 'amount', 'cost', 'mrp']);
+  let price30Index = findHeader(['30ml', 'price30ml', '30mlprice', '30', 'smallpeg']);
+  let price60Index = findHeader(['60ml', 'price60ml', '60mlprice', '60', 'largepeg']);
+  let price90Index = findHeader(['90ml', 'price90ml', '90mlprice', '90']);
+  let price180Index = findHeader(['180ml', 'price180ml', '180mlprice', '180', 'quarter']);
+  let categoryIndex = findHeader(['category', 'section', 'group', 'barcategory', 'kind']);
+  let typeIndex = findHeader(['type', 'itemtype', 'drinktype']);
+  let descriptionIndex = findHeader(['description', 'details', 'desc', 'notes']);
+  let bestSellerIndex = findHeader(['bestseller', 'bestselling', 'popular', 'recommended']);
+  const hasHeaders = [nameIndex, priceIndex, price30Index, price60Index, price90Index, price180Index, categoryIndex, typeIndex, descriptionIndex, bestSellerIndex].some((index) => index >= 0);
+  if (nameIndex < 0) nameIndex = 0;
+  if (priceIndex < 0) priceIndex = 1;
+  if (price30Index < 0) price30Index = 2;
+  if (price60Index < 0) price60Index = 3;
+  if (categoryIndex < 0) categoryIndex = 4;
+  if (typeIndex < 0) typeIndex = 5;
+  if (descriptionIndex < 0) descriptionIndex = 6;
+  if (bestSellerIndex < 0) bestSellerIndex = 7;
+  const dataRows = hasHeaders ? rows.slice(1) : rows;
+  const items = dataRows.map((columns) => {
+    const name = String(columns[nameIndex] || '').trim();
+    const suppliedCategory = String(columns[categoryIndex] || '').trim();
+    return {
+      name,
+      price: formatImportedPrice(columns[priceIndex]),
+      price30ml: formatImportedPrice(columns[price30Index]),
+      price60ml: formatImportedPrice(columns[price60Index]),
+      price90ml: price90Index >= 0 ? formatImportedPrice(columns[price90Index]) : '',
+      price180ml: price180Index >= 0 ? formatImportedPrice(columns[price180Index]) : '',
+      category: suppliedCategory || 'Bar Menu',
+      type: /food/i.test(String(columns[typeIndex] || '')) ? 'food' : 'beverage',
+      description: String(columns[descriptionIndex] || '').trim(),
+      dietary: '',
+      bestSeller: /^(1|true|yes|y|checked|best seller|popular|recommended)$/i.test(String(columns[bestSellerIndex] || '').trim()),
+      mustHave: false,
+      isBar: true
+    };
+  }).filter((item) => item.name);
+  return { items: dedupeMenuItems(items), extractionMethod, pageCount: 0 };
+}
+
+function barCategoryHeading(line) {
+  const clean = String(line || '').replace(/[:\-]+$/, '').trim();
+  if (!clean || clean.length > 60 || /\d/.test(clean)) return '';
+  const known = /\b(whisk(?:y|ey)|scotch|bourbon|rum|vodka|gin|brandy|cognac|tequila|liqueur|spirits?|feni|beer|wine|champagne|sparkling|cocktails?|mocktails?|shooters?|aperitifs?|bar menu|bar bites?|bar snacks?|draught|bottled|imported|domestic|beverages?)\b/i.test(clean);
+  return known ? clean : '';
+}
+
+function isFoodOnlyHeading(line) {
+  const clean = String(line || '').trim();
+  return likelyMenuCategory(clean) && /\b(starters?|soups?|salads?|main course|biryani|rice|noodles|breads?|seafood|chicken|mutton|vegetarian|non.?veg|desserts?)\b/i.test(clean);
+}
+
+function isAlcoholMenuItem(item = {}) {
+  return /\b(bar menu|alcohol|spirits?|feni|beer|wine|whisk(?:y|ey)|scotch|bourbon|rum|vodka|gin|brandy|cognac|liqueur|tequila|cocktail|champagne)\b/i.test(`${item.category || ''} ${item.name || ''}`);
+}
+
+function parseBarMenuText(rawText) {
+  const lines = String(rawText || '').split(/\r?\n/)
+    .map((line) => line.replace(/[|•·]+/g, ' ').replace(/\.{2,}/g, ' ').replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+  const items = [];
+  let category = 'Bar Menu';
+  let activeSizes = [];
+  let acceptingBarRows = true;
+  const validSizes = [30, 60, 90, 180];
+
+  lines.forEach((originalLine) => {
+    const sizeHeaders = [...originalLine.matchAll(/\b(30|60|90|180)\s*ml\b/gi)]
+      .map((match) => ({ size: Number(match[1]), index: match.index }))
+      .sort((a, b) => a.index - b.index)
+      .map((entry) => entry.size);
+    if (sizeHeaders.length && /price|rate|ml|peg/i.test(originalLine)) {
+      activeSizes = [...new Set(sizeHeaders)].filter((size) => validSizes.includes(size));
+      return;
+    }
+
+    const heading = barCategoryHeading(originalLine);
+    if (heading) { category = heading; acceptingBarRows = true; return; }
+    if (isFoodOnlyHeading(originalLine)) { acceptingBarRows = false; return; }
+    if (!acceptingBarRows) return;
+    if (/\b(item name|description|category|best seller|menu|page|phone|contact|gst|tax)\b/i.test(originalLine) && !/\d{2,5}/.test(originalLine)) return;
+
+    const numberMatches = [...originalLine.matchAll(/(?:₹|Rs\.?|INR)?\s*(\d{2,5}(?:\.\d{1,2})?)/gi)]
+      .filter((match) => !/^\s*ml\b/i.test(originalLine.slice((match.index || 0) + match[0].length)))
+      .filter((match) => {
+        const remainder = originalLine.slice(match.index || 0);
+        return !/[a-z]/i.test(remainder.replace(/(?:₹|Rs\.?|INR|ml|peg)/gi, ''));
+      });
+    if (!numberMatches.length) return;
+
+    const firstPriceIndex = numberMatches[0].index || 0;
+    const bestSeller = /\b(best\s*seller|popular|recommended)\b|★|⭐/i.test(originalLine);
+    const name = originalLine.slice(0, firstPriceIndex)
+      .replace(/\b(best\s*seller|popular|recommended)\b|[★⭐*]+/gi, '')
+      .replace(/[.\-–—:\s]+$/, '').replace(/^[\d.)\-\s]+/, '').trim();
+    if (name.length < 2 || /^(total|subtotal|price|rate|amount|30\s*ml|60\s*ml|90\s*ml|180\s*ml)$/i.test(name)) return;
+    const values = numberMatches.map((match) => formatImportedPrice(match[1]));
+    const prices = { price: '', price30ml: '', price60ml: '', price90ml: '', price180ml: '' };
+    if (activeSizes.length) {
+      values.slice(0, activeSizes.length).forEach((value, index) => { prices[`price${activeSizes[index]}ml`] = value; });
+      if (values.length > activeSizes.length) prices.price = values[values.length - 1];
+    } else if (values.length === 1) {
+      prices.price = values[0];
+    } else {
+      values.slice(0, 4).forEach((value, index) => { prices[`price${validSizes[index]}ml`] = value; });
+    }
+    const foodType = /\b(snack|starter|fries|peanut|masala|chicken|fish|prawn|paneer|kebab|tikka|salad)\b/i.test(`${category} ${name}`);
+    items.push({
+      name, ...prices, category, type: foodType ? 'food' : 'beverage', description: '', dietary: '',
+      bestSeller, mustHave: false, isBar: true
+    });
+  });
+  return dedupeMenuItems(items);
+}
+
+async function extractBarMenu(file) {
+  const extension = path.extname(file.originalname).toLowerCase();
+  if (extension === '.csv') return extractBarMenuFromRows(parseCsvRows(file.buffer.toString('utf8')), 'csv');
+  if (extension === '.xlsx') return extractBarMenuFromRows(await workbookRows(file), 'xlsx');
+  const pdfExtraction = await extractAirMenuFromPdf(file);
+  const parsedBarItems = parseBarMenuText(pdfExtraction.rawText || '');
+  return {
+    ...pdfExtraction,
+    items: parsedBarItems.length ? parsedBarItems : pdfExtraction.items
+      .filter((item) => item.type === 'beverage' || airMenuItemType(item.category, item.name) === 'beverage' || isAlcoholMenuItem(item))
+      .map((item) => ({
+      name: item.name,
+      price: item.price || '',
+      price30ml: item.halfPrice || '',
+      price60ml: item.fullPrice || '',
+      price90ml: '',
+      price180ml: '',
+      category: item.category && item.category !== 'Menu' ? item.category : 'Bar Menu',
+      type: 'beverage',
+      description: item.description || '',
+      dietary: '',
+      bestSeller: false,
+      mustHave: false,
+      isBar: true
+    })),
+    extractionMethod: pdfExtraction.extractionMethod
+  };
+}
+
 async function extractAirMenuFromPdf(file) {
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
   const { createCanvas } = require('@napi-rs/canvas');
@@ -1352,7 +1567,18 @@ async function extractAirMenuFromPdf(file) {
   for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
     const page = await pdf.getPage(pageNumber);
     const content = await page.getTextContent();
-    pageTexts.push(content.items.map((item) => `${item.str}${item.hasEOL ? '\n' : ' '}`).join('').trim());
+    const rows = [];
+    content.items.forEach((item) => {
+      const x = Number(item.transform?.[4] || 0);
+      const y = Number(item.transform?.[5] || 0);
+      let row = rows.find((candidate) => Math.abs(candidate.y - y) <= 2);
+      if (!row) { row = { y, items: [] }; rows.push(row); }
+      row.items.push({ x, text: item.str || '' });
+    });
+    const pageText = rows.sort((a, b) => b.y - a.y)
+      .map((row) => row.items.sort((a, b) => a.x - b.x).map((item) => item.text).join(' ').replace(/\s+/g, ' ').trim())
+      .filter(Boolean).join('\n');
+    pageTexts.push(pageText);
   }
 
   let extractionMethod = 'embedded-text';
@@ -1414,7 +1640,10 @@ app.get('/api/air-menu', async (req, res) => {
     return res.status(410).json({ expired: true, redirect: 'https://www.redlanternrestaurant.in/menu' });
   }
   const menu = await getSection('airMenu');
-  const dishes = Array.isArray(menu.items) ? menu.items : [];
+  const dishes = [
+    ...(Array.isArray(menu.items) ? menu.items : []),
+    ...(Array.isArray(menu.barItems) ? menu.barItems.map((item) => ({ ...item, isBar: true })) : [])
+  ];
   const isCard = req.query.mode === 'card';
   const isLive = isCard ? menu.cardLive !== false : menu.tableLive !== false;
   if (!isLive) return res.status(410).json({ unavailable: true, redirect: 'https://www.redlanternrestaurant.in/menu' });
@@ -1422,7 +1651,7 @@ app.get('/api/air-menu', async (req, res) => {
   const visibleDishes = dishes.filter((dish) => {
     const setting = visibility[dish.category];
     if (setting && setting[isCard ? 'card' : 'table'] === false) return false;
-    if (isCard && !setting && /alcohol|beer|wine|whisky|whiskey|rum|vodka|gin|brandy|tequila|cocktail/i.test(dish.category || '')) return false;
+    if (isCard && !setting && (dish.isBar || /\b(bar menu|alcohol|spirits?|feni|beer|wine|whisky|whiskey|scotch|bourbon|rum|vodka|gin|brandy|cognac|liqueur|tequila|cocktail)\b/i.test(dish.category || ''))) return false;
     return true;
   });
   res.set('Cache-Control', 'no-store');
@@ -1441,23 +1670,51 @@ app.get('/api/air-menu', async (req, res) => {
 
 app.post('/api/admin/air-menu/extract', menuFileUpload.single('menuFile'), async (req, res) => {
   try {
-    if (!req.file) return res.status(400).json({ error: 'Choose a menu PDF or CSV file first.' });
+    if (!req.file) return res.status(400).json({ error: 'Choose a menu PDF, CSV, or XLSX file first.' });
     const extension = path.extname(req.file.originalname).toLowerCase();
-    const extraction = extension === '.csv' ? extractAirMenuFromCsv(req.file) : await extractAirMenuFromPdf(req.file);
+    const extraction = extension === '.csv' ? extractAirMenuFromCsv(req.file)
+      : extension === '.xlsx' ? await extractAirMenuFromXlsx(req.file)
+        : await extractAirMenuFromPdf(req.file);
+    const separatedItems = extraction.items.filter((item) => !isAlcoholMenuItem(item));
+    const skippedBarItems = extraction.items.length - separatedItems.length;
     res.set('Cache-Control', 'no-store');
     res.json({
       fileName: req.file.originalname,
-      itemCount: extraction.items.length,
-      items: extraction.items,
+      itemCount: separatedItems.length,
+      items: separatedItems,
+      skippedBarItems,
       extractionMethod: extraction.extractionMethod,
       pageCount: extraction.pageCount,
-      warning: extraction.items.length ? '' : extension === '.csv'
+      warning: separatedItems.length ? (skippedBarItems ? `${skippedBarItems} bar item${skippedBarItems === 1 ? ' was' : 's were'} skipped. Import those through the separate Bar Menu section.` : '') : extension === '.csv'
         ? 'No menu rows were found. Check that the CSV contains item/name and price columns.'
         : 'OCR found text, but no item/price pairs were recognised. Add items manually or try a clearer PDF.'
     });
   } catch (error) {
     logDiagnostic({
       level: 'error', category: 'cms-save', message: `Air Menu PDF extraction failed: ${error.message}`,
+      method: req.method, path: req.path, statusCode: error.statusCode || 500,
+      ipHash: hashIp(req), userAgent: req.headers['user-agent'] || ''
+    });
+    res.status(error.statusCode || 500).json({ error: error.message });
+  }
+});
+
+app.post('/api/admin/air-menu/extract-bar', menuFileUpload.single('menuFile'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Choose a Bar Menu PDF, CSV, or XLSX file first.' });
+    const extraction = await extractBarMenu(req.file);
+    res.set('Cache-Control', 'no-store');
+    res.json({
+      fileName: req.file.originalname,
+      itemCount: extraction.items.length,
+      items: extraction.items,
+      extractionMethod: extraction.extractionMethod,
+      pageCount: extraction.pageCount || 0,
+      warning: extraction.items.length ? '' : 'No bar-menu rows were recognised. Check the file headings or try a clearer PDF.'
+    });
+  } catch (error) {
+    logDiagnostic({
+      level: 'error', category: 'cms-save', message: `Bar Menu extraction failed: ${error.message}`,
       method: req.method, path: req.path, statusCode: error.statusCode || 500,
       ipHash: hashIp(req), userAgent: req.headers['user-agent'] || ''
     });

@@ -36,6 +36,13 @@ function portionPriceHtml(dish) {
   };
   const half = normalize(dish.halfPrice);
   const full = normalize(dish.fullPrice);
+  const mlPrices = [
+    ['30 ML', normalize(dish.price30ml)],
+    ['60 ML', normalize(dish.price60ml)],
+    ['90 ML', normalize(dish.price90ml)],
+    ['180 ML', normalize(dish.price180ml)]
+  ].filter(([, price]) => price);
+  if (mlPrices.length) return `<span class="portion-prices ml-prices">${mlPrices.map(([label, price]) => `<span><small>${label}</small>${escapeHtml(price)}</span>`).join('')}</span>`;
   if (half || full) return `<span class="portion-prices">${half ? `<span><small>Half</small>${escapeHtml(half)}</span>` : ''}${full ? `<span><small>Full</small>${escapeHtml(full)}</span>` : ''}</span>`;
   const price = displayPrice(dish);
   return price ? `<span class="dish-price">${escapeHtml(price)}</span>` : '';
@@ -66,8 +73,14 @@ function numericPrice(value) {
 
 function registerOrderOptions(dish, category, index, showPrices) {
   const variants = [];
-  if (dish.halfPrice) variants.push({ portion: 'Half', price: dish.halfPrice });
-  if (dish.fullPrice) variants.push({ portion: 'Full', price: dish.fullPrice });
+  if (dish.price30ml) variants.push({ portion: '30 ML', price: dish.price30ml });
+  if (dish.price60ml) variants.push({ portion: '60 ML', price: dish.price60ml });
+  if (dish.price90ml) variants.push({ portion: '90 ML', price: dish.price90ml });
+  if (dish.price180ml) variants.push({ portion: '180 ML', price: dish.price180ml });
+  if (!variants.length) {
+    if (dish.halfPrice) variants.push({ portion: 'Half', price: dish.halfPrice });
+    if (dish.fullPrice) variants.push({ portion: 'Full', price: dish.fullPrice });
+  }
   if (!variants.length) variants.push({ portion: '', price: dish.price || displayPrice(dish) });
   return `<div class="order-pickers">${variants.map((variant) => {
     const key = encodeURIComponent(`${category}|${displayName(dish.name)}|${variant.portion}`);
@@ -162,18 +175,37 @@ function configureOrderActions(menu) {
 function setupMenuControls() {
   const input = document.getElementById('menu-search');
   const sections = [...document.querySelectorAll('.category')];
-  const buttons = [...document.querySelectorAll('.category-nav button')];
+  const typeNav = document.getElementById('menu-type-nav');
+  const categoryNav = document.getElementById('category-nav');
+  const availableTypes = [...new Set(sections.map((section) => section.dataset.menuType))];
+  let activeType = availableTypes[0] || 'food';
+
+  const highlightSection = (section) => {
+    section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    window.setTimeout(() => {
+      sections.forEach((item) => item.classList.remove('category-selected'));
+      section.classList.add('category-selected');
+    }, 320);
+  };
+
+  const renderCategoryNav = () => {
+    const activeSections = sections.filter((section) => section.dataset.menuType === activeType);
+    categoryNav.innerHTML = activeSections.map((section, index) =>
+      `<button type="button" class="${index === 0 ? 'active' : ''}" data-target="${section.id}">${escapeHtml(section.dataset.category)}</button>`).join('');
+  };
+
   const filterMenu = () => {
     const query = input.value.trim().toLowerCase();
     let visibleItems = 0;
     sections.forEach((section) => {
+      const inActiveMenu = section.dataset.menuType === activeType;
       let sectionItems = 0;
       section.querySelectorAll('.dish').forEach((dish) => {
-        const visible = !query || dish.dataset.search.includes(query);
+        const visible = inActiveMenu && (!query || dish.dataset.search.includes(query));
         dish.hidden = !visible;
         if (visible) sectionItems += 1;
       });
-      section.hidden = sectionItems === 0;
+      section.hidden = !inActiveMenu || sectionItems === 0;
       visibleItems += sectionItems;
     });
     let empty = document.getElementById('search-empty');
@@ -187,20 +219,31 @@ function setupMenuControls() {
     empty.hidden = visibleItems > 0;
   };
   input.addEventListener('input', filterMenu);
-  buttons.forEach((button) => button.addEventListener('click', () => {
-    buttons.forEach((item) => item.classList.remove('active'));
+  typeNav.innerHTML = availableTypes.map((type, index) =>
+    `<button type="button" class="${index === 0 ? 'active' : ''}" data-menu-type="${type}">${type === 'bar' ? 'Bar Menu' : 'Food Menu'}</button>`).join('');
+  typeNav.hidden = availableTypes.length < 2;
+  typeNav.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-menu-type]');
+    if (!button || button.dataset.menuType === activeType) return;
+    activeType = button.dataset.menuType;
+    typeNav.querySelectorAll('button').forEach((item) => item.classList.toggle('active', item === button));
+    renderCategoryNav();
+    filterMenu();
+    const firstSection = sections.find((section) => section.dataset.menuType === activeType && !section.hidden);
+    sections.forEach((section) => section.classList.remove('category-selected'));
+    if (firstSection) firstSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+  categoryNav.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-target]');
+    if (!button) return;
+    categoryNav.querySelectorAll('button').forEach((item) => item.classList.remove('active'));
     button.classList.add('active');
     const section = document.getElementById(button.dataset.target);
     if (!section) return;
-    section.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    window.setTimeout(() => {
-      sections.forEach((item) => item.classList.remove('category-highlight'));
-      section.classList.remove('category-highlight');
-      void section.offsetWidth;
-      section.classList.add('category-highlight');
-      window.setTimeout(() => section.classList.remove('category-highlight'), 2400);
-    }, 320);
-  }));
+    highlightSection(section);
+  });
+  renderCategoryNav();
+  filterMenu();
 }
 
 function updateTimer() {
@@ -251,15 +294,14 @@ async function loadMenu() {
     orderShowsPrices = menu.showPrices;
 
     const groups = menu.dishes.reduce((all, dish) => {
+      const menuType = dish.isBar ? 'bar' : 'food';
       const category = dish.category || 'Menu';
-      (all[category] ||= []).push(dish);
+      ((all[menuType] ||= {})[category] ||= []).push(dish);
       return all;
     }, {});
-    const entries = Object.entries(groups);
-    document.getElementById('category-nav').innerHTML = entries.map(([category], index) =>
-      `<button type="button" class="${index === 0 ? 'active' : ''}" data-target="${slug(category)}">${escapeHtml(category)}</button>`).join('');
-    document.getElementById('menu-content').innerHTML = entries.length ? entries.map(([category, dishes]) => `
-      <section class="category" id="${slug(category)}">
+    const entries = ['food', 'bar'].flatMap((menuType) => Object.entries(groups[menuType] || {}).map(([category, dishes]) => ({ menuType, category, dishes })));
+    document.getElementById('menu-content').innerHTML = entries.length ? entries.map(({ menuType, category, dishes }) => `
+      <section class="category" id="${menuType}-${slug(category)}" data-menu-type="${menuType}" data-category="${escapeHtml(category)}">
         <h2>${escapeHtml(category)}</h2>
         <div class="dish-grid">${dishes.map((dish, index) => `<article class="dish" data-search="${escapeHtml(`${displayName(dish.name)} ${dish.category} ${dish.description || ''}`.toLowerCase())}">
           <div class="dish-head"><h3>${dietarySymbol(dish)}<span>${escapeHtml(displayName(dish.name))}</span></h3>${menu.showPrices ? portionPriceHtml(dish) : ''}</div>
