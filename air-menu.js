@@ -67,11 +67,6 @@ function dietarySymbol(dish) {
   return `<span class="dietary-symbol ${kind}" aria-label="${kind === 'nonveg' ? 'Non-Veg' : 'Veg'}"><i></i></span>`;
 }
 
-function numericPrice(value) {
-  const amount = String(value || '').match(/(\d{1,6}(?:\.\d{1,2})?)/)?.[1];
-  return amount ? Number(amount) : 0;
-}
-
 function registerOrderOptions(dish, category, index, showPrices) {
   const variants = [];
   if (dish.price30ml) variants.push({ portion: '30 ML', price: dish.price30ml });
@@ -93,15 +88,11 @@ function registerOrderOptions(dish, category, index, showPrices) {
 
 function orderSummaryText() {
   const lines = ['Red Lantern – Order Selection'];
-  let total = 0;
   Object.entries(orderSelections).forEach(([key, quantity]) => {
     const item = orderCatalog.get(key);
     if (!item || quantity <= 0) return;
-    const amount = numericPrice(item.price) * quantity;
-    total += amount;
     lines.push(`${quantity} × ${item.name}${item.portion ? ` (${item.portion})` : ''}${orderShowsPrices && item.price ? ` – ${item.price}${quantity > 1 ? ` each` : ''}` : ''}`);
   });
-  if (orderShowsPrices && total) lines.push(`Estimated total: ₹${total}`);
   lines.push('Please confirm availability and the final bill with the waiter.');
   return lines.join('\n');
 }
