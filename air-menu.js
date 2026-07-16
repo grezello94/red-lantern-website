@@ -5,6 +5,7 @@ const orderStorageKey = `red-lantern-order:${params.get('signature') || expires}
 const orderCatalog = new Map();
 let orderSelections = {};
 let orderShowsPrices = false;
+let orderWhatsAppNumber = '';
 
 try { orderSelections = JSON.parse(sessionStorage.getItem(orderStorageKey) || '{}'); } catch { orderSelections = {}; }
 
@@ -127,7 +128,8 @@ function renderOrderSummary() {
     const item = orderCatalog.get(key);
     return `<div class="summary-item"><div><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml([item.category, item.portion].filter(Boolean).join(' · '))}</span></div><div class="summary-quantity"><button type="button" data-order-action="minus" data-order-key="${key}">−</button><b>${quantity}</b><button type="button" data-order-action="plus" data-order-key="${key}">+</button></div></div>`;
   }).join('') : '<p class="empty">No dishes selected yet.</p>';
-  document.getElementById('share-whatsapp').href = `https://wa.me/?text=${encodeURIComponent(orderSummaryText())}`;
+  const whatsappTarget = orderWhatsAppNumber ? `https://wa.me/${orderWhatsAppNumber}` : 'https://wa.me/';
+  document.getElementById('share-whatsapp').href = `${whatsappTarget}?text=${encodeURIComponent(orderSummaryText())}`;
 }
 
 function changeOrderQuantity(key, change) {
@@ -166,8 +168,10 @@ function configureOrderActions(menu) {
   whatsapp.hidden = !isCard;
   const call = document.getElementById('call-to-order');
   const phone = String(menu.cardOrderPhone || '').trim();
-  const dialNumber = `${phone.startsWith('+') ? '+' : ''}${phone.replace(/\D/g, '')}`;
-  const showCall = isCard && menu.cardCallEnabled && dialNumber.replace(/\D/g, '').length >= 7;
+  const phoneDigits = phone.replace(/\D/g, '');
+  const dialNumber = `${phone.startsWith('+') ? '+' : ''}${phoneDigits}`;
+  orderWhatsAppNumber = isCard && phoneDigits.length >= 7 ? phoneDigits : '';
+  const showCall = isCard && menu.cardCallEnabled && phoneDigits.length >= 7;
   call.hidden = !showCall;
   call.href = showCall ? `tel:${dialNumber}` : '#';
 }

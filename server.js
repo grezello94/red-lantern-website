@@ -103,6 +103,27 @@ function hashIp(req) {
   return crypto.createHash('sha256').update(clientIp(req)).digest('hex').slice(0, 16);
 }
 
+function dailyQrVisitorId(req) {
+  const dateBucket = new Date().toISOString().slice(0, 10);
+  const secret = process.env.AIR_MENU_SECRET || process.env.ADMIN_PASSWORD || 'red-lantern-qr-visitors';
+  return crypto.createHmac('sha256', secret).update(`${dateBucket}:${clientIp(req)}`).digest('hex').slice(0, 12);
+}
+
+function safeScanHeader(value) {
+  const text = String(Array.isArray(value) ? value[0] : value || '').slice(0, 120);
+  try { return decodeURIComponent(text); } catch { return text; }
+}
+
+function qrScanDetails(req, mode) {
+  return {
+    mode,
+    qrType: mode === 'card' ? 'Business Card QR' : 'Table QR',
+    country: safeScanHeader(req.headers['x-vercel-ip-country']),
+    region: safeScanHeader(req.headers['x-vercel-ip-country-region']),
+    city: safeScanHeader(req.headers['x-vercel-ip-city'])
+  };
+}
+
 function diagnosticSolution(category, message = '') {
   const text = String(message).toLowerCase();
   if (category === 'security') return 'Check the request path and IP hash. If repeated, keep admin credentials strong and consider blocking the source in Vercel Firewall.';
@@ -237,10 +258,10 @@ function isProtectedAdminPath(req) {
     || req.path === '/admin-cms.js'
     || req.path === '/api/admin/content'
     || req.path === '/api/admin/logs'
+    || req.path === '/api/admin/qr-scans'
     || req.path === '/api/admin/health'
     || req.path.startsWith('/api/admin/qr/')
-    || req.path === '/api/admin/air-menu/extract'
-    || req.path === '/api/admin/air-menu/dietary'
+    || req.path.startsWith('/api/admin/air-menu/')
     || req.path.startsWith('/api/update-')
     || req.path === '/api/growth-ai';
 }
@@ -1621,6 +1642,19 @@ app.get('/scan/:mode', async (req, res) => {
   if ((mode === 'table' && menu.tableLive === false) || (mode === 'card' && menu.cardLive === false)) {
     return res.redirect(302, 'https://www.redlanternrestaurant.in/menu');
   }
+  const scanDetails = qrScanDetails(req, mode);
+  await writeDiagnostic({
+    level: 'info',
+    category: 'qr-scan',
+    message: `${scanDetails.qrType} scanned`,
+    solution: 'No action required. Use the QR Scan Log dashboard to monitor engagement.',
+    location: scanDetails.qrType,
+    method: req.method,
+    path: req.path,
+    statusCode: 302,
+    ipHash: dailyQrVisitorId(req),
+    details: scanDetails
+  });
   const expires = Date.now() + airMenuLifetimeMs;
   const signature = airMenuSignature(mode, expires);
   res.set('Cache-Control', 'no-store');
@@ -1910,6 +1944,51 @@ app.post('/api/admin/google-reviews/sync', async (req, res) => {
   }
 });
 
+app.get('/api/admin/qr-scans', async (req, res) => {
+  try {
+    res.set('Cache-Control', 'no-store');
+    if (!sql) return res.status(503).json({ error: 'Neon is not configured, so QR scan logs cannot be stored.' });
+    const limit = Math.min(Math.max(Number(req.query.limit || 100), 1), 500);
+    await ensureDiagnosticsTable();
+    const [rows, summaryRows] = await Promise.all([
+      sql`
+        SELECT id, created_at, message, ip_hash, details,
+               COUNT(*) OVER (PARTITION BY ip_hash)::int AS visitor_scan_count
+        FROM website_diagnostics
+        WHERE category = 'qr-scan'
+        ORDER BY created_at DESC
+        LIMIT ${limit}
+      `,
+      sql`
+        SELECT
+          COUNT(*)::int AS total_scans,
+          COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours')::int AS scans_24h,
+          COUNT(*) FILTER (WHERE details->>'mode' = 'table')::int AS table_scans,
+          COUNT(*) FILTER (WHERE details->>'mode' = 'card')::int AS card_scans,
+          COUNT(DISTINCT ip_hash) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours')::int AS unique_24h
+        FROM website_diagnostics
+        WHERE category = 'qr-scan'
+      `
+    ]);
+    res.json({ scans: rows, summary: summaryRows[0] || {} });
+  } catch (error) {
+    console.error('QR scan logs read error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/admin/qr-scans', async (req, res) => {
+  try {
+    if (!sql) return res.status(503).json({ error: 'Neon is not configured, so QR scan logs cannot be cleared.' });
+    await ensureDiagnosticsTable();
+    await sql`DELETE FROM website_diagnostics WHERE category = 'qr-scan'`;
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('QR scan logs clear error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.get('/api/admin/logs', async (req, res) => {
   try {
     res.set('Cache-Control', 'no-store');
@@ -1920,6 +1999,7 @@ app.get('/api/admin/logs', async (req, res) => {
       SELECT id, created_at, level, category, message, solution, location, method, path,
              status_code, duration_ms, ip_hash, user_agent, details
       FROM website_diagnostics
+      WHERE category <> 'qr-scan'
       ORDER BY created_at DESC
       LIMIT ${limit}
     `;

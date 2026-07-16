@@ -1503,6 +1503,66 @@ async function clearLogs() {
   }
 }
 
+function renderQrScans(data = {}) {
+  const list = document.getElementById('qr-scans-list');
+  const stats = document.getElementById('qr-scan-stats');
+  const status = document.getElementById('qr-scans-status');
+  if (!list || !stats) return;
+  const summary = data.summary || {};
+  const statItems = [
+    ['Total scans', summary.total_scans || 0],
+    ['Last 24 hours', summary.scans_24h || 0],
+    ['Unique in 24h', summary.unique_24h || 0],
+    ['Table QR', summary.table_scans || 0],
+    ['Business Card QR', summary.card_scans || 0]
+  ];
+  stats.innerHTML = statItems.map(([label, value]) => `<div class="scan-stat"><strong>${escapeHtml(value)}</strong><span>${escapeHtml(label)}</span></div>`).join('');
+  const scans = data.scans || [];
+  if (status) status.textContent = `${scans.length} recent scan${scans.length === 1 ? '' : 's'} loaded`;
+  list.innerHTML = scans.length ? scans.map((scan) => {
+    const details = scan.details || {};
+    const place = [details.city, details.region, details.country].filter(Boolean).join(', ') || 'Approximate location unavailable';
+    return `<article class="scan-entry">
+      <div><strong>${escapeHtml(details.qrType || scan.message || 'QR scan')}</strong><span>${escapeHtml(formatLogTime(scan.created_at))}</span></div>
+      <div><strong>${details.mode === 'card' ? 'Visiting-card menu' : 'In-store table menu'}</strong><span>Anonymous visitor: ${escapeHtml(scan.ip_hash || 'unavailable')} · ${escapeHtml(scan.visitor_scan_count || 1)} scan${Number(scan.visitor_scan_count || 1) === 1 ? '' : 's'}</span></div>
+      <div><strong>${escapeHtml(place)}</strong><span>Approximate network location</span></div>
+    </article>`;
+  }).join('') : '<p class="log-status">No QR scans have been recorded yet.</p>';
+}
+
+async function refreshQrScans() {
+  const status = document.getElementById('qr-scans-status');
+  if (status) status.textContent = 'Loading scans...';
+  try {
+    const response = await fetch('/api/admin/qr-scans?limit=150', { cache: 'no-store' });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Unable to load QR scan logs.');
+    renderQrScans(data);
+  } catch (error) {
+    if (status) status.textContent = error.message || 'Unable to load QR scan logs.';
+  }
+}
+
+async function clearQrScans() {
+  if (!window.confirm('Clear all QR scan history?')) return;
+  const status = document.getElementById('qr-scans-status');
+  if (status) status.textContent = 'Clearing scan history...';
+  try {
+    const response = await fetch('/api/admin/qr-scans', { method: 'DELETE' });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Unable to clear QR scan history.');
+    await refreshQrScans();
+  } catch (error) {
+    if (status) status.textContent = error.message || 'Unable to clear QR scan history.';
+  }
+}
+
+function setupQrScanDashboard() {
+  document.getElementById('refresh-qr-scans')?.addEventListener('click', refreshQrScans);
+  document.getElementById('clear-qr-scans')?.addEventListener('click', clearQrScans);
+  refreshQrScans();
+}
+
 function setupDiagnosticsDashboard() {
   document.getElementById('refresh-health')?.addEventListener('click', refreshHealth);
   document.getElementById('refresh-logs')?.addEventListener('click', refreshLogs);
@@ -1593,6 +1653,7 @@ fetch('/api/admin/content')
 setupAiGrowthButton();
 setupGrowthRefreshButton();
 setupDiagnosticsDashboard();
+setupQrScanDashboard();
 setupGoogleReviewsSync();
 setupRichTextToolbar();
 setupBlogDescriptionGenerator();

@@ -82,12 +82,20 @@
       .category-control-row strong { color: #1f2937; }
       .category-control-row label { display: inline-flex; align-items: center; gap: 7px; color: #4b5563; font-size: 13px; font-weight: 800; }
       .category-control-row input { width: 18px; height: 18px; accent-color: #d62828; }
+      .scan-stats { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:12px; margin-bottom:22px; }
+      .scan-stat { padding:16px; border:1px solid #e5e7eb; border-radius:10px; background:#f9fafb; }
+      .scan-stat strong { display:block; color:#d62828; font-size:24px; line-height:1; }
+      .scan-stat span { display:block; margin-top:7px; color:#6b7280; font-size:11px; font-weight:700; }
+      .scan-list { display:grid; gap:10px; margin-top:18px; }
+      .scan-entry { display:grid; grid-template-columns:repeat(3,minmax(160px,1fr)); gap:14px; padding:15px; border:1px solid #e5e7eb; border-left:4px solid #d62828; border-radius:9px; background:#fff; }
+      .scan-entry strong,.scan-entry span { display:block; }
+      .scan-entry span { margin-top:4px; color:#6b7280; font-size:11px; line-height:1.4; }
       
       /* Tab functionality */
       .tab-content { display: none; animation: fadeIn 0.3s ease; }
       .tab-content.active { display: block; }
       @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-      @media (max-width: 760px) { .sidebar { position: static; width: 100%; height: auto; } body { display: block; } .main-content { margin-left: 0; padding: 24px 16px; } .form-grid, .qr-grid { grid-template-columns: 1fr; } .category-control-row { grid-template-columns: 1fr; gap: 10px; } }
+      @media (max-width: 760px) { .sidebar { position: static; width: 100%; height: auto; } body { display: block; } .main-content { margin-left: 0; padding: 24px 16px; } .form-grid, .qr-grid { grid-template-columns: 1fr; } .category-control-row { grid-template-columns: 1fr; gap: 10px; } .scan-stats { grid-template-columns:repeat(2,1fr); } .scan-entry { grid-template-columns:1fr; } }
       
       /* Rich Text Editor Mock Styles */
       .rich-text-editor { border: 1px solid #d1d5db; border-radius: 8px; overflow: hidden; background: #f9fafb; margin-top: 8px; transition: border 0.2s; }
@@ -167,6 +175,7 @@
         <div class="nav-category">Growth</div>
         <div class="nav-item" data-target="tab-growth">Growth Ideas</div>
         <div class="nav-category">System</div>
+        <div class="nav-item" data-target="tab-qr-scans">QR Scan Logs</div>
         <div class="nav-item" data-target="tab-logs">Site Logs</div>
       </nav>
     </aside>
@@ -476,7 +485,7 @@
               <div class="switch-row"><div><strong>Show business card prices</strong><span class="help-text" style="margin:4px 0 0;">Show prices on the visiting-card menu.</span></div><input type="checkbox" name="airShowCardPrices"></div>
             </div>
             <div class="form-grid">
-              <div class="form-group"><label>Business Card Order Phone</label><span class="help-text">Include country code, for example +91 98765 43210.</span><input type="tel" name="airCardOrderPhone" placeholder="+91 98765 43210"></div>
+              <div class="form-group"><label>Business Card Order Phone & WhatsApp</label><span class="help-text">Orders are sent directly to this WhatsApp number. Include country code, for example +91 98765 43210.</span><input type="tel" name="airCardOrderPhone" placeholder="+91 98765 43210"></div>
               <div class="switch-row"><div><strong>Call to Place Order</strong><span class="help-text" style="margin:4px 0 0;">Show a direct Phone app button only on the Business Card QR menu.</span></div><input type="checkbox" name="airCardCallEnabled"></div>
             </div>
           </div>
@@ -978,6 +987,29 @@
         </div>
       </div>
 
+      <!-- QR SCAN LOGS TAB -->
+      <div id="tab-qr-scans" class="tab-content">
+        <header class="header">
+          <div>
+            <h1>QR Scan Logs</h1>
+            <p>Monitor Table and Business Card QR usage without tracking individual visitors.</p>
+          </div>
+          <button class="logout-btn">Log Out</button>
+        </header>
+
+        <div class="card">
+          <h2>Scan Overview</h2>
+          <p class="help-text" style="font-size:13px; margin-bottom:18px;">Each scan is counted. A daily rotating anonymous visitor ID estimates unique scanners and repeated activity without storing raw IPs. Approximate city/region/country is recorded when available.</p>
+          <div id="qr-scan-stats" class="scan-stats"></div>
+          <div class="log-toolbar">
+            <button type="button" id="refresh-qr-scans" class="btn-refresh">Refresh scan logs</button>
+            <button type="button" id="clear-qr-scans" class="logout-btn">Clear scan history</button>
+            <span id="qr-scans-status" class="log-status">Loading scans...</span>
+          </div>
+          <div id="qr-scans-list" class="scan-list"></div>
+        </div>
+      </div>
+
       <!-- SITE LOGS TAB -->
       <div id="tab-logs" class="tab-content">
         <header class="header">
@@ -1246,6 +1278,6 @@
         });
       }
     </script>
-    <script src="admin-cms.js?v=20260716-13" defer></script>
+    <script src="admin-cms.js?v=20260716-17" defer></script>
   </body>
 </html>
