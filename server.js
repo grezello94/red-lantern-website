@@ -68,7 +68,7 @@ const app = express();
 app.set('trust proxy', 1);
 const port = process.env.PORT || 3001;
 const host = process.env.HOST || '0.0.0.0';
-const uploadsDir = path.join(__dirname, 'uploads');
+const uploadsDir = process.env.VERCEL ? path.join('/tmp', 'red-lantern-uploads') : path.join(__dirname, 'uploads');
 
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
