@@ -315,8 +315,10 @@ async function loadMenu() {
         </article>`).join('')}</div>
       </section>`).join('') : '<p class="empty">The menu is being updated. Please ask our team for today’s selections.</p>';
     if (entries.length) { setupMenuControls(); updateOrderUI(); }
-  } catch {
-    document.getElementById('menu-content').innerHTML = '<p class="empty">We could not load the menu. Please try scanning the QR code again.</p>';
+  } catch (error) {
+    // Keep the printed QR useful even if the Air Menu API is temporarily down.
+    console.error('Air Menu failed to load; using website menu fallback:', error);
+    window.location.replace(fallbackUrl);
   }
 }
 

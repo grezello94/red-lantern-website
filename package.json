@@ -8,7 +8,8 @@
   },
   "scripts": {
     "minify:css": "cleancss -o style.min.css style.css",
-    "build": "npm run minify:css",
+    "check": "node --check server.js && node --check admin-cms.js && node --check air-menu.js",
+    "build": "npm run check && npm run minify:css",
     "start": "node server.js",
     "dev": "node server.js",
     "test": "echo \"Error: no test specified\" && exit 1"

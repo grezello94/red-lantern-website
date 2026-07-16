@@ -68,10 +68,15 @@ const app = express();
 app.set('trust proxy', 1);
 const port = process.env.PORT || 3001;
 const host = process.env.HOST || '0.0.0.0';
-const uploadsDir = process.env.VERCEL ? path.join('/tmp', 'red-lantern-uploads') : path.join(__dirname, 'uploads');
+let uploadsDir = process.env.VERCEL ? path.join('/tmp', 'red-lantern-uploads') : path.join(__dirname, 'uploads');
 
-if (!fs.existsSync(uploadsDir)) {
+try {
   fs.mkdirSync(uploadsDir, { recursive: true });
+} catch (error) {
+  // Local uploads are optional. Never prevent the website from starting because
+  // a serverless filesystem is read-only or its temporary storage is unavailable.
+  console.warn(`Local uploads disabled: ${error.message}`);
+  uploadsDir = null;
 }
 
 let sql = null;
@@ -481,12 +486,14 @@ app.use(express.static(__dirname, {
     }
   }
 }));
-app.use('/uploads', express.static(uploadsDir, {
-  dotfiles: 'deny',
-  index: false,
-  maxAge: '7d',
-  immutable: true
-}));
+if (uploadsDir) {
+  app.use('/uploads', express.static(uploadsDir, {
+    dotfiles: 'deny',
+    index: false,
+    maxAge: '7d',
+    immutable: true
+  }));
+}
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 app.use(express.json({ limit: '1mb' }));
 
@@ -1638,27 +1645,34 @@ async function extractAirMenuFromPdf(file) {
 app.get('/scan/:mode', async (req, res) => {
   const mode = req.params.mode;
   if (!['table', 'card'].includes(mode)) return res.redirect(302, '/menu');
-  const menu = await getSection('airMenu');
-  if ((mode === 'table' && menu.tableLive === false) || (mode === 'card' && menu.cardLive === false)) {
+  try {
+    const menu = await getSection('airMenu');
+    if ((mode === 'table' && menu.tableLive === false) || (mode === 'card' && menu.cardLive === false)) {
+      return res.redirect(302, 'https://www.redlanternrestaurant.in/menu');
+    }
+    const scanDetails = qrScanDetails(req, mode);
+    await writeDiagnostic({
+      level: 'info',
+      category: 'qr-scan',
+      message: `${scanDetails.qrType} scanned`,
+      solution: 'No action required. Use the QR Scan Log dashboard to monitor engagement.',
+      location: scanDetails.qrType,
+      method: req.method,
+      path: req.path,
+      statusCode: 302,
+      ipHash: dailyQrVisitorId(req),
+      details: scanDetails
+    });
+    const expires = Date.now() + airMenuLifetimeMs;
+    const signature = airMenuSignature(mode, expires);
+    res.set('Cache-Control', 'no-store');
+    return res.redirect(302, `/air-menu?mode=${mode}&expires=${expires}&signature=${encodeURIComponent(signature)}`);
+  } catch (error) {
+    // A database or analytics outage must not strand customers at a 500 page.
+    console.error(`QR ${mode} scan failed; using website menu fallback:`, error);
+    res.set('Cache-Control', 'no-store');
     return res.redirect(302, 'https://www.redlanternrestaurant.in/menu');
   }
-  const scanDetails = qrScanDetails(req, mode);
-  await writeDiagnostic({
-    level: 'info',
-    category: 'qr-scan',
-    message: `${scanDetails.qrType} scanned`,
-    solution: 'No action required. Use the QR Scan Log dashboard to monitor engagement.',
-    location: scanDetails.qrType,
-    method: req.method,
-    path: req.path,
-    statusCode: 302,
-    ipHash: dailyQrVisitorId(req),
-    details: scanDetails
-  });
-  const expires = Date.now() + airMenuLifetimeMs;
-  const signature = airMenuSignature(mode, expires);
-  res.set('Cache-Control', 'no-store');
-  return res.redirect(302, `/air-menu?mode=${mode}&expires=${expires}&signature=${encodeURIComponent(signature)}`);
 });
 
 app.get('/air-menu', (req, res) => {
