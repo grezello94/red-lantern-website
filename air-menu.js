@@ -6,6 +6,7 @@ const orderCatalog = new Map();
 let orderSelections = {};
 let orderShowsPrices = false;
 let orderWhatsAppNumber = '';
+let orderIsBusinessCard = false;
 
 try { orderSelections = JSON.parse(sessionStorage.getItem(orderStorageKey) || '{}'); } catch { orderSelections = {}; }
 
@@ -93,7 +94,12 @@ function orderSummaryText() {
     if (!item || quantity <= 0) return;
     lines.push(`${quantity} × ${item.name}${item.portion ? ` (${item.portion})` : ''}${orderShowsPrices && item.price ? ` – ${item.price}${quantity > 1 ? ` each` : ''}` : ''}`);
   });
-  lines.push('Please confirm availability and the final bill with the waiter.');
+  if (orderIsBusinessCard) {
+    lines.push('Please confirm the availability and the final bill with the restaurant on call.');
+    lines.push('If you do not receive a reply to your message, kindly call us.');
+  } else {
+    lines.push('Please confirm availability and the final bill with the waiter.');
+  }
   return lines.join('\n');
 }
 
@@ -154,6 +160,7 @@ function setupOrderShortlist() {
 
 function configureOrderActions(menu) {
   const isCard = menu.mode === 'card';
+  orderIsBusinessCard = isCard;
   document.body.classList.toggle('card-menu-mode', isCard);
   const whatsapp = document.getElementById('share-whatsapp');
   whatsapp.hidden = !isCard;
