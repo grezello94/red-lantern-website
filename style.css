@@ -104,6 +104,22 @@ a {
   box-shadow: 0 0 12px rgba(222, 42, 42, 0.55);
 }
 
+/* Interior pages begin on a light canvas, so the hero's white navigation
+   treatment is deliberately replaced with high-contrast ink. */
+body:not(.home-page) .site-header {
+  color: #251b18;
+  text-shadow: none;
+}
+
+body:not(.home-page) .site-nav {
+  color: #463733;
+}
+
+body:not(.home-page) .site-nav a:not(.call-button):hover {
+  color: var(--brand-red);
+  text-shadow: none;
+}
+
 .call-button {
   display: inline-flex;
   align-items: center;
@@ -296,11 +312,12 @@ a {
     linear-gradient(90deg, rgba(244, 166, 42, 0.12), transparent 18%, transparent 82%, rgba(244, 166, 42, 0.12)),
     #cc1d1d;
   width: 100%;
-  padding: 22px 5vw;
+  padding: 18px clamp(24px, 3vw, 64px);
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: clamp(30px, 5vw, 90px);
+  column-gap: clamp(24px, 2vw, 48px);
+  row-gap: 14px;
   font-size: 1rem;
   color: #fff;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 16px 34px rgba(204, 29, 29, 0.16);
@@ -1022,6 +1039,24 @@ a {
   flex-wrap: wrap;
   gap: 56px;
   margin-top: 0;
+}
+
+/* Keep the three desktop testimonials together at standard 100% browser zoom.
+   The former fixed-width flex cards needed more room than many desktop viewports
+   provide, causing the final review to wrap onto a row by itself. */
+@media (min-width: 1180px) {
+  .testimonials .card-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: clamp(28px, 3vw, 48px);
+    max-width: 1200px;
+    margin-inline: auto;
+  }
+
+  .testimonials .review-card {
+    width: auto;
+    max-width: none;
+  }
 }
 
 .why-us .card-grid {
