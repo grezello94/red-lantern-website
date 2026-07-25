@@ -395,13 +395,33 @@ function cleanAirSheetText(value, isCategory = false) {
   return text;
 }
 
+function formatAirPrice(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  if (/^₹/.test(text)) return text;
+  if (/^(?:rs\.?|inr)\s*/i.test(text)) return `₹${text.replace(/^(?:rs\.?|inr)\s*/i, '')}`;
+  return /^\d/.test(text) ? `₹${text}` : text;
+}
+
+function stableCategoryOrder(items = []) {
+  const groups = new Map();
+  items.forEach((item) => {
+    const category = cleanAirSheetText(item.category || 'Menu', true) || 'Menu';
+    if (!groups.has(category)) groups.set(category, []);
+    groups.get(category).push({ ...item, category });
+  });
+  return [...groups.values()].flat();
+}
+
 function airItemMarkup(item = {}, index = 0) {
   return `
     <tr class="air-item-entry" data-row="${index}">
       <td><input type="text" name="airItemName[]" value="${escapeHtml(cleanAirSheetText(item.name))}" placeholder="Item name" required></td>
-      <td><input type="text" name="airItemPrice[]" value="${escapeHtml(item.price || '')}" placeholder="₹250"></td>
-      <td><input type="text" name="airItemFullPrice[]" value="${escapeHtml(item.fullPrice || '')}" placeholder="₹450"></td>
-      <td><input type="text" name="airItemHalfPrice[]" value="${escapeHtml(item.halfPrice || '')}" placeholder="₹280"></td>
+      <td><input type="text" class="air-price-input" name="airItemPrice[]" value="${escapeHtml(formatAirPrice(item.price))}" placeholder="₹250"></td>
+      <td><input type="text" name="airItemFullLabel[]" value="${escapeHtml(item.fullLabel || 'Full')}" placeholder="e.g. With Bone"></td>
+      <td><input type="text" class="air-price-input" name="airItemFullPrice[]" value="${escapeHtml(formatAirPrice(item.fullPrice))}" placeholder="₹450"></td>
+      <td><input type="text" name="airItemHalfLabel[]" value="${escapeHtml(item.halfLabel || 'Half')}" placeholder="e.g. Boneless"></td>
+      <td><input type="text" class="air-price-input" name="airItemHalfPrice[]" value="${escapeHtml(formatAirPrice(item.halfPrice))}" placeholder="₹280"></td>
       <td><input type="text" name="airItemCategory[]" value="${escapeHtml(cleanAirSheetText(item.category || 'Menu', true))}" placeholder="Category" required></td>
       <td><select name="airItemType[]"><option value="food" ${item.type !== 'beverage' ? 'selected' : ''}>Food</option><option value="beverage" ${item.type === 'beverage' ? 'selected' : ''}>Beverage</option></select></td>
       <td><div class="dietary-picker"><input type="hidden" name="airItemDietary[]" value="${item.dietary || ''}"><label class="dietary-choice veg" title="Veg"><input type="checkbox" data-dietary="veg" ${item.dietary === 'veg' ? 'checked' : ''}><span class="dietary-mark"></span></label><label class="dietary-choice nonveg" title="Non-Veg"><input type="checkbox" data-dietary="nonveg" ${item.dietary === 'nonveg' ? 'checked' : ''}><span class="dietary-mark"></span></label></div></td>
@@ -416,11 +436,11 @@ function airBarItemMarkup(item = {}, index = 0) {
   return `
     <tr class="air-bar-item-entry" data-row="${index}">
       <td><input type="text" name="airBarItemName[]" value="${escapeHtml(cleanAirSheetText(item.name))}" placeholder="Item name" required></td>
-      <td><input type="text" name="airBarItemPrice[]" value="${escapeHtml(item.price || '')}" placeholder="₹250"></td>
-      <td><input type="text" name="airBarItem30mlPrice[]" value="${escapeHtml(item.price30ml || '')}" placeholder="₹180"></td>
-      <td><input type="text" name="airBarItem60mlPrice[]" value="${escapeHtml(item.price60ml || '')}" placeholder="₹320"></td>
-      <td><input type="text" name="airBarItem90mlPrice[]" value="${escapeHtml(item.price90ml || '')}" placeholder="Optional"></td>
-      <td><input type="text" name="airBarItem180mlPrice[]" value="${escapeHtml(item.price180ml || '')}" placeholder="Optional"></td>
+      <td><input type="text" class="air-price-input" name="airBarItemPrice[]" value="${escapeHtml(formatAirPrice(item.price))}" placeholder="₹250"></td>
+      <td><input type="text" class="air-price-input" name="airBarItem30mlPrice[]" value="${escapeHtml(formatAirPrice(item.price30ml))}" placeholder="₹180"></td>
+      <td><input type="text" class="air-price-input" name="airBarItem60mlPrice[]" value="${escapeHtml(formatAirPrice(item.price60ml))}" placeholder="₹320"></td>
+      <td><input type="text" class="air-price-input" name="airBarItem90mlPrice[]" value="${escapeHtml(formatAirPrice(item.price90ml))}" placeholder="Optional"></td>
+      <td><input type="text" class="air-price-input" name="airBarItem180mlPrice[]" value="${escapeHtml(formatAirPrice(item.price180ml))}" placeholder="Optional"></td>
       <td><input type="text" name="airBarItemCategory[]" value="${escapeHtml(cleanAirSheetText(item.category || 'Bar Menu', true))}" placeholder="Whisky, Beer…" required></td>
       <td><select name="airBarItemType[]"><option value="beverage" ${item.type !== 'food' ? 'selected' : ''}>Beverage</option><option value="food" ${item.type === 'food' ? 'selected' : ''}>Food</option></select></td>
       <td><input type="text" name="airBarItemDescription[]" value="${escapeHtml(item.description || '')}" placeholder="Optional description"></td>
@@ -440,6 +460,13 @@ function syncAirCategoryVisibility() {
   if (hidden) hidden.value = JSON.stringify(airCategoryVisibility);
 }
 
+function setAirCategoryStatus(message = '', isError = false) {
+  const status = document.getElementById('air-category-status');
+  if (!status) return;
+  status.textContent = message;
+  status.style.color = isError ? '#b91c1c' : '#166534';
+}
+
 function renderAirCategoryControls(items = []) {
   const container = document.getElementById('air-category-controls');
   if (!container) return;
@@ -456,25 +483,47 @@ function renderAirCategoryControls(items = []) {
       <strong>${escapeHtml(category)}</strong>
       <label><input type="checkbox" data-view="table" ${setting.table !== false ? 'checked' : ''}> Table QR</label>
       <label><input type="checkbox" data-view="card" ${setting.card !== false ? 'checked' : ''}> Business Card QR</label>
+      <button type="button" class="delete-category-btn" data-delete-category="${escapeHtml(category)}">Delete</button>
     </div>`;
   }).join('') : '<p class="air-empty">Add or import menu items to configure category visibility.</p>';
   syncAirCategoryVisibility();
 }
 
+function deleteAirCategory(category) {
+  const normalizedCategory = cleanAirSheetText(category || 'Menu', true).toLowerCase();
+  const items = airSheetItems();
+  const removedItems = items.filter((item) => cleanAirSheetText(item.category || 'Menu', true).toLowerCase() === normalizedCategory);
+  if (!removedItems.length) {
+    setAirCategoryStatus('No items found for that category.', true);
+    return;
+  }
+
+  const confirmed = window.confirm(`Delete "${category}" and ${removedItems.length} menu item${removedItems.length === 1 ? '' : 's'}? Click Publish Changes to save this deletion.`);
+  if (!confirmed) return;
+
+  delete airCategoryVisibility[category];
+  const remainingItems = items.filter((item) => cleanAirSheetText(item.category || 'Menu', true).toLowerCase() !== normalizedCategory);
+  renderAirItems(remainingItems);
+  setAirCategoryStatus(`Deleted ${category}. Click Publish Changes to save.`);
+}
+
 function renderAirItems(items = []) {
   const container = document.getElementById('air-items-container');
   if (!container) return;
-  container.innerHTML = items.map((item, index) => airItemMarkup(item, index)).join('');
-  if (!items.length) container.innerHTML = '<tr class="air-empty-row"><td colspan="11"><p class="air-empty">Upload a CSV, paste from Excel, or add your first menu item.</p></td></tr>';
-  renderAirCategoryControls([...items, ...airBarSheetItems()]);
+  const orderedItems = stableCategoryOrder(items);
+  container.innerHTML = orderedItems.map((item, index) => airItemMarkup(item, index)).join('');
+  if (!orderedItems.length) container.innerHTML = '<tr class="air-empty-row"><td colspan="13"><p class="air-empty">Upload a CSV, paste from Excel, or add your first menu item.</p></td></tr>';
+  renderAirCategoryControls([...orderedItems, ...airBarSheetItems()]);
 }
 
 function airSheetItems() {
   return [...document.querySelectorAll('#air-items-container .air-item-entry')].map((row) => ({
     name: row.querySelector('[name="airItemName[]"]')?.value.trim() || '',
-    price: row.querySelector('[name="airItemPrice[]"]')?.value.trim() || '',
-    fullPrice: row.querySelector('[name="airItemFullPrice[]"]')?.value.trim() || '',
-    halfPrice: row.querySelector('[name="airItemHalfPrice[]"]')?.value.trim() || '',
+    price: formatAirPrice(row.querySelector('[name="airItemPrice[]"]')?.value),
+    fullLabel: row.querySelector('[name="airItemFullLabel[]"]')?.value.trim() || 'Full',
+    fullPrice: formatAirPrice(row.querySelector('[name="airItemFullPrice[]"]')?.value),
+    halfLabel: row.querySelector('[name="airItemHalfLabel[]"]')?.value.trim() || 'Half',
+    halfPrice: formatAirPrice(row.querySelector('[name="airItemHalfPrice[]"]')?.value),
     category: row.querySelector('[name="airItemCategory[]"]')?.value.trim() || 'Menu',
     type: row.querySelector('[name="airItemType[]"]')?.value === 'beverage' ? 'beverage' : 'food',
     dietary: row.querySelector('[name="airItemDietary[]"]')?.value || '',
@@ -554,6 +603,15 @@ function setupAirMenuEditor() {
     container.querySelector('.air-item-entry:last-child [name="airItemName[]"]')?.focus();
   });
 
+  container.addEventListener('focusin', (event) => {
+    if (event.target.matches('.air-price-input') && !event.target.value) event.target.value = '₹';
+  });
+
+  container.addEventListener('focusout', (event) => {
+    if (event.target.matches('.air-price-input')) event.target.value = formatAirPrice(event.target.value);
+    if (event.target.matches('[name="airItemCategory[]"]')) renderAirItems(stableCategoryOrder(airSheetItems()));
+  });
+
   container.addEventListener('click', (event) => {
     if (!event.target.matches('.remove-air-item')) return;
     event.target.closest('.air-item-entry')?.remove();
@@ -609,8 +667,8 @@ function setupAirMenuEditor() {
     if (!target || (!clipboard.includes('\t') && !clipboard.includes('\n'))) return;
     event.preventDefault();
     const pastedRows = clipboard.replace(/\r/g, '').split('\n').filter((row) => row.trim()).map((row) => row.split('\t'));
-    const fields = ['airItemName[]', 'airItemPrice[]', 'airItemFullPrice[]', 'airItemHalfPrice[]', 'airItemCategory[]', 'airItemType[]', 'dietary', 'airItemDescription[]', 'bestSeller', 'mustHave'];
-    const startColumn = Math.max(0, Math.min(9, target.closest('td')?.cellIndex || 0));
+    const fields = ['airItemName[]', 'airItemPrice[]', 'airItemFullLabel[]', 'airItemFullPrice[]', 'airItemHalfLabel[]', 'airItemHalfPrice[]', 'airItemCategory[]', 'airItemType[]', 'dietary', 'airItemDescription[]', 'bestSeller', 'mustHave'];
+    const startColumn = Math.max(0, Math.min(11, target.closest('td')?.cellIndex || 0));
     let tableRows = [...container.querySelectorAll('.air-item-entry')];
     const startRow = Math.max(0, tableRows.indexOf(target.closest('.air-item-entry')));
     container.querySelector('.air-empty-row')?.remove();
@@ -621,7 +679,7 @@ function setupAirMenuEditor() {
         tableRows = [...container.querySelectorAll('.air-item-entry')];
       }
       const row = tableRows[startRow + rowOffset];
-      cells.slice(0, 10 - startColumn).forEach((value, columnOffset) => {
+      cells.slice(0, 12 - startColumn).forEach((value, columnOffset) => {
         const fieldName = fields[startColumn + columnOffset];
         if (fieldName === 'dietary') {
           const dietaryValue = /non[\s-]?veg/i.test(value) ? 'nonveg' : /veg/i.test(value) ? 'veg' : '';
@@ -640,11 +698,11 @@ function setupAirMenuEditor() {
         const cleanValue = value.trim();
         field.value = fieldName === 'airItemType[]'
           ? (/beverage|drink/i.test(cleanValue) ? 'beverage' : 'food')
-          : cleanValue;
+          : field.classList.contains('air-price-input') ? formatAirPrice(cleanValue) : cleanValue;
       });
     });
 
-    renderAirItems(dedupeAirSheetItems(airSheetItems()));
+    renderAirItems(stableCategoryOrder(dedupeAirSheetItems(airSheetItems())));
   });
 
   categoryControls?.addEventListener('change', (event) => {
@@ -655,6 +713,12 @@ function setupAirMenuEditor() {
     airCategoryVisibility[category] ||= { table: true, card: !isAlcoholCategory(category) };
     airCategoryVisibility[category][checkbox.dataset.view] = checkbox.checked;
     syncAirCategoryVisibility();
+  });
+
+  categoryControls?.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-delete-category]');
+    if (!button) return;
+    deleteAirCategory(button.dataset.deleteCategory || '');
   });
 
   extractButton?.addEventListener('click', async () => {
@@ -698,6 +762,12 @@ function setupAirBarMenuEditor() {
   if (!container) return;
 
   const refreshCategories = () => renderAirCategoryControls([...airSheetItems(), ...airBarSheetItems()]);
+  container.addEventListener('focusin', (event) => {
+    if (event.target.matches('.air-price-input') && !event.target.value) event.target.value = '₹';
+  });
+  container.addEventListener('focusout', (event) => {
+    if (event.target.matches('.air-price-input')) event.target.value = formatAirPrice(event.target.value);
+  });
   addButton?.addEventListener('click', () => {
     container.querySelector('.air-empty-row')?.remove();
     container.insertAdjacentHTML('beforeend', airBarItemMarkup({}, container.querySelectorAll('.air-bar-item-entry').length));

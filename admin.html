@@ -78,7 +78,7 @@
       .air-sheet .remove-air-item:hover { background: #fef2f2; }
       .air-empty { padding: 24px; margin-bottom: 16px; border: 2px dashed #e5e7eb; border-radius: 8px; color: #6b7280; text-align: center; }
       .category-control-list { display: grid; gap: 10px; }
-      .category-control-row { display: grid; grid-template-columns: minmax(180px, 1fr) auto auto; align-items: center; gap: 24px; padding: 14px 16px; border: 1px solid #e5e7eb; border-radius: 9px; background: #f9fafb; }
+      .category-control-row { display: grid; grid-template-columns: minmax(180px, 1fr) auto auto auto; align-items: center; gap: 24px; padding: 14px 16px; border: 1px solid #e5e7eb; border-radius: 9px; background: #f9fafb; }
       .category-control-row strong { color: #1f2937; }
       .category-control-row label { display: inline-flex; align-items: center; gap: 7px; color: #4b5563; font-size: 13px; font-weight: 800; }
       .category-control-row input { width: 18px; height: 18px; accent-color: #d62828; }
@@ -90,6 +90,8 @@
       .scan-entry { display:grid; grid-template-columns:repeat(3,minmax(160px,1fr)); gap:14px; padding:15px; border:1px solid #e5e7eb; border-left:4px solid #d62828; border-radius:9px; background:#fff; }
       .scan-entry strong,.scan-entry span { display:block; }
       .scan-entry span { margin-top:4px; color:#6b7280; font-size:11px; line-height:1.4; }
+      .delete-category-btn { min-height: 34px; padding: 0 12px; border: 1px solid #fecaca; border-radius: 7px; background: #fff; color: #dc2626; cursor: pointer; font-size: 12px; font-weight: 900; }
+      .delete-category-btn:hover { background: #fef2f2; border-color: #fca5a5; }
       
       /* Tab functionality */
       .tab-content { display: none; animation: fadeIn 0.3s ease; }
@@ -505,10 +507,10 @@
 
           <div class="card">
             <h2>Air Menu Spreadsheet</h2>
-            <span class="help-text" style="margin-bottom:18px;">Use Price for single-price items. For portioned items, fill Half Price and/or Full Price and leave Price blank. Duplicate item/category combinations are removed automatically.</span>
+            <span class="help-text" style="margin-bottom:18px;">Use Price for single-price items. For items with two options, name each option (for example, With Bone and Boneless) and enter its price. Leave Price blank. All prices use ₹ by default. Rows are kept together by category.</span>
             <div class="air-sheet-wrap">
               <table class="air-sheet">
-                <thead><tr><th>Item Name</th><th>Price</th><th>Full Price</th><th>Half Price</th><th>Category</th><th>Type</th><th>Veg / Non-Veg</th><th>Description <span>(optional)</span></th><th>Best Seller</th><th>Must Have</th><th></th></tr></thead>
+                <thead><tr><th>Item Name</th><th>Price</th><th>Option 1 Name</th><th>Option 1 Price</th><th>Option 2 Name</th><th>Option 2 Price</th><th>Category</th><th>Type</th><th>Veg / Non-Veg</th><th>Description <span>(optional)</span></th><th>Best Seller</th><th>Must Have</th><th></th></tr></thead>
                 <tbody id="air-items-container"></tbody>
               </table>
             </div>
@@ -518,8 +520,9 @@
 
           <div class="card">
             <h2>Category Visibility</h2>
-            <span class="help-text" style="margin-bottom:18px;">Expose or hide each category independently on the Table and Business Card QR menus. Alcohol is hidden from the business-card menu by default.</span>
+            <span class="help-text" style="margin-bottom:18px;">Expose, hide, or delete each category independently. Deleting a category removes its items from the spreadsheet; click Publish Changes to save.</span>
             <div id="air-category-controls" class="category-control-list"></div>
+            <p id="air-category-status" class="growth-ai-status" style="margin:12px 0 0;"></p>
           </div>
 
           <div class="card">
