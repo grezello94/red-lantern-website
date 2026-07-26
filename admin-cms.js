@@ -402,6 +402,8 @@ function airItemMarkup(item = {}, index = 0) {
       <td><input type="text" name="airItemPrice[]" value="${escapeHtml(item.price || '')}" placeholder="₹250"></td>
       <td><input type="text" name="airItemFullPrice[]" value="${escapeHtml(item.fullPrice || '')}" placeholder="₹450"></td>
       <td><input type="text" name="airItemHalfPrice[]" value="${escapeHtml(item.halfPrice || '')}" placeholder="₹280"></td>
+      <td><input type="text" name="airItemWithBonePrice[]" value="${escapeHtml(item.withBonePrice || '')}" placeholder="₹450"></td>
+      <td><input type="text" name="airItemBonelessPrice[]" value="${escapeHtml(item.bonelessPrice || '')}" placeholder="₹500"></td>
       <td><input type="text" name="airItemCategory[]" value="${escapeHtml(cleanAirSheetText(item.category || 'Menu', true))}" placeholder="Category" required></td>
       <td><select name="airItemType[]"><option value="food" ${item.type !== 'beverage' ? 'selected' : ''}>Food</option><option value="beverage" ${item.type === 'beverage' ? 'selected' : ''}>Beverage</option></select></td>
       <td><div class="dietary-picker"><input type="hidden" name="airItemDietary[]" value="${item.dietary || ''}"><label class="dietary-choice veg" title="Veg"><input type="checkbox" data-dietary="veg" ${item.dietary === 'veg' ? 'checked' : ''}><span class="dietary-mark"></span></label><label class="dietary-choice nonveg" title="Non-Veg"><input type="checkbox" data-dietary="nonveg" ${item.dietary === 'nonveg' ? 'checked' : ''}><span class="dietary-mark"></span></label></div></td>
@@ -465,7 +467,7 @@ function renderAirItems(items = []) {
   const container = document.getElementById('air-items-container');
   if (!container) return;
   container.innerHTML = items.map((item, index) => airItemMarkup(item, index)).join('');
-  if (!items.length) container.innerHTML = '<tr class="air-empty-row"><td colspan="11"><p class="air-empty">Upload a CSV, paste from Excel, or add your first menu item.</p></td></tr>';
+  if (!items.length) container.innerHTML = '<tr class="air-empty-row"><td colspan="13"><p class="air-empty">Upload a CSV, paste from Excel, or add your first menu item.</p></td></tr>';
   renderAirCategoryControls([...items, ...airBarSheetItems()]);
 }
 
@@ -475,6 +477,8 @@ function airSheetItems() {
     price: row.querySelector('[name="airItemPrice[]"]')?.value.trim() || '',
     fullPrice: row.querySelector('[name="airItemFullPrice[]"]')?.value.trim() || '',
     halfPrice: row.querySelector('[name="airItemHalfPrice[]"]')?.value.trim() || '',
+    withBonePrice: row.querySelector('[name="airItemWithBonePrice[]"]')?.value.trim() || '',
+    bonelessPrice: row.querySelector('[name="airItemBonelessPrice[]"]')?.value.trim() || '',
     category: row.querySelector('[name="airItemCategory[]"]')?.value.trim() || 'Menu',
     type: row.querySelector('[name="airItemType[]"]')?.value === 'beverage' ? 'beverage' : 'food',
     dietary: row.querySelector('[name="airItemDietary[]"]')?.value || '',
@@ -609,8 +613,8 @@ function setupAirMenuEditor() {
     if (!target || (!clipboard.includes('\t') && !clipboard.includes('\n'))) return;
     event.preventDefault();
     const pastedRows = clipboard.replace(/\r/g, '').split('\n').filter((row) => row.trim()).map((row) => row.split('\t'));
-    const fields = ['airItemName[]', 'airItemPrice[]', 'airItemFullPrice[]', 'airItemHalfPrice[]', 'airItemCategory[]', 'airItemType[]', 'dietary', 'airItemDescription[]', 'bestSeller', 'mustHave'];
-    const startColumn = Math.max(0, Math.min(9, target.closest('td')?.cellIndex || 0));
+    const fields = ['airItemName[]', 'airItemPrice[]', 'airItemFullPrice[]', 'airItemHalfPrice[]', 'airItemWithBonePrice[]', 'airItemBonelessPrice[]', 'airItemCategory[]', 'airItemType[]', 'dietary', 'airItemDescription[]', 'bestSeller', 'mustHave'];
+    const startColumn = Math.max(0, Math.min(11, target.closest('td')?.cellIndex || 0));
     let tableRows = [...container.querySelectorAll('.air-item-entry')];
     const startRow = Math.max(0, tableRows.indexOf(target.closest('.air-item-entry')));
     container.querySelector('.air-empty-row')?.remove();
@@ -621,7 +625,7 @@ function setupAirMenuEditor() {
         tableRows = [...container.querySelectorAll('.air-item-entry')];
       }
       const row = tableRows[startRow + rowOffset];
-      cells.slice(0, 10 - startColumn).forEach((value, columnOffset) => {
+      cells.slice(0, 12 - startColumn).forEach((value, columnOffset) => {
         const fieldName = fields[startColumn + columnOffset];
         if (fieldName === 'dietary') {
           const dietaryValue = /non[\s-]?veg/i.test(value) ? 'nonveg' : /veg/i.test(value) ? 'veg' : '';

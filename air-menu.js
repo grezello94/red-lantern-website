@@ -38,6 +38,8 @@ function portionPriceHtml(dish) {
   };
   const half = normalize(dish.halfPrice);
   const full = normalize(dish.fullPrice);
+  const withBone = normalize(dish.withBonePrice);
+  const boneless = normalize(dish.bonelessPrice);
   const mlPrices = [
     ['30 ML', normalize(dish.price30ml)],
     ['60 ML', normalize(dish.price60ml)],
@@ -45,7 +47,7 @@ function portionPriceHtml(dish) {
     ['180 ML', normalize(dish.price180ml)]
   ].filter(([, price]) => price);
   if (mlPrices.length) return `<span class="portion-prices ml-prices">${mlPrices.map(([label, price]) => `<span><small>${label}</small>${escapeHtml(price)}</span>`).join('')}</span>`;
-  if (half || full) return `<span class="portion-prices">${half ? `<span><small>Half</small>${escapeHtml(half)}</span>` : ''}${full ? `<span><small>Full</small>${escapeHtml(full)}</span>` : ''}</span>`;
+  if (half || full || withBone || boneless) return `<span class="portion-prices">${half ? `<span><small>Half</small>${escapeHtml(half)}</span>` : ''}${full ? `<span><small>Full</small>${escapeHtml(full)}</span>` : ''}${withBone ? `<span><small>With Bone</small>${escapeHtml(withBone)}</span>` : ''}${boneless ? `<span><small>Boneless</small>${escapeHtml(boneless)}</span>` : ''}</span>`;
   const price = displayPrice(dish);
   return price ? `<span class="dish-price">${escapeHtml(price)}</span>` : '';
 }
@@ -77,6 +79,8 @@ function registerOrderOptions(dish, category, index, showPrices) {
   if (!variants.length) {
     if (dish.halfPrice) variants.push({ portion: 'Half', price: dish.halfPrice });
     if (dish.fullPrice) variants.push({ portion: 'Full', price: dish.fullPrice });
+    if (dish.withBonePrice) variants.push({ portion: 'With Bone', price: dish.withBonePrice });
+    if (dish.bonelessPrice) variants.push({ portion: 'Boneless', price: dish.bonelessPrice });
   }
   if (!variants.length) variants.push({ portion: '', price: dish.price || displayPrice(dish) });
   return `<div class="order-pickers">${variants.map((variant) => {

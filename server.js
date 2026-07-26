@@ -624,6 +624,8 @@ function normalizeAirMenu(body) {
   const prices = asArray(body.airItemPrice);
   const fullPrices = asArray(body.airItemFullPrice);
   const halfPrices = asArray(body.airItemHalfPrice);
+  const withBonePrices = asArray(body.airItemWithBonePrice);
+  const bonelessPrices = asArray(body.airItemBonelessPrice);
   const categories = asArray(body.airItemCategory);
   const types = asArray(body.airItemType);
   const descriptions = asArray(body.airItemDescription);
@@ -665,6 +667,8 @@ function normalizeAirMenu(body) {
       price: String(prices[index] || '').trim(),
       fullPrice: String(fullPrices[index] || '').trim(),
       halfPrice: String(halfPrices[index] || '').trim(),
+      withBonePrice: String(withBonePrices[index] || '').trim(),
+      bonelessPrice: String(bonelessPrices[index] || '').trim(),
       category: String(categories[index] || 'Menu').trim() || 'Menu',
       type: types[index] === 'beverage' ? 'beverage' : 'food',
       description: String(descriptions[index] || '').trim(),
@@ -1358,13 +1362,15 @@ function extractAirMenuFromCsv(file) {
   let priceIndex = findHeader(['price', 'rate', 'amount', 'cost', 'mrp']);
   let fullPriceIndex = findHeader(['fullprice', 'full', 'fullrate', 'pricefull']);
   let halfPriceIndex = findHeader(['halfprice', 'half', 'halfrate', 'pricehalf']);
+  let withBonePriceIndex = findHeader(['withbone', 'withboneprice', 'bonein', 'boneinprice']);
+  let bonelessPriceIndex = findHeader(['boneless', 'bonelessprice']);
   let categoryIndex = findHeader(['category', 'section', 'group', 'menucategory', 'course']);
   let typeIndex = findHeader(['type', 'itemtype', 'foodtype', 'kind']);
   let descriptionIndex = findHeader(['description', 'details', 'itemdescription', 'desc', 'ingredients']);
   let dietaryIndex = findHeader(['dietary', 'diet', 'vegornonveg', 'vegnonveg', 'foodpreference']);
   let bestSellerIndex = findHeader(['bestseller', 'bestselling', 'popular', 'isbestSeller']);
   let mustHaveIndex = findHeader(['musthave', 'musttry', 'recommended', 'chefchoice']);
-  const hasHeaders = nameIndex >= 0 || priceIndex >= 0 || fullPriceIndex >= 0 || halfPriceIndex >= 0 || categoryIndex >= 0 || typeIndex >= 0 || descriptionIndex >= 0 || dietaryIndex >= 0 || bestSellerIndex >= 0 || mustHaveIndex >= 0;
+  const hasHeaders = nameIndex >= 0 || priceIndex >= 0 || fullPriceIndex >= 0 || halfPriceIndex >= 0 || withBonePriceIndex >= 0 || bonelessPriceIndex >= 0 || categoryIndex >= 0 || typeIndex >= 0 || descriptionIndex >= 0 || dietaryIndex >= 0 || bestSellerIndex >= 0 || mustHaveIndex >= 0;
   if (nameIndex < 0) nameIndex = 0;
   if (priceIndex < 0) priceIndex = 1;
   if (categoryIndex < 0) categoryIndex = 2;
@@ -1375,6 +1381,8 @@ function extractAirMenuFromCsv(file) {
     const rawPrice = String(columns[priceIndex] || '').trim();
     const rawFullPrice = fullPriceIndex >= 0 ? String(columns[fullPriceIndex] || '').trim() : '';
     const rawHalfPrice = halfPriceIndex >= 0 ? String(columns[halfPriceIndex] || '').trim() : '';
+    const rawWithBonePrice = withBonePriceIndex >= 0 ? String(columns[withBonePriceIndex] || '').trim() : '';
+    const rawBonelessPrice = bonelessPriceIndex >= 0 ? String(columns[bonelessPriceIndex] || '').trim() : '';
     const suppliedCategory = String(columns[categoryIndex] || '').trim();
     const suppliedType = String(columns[typeIndex] || '').toLowerCase();
     const price = rawPrice && !/[₹$€£]|\b(?:rs|inr)\b/i.test(rawPrice) ? `₹${rawPrice}` : rawPrice.replace(/^rs\.?\s*/i, '₹');
@@ -1384,6 +1392,8 @@ function extractAirMenuFromCsv(file) {
       price,
       fullPrice: formatImportedPrice(rawFullPrice),
       halfPrice: formatImportedPrice(rawHalfPrice),
+      withBonePrice: formatImportedPrice(rawWithBonePrice),
+      bonelessPrice: formatImportedPrice(rawBonelessPrice),
       category: inferMenuCategory(name, suppliedCategory),
       type: /beverage|drink/i.test(suppliedType) ? 'beverage' : /food/i.test(suppliedType) ? 'food' : airMenuItemType(inferMenuCategory(name, suppliedCategory), name),
       description: descriptionIndex >= 0 ? String(columns[descriptionIndex] || '').trim() : '',

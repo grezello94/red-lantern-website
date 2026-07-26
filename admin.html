@@ -18,7 +18,7 @@
       .nav-category { padding: 0 24px; margin: 20px 0 8px; font-size: 12px; text-transform: uppercase; color: #9ca3af; letter-spacing: 0.05em; font-weight: 700; }
       
       /* Main Content Styles */
-      .main-content { flex: 1; padding: 40px 60px; margin-left: 280px; max-width: 1200px; }
+      .main-content { flex: 1; padding: 40px 60px; margin-left: 280px; max-width: 1440px; }
       .header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 30px; padding-bottom: 20px; border-bottom: 1px solid #e5e7eb; }
       .header h1 { font-size: 32px; font-family: "Playfair Display", serif; color: #111827; }
       .header p { color: #6b7280; font-size: 15px; margin-top: 4px; }
@@ -52,9 +52,9 @@
       .qr-target { display:block; margin:0 auto 12px; color:#6b7280; font-size:11px; word-break:break-all; }
       .add-menu-item-btn { width: 100%; padding: 14px; border: 2px dashed #d1d5db; border-radius: 8px; background: #f9fafb; color: #374151; cursor: pointer; font: inherit; font-weight: 800; }
       .air-sheet-wrap { margin-bottom: 16px; overflow: auto; border: 1px solid #dfe3e8; border-radius: 10px; background: #fff; }
-      .air-sheet { width: 100%; min-width: 1580px; border-collapse: collapse; table-layout: fixed; }
+      .air-sheet { width: 100%; min-width: 1900px; border-collapse: collapse; table-layout: fixed; }
       .air-sheet th { position: sticky; top: 0; z-index: 1; padding: 11px 10px; border-right: 1px solid #dfe3e8; border-bottom: 2px solid #cfd5dd; background: #f3f4f6; color: #1f2937; text-align: left; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .03em; }
-      .air-sheet th:nth-child(1) { width: 17%; } .air-sheet th:nth-child(2), .air-sheet th:nth-child(3), .air-sheet th:nth-child(4) { width: 7%; } .air-sheet th:nth-child(5) { width: 14%; } .air-sheet th:nth-child(6) { width: 9%; } .air-sheet th:nth-child(7) { width: 12%; text-align:center; } .air-sheet th:nth-child(8) { width: 20%; } .air-sheet th:nth-child(9), .air-sheet th:nth-child(10) { width: 6%; text-align:center; } .air-sheet th:nth-child(11) { width:48px; }
+      .air-sheet th:nth-child(1) { width: 15%; } .air-sheet th:nth-child(2), .air-sheet th:nth-child(3), .air-sheet th:nth-child(4), .air-sheet th:nth-child(5), .air-sheet th:nth-child(6) { width: 7%; } .air-sheet th:nth-child(7) { width: 13%; } .air-sheet th:nth-child(8) { width: 8%; } .air-sheet th:nth-child(9) { width: 11%; text-align:center; } .air-sheet th:nth-child(10) { width: 18%; } .air-sheet th:nth-child(11), .air-sheet th:nth-child(12) { width: 6%; text-align:center; } .air-sheet th:nth-child(13) { width:48px; }
       .bar-sheet { min-width: 1720px; }
       .bar-sheet th:nth-child(1) { width:16%; } .bar-sheet th:nth-child(2), .bar-sheet th:nth-child(3), .bar-sheet th:nth-child(4), .bar-sheet th:nth-child(5), .bar-sheet th:nth-child(6) { width:7%; } .bar-sheet th:nth-child(7) { width:14%; text-align:left; } .bar-sheet th:nth-child(8) { width:9%; } .bar-sheet th:nth-child(9) { width:20%; } .bar-sheet th:nth-child(10) { width:7%; text-align:center; } .bar-sheet th:nth-child(11) { width:48px; }
       .air-sheet th span { color: #6b7280; font-weight: 600; text-transform: none; }
@@ -95,7 +95,7 @@
       .tab-content { display: none; animation: fadeIn 0.3s ease; }
       .tab-content.active { display: block; }
       @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-      @media (max-width: 760px) { .sidebar { position: static; width: 100%; height: auto; } body { display: block; } .main-content { margin-left: 0; padding: 24px 16px; } .form-grid, .qr-grid { grid-template-columns: 1fr; } .category-control-row { grid-template-columns: 1fr; gap: 10px; } .scan-stats { grid-template-columns:repeat(2,1fr); } .scan-entry { grid-template-columns:1fr; } }
+      @media (max-width: 760px) { .sidebar { position: static; width: 100%; height: auto; } body { display: block; } .main-content { margin-left: 0; padding: 24px 16px; } .form-grid, .qr-grid, .air-import-grid { grid-template-columns: 1fr; } #tab-air-menu .header { padding: 22px; align-items: flex-start; } #tab-air-menu .header h1 { font-size: 30px; } .air-import-card { min-height: 0; } .category-control-row { grid-template-columns: 1fr; gap: 10px; } .scan-stats { grid-template-columns:repeat(2,1fr); } .scan-entry { grid-template-columns:1fr; } }
       
       /* Rich Text Editor Mock Styles */
       .rich-text-editor { border: 1px solid #d1d5db; border-radius: 8px; overflow: hidden; background: #f9fafb; margin-top: 8px; transition: border 0.2s; }
@@ -112,6 +112,34 @@
       .growth-ai-button { background: #111827; color: #fff; border: none; padding: 12px 18px; border-radius: 8px; font-weight: 800; cursor: pointer; }
       .growth-ai-button:disabled { opacity: 0.65; cursor: wait; }
       .growth-ai-status { margin-top: 12px; color: #6b7280; font-size: 14px; font-weight: 700; }
+      /* Air Menu workspace */
+      #tab-air-menu .header { align-items: center; margin-bottom: 24px; padding: 26px 30px; border: 0; border-radius: 16px; background: linear-gradient(115deg, #fff 0%, #fff8f4 100%); box-shadow: 0 8px 22px rgba(17, 24, 39, .06); }
+      #tab-air-menu .header h1 { font-size: 36px; color: #111827; }
+      #tab-air-menu .header p { max-width: 640px; margin-top: 7px; line-height: 1.55; }
+      #tab-air-menu .logout-btn { background: transparent; }
+      .air-eyebrow { display: inline-flex; align-items: center; gap: 7px; margin-bottom: 8px; color: #b91c1c; font-size: 11px; font-weight: 900; letter-spacing: .1em; text-transform: uppercase; }
+      .air-eyebrow::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: #d62828; box-shadow: 0 0 0 4px #fee2e2; }
+      .air-workflow { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; padding: 13px 16px; border: 1px solid #ede9e7; border-radius: 12px; background: #fff; color: #6b7280; font-size: 12px; font-weight: 700; }
+      .air-workflow-step { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+      .air-workflow-step b { display: grid; width: 21px; height: 21px; place-items: center; border-radius: 50%; background: #111827; color: #fff; font-size: 11px; }
+      .air-workflow-line { flex: 1; min-width: 20px; height: 1px; background: #e5e7eb; }
+      .air-import-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; margin-bottom: 26px; }
+      .air-import-card { position: relative; min-height: 266px; padding: 26px; margin: 0; overflow: hidden; border-color: #ece7e5; box-shadow: 0 6px 18px rgba(17, 24, 39, .045); }
+      .air-import-card::after { content: ""; position: absolute; right: -32px; bottom: -52px; width: 156px; height: 156px; border: 24px solid rgba(214, 40, 40, .055); border-radius: 50%; pointer-events: none; }
+      .air-import-card h2 { position: relative; z-index: 1; margin-bottom: 12px; font-size: 19px; }
+      .air-import-kicker { position: relative; z-index: 1; display: inline-flex; align-items: center; margin-bottom: 12px; padding: 4px 8px; border-radius: 999px; background: #fef2f2; color: #b91c1c; font-size: 10px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
+      .air-import-card .help-text { position: relative; z-index: 1; min-height: 52px; font-size: 13px !important; line-height: 1.55; }
+      .air-upload-field { position: relative; z-index: 1; padding: 13px; border: 1px dashed #d6d3d1; border-radius: 10px; background: #fcfcfb; }
+      .air-upload-field label { margin-bottom: 7px; }
+      .air-upload-field input[type="file"] { width: 100%; margin: 0; color: #6b7280; font-size: 12px; }
+      .air-upload-field input[type="file"]::file-selector-button { margin-right: 10px; padding: 8px 11px; border: 0; border-radius: 6px; background: #fee2e2; color: #991b1b; font: 800 12px Manrope, sans-serif; cursor: pointer; }
+      .air-import-card .growth-ai-button { position: relative; z-index: 1; width: 100%; margin-top: 14px !important; padding: 13px 16px; border-radius: 9px; }
+      .air-import-card .growth-ai-status { position: relative; z-index: 1; min-height: 20px; margin: 10px 0 0; font-size: 12px; }
+      #tab-air-menu form > .card { border-color: #eceff3; }
+      #tab-air-menu form > .card h2 { margin-bottom: 18px; }
+      #tab-air-menu .switch-row { transition: border-color .2s, box-shadow .2s; }
+      #tab-air-menu .switch-row:hover { border-color: #fecaca; box-shadow: 0 4px 12px rgba(214, 40, 40, .06); }
+      @media (max-width: 760px) { .air-workflow { align-items: flex-start; flex-direction: column; } .air-workflow-line { width: 1px; height: 12px; margin-left: 10px; } }
       .growth-ai-summary { color: #374151; line-height: 1.6; margin-bottom: 16px; }
       .growth-score-header { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; }
       .growth-score-label { color: #4b5563; font-size: 14px; margin-bottom: 8px; }
@@ -439,32 +467,45 @@
       <div id="tab-air-menu" class="tab-content">
         <header class="header">
           <div>
+            <span class="air-eyebrow">Menu management</span>
             <h1>Air Menu</h1>
             <p>A separate QR-only food and bar menu. Import files, review the spreadsheets, then publish.</p>
           </div>
           <button class="logout-btn">Log Out</button>
         </header>
 
-        <div class="card">
-          <h2>Import Menu PDF, CSV or XLSX</h2>
-          <p class="help-text" style="font-size:14px; margin-bottom:16px;">PDF files use embedded text or local OCR. CSV and XLSX files support common food-menu columns. No OpenAI account or external AI service is used.</p>
-          <div class="form-group">
-            <label for="air-menu-file">Menu PDF, CSV or XLSX</label>
-            <input id="air-menu-file" type="file" accept="application/pdf,.pdf,text/csv,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.xlsx">
-          </div>
-          <button type="button" id="extract-air-menu" class="growth-ai-button" style="margin-top:16px;">Import & Extract Menu</button>
-          <p id="air-extract-status" class="growth-ai-status"></p>
+        <div class="air-workflow" aria-label="Air Menu publishing workflow">
+          <span class="air-workflow-step"><b>1</b> Import your files</span>
+          <span class="air-workflow-line" aria-hidden="true"></span>
+          <span class="air-workflow-step"><b>2</b> Review menu details</span>
+          <span class="air-workflow-line" aria-hidden="true"></span>
+          <span class="air-workflow-step"><b>3</b> Publish QR menu</span>
         </div>
 
-        <div class="card">
-          <h2>Import Bar Menu</h2>
-          <p class="help-text" style="font-size:14px; margin-bottom:16px;">Upload a separate PDF, CSV or XLSX bar list. Recommended headings: Item Name, Price, 30 ML, 60 ML, 90 ML, 180 ML, Category, Type, Description, Best Seller.</p>
-          <div class="form-group">
-            <label for="air-bar-menu-file">Bar Menu PDF, CSV or XLSX</label>
-            <input id="air-bar-menu-file" type="file" accept="application/pdf,.pdf,text/csv,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.xlsx">
-          </div>
-          <button type="button" id="extract-air-bar-menu" class="growth-ai-button" style="margin-top:16px;">Import & Extract Bar Menu</button>
-          <p id="air-bar-extract-status" class="growth-ai-status"></p>
+        <div class="air-import-grid">
+          <section class="card air-import-card">
+            <span class="air-import-kicker">Food</span>
+            <h2>Import Food Menu</h2>
+            <p class="help-text">Upload a menu PDF, CSV, or XLSX. PDFs use embedded text or local OCR; spreadsheet columns are mapped automatically.</p>
+            <div class="form-group air-upload-field">
+              <label for="air-menu-file">Food menu file</label>
+              <input id="air-menu-file" type="file" accept="application/pdf,.pdf,text/csv,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.xlsx">
+            </div>
+            <button type="button" id="extract-air-menu" class="growth-ai-button">Import food menu</button>
+            <p id="air-extract-status" class="growth-ai-status"></p>
+          </section>
+
+          <section class="card air-import-card">
+            <span class="air-import-kicker">Beverages</span>
+            <h2>Import Bar Menu</h2>
+            <p class="help-text">Upload a separate bar list. Recommended columns: Item Name, Price, 30 ML, 60 ML, 90 ML, 180 ML, Category, and Type.</p>
+            <div class="form-group air-upload-field">
+              <label for="air-bar-menu-file">Bar menu file</label>
+              <input id="air-bar-menu-file" type="file" accept="application/pdf,.pdf,text/csv,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.xlsx">
+            </div>
+            <button type="button" id="extract-air-bar-menu" class="growth-ai-button">Import bar menu</button>
+            <p id="air-bar-extract-status" class="growth-ai-status"></p>
+          </section>
         </div>
 
         <form action="/api/update-airMenu" method="POST">
@@ -505,10 +546,10 @@
 
           <div class="card">
             <h2>Air Menu Spreadsheet</h2>
-            <span class="help-text" style="margin-bottom:18px;">Use Price for single-price items. For portioned items, fill Half Price and/or Full Price and leave Price blank. Duplicate item/category combinations are removed automatically.</span>
+            <span class="help-text" style="margin-bottom:18px;">Use Price for single-price items. Add Full, Half, With Bone, or Boneless prices where applicable, and leave Price blank. Duplicate item/category combinations are removed automatically.</span>
             <div class="air-sheet-wrap">
               <table class="air-sheet">
-                <thead><tr><th>Item Name</th><th>Price</th><th>Full Price</th><th>Half Price</th><th>Category</th><th>Type</th><th>Veg / Non-Veg</th><th>Description <span>(optional)</span></th><th>Best Seller</th><th>Must Have</th><th></th></tr></thead>
+                <thead><tr><th>Item Name</th><th>Price</th><th>Full</th><th>Half</th><th>With Bone</th><th>Boneless</th><th>Category</th><th>Type</th><th>Veg / Non-Veg</th><th>Description <span>(optional)</span></th><th>Best Seller</th><th>Must Have</th><th></th></tr></thead>
                 <tbody id="air-items-container"></tbody>
               </table>
             </div>
