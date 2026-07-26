@@ -7,6 +7,7 @@ let orderSelections = {};
 let orderShowsPrices = false;
 let orderWhatsAppNumber = '';
 let orderIsBusinessCard = false;
+let orderCustomerPhone = localStorage.getItem('red-lantern-order-phone') || '';
 
 try { orderSelections = JSON.parse(sessionStorage.getItem(orderStorageKey) || '{}'); } catch { orderSelections = {}; }
 
@@ -92,15 +93,21 @@ function registerOrderOptions(dish, category, index, showPrices) {
 }
 
 function orderSummaryText() {
-  const lines = ['Red Lantern – Order Selection'];
+  const lines = ['*Red Lantern Order Selection For:*'];
+  if (orderIsBusinessCard) {
+    lines.push(`Your Mobile Number: ${orderCustomerPhone || 'Not provided'}`);
+    lines.push('');
+  }
   Object.entries(orderSelections).forEach(([key, quantity]) => {
     const item = orderCatalog.get(key);
     if (!item || quantity <= 0) return;
     lines.push(`${quantity} × ${item.name}${item.portion ? ` (${item.portion})` : ''}${orderShowsPrices && item.price ? ` – ${item.price}${quantity > 1 ? ` each` : ''}` : ''}`);
   });
   if (orderIsBusinessCard) {
-    lines.push('Please confirm the availability and the final bill with the restaurant on call.');
-    lines.push('If you do not receive a reply to your message, kindly call us.');
+    lines.push('');
+    lines.push('*Please confirm the availability and the final bill with the restaurant on call.*');
+    lines.push('');
+    lines.push('_If you do not receive a reply to your message, kindly call us._');
   } else {
     lines.push('Please confirm availability and the final bill with the waiter.');
   }
@@ -129,6 +136,10 @@ function renderOrderSummary() {
     const item = orderCatalog.get(key);
     return `<div class="summary-item"><div><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml([item.category, item.portion].filter(Boolean).join(' · '))}</span></div><div class="summary-quantity"><button type="button" data-order-action="minus" data-order-key="${key}">−</button><b>${quantity}</b><button type="button" data-order-action="plus" data-order-key="${key}">+</button></div></div>`;
   }).join('') : '<p class="empty">No dishes selected yet.</p>';
+  const customerDetails = document.getElementById('order-customer-details');
+  const customerPhone = document.getElementById('order-customer-phone');
+  customerDetails.hidden = !orderIsBusinessCard;
+  if (customerPhone && customerPhone.value !== orderCustomerPhone) customerPhone.value = orderCustomerPhone;
   const whatsappTarget = orderWhatsAppNumber ? `https://wa.me/${orderWhatsAppNumber}` : 'https://wa.me/';
   document.getElementById('share-whatsapp').href = `${whatsappTarget}?text=${encodeURIComponent(orderSummaryText())}`;
 }
@@ -152,6 +163,11 @@ function setupOrderShortlist() {
   document.getElementById('close-order-summary').addEventListener('click', () => dialog.close());
   dialog.addEventListener('click', (event) => { if (event.target === dialog) dialog.close(); });
   document.getElementById('clear-order').addEventListener('click', () => { orderSelections = {}; updateOrderUI(); });
+  document.getElementById('order-customer-phone').addEventListener('input', (event) => {
+    orderCustomerPhone = event.target.value.trim();
+    localStorage.setItem('red-lantern-order-phone', orderCustomerPhone);
+    renderOrderSummary();
+  });
   document.getElementById('copy-order').addEventListener('click', async () => {
     const status = document.getElementById('order-action-status');
     try {

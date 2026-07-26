@@ -40,6 +40,11 @@
     <dialog id="order-summary" class="order-dialog">
       <div class="order-dialog-head"><div><p>Your selection</p><h2>Order Summary</h2></div><button type="button" id="close-order-summary" aria-label="Close">×</button></div>
       <div id="order-summary-items" class="order-summary-items"></div>
+      <div id="order-customer-details" class="order-customer-details" hidden>
+        <label for="order-customer-phone">Your Mobile Number</label>
+        <input id="order-customer-phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="e.g. +91 98765 43210">
+        <span>We cannot access your WhatsApp number automatically. This helps the restaurant contact you about this order.</span>
+      </div>
       <div class="order-summary-actions">
         <button type="button" id="copy-order">Copy Summary</button>
         <a id="share-whatsapp" class="card-order-action" href="#" target="_blank" rel="noopener">Send to WhatsApp</a>
