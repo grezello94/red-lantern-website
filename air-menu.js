@@ -45,7 +45,7 @@ function portionPriceHtml(dish) {
     ['180 ML', normalize(dish.price180ml)]
   ].filter(([, price]) => price);
   if (mlPrices.length) return `<span class="portion-prices ml-prices">${mlPrices.map(([label, price]) => `<span><small>${label}</small>${escapeHtml(price)}</span>`).join('')}</span>`;
-  if (half || full) return `<span class="portion-prices">${half ? `<span><small>${escapeHtml(dish.halfLabel || 'Half')}</small>${escapeHtml(half)}</span>` : ''}${full ? `<span><small>${escapeHtml(dish.fullLabel || 'Full')}</small>${escapeHtml(full)}</span>` : ''}</span>`;
+  if (half || full) return `<span class="portion-prices">${half ? `<span><small>Half</small>${escapeHtml(half)}</span>` : ''}${full ? `<span><small>Full</small>${escapeHtml(full)}</span>` : ''}</span>`;
   const price = displayPrice(dish);
   return price ? `<span class="dish-price">${escapeHtml(price)}</span>` : '';
 }
@@ -75,8 +75,8 @@ function registerOrderOptions(dish, category, index, showPrices) {
   if (dish.price90ml) variants.push({ portion: '90 ML', price: dish.price90ml });
   if (dish.price180ml) variants.push({ portion: '180 ML', price: dish.price180ml });
   if (!variants.length) {
-    if (dish.halfPrice) variants.push({ portion: dish.halfLabel || 'Half', price: dish.halfPrice });
-    if (dish.fullPrice) variants.push({ portion: dish.fullLabel || 'Full', price: dish.fullPrice });
+    if (dish.halfPrice) variants.push({ portion: 'Half', price: dish.halfPrice });
+    if (dish.fullPrice) variants.push({ portion: 'Full', price: dish.fullPrice });
   }
   if (!variants.length) variants.push({ portion: '', price: dish.price || displayPrice(dish) });
   return `<div class="order-pickers">${variants.map((variant) => {

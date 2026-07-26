@@ -622,9 +622,7 @@ function normalizeMenu(body, files) {
 function normalizeAirMenu(body) {
   const names = asArray(body.airItemName);
   const prices = asArray(body.airItemPrice);
-  const fullLabels = asArray(body.airItemFullLabel);
   const fullPrices = asArray(body.airItemFullPrice);
-  const halfLabels = asArray(body.airItemHalfLabel);
   const halfPrices = asArray(body.airItemHalfPrice);
   const categories = asArray(body.airItemCategory);
   const types = asArray(body.airItemType);
@@ -662,27 +660,25 @@ function normalizeAirMenu(body) {
     categoryVisibility,
     sourceFileName: body.airSourceFileName || '',
     barSourceFileName: body.airBarSourceFileName || '',
-    items: groupMenuItemsByCategory(dedupeMenuItems(names.map((name, index) => ({
+    items: dedupeMenuItems(names.map((name, index) => ({
       name: String(name || '').trim(),
-      price: normalizeMenuPrice(prices[index]),
-      fullLabel: String(fullLabels[index] || 'Full').trim() || 'Full',
-      fullPrice: normalizeMenuPrice(fullPrices[index]),
-      halfLabel: String(halfLabels[index] || 'Half').trim() || 'Half',
-      halfPrice: normalizeMenuPrice(halfPrices[index]),
+      price: String(prices[index] || '').trim(),
+      fullPrice: String(fullPrices[index] || '').trim(),
+      halfPrice: String(halfPrices[index] || '').trim(),
       category: String(categories[index] || 'Menu').trim() || 'Menu',
       type: types[index] === 'beverage' ? 'beverage' : 'food',
       description: String(descriptions[index] || '').trim(),
       dietary: dietaryValues[index] === 'nonveg' ? 'nonveg' : dietaryValues[index] === 'veg' ? 'veg' : '',
       bestSeller: bestSellers[index] === 'true',
       mustHave: mustHaves[index] === 'true'
-    })).filter((item) => item.name))),
-    barItems: groupMenuItemsByCategory(dedupeMenuItems(barNames.map((name, index) => ({
+    })).filter((item) => item.name)),
+    barItems: dedupeMenuItems(barNames.map((name, index) => ({
       name: String(name || '').trim(),
-      price: normalizeMenuPrice(barPrices[index]),
-      price30ml: normalizeMenuPrice(bar30mlPrices[index]),
-      price60ml: normalizeMenuPrice(bar60mlPrices[index]),
-      price90ml: normalizeMenuPrice(bar90mlPrices[index]),
-      price180ml: normalizeMenuPrice(bar180mlPrices[index]),
+      price: String(barPrices[index] || '').trim(),
+      price30ml: String(bar30mlPrices[index] || '').trim(),
+      price60ml: String(bar60mlPrices[index] || '').trim(),
+      price90ml: String(bar90mlPrices[index] || '').trim(),
+      price180ml: String(bar180mlPrices[index] || '').trim(),
       category: String(barCategories[index] || 'Bar Menu').trim() || 'Bar Menu',
       type: barTypes[index] === 'food' ? 'food' : 'beverage',
       description: String(barDescriptions[index] || '').trim(),
@@ -690,19 +686,12 @@ function normalizeAirMenu(body) {
       bestSeller: barBestSellers[index] === 'true',
       mustHave: false,
       isBar: true
-    })).filter((item) => item.name)))
+    })).filter((item) => item.name))
   };
 }
 
 function menuItemKey(item = {}) {
   return `${String(item.category || 'menu').toLowerCase().replace(/[^a-z0-9]/g, '')}::${String(item.name || '').toLowerCase().replace(/[^a-z0-9]/g, '')}`;
-}
-
-function normalizeMenuPrice(value) {
-  const price = String(value || '').trim();
-  if (!price || /^₹/.test(price)) return price;
-  if (/^(?:rs\.?|inr)\s*/i.test(price)) return `₹${price.replace(/^(?:rs\.?|inr)\s*/i, '')}`;
-  return /^\d/.test(price) ? `₹${price}` : price;
 }
 
 function dedupeMenuItems(items = []) {
@@ -713,16 +702,6 @@ function dedupeMenuItems(items = []) {
     seen.add(key);
     return true;
   });
-}
-
-function groupMenuItemsByCategory(items = []) {
-  const groups = new Map();
-  items.forEach((item) => {
-    const category = String(item.category || 'Menu').trim() || 'Menu';
-    if (!groups.has(category)) groups.set(category, []);
-    groups.get(category).push(item);
-  });
-  return [...groups.values()].flat();
 }
 
 function stripHtml(value) {
