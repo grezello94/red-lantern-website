@@ -55,6 +55,15 @@
       .air-sheet { width: 100%; min-width: 1900px; border-collapse: collapse; table-layout: fixed; }
       .air-sheet th { position: sticky; top: 0; z-index: 1; padding: 11px 10px; border-right: 1px solid #dfe3e8; border-bottom: 2px solid #cfd5dd; background: #f3f4f6; color: #1f2937; text-align: left; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .03em; }
       .air-sheet th:nth-child(1) { width: 15%; } .air-sheet th:nth-child(2), .air-sheet th:nth-child(3), .air-sheet th:nth-child(4), .air-sheet th:nth-child(5), .air-sheet th:nth-child(6) { width: 7%; } .air-sheet th:nth-child(7) { width: 13%; } .air-sheet th:nth-child(8) { width: 8%; } .air-sheet th:nth-child(9) { width: 11%; text-align:center; } .air-sheet th:nth-child(10) { width: 18%; } .air-sheet th:nth-child(11), .air-sheet th:nth-child(12) { width: 6%; text-align:center; } .air-sheet th:nth-child(13) { width:48px; }
+      /* Food-sheet flags are deliberately narrow, leaving room for the dish name. */
+      .food-sheet th:nth-child(1), .food-sheet th:nth-child(2) { width: 5%; text-align: center; }
+      .food-sheet th:nth-child(3) { width: 15%; }
+      .food-sheet th:nth-child(4), .food-sheet th:nth-child(5), .food-sheet th:nth-child(6), .food-sheet th:nth-child(7), .food-sheet th:nth-child(8) { width: 7%; }
+      .food-sheet th:nth-child(9) { width: 13%; }
+      .food-sheet th:nth-child(10) { width: 8%; }
+      .food-sheet th:nth-child(11) { width: 11%; text-align: center; }
+      .food-sheet th:nth-child(12) { width: 18%; }
+      .food-sheet th:nth-child(13) { width: 48px; }
       .bar-sheet { min-width: 1720px; }
       .bar-sheet th:nth-child(1) { width:16%; } .bar-sheet th:nth-child(2), .bar-sheet th:nth-child(3), .bar-sheet th:nth-child(4), .bar-sheet th:nth-child(5), .bar-sheet th:nth-child(6) { width:7%; } .bar-sheet th:nth-child(7) { width:14%; text-align:left; } .bar-sheet th:nth-child(8) { width:9%; } .bar-sheet th:nth-child(9) { width:20%; } .bar-sheet th:nth-child(10) { width:7%; text-align:center; } .bar-sheet th:nth-child(11) { width:48px; }
       .air-sheet th span { color: #6b7280; font-weight: 600; text-transform: none; }
@@ -519,6 +528,7 @@
             </div>
             <div class="form-grid full"><div class="form-group"><label>Menu Note</label><textarea name="airMenuNote" rows="2">Availability may vary. Please ask our team about today’s specials.</textarea></div></div>
             <input type="hidden" name="airCategoryVisibility" value="{}">
+            <datalist id="air-category-options"></datalist>
             <div class="form-grid">
               <div class="switch-row"><div><strong>Table menu live</strong><span class="help-text" style="margin:4px 0 0;">Allow the in-store table QR to open.</span></div><input type="checkbox" name="airTableLive" checked></div>
               <div class="switch-row"><div><strong>Business card menu live</strong><span class="help-text" style="margin:4px 0 0;">Allow the visiting-card QR to open.</span></div><input type="checkbox" name="airCardLive" checked></div>
@@ -548,8 +558,8 @@
             <h2>Air Menu Spreadsheet</h2>
             <span class="help-text" style="margin-bottom:18px;">Use Price for single-price items. Add Full, Half, With Bone, or Boneless prices where applicable, and leave Price blank. Duplicate item/category combinations are removed automatically.</span>
             <div class="air-sheet-wrap">
-              <table class="air-sheet">
-                <thead><tr><th>Item Name</th><th>Price</th><th>Full</th><th>Half</th><th>With Bone</th><th>Boneless</th><th>Category</th><th>Type</th><th>Veg / Non-Veg</th><th>Description <span>(optional)</span></th><th>Best Seller</th><th>Must Have</th><th></th></tr></thead>
+              <table class="air-sheet food-sheet">
+                <thead><tr><th>Best Seller</th><th>Must Have</th><th>Item Name</th><th>Price</th><th>Full</th><th>Half</th><th>With Bone</th><th>Boneless</th><th>Category</th><th>Type</th><th>Veg / Non-Veg</th><th>Description <span>(optional)</span></th><th></th></tr></thead>
                 <tbody id="air-items-container"></tbody>
               </table>
             </div>

@@ -619,6 +619,13 @@ function normalizeMenu(body, files) {
   };
 }
 
+function dietaryFromMenuCategory(category) {
+  const value = String(category || '').trim();
+  if (/\bnon\s*[-/]?\s*veg\b|\bnonveg\b/i.test(value)) return 'nonveg';
+  if (/\bveg(?:etarian)?\b/i.test(value)) return 'veg';
+  return '';
+}
+
 function normalizeAirMenu(body) {
   const names = asArray(body.airItemName);
   const prices = asArray(body.airItemPrice);
@@ -672,7 +679,7 @@ function normalizeAirMenu(body) {
       category: String(categories[index] || 'Menu').trim() || 'Menu',
       type: types[index] === 'beverage' ? 'beverage' : 'food',
       description: String(descriptions[index] || '').trim(),
-      dietary: dietaryValues[index] === 'nonveg' ? 'nonveg' : dietaryValues[index] === 'veg' ? 'veg' : '',
+      dietary: dietaryValues[index] === 'nonveg' ? 'nonveg' : dietaryValues[index] === 'veg' ? 'veg' : dietaryFromMenuCategory(categories[index]),
       bestSeller: bestSellers[index] === 'true',
       mustHave: mustHaves[index] === 'true'
     })).filter((item) => item.name)),
@@ -1321,7 +1328,7 @@ function parseMenuText(rawText) {
       price = '';
     }
     const resolvedCategory = inferMenuCategory(name, category);
-    items.push({ name, price, halfPrice, fullPrice, category: resolvedCategory, type: airMenuItemType(resolvedCategory, name), description: '', dietary: '', bestSeller: false, mustHave: false });
+    items.push({ name, price, halfPrice, fullPrice, category: resolvedCategory, type: airMenuItemType(resolvedCategory, name), description: '', dietary: dietaryFromMenuCategory(resolvedCategory), bestSeller: false, mustHave: false });
   });
 
   return items.filter((item, index) => !items.slice(0, index).some((prior) =>
@@ -1387,6 +1394,8 @@ function extractAirMenuFromCsv(file) {
     const suppliedType = String(columns[typeIndex] || '').toLowerCase();
     const price = rawPrice && !/[₹$€£]|\b(?:rs|inr)\b/i.test(rawPrice) ? `₹${rawPrice}` : rawPrice.replace(/^rs\.?\s*/i, '₹');
     const formatImportedPrice = (value) => value && !/[₹$€£]|\b(?:rs|inr)\b/i.test(value) ? `₹${value}` : value.replace(/^rs\.?\s*/i, '₹');
+    const resolvedCategory = inferMenuCategory(name, suppliedCategory);
+    const importedDietary = dietaryIndex >= 0 && /non[\s-]?veg/i.test(String(columns[dietaryIndex] || '')) ? 'nonveg' : dietaryIndex >= 0 && /veg/i.test(String(columns[dietaryIndex] || '')) ? 'veg' : '';
     return {
       name,
       price,
@@ -1394,10 +1403,10 @@ function extractAirMenuFromCsv(file) {
       halfPrice: formatImportedPrice(rawHalfPrice),
       withBonePrice: formatImportedPrice(rawWithBonePrice),
       bonelessPrice: formatImportedPrice(rawBonelessPrice),
-      category: inferMenuCategory(name, suppliedCategory),
-      type: /beverage|drink/i.test(suppliedType) ? 'beverage' : /food/i.test(suppliedType) ? 'food' : airMenuItemType(inferMenuCategory(name, suppliedCategory), name),
+      category: resolvedCategory,
+      type: /beverage|drink/i.test(suppliedType) ? 'beverage' : /food/i.test(suppliedType) ? 'food' : airMenuItemType(resolvedCategory, name),
       description: descriptionIndex >= 0 ? String(columns[descriptionIndex] || '').trim() : '',
-      dietary: dietaryIndex >= 0 && /non[\s-]?veg/i.test(String(columns[dietaryIndex] || '')) ? 'nonveg' : dietaryIndex >= 0 && /veg/i.test(String(columns[dietaryIndex] || '')) ? 'veg' : '',
+      dietary: importedDietary || dietaryFromMenuCategory(resolvedCategory),
       bestSeller: bestSellerIndex >= 0 && /^(1|true|yes|y|checked|best seller|popular)$/i.test(String(columns[bestSellerIndex] || '').trim()),
       mustHave: mustHaveIndex >= 0 && /^(1|true|yes|y|checked|must have|must try|recommended)$/i.test(String(columns[mustHaveIndex] || '').trim())
     };

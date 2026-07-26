@@ -58,16 +58,24 @@ function dietaryTag(dish) {
   if (dish.type === 'beverage') tags.push('<span class="tag tag-drink">Beverage</span>');
   const text = `${dish.name || ''} ${dish.description || ''}`;
   const nonVeg = /\b(chicken|fish|prawn|shrimp|squid|calamari|crab|lobster|mutton|lamb|goat|egg|beef|pork|ham|bacon|sausage)\b/i.test(text);
-  if (dish.type !== 'beverage') tags.push((dish.dietary === 'nonveg' || (!dish.dietary && nonVeg)) ? '<span class="tag tag-nonveg">Non-Veg</span>' : '<span class="tag tag-veg">Veg</span>');
+  const categoryDietary = dietaryFromCategory(dish.category);
+  if (dish.type !== 'beverage') tags.push((dish.dietary === 'nonveg' || (!dish.dietary && (categoryDietary === 'nonveg' || (!categoryDietary && nonVeg)))) ? '<span class="tag tag-nonveg">Non-Veg</span>' : '<span class="tag tag-veg">Veg</span>');
   if (dish.bestSeller) tags.push('<span class="tag tag-featured">Best Seller</span>');
   if (dish.mustHave) tags.push('<span class="tag tag-must">Must Have</span>');
   return tags.join('');
 }
 
+function dietaryFromCategory(category) {
+  const value = String(category || '').trim();
+  if (/\bnon\s*[-/]?\s*veg\b|\bnonveg\b/i.test(value)) return 'nonveg';
+  if (/\bveg(?:etarian)?\b/i.test(value)) return 'veg';
+  return '';
+}
+
 function dietarySymbol(dish) {
   if (dish.type === 'beverage') return '';
   const inferredNonVeg = /\b(chicken|fish|prawn|shrimp|squid|calamari|crab|lobster|mutton|lamb|goat|egg|beef|pork|ham|bacon|sausage)\b/i.test(`${dish.name || ''} ${dish.description || ''}`);
-  const kind = dish.dietary || (inferredNonVeg ? 'nonveg' : 'veg');
+  const kind = dish.dietary || dietaryFromCategory(dish.category) || (inferredNonVeg ? 'nonveg' : 'veg');
   return `<span class="dietary-symbol ${kind}" aria-label="${kind === 'nonveg' ? 'Non-Veg' : 'Veg'}"><i></i></span>`;
 }
 

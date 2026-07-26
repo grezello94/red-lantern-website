@@ -395,21 +395,43 @@ function cleanAirSheetText(value, isCategory = false) {
   return text;
 }
 
+function dietaryFromAirCategory(category) {
+  const value = String(category || '').trim();
+  if (/\bnon\s*[-/]?\s*veg\b|\bnonveg\b/i.test(value)) return 'nonveg';
+  if (/\bveg(?:etarian)?\b/i.test(value)) return 'veg';
+  return '';
+}
+
+function syncDietaryPickerFromCategory(row) {
+  const category = row?.querySelector('[name="airItemCategory[]"]')?.value || '';
+  const dietary = dietaryFromAirCategory(category);
+  if (!dietary) return false;
+  const picker = row.querySelector('.dietary-picker');
+  const hidden = picker?.querySelector('[name="airItemDietary[]"]');
+  if (!picker || !hidden) return false;
+  hidden.value = dietary;
+  picker.querySelectorAll('[data-dietary]').forEach((choice) => {
+    choice.checked = choice.dataset.dietary === dietary;
+  });
+  return true;
+}
+
 function airItemMarkup(item = {}, index = 0) {
+  const dietary = item.dietary || dietaryFromAirCategory(item.category);
   return `
     <tr class="air-item-entry" data-row="${index}">
+      <td><label class="sheet-check"><input type="hidden" name="airItemBestSeller[]" value="${item.bestSeller ? 'true' : 'false'}"><input type="checkbox" data-item-flag="bestSeller" ${item.bestSeller ? 'checked' : ''} aria-label="Best Seller"></label></td>
+      <td><label class="sheet-check"><input type="hidden" name="airItemMustHave[]" value="${item.mustHave ? 'true' : 'false'}"><input type="checkbox" data-item-flag="mustHave" ${item.mustHave ? 'checked' : ''} aria-label="Must Have"></label></td>
       <td><input type="text" name="airItemName[]" value="${escapeHtml(cleanAirSheetText(item.name))}" placeholder="Item name" required></td>
       <td><input type="text" name="airItemPrice[]" value="${escapeHtml(item.price || '')}" placeholder="₹250"></td>
       <td><input type="text" name="airItemFullPrice[]" value="${escapeHtml(item.fullPrice || '')}" placeholder="₹450"></td>
       <td><input type="text" name="airItemHalfPrice[]" value="${escapeHtml(item.halfPrice || '')}" placeholder="₹280"></td>
       <td><input type="text" name="airItemWithBonePrice[]" value="${escapeHtml(item.withBonePrice || '')}" placeholder="₹450"></td>
       <td><input type="text" name="airItemBonelessPrice[]" value="${escapeHtml(item.bonelessPrice || '')}" placeholder="₹500"></td>
-      <td><input type="text" name="airItemCategory[]" value="${escapeHtml(cleanAirSheetText(item.category || 'Menu', true))}" placeholder="Category" required></td>
+      <td><input type="text" name="airItemCategory[]" list="air-category-options" value="${escapeHtml(cleanAirSheetText(item.category || 'Menu', true))}" placeholder="Choose or type a category" required></td>
       <td><select name="airItemType[]"><option value="food" ${item.type !== 'beverage' ? 'selected' : ''}>Food</option><option value="beverage" ${item.type === 'beverage' ? 'selected' : ''}>Beverage</option></select></td>
-      <td><div class="dietary-picker"><input type="hidden" name="airItemDietary[]" value="${item.dietary || ''}"><label class="dietary-choice veg" title="Veg"><input type="checkbox" data-dietary="veg" ${item.dietary === 'veg' ? 'checked' : ''}><span class="dietary-mark"></span></label><label class="dietary-choice nonveg" title="Non-Veg"><input type="checkbox" data-dietary="nonveg" ${item.dietary === 'nonveg' ? 'checked' : ''}><span class="dietary-mark"></span></label></div></td>
+      <td><div class="dietary-picker"><input type="hidden" name="airItemDietary[]" value="${dietary}"><label class="dietary-choice veg" title="Veg"><input type="checkbox" data-dietary="veg" ${dietary === 'veg' ? 'checked' : ''}><span class="dietary-mark"></span></label><label class="dietary-choice nonveg" title="Non-Veg"><input type="checkbox" data-dietary="nonveg" ${dietary === 'nonveg' ? 'checked' : ''}><span class="dietary-mark"></span></label></div></td>
       <td><input type="text" name="airItemDescription[]" value="${escapeHtml(item.description || '')}" placeholder="Optional description"></td>
-      <td><label class="sheet-check"><input type="hidden" name="airItemBestSeller[]" value="${item.bestSeller ? 'true' : 'false'}"><input type="checkbox" data-item-flag="bestSeller" ${item.bestSeller ? 'checked' : ''} aria-label="Best Seller"></label></td>
-      <td><label class="sheet-check"><input type="hidden" name="airItemMustHave[]" value="${item.mustHave ? 'true' : 'false'}"><input type="checkbox" data-item-flag="mustHave" ${item.mustHave ? 'checked' : ''} aria-label="Must Have"></label></td>
       <td><button type="button" class="remove-air-item" aria-label="Remove row">×</button></td>
     </tr>`;
 }
@@ -423,7 +445,7 @@ function airBarItemMarkup(item = {}, index = 0) {
       <td><input type="text" name="airBarItem60mlPrice[]" value="${escapeHtml(item.price60ml || '')}" placeholder="₹320"></td>
       <td><input type="text" name="airBarItem90mlPrice[]" value="${escapeHtml(item.price90ml || '')}" placeholder="Optional"></td>
       <td><input type="text" name="airBarItem180mlPrice[]" value="${escapeHtml(item.price180ml || '')}" placeholder="Optional"></td>
-      <td><input type="text" name="airBarItemCategory[]" value="${escapeHtml(cleanAirSheetText(item.category || 'Bar Menu', true))}" placeholder="Whisky, Beer…" required></td>
+      <td><input type="text" name="airBarItemCategory[]" list="air-category-options" value="${escapeHtml(cleanAirSheetText(item.category || 'Bar Menu', true))}" placeholder="Choose or type a category" required></td>
       <td><select name="airBarItemType[]"><option value="beverage" ${item.type !== 'food' ? 'selected' : ''}>Beverage</option><option value="food" ${item.type === 'food' ? 'selected' : ''}>Food</option></select></td>
       <td><input type="text" name="airBarItemDescription[]" value="${escapeHtml(item.description || '')}" placeholder="Optional description"></td>
       <td><label class="sheet-check"><input type="hidden" name="airBarItemBestSeller[]" value="${item.bestSeller ? 'true' : 'false'}"><input type="checkbox" data-bar-item-flag="bestSeller" ${item.bestSeller ? 'checked' : ''} aria-label="Best Seller"></label></td>
@@ -442,9 +464,22 @@ function syncAirCategoryVisibility() {
   if (hidden) hidden.value = JSON.stringify(airCategoryVisibility);
 }
 
+function renderAirCategoryOptions(items = []) {
+  const options = document.getElementById('air-category-options');
+  if (!options) return;
+  const categories = new Map();
+  [...Object.keys(airCategoryVisibility), ...items.map((item) => item.category)]
+    .map((category) => cleanAirSheetText(category, true))
+    .filter(Boolean)
+    .forEach((category) => categories.set(category.toLowerCase(), category));
+  options.innerHTML = [...categories.values()]
+    .sort((first, second) => first.localeCompare(second))
+    .map((category) => `<option value="${escapeHtml(category)}"></option>`)
+    .join('');
+}
+
 function renderAirCategoryControls(items = []) {
   const container = document.getElementById('air-category-controls');
-  if (!container) return;
   const categories = [...new Set(items.map((item) => item.category || 'Menu'))];
   const barCategories = new Set(items.filter((item) => item.isBar).map((item) => item.category || 'Bar Menu'));
   categories.forEach((category) => {
@@ -452,6 +487,8 @@ function renderAirCategoryControls(items = []) {
       airCategoryVisibility[category] = { table: true, card: !barCategories.has(category) && !isAlcoholCategory(category) };
     }
   });
+  renderAirCategoryOptions(items);
+  if (!container) return;
   container.innerHTML = categories.length ? categories.map((category) => {
     const setting = airCategoryVisibility[category];
     return `<div class="category-control-row" data-category="${escapeHtml(category)}">
@@ -472,20 +509,23 @@ function renderAirItems(items = []) {
 }
 
 function airSheetItems() {
-  return [...document.querySelectorAll('#air-items-container .air-item-entry')].map((row) => ({
-    name: row.querySelector('[name="airItemName[]"]')?.value.trim() || '',
-    price: row.querySelector('[name="airItemPrice[]"]')?.value.trim() || '',
-    fullPrice: row.querySelector('[name="airItemFullPrice[]"]')?.value.trim() || '',
-    halfPrice: row.querySelector('[name="airItemHalfPrice[]"]')?.value.trim() || '',
-    withBonePrice: row.querySelector('[name="airItemWithBonePrice[]"]')?.value.trim() || '',
-    bonelessPrice: row.querySelector('[name="airItemBonelessPrice[]"]')?.value.trim() || '',
-    category: row.querySelector('[name="airItemCategory[]"]')?.value.trim() || 'Menu',
-    type: row.querySelector('[name="airItemType[]"]')?.value === 'beverage' ? 'beverage' : 'food',
-    dietary: row.querySelector('[name="airItemDietary[]"]')?.value || '',
-    description: row.querySelector('[name="airItemDescription[]"]')?.value.trim() || '',
-    bestSeller: row.querySelector('[data-item-flag="bestSeller"]')?.checked || false,
-    mustHave: row.querySelector('[data-item-flag="mustHave"]')?.checked || false
-  })).filter((item) => item.name);
+  return [...document.querySelectorAll('#air-items-container .air-item-entry')].map((row) => {
+    const category = row.querySelector('[name="airItemCategory[]"]')?.value.trim() || 'Menu';
+    return {
+      name: row.querySelector('[name="airItemName[]"]')?.value.trim() || '',
+      price: row.querySelector('[name="airItemPrice[]"]')?.value.trim() || '',
+      fullPrice: row.querySelector('[name="airItemFullPrice[]"]')?.value.trim() || '',
+      halfPrice: row.querySelector('[name="airItemHalfPrice[]"]')?.value.trim() || '',
+      withBonePrice: row.querySelector('[name="airItemWithBonePrice[]"]')?.value.trim() || '',
+      bonelessPrice: row.querySelector('[name="airItemBonelessPrice[]"]')?.value.trim() || '',
+      category,
+      type: row.querySelector('[name="airItemType[]"]')?.value === 'beverage' ? 'beverage' : 'food',
+      dietary: row.querySelector('[name="airItemDietary[]"]')?.value || dietaryFromAirCategory(category),
+      description: row.querySelector('[name="airItemDescription[]"]')?.value.trim() || '',
+      bestSeller: row.querySelector('[data-item-flag="bestSeller"]')?.checked || false,
+      mustHave: row.querySelector('[data-item-flag="mustHave"]')?.checked || false
+    };
+  }).filter((item) => item.name);
 }
 
 function airBarSheetItems() {
@@ -567,7 +607,11 @@ function setupAirMenuEditor() {
     })).concat(airBarSheetItems()));
   });
 
-  container.addEventListener('input', () => {
+  container.addEventListener('input', (event) => {
+    if (event.target.matches('[name="airItemCategory[]"]')) {
+      syncDietaryPickerFromCategory(event.target.closest('.air-item-entry'));
+      return;
+    }
     const items = [...container.querySelectorAll('.air-item-entry')].map((entry) => ({
       category: entry.querySelector('[name="airItemCategory[]"]')?.value.trim() || 'Menu'
     }));
@@ -575,6 +619,11 @@ function setupAirMenuEditor() {
   });
 
   container.addEventListener('change', async (event) => {
+    if (event.target.matches('[name="airItemCategory[]"]')) {
+      syncDietaryPickerFromCategory(event.target.closest('.air-item-entry'));
+      renderAirCategoryControls([...airSheetItems(), ...airBarSheetItems()]);
+      return;
+    }
     const dietary = event.target.closest('[data-dietary]');
     if (dietary) {
       const picker = dietary.closest('.dietary-picker');
@@ -613,7 +662,7 @@ function setupAirMenuEditor() {
     if (!target || (!clipboard.includes('\t') && !clipboard.includes('\n'))) return;
     event.preventDefault();
     const pastedRows = clipboard.replace(/\r/g, '').split('\n').filter((row) => row.trim()).map((row) => row.split('\t'));
-    const fields = ['airItemName[]', 'airItemPrice[]', 'airItemFullPrice[]', 'airItemHalfPrice[]', 'airItemWithBonePrice[]', 'airItemBonelessPrice[]', 'airItemCategory[]', 'airItemType[]', 'dietary', 'airItemDescription[]', 'bestSeller', 'mustHave'];
+    const fields = ['bestSeller', 'mustHave', 'airItemName[]', 'airItemPrice[]', 'airItemFullPrice[]', 'airItemHalfPrice[]', 'airItemWithBonePrice[]', 'airItemBonelessPrice[]', 'airItemCategory[]', 'airItemType[]', 'dietary', 'airItemDescription[]'];
     const startColumn = Math.max(0, Math.min(11, target.closest('td')?.cellIndex || 0));
     let tableRows = [...container.querySelectorAll('.air-item-entry')];
     const startRow = Math.max(0, tableRows.indexOf(target.closest('.air-item-entry')));
@@ -715,8 +764,15 @@ function setupAirBarMenuEditor() {
     if (!container.querySelector('.air-bar-item-entry')) renderAirBarItems([]);
     refreshCategories();
   });
-  container.addEventListener('input', refreshCategories);
+  container.addEventListener('input', (event) => {
+    if (event.target.matches('[name="airBarItemCategory[]"]')) return;
+    refreshCategories();
+  });
   container.addEventListener('change', (event) => {
+    if (event.target.matches('[name="airBarItemCategory[]"]')) {
+      refreshCategories();
+      return;
+    }
     const flag = event.target.closest('[data-bar-item-flag]');
     if (!flag) return;
     const hidden = flag.closest('.sheet-check')?.querySelector('input[type="hidden"]');
