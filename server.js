@@ -1943,6 +1943,29 @@ app.post('/api/admin/air-menu/dietary', async (req, res) => {
   }
 });
 
+app.post('/api/admin/air-menu/gravy-style', async (req, res) => {
+  try {
+    const name = String(req.body.name || '').trim();
+    const category = String(req.body.category || '').trim();
+    const gravyStyleAvailable = req.body.gravyStyleAvailable === true;
+    if (!name) return res.status(400).json({ error: 'Item name is required.' });
+    const menu = await getSection('airMenu');
+    let updated = false;
+    const targetKey = menuItemKey({ name, category });
+    menu.items = (menu.items || []).map((item) => {
+      if (menuItemKey(item) !== targetKey) return item;
+      updated = true;
+      return { ...item, gravyStyleAvailable };
+    });
+    if (!updated) return res.status(404).json({ error: 'Publish the Air Menu once before changing this setting.' });
+    await saveSection('airMenu', menu);
+    clearPublicContentCache();
+    res.json({ saved: true, gravyStyleAvailable });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.get('/api/admin/qr/:mode', async (req, res) => {
   const mode = req.params.mode;
   if (!['table', 'card'].includes(mode)) return res.status(404).end();

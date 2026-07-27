@@ -656,6 +656,26 @@ function setupAirMenuEditor() {
     if (!flag) return;
     const hidden = flag.closest('.sheet-check')?.querySelector('input[type="hidden"]');
     if (hidden) hidden.value = flag.checked ? 'true' : 'false';
+    if (flag.dataset.itemFlag !== 'gravyStyleAvailable') return;
+
+    const row = flag.closest('.air-item-entry');
+    const status = document.getElementById('air-sheet-status');
+    const payload = {
+      name: row?.querySelector('[name="airItemName[]"]')?.value.trim() || '',
+      category: row?.querySelector('[name="airItemCategory[]"]')?.value.trim() || 'Menu',
+      gravyStyleAvailable: flag.checked
+    };
+    if (status) { status.textContent = 'Saving Gravy / Semi-Gravy setting…'; status.style.color = '#6b7280'; }
+    try {
+      const response = await fetch('/api/admin/air-menu/gravy-style', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Unable to save setting.');
+      if (status) { status.textContent = `${payload.name}: Gravy / Semi-Gravy ${payload.gravyStyleAvailable ? 'enabled' : 'disabled'} and saved live.`; status.style.color = '#166534'; }
+    } catch (error) {
+      if (status) { status.textContent = error.message; status.style.color = '#b91c1c'; }
+    }
   });
 
   container.addEventListener('paste', (event) => {
