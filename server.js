@@ -1857,7 +1857,11 @@ app.get('/api/air-menu', async (req, res) => {
   const isLive = isCard ? menu.cardLive !== false : menu.tableLive !== false;
   if (!isLive) return res.status(410).json({ unavailable: true, redirect: 'https://www.redlanternrestaurant.in/menu' });
   const visibility = menu.categoryVisibility && typeof menu.categoryVisibility === 'object' ? menu.categoryVisibility : {};
+  let unavailable = new Set();
+  try { await ensureMenuAvailabilityTable(); const rows = await sql`SELECT item_key FROM menu_availability WHERE unavailable_until > NOW()`; unavailable = new Set(rows.map((row) => row.item_key)); } catch (error) { console.warn('Menu availability lookup failed:', error.message); }
   const visibleDishes = dishes.filter((dish) => {
+    const itemKey = `${String(dish.category || '').toLowerCase()}::${String(dish.name || '').toLowerCase()}`;
+    if (unavailable.has(itemKey)) return false;
     const setting = visibility[dish.category];
     if (setting && setting[isCard ? 'card' : 'table'] === false) return false;
     if (isCard && !setting && (dish.isBar || /\b(bar menu|alcohol|spirits?|feni|beer|wine|whisky|whiskey|scotch|bourbon|rum|vodka|gin|brandy|cognac|liqueur|tequila|cocktail)\b/i.test(dish.category || ''))) return false;
@@ -1899,6 +1903,7 @@ app.post('/api/direct-orders', async (req, res) => {
 app.get('/api/orders', async (req, res) => { try { await ensureDirectOrdersTable(); res.json(await sql`SELECT o.*, (SELECT COUNT(*) FROM direct_orders h WHERE h.customer_phone=o.customer_phone) AS customer_order_count, (SELECT MAX(h.created_at) FROM direct_orders h WHERE h.customer_phone=o.customer_phone AND h.id<>o.id) AS customer_last_order_at FROM direct_orders o ORDER BY o.created_at DESC LIMIT 100`); } catch (error) { res.status(500).json({ error: error.message }); } });
 app.patch('/api/orders/:id', async (req, res) => { try { await ensureDirectOrdersTable(); const status = ['new','accepted','preparing','ready','completed','rejected'].includes(req.body.status) ? req.body.status : 'new'; await sql`UPDATE direct_orders SET status=${status}, updated_at=NOW() WHERE id=${req.params.id}`; res.json({ ok:true }); } catch (error) { res.status(500).json({ error:error.message }); } });
 app.get('/api/orders/availability', async (req,res)=>{try{await ensureMenuAvailabilityTable();res.json(await sql`SELECT * FROM menu_availability WHERE unavailable_until > NOW()`)}catch(e){res.status(500).json({error:e.message})}});
+app.get('/api/orders/menu', async (req,res)=>{try{const menu=await getSection('airMenu');res.json([...(menu.items||[]),...(menu.barItems||[])].map(item=>({name:item.name,category:item.category,key:`${String(item.category||'').toLowerCase()}::${String(item.name||'').toLowerCase()}`})).filter(item=>item.name))}catch(e){res.status(500).json({error:e.message})}});
 app.put('/api/orders/availability/:key', async (req,res)=>{try{await ensureMenuAvailabilityTable();const until=new Date(req.body.unavailableUntil);if(Number.isNaN(+until))return res.status(400).json({error:'Choose a valid restock time.'});await sql`INSERT INTO menu_availability (item_key,unavailable_until) VALUES (${req.params.key},${until.toISOString()}) ON CONFLICT (item_key) DO UPDATE SET unavailable_until=EXCLUDED.unavailable_until`;res.json({ok:true})}catch(e){res.status(500).json({error:e.message})}});
 app.delete('/api/orders/availability/:key', async (req,res)=>{try{await ensureMenuAvailabilityTable();await sql`DELETE FROM menu_availability WHERE item_key=${req.params.key}`;res.json({ok:true})}catch(e){res.status(500).json({error:e.message})}});
 
