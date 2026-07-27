@@ -536,6 +536,12 @@ const labels = {
 
 let publicContentCache = null;
 let directOrdersTableReady = null;
+let menuAvailabilityTableReady = null;
+async function ensureMenuAvailabilityTable() {
+  if (!sql) throw new Error('Orders database is not configured.');
+  if (!menuAvailabilityTableReady) menuAvailabilityTableReady = sql`CREATE TABLE IF NOT EXISTS menu_availability (item_key TEXT PRIMARY KEY, unavailable_until TIMESTAMPTZ NOT NULL)`;
+  return menuAvailabilityTableReady;
+}
 async function ensureDirectOrdersTable() {
   if (!sql) throw new Error('Orders database is not configured.');
   if (!directOrdersTableReady) directOrdersTableReady = sql`CREATE TABLE IF NOT EXISTS direct_orders (id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'new', mode TEXT NOT NULL, customer_name TEXT, customer_phone TEXT NOT NULL, special_request TEXT, items JSONB NOT NULL, total NUMERIC NOT NULL DEFAULT 0, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;
@@ -1892,6 +1898,9 @@ app.post('/api/direct-orders', async (req, res) => {
 
 app.get('/api/orders', async (req, res) => { try { await ensureDirectOrdersTable(); res.json(await sql`SELECT * FROM direct_orders ORDER BY created_at DESC LIMIT 100`); } catch (error) { res.status(500).json({ error: error.message }); } });
 app.patch('/api/orders/:id', async (req, res) => { try { await ensureDirectOrdersTable(); const status = ['new','accepted','preparing','ready','completed','rejected'].includes(req.body.status) ? req.body.status : 'new'; await sql`UPDATE direct_orders SET status=${status}, updated_at=NOW() WHERE id=${req.params.id}`; res.json({ ok:true }); } catch (error) { res.status(500).json({ error:error.message }); } });
+app.get('/api/orders/availability', async (req,res)=>{try{await ensureMenuAvailabilityTable();res.json(await sql`SELECT * FROM menu_availability WHERE unavailable_until > NOW()`)}catch(e){res.status(500).json({error:e.message})}});
+app.put('/api/orders/availability/:key', async (req,res)=>{try{await ensureMenuAvailabilityTable();const until=new Date(req.body.unavailableUntil);if(Number.isNaN(+until))return res.status(400).json({error:'Choose a valid restock time.'});await sql`INSERT INTO menu_availability (item_key,unavailable_until) VALUES (${req.params.key},${until.toISOString()}) ON CONFLICT (item_key) DO UPDATE SET unavailable_until=EXCLUDED.unavailable_until`;res.json({ok:true})}catch(e){res.status(500).json({error:e.message})}});
+app.delete('/api/orders/availability/:key', async (req,res)=>{try{await ensureMenuAvailabilityTable();await sql`DELETE FROM menu_availability WHERE item_key=${req.params.key}`;res.json({ok:true})}catch(e){res.status(500).json({error:e.message})}});
 
 app.get('/api/admin/air-menu/export', async (req, res) => {
   try {
