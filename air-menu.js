@@ -8,6 +8,7 @@ let orderShowsPrices = false;
 let orderWhatsAppNumber = '';
 let orderIsBusinessCard = false;
 let orderCustomerPhone = localStorage.getItem('red-lantern-order-phone') || '';
+let directOrdersEnabled = false;
 
 function syncOrderVisibleHeight() {
   const height = window.visualViewport?.height || window.innerHeight;
@@ -182,7 +183,7 @@ function renderOrderSummary() {
   }).join('') : '<p class="empty">No dishes selected yet.</p>';
   const customerDetails = document.getElementById('order-customer-details');
   const customerPhone = document.getElementById('order-customer-phone');
-  customerDetails.hidden = !orderIsBusinessCard;
+  customerDetails.hidden = !(orderIsBusinessCard || directOrdersEnabled);
   if (customerPhone && customerPhone.value !== orderCustomerPhone) customerPhone.value = orderCustomerPhone;
   const whatsappTarget = orderWhatsAppNumber ? `https://wa.me/${orderWhatsAppNumber}` : 'https://wa.me/';
   document.getElementById('share-whatsapp').href = `${whatsappTarget}?text=${encodeURIComponent(orderSummaryText())}`;
@@ -255,6 +256,14 @@ function setupOrderShortlist() {
       status.textContent = 'Order summary copied.';
     } catch { status.textContent = 'Copy is unavailable. Use WhatsApp sharing instead.'; }
   });
+  document.getElementById('place-direct-order').addEventListener('click', async () => {
+    const status = document.getElementById('order-action-status');
+    const phone = document.getElementById('order-customer-phone').value.trim();
+    const items = Object.entries(orderSelections).filter(([, quantity]) => quantity > 0).map(([key, quantity]) => ({ ...orderCatalog.get(key), quantity }));
+    if (!phone || phone.replace(/\D/g, '').length < 7) { status.textContent = 'Please enter a valid mobile number to place a direct order.'; return; }
+    const button = document.getElementById('place-direct-order'); button.disabled = true; status.textContent = 'Placing your order…';
+    try { const response = await fetch('/api/direct-orders', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ mode:params.get('mode'), expires, signature:params.get('signature'), customerPhone:phone, customerName:document.getElementById('order-customer-name').value.trim(), specialRequest:document.getElementById('order-special-request').value.trim(), items }) }); const result = await response.json(); if (!response.ok) throw new Error(result.error); orderSelections={}; updateOrderUI(); status.textContent=`Order ${result.id} placed successfully. Our team will confirm it shortly.`; } catch(error) { status.textContent=error.message || 'Unable to place the order. Please call us.'; } finally { button.disabled=false; }
+  });
   updateOrderUI();
 }
 
@@ -263,6 +272,8 @@ function configureOrderActions(menu) {
   orderIsBusinessCard = isCard;
   document.body.classList.toggle('card-menu-mode', isCard);
   const whatsapp = document.getElementById('share-whatsapp');
+  directOrdersEnabled = menu.directOrdersEnabled === true;
+  document.getElementById('place-direct-order').hidden = !directOrdersEnabled;
   whatsapp.hidden = !isCard;
   const call = document.getElementById('call-to-order');
   const phone = String(menu.cardOrderPhone || '').trim();

@@ -41,12 +41,17 @@
       <div class="order-dialog-head"><div><p>Your selection</p><h2>Order Summary</h2></div><button type="button" id="close-order-summary" aria-label="Close">×</button></div>
       <div id="order-summary-items" class="order-summary-items"></div>
       <div id="order-customer-details" class="order-customer-details" hidden>
+        <label for="order-customer-name">Your Name <small>(optional)</small></label>
+        <input id="order-customer-name" type="text" autocomplete="name" placeholder="e.g. Rahul">
         <label for="order-customer-phone">Your Mobile Number</label>
         <input id="order-customer-phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="e.g. +91 98765 43210">
+        <label for="order-special-request">Special request <small>(optional)</small></label>
+        <input id="order-special-request" type="text" maxlength="240" placeholder="e.g. Less spicy">
         <span>We cannot access your WhatsApp number automatically. This helps the restaurant contact you about this order.</span>
       </div>
       <div class="order-summary-actions">
         <button type="button" id="copy-order">Copy Summary</button>
+        <button type="button" id="place-direct-order" hidden>Place Direct Order</button>
         <a id="share-whatsapp" class="card-order-action" href="#" target="_blank" rel="noopener">Send to WhatsApp</a>
         <a id="call-to-order" class="call-order card-order-action" href="#" hidden>Call to Place Order</a>
         <button type="button" id="clear-order" class="clear-order">Clear Selection</button>

@@ -576,7 +576,9 @@ function fillAirMenu(menu = {}) {
     airCardLive: menu.cardLive !== false,
     airShowTablePrices: menu.showTablePrices !== false,
     airShowCardPrices: menu.showCardPrices === true,
-    airCardCallEnabled: menu.cardCallEnabled === true
+    airCardCallEnabled: menu.cardCallEnabled === true,
+    airTableDirectOrders: menu.tableDirectOrders === true,
+    airCardDirectOrders: menu.cardDirectOrders !== false
   };
   Object.entries(toggles).forEach(([name, checked]) => {
     const field = document.querySelector(`[name="${name}"]`);

@@ -367,6 +367,21 @@ function requireAdmin(req, res, next) {
   return res.status(401).send('Invalid username or password.');
 }
 
+function requireOrdersConsole(req, res, next) {
+  const protectedPath = req.path === '/orders' || req.path === '/orders.html' || req.path === '/orders.js' || req.path === '/orders.css' || req.path.startsWith('/api/orders');
+  if (!protectedPath) return next();
+  const username = process.env.ORDERS_USERNAME;
+  const password = process.env.ORDERS_PASSWORD;
+  if (!username || !password) return res.status(503).send('Orders console is not configured. Add ORDERS_USERNAME and ORDERS_PASSWORD.');
+  const [scheme, encoded] = String(req.headers.authorization || '').split(' ');
+  const [providedUser, ...providedPassword] = scheme === 'Basic' && encoded ? Buffer.from(encoded, 'base64').toString('utf8').split(':') : [];
+  if (!secureCompare(providedUser || '', username) || !secureCompare(providedPassword.join(':'), password)) {
+    res.set('WWW-Authenticate', 'Basic realm="Red Lantern Orders", charset="UTF-8"');
+    return res.status(401).send('Authentication required.');
+  }
+  next();
+}
+
 function requestDiagnostics(req, res, next) {
   const started = Date.now();
   res.on('finish', () => {
@@ -443,6 +458,7 @@ function blockSensitiveFiles(req, res, next) {
 app.use(securityHeaders);
 app.use(requestDiagnostics);
 app.use(requireAdmin);
+app.use(requireOrdersConsole);
 app.use(blockSensitiveFiles);
 
 const cleanPageRoutes = new Map([
@@ -451,7 +467,8 @@ const cleanPageRoutes = new Map([
   ['/about', 'about.html'],
   ['/blogs', 'blogs.html'],
   ['/contact', 'contact.html'],
-  ['/blog', 'blog-post.html']
+  ['/blog', 'blog-post.html'],
+  ['/orders', 'orders.html']
 ]);
 
 const legacyPageRedirects = new Map([
@@ -518,6 +535,12 @@ const labels = {
 };
 
 let publicContentCache = null;
+let directOrdersTableReady = null;
+async function ensureDirectOrdersTable() {
+  if (!sql) throw new Error('Orders database is not configured.');
+  if (!directOrdersTableReady) directOrdersTableReady = sql`CREATE TABLE IF NOT EXISTS direct_orders (id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'new', mode TEXT NOT NULL, customer_name TEXT, customer_phone TEXT NOT NULL, special_request TEXT, items JSONB NOT NULL, total NUMERIC NOT NULL DEFAULT 0, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;
+  return directOrdersTableReady;
+}
 const publicContentCacheMs = Number(process.env.PUBLIC_CONTENT_CACHE_MS || 60000);
 
 function clearPublicContentCache() {
@@ -663,6 +686,8 @@ function normalizeAirMenu(body) {
     note: body.airMenuNote || 'Availability may vary. Please ask our team about today’s specials.',
     tableLive: body.airTableLive === 'on',
     cardLive: body.airCardLive === 'on',
+    tableDirectOrders: body.airTableDirectOrders === 'on',
+    cardDirectOrders: body.airCardDirectOrders === 'on',
     showTablePrices: body.airShowTablePrices === 'on',
     showCardPrices: body.airShowCardPrices === 'on',
     cardCallEnabled: body.airCardCallEnabled === 'on',
@@ -1838,6 +1863,7 @@ app.get('/api/air-menu', async (req, res) => {
     pageSubtitle: menu.pageSubtitle || '',
     note: menu.note || '',
     showPrices: isCard ? menu.showCardPrices === true : menu.showTablePrices !== false,
+    directOrdersEnabled: isCard ? menu.cardDirectOrders !== false : menu.tableDirectOrders === true,
     cardCallEnabled: isCard && menu.cardCallEnabled === true,
     cardOrderPhone: isCard ? String(menu.cardOrderPhone || '') : '',
     mode: req.query.mode,
@@ -1845,6 +1871,27 @@ app.get('/api/air-menu', async (req, res) => {
     dishes: visibleDishes
   });
 });
+
+app.post('/api/direct-orders', async (req, res) => {
+  try {
+    const { mode, expires, signature, customerPhone, customerName, specialRequest, items = [] } = req.body || {};
+    if (!validAirMenuAccess(mode, expires, signature)) return res.status(410).json({ error: 'This QR session has expired. Please scan again.' });
+    const menu = await getSection('airMenu');
+    const enabled = mode === 'card' ? menu.cardDirectOrders !== false : menu.tableDirectOrders === true;
+    if (!enabled) return res.status(403).json({ error: 'Direct ordering is unavailable for this QR menu.' });
+    const phone = String(customerPhone || '').replace(/\D/g, '');
+    if (phone.length < 7) return res.status(400).json({ error: 'Enter a valid mobile number.' });
+    const cleanItems = Array.isArray(items) ? items.filter((item) => Number(item.quantity) > 0).slice(0, 30).map((item) => ({ name: String(item.name || '').slice(0, 100), category: String(item.category || '').slice(0, 80), portion: String(item.portion || '').slice(0, 40), style: String(item.style || '').slice(0, 30), quantity: Math.min(20, Number(item.quantity) || 0), price: String(item.price || '').slice(0, 30) })) : [];
+    if (!cleanItems.length || cleanItems.some((item) => !item.name)) return res.status(400).json({ error: 'Add at least one valid menu item.' });
+    await ensureDirectOrdersTable();
+    const id = `RL${Date.now().toString(36).toUpperCase()}${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
+    await sql`INSERT INTO direct_orders (id, mode, customer_name, customer_phone, special_request, items) VALUES (${id}, ${mode}, ${String(customerName || '').trim().slice(0, 80)}, ${phone}, ${String(specialRequest || '').trim().slice(0, 240)}, ${JSON.stringify(cleanItems)})`;
+    res.json({ id, status: 'new' });
+  } catch (error) { res.status(500).json({ error: 'Unable to place the order. Please call us instead.' }); }
+});
+
+app.get('/api/orders', async (req, res) => { try { await ensureDirectOrdersTable(); res.json(await sql`SELECT * FROM direct_orders ORDER BY created_at DESC LIMIT 100`); } catch (error) { res.status(500).json({ error: error.message }); } });
+app.patch('/api/orders/:id', async (req, res) => { try { await ensureDirectOrdersTable(); const status = ['new','accepted','preparing','ready','completed','rejected'].includes(req.body.status) ? req.body.status : 'new'; await sql`UPDATE direct_orders SET status=${status}, updated_at=NOW() WHERE id=${req.params.id}`; res.json({ ok:true }); } catch (error) { res.status(500).json({ error:error.message }); } });
 
 app.get('/api/admin/air-menu/export', async (req, res) => {
   try {
