@@ -1,0 +1,55 @@
+/* Readable repeat-customer history and resilient order totals. */
+.customer-trust {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 9px;
+  margin: 8px 0 16px;
+  line-height: 1.35;
+}
+.customer-trust b { color: #1f2b41; }
+.customer-trust span {
+  flex-basis: 100%;
+  color: #718097;
+  font-size: 13px;
+}
+.totals { min-height: 54px; box-sizing: border-box; }
+
+.header-actions { display: flex; align-items: center; gap: 8px; }
+.availability-toggle { background: #f8b133; color: #1d2b46; }
+#availability {
+  margin: 22px 28px 0;
+  padding: 22px;
+  border: 1px solid #e8e1da;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 10px 28px rgba(24, 39, 70, .08);
+}
+#availability[hidden] { display: none; }
+.availability-heading { display: flex; align-items: start; justify-content: space-between; gap: 16px; }
+.eyebrow { color: #b02b29; font-size: 11px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; }
+.availability-heading h2 { margin: 4px 0; font-size: 21px; }
+.availability-heading p { margin: 0; color: #68778e; }
+.quiet-button { background: #eef2f7; color: #263d68; }
+#menu-search { width: min(100%, 540px); margin: 18px 0 12px; padding: 12px 14px; border: 1px solid #cfd8e4; border-radius: 9px; color: #1f2b41; font: inherit; }
+#menu-results { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 10px; }
+.menu-item { display: grid; grid-template-columns: minmax(145px, 1fr) auto; gap: 8px 14px; align-items: center; padding: 13px 14px; border: 1px solid #e5e9ee; border-radius: 11px; background: #fbfcfd; }
+.menu-item.is-out { border-color: #f4c5c5; background: #fff8f7; }
+.menu-item-name b, .menu-item-name span { display: block; }
+.menu-item-name span { margin-top: 3px; color: #738197; font-size: 12px; }
+.availability-state { color: #187c50; font-size: 12px; font-weight: 800; text-align: right; }
+.is-out .availability-state { color: #bb2d2b; }
+.availability-controls { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.availability-controls button { padding: 7px 10px; font-size: 12px; }
+.stock-tomorrow { background: #dc3430; }
+.stock-date { background: #c88218; }
+.stock-in { background: #168451; }
+.availability-controls label { color: #5f6c80; font-size: 12px; font-weight: 700; }
+.availability-controls input { margin-left: 4px; padding: 6px; border: 1px solid #ccd5e1; border-radius: 6px; font: inherit; }
+.empty-state { padding: 28px; color: #718097; text-align: center; }
+@media (max-width: 600px) {
+  .header-actions { gap: 5px; }
+  .header-actions button { padding: 7px 8px; font-size: 10px; }
+  #availability { margin: 14px 16px 0; padding: 16px; }
+  #menu-results { grid-template-columns: 1fr; }
+  .availability-heading p { font-size: 12px; }
+}

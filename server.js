@@ -1891,11 +1891,27 @@ app.post('/api/direct-orders', async (req, res) => {
     if (!enabled) return res.status(403).json({ error: 'Direct ordering is unavailable for this QR menu.' });
     const phone = String(customerPhone || '').replace(/\D/g, '');
     if (phone.length < 7) return res.status(400).json({ error: 'Enter a valid mobile number.' });
-    const cleanItems = Array.isArray(items) ? items.filter((item) => Number(item.quantity) > 0).slice(0, 30).map((item) => ({ name: String(item.name || '').slice(0, 100), category: String(item.category || '').slice(0, 80), portion: String(item.portion || '').slice(0, 40), style: String(item.style || '').slice(0, 30), quantity: Math.min(20, Number(item.quantity) || 0), price: String(item.price || '').slice(0, 30) })) : [];
+    const priceNumber = (value) => Number(String(value || '').replace(/[^0-9.]/g, '')) || 0;
+    const menuItems = [...(Array.isArray(menu.items) ? menu.items : []), ...(Array.isArray(menu.barItems) ? menu.barItems : [])];
+    const portionPrice = (item, portion) => {
+      const key = String(portion || '').trim().toLowerCase();
+      const prices = { half: item.halfPrice, full: item.fullPrice, 'with bone': item.withBonePrice, boneless: item.bonelessPrice, '30 ml': item.price30ml, '60 ml': item.price60ml, '90 ml': item.price90ml, '180 ml': item.price180ml };
+      return prices[key] || item.price || '';
+    };
+    const cleanItems = Array.isArray(items) ? items.filter((item) => Number(item.quantity) > 0).slice(0, 30).map((item) => {
+      const name = String(item.name || '').trim().slice(0, 100);
+      const category = String(item.category || '').trim().slice(0, 80);
+      const source = menuItems.find((dish) => String(dish.name || '').trim().toLowerCase() === name.toLowerCase() && String(dish.category || '').trim().toLowerCase() === category.toLowerCase());
+      if (!source) return null;
+      const style = /^(gravy|semi-gravy)$/i.test(String(item.style || '').trim()) && (source.gravyStyleAvailable || source.gravyAvailable || source.semiGravyAvailable) ? String(item.style).trim() : '';
+      const price = portionPrice(source, item.portion);
+      return { name: String(source.name || '').slice(0, 100), category: String(source.category || '').slice(0, 80), portion: String(item.portion || '').slice(0, 40), style, quantity: Math.min(20, Number(item.quantity) || 0), price: price ? `₹${priceNumber(price)}` : '' };
+    }).filter(Boolean) : [];
     if (!cleanItems.length || cleanItems.some((item) => !item.name)) return res.status(400).json({ error: 'Add at least one valid menu item.' });
     await ensureDirectOrdersTable();
     const id = `RL${Date.now().toString(36).toUpperCase()}${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
-    await sql`INSERT INTO direct_orders (id, mode, customer_name, customer_phone, special_request, items) VALUES (${id}, ${mode}, ${String(customerName || '').trim().slice(0, 80)}, ${phone}, ${String(specialRequest || '').trim().slice(0, 240)}, ${JSON.stringify(cleanItems)})`;
+    const total = cleanItems.reduce((sum, item) => sum + item.quantity * (priceNumber(item.price) + (item.style ? 10 : 0)), 0);
+    await sql`INSERT INTO direct_orders (id, mode, customer_name, customer_phone, special_request, items, total) VALUES (${id}, ${mode}, ${String(customerName || '').trim().slice(0, 80)}, ${phone}, ${String(specialRequest || '').trim().slice(0, 240)}, ${JSON.stringify(cleanItems)}, ${total})`;
     res.json({ id, status: 'new' });
   } catch (error) { res.status(500).json({ error: 'Unable to place the order. Please call us instead.' }); }
 });
