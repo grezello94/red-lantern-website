@@ -1892,26 +1892,34 @@ app.post('/api/direct-orders', async (req, res) => {
     const phone = String(customerPhone || '').replace(/\D/g, '');
     if (phone.length < 7) return res.status(400).json({ error: 'Enter a valid mobile number.' });
     const priceNumber = (value) => Number(String(value || '').replace(/[^0-9.]/g, '')) || 0;
+    const displayItemName = (value) => String(value || '').replace(/[.…·]{2,}/g, ' ').replace(/\s+\d{2,5}(?:\.\d{1,2})?\s*\/?\s*$/, '').replace(/\s+/g, ' ').trim();
     const menuItems = [...(Array.isArray(menu.items) ? menu.items : []), ...(Array.isArray(menu.barItems) ? menu.barItems : [])];
     const portionPrice = (item, portion) => {
       const key = String(portion || '').trim().toLowerCase();
       const prices = { half: item.halfPrice, full: item.fullPrice, 'with bone': item.withBonePrice, boneless: item.bonelessPrice, '30 ml': item.price30ml, '60 ml': item.price60ml, '90 ml': item.price90ml, '180 ml': item.price180ml };
       return prices[key] || item.price || '';
     };
-    const cleanItems = Array.isArray(items) ? items.filter((item) => Number(item.quantity) > 0).slice(0, 30).map((item) => {
+    const submittedItems = Array.isArray(items) ? items.filter((item) => Number(item.quantity) > 0).slice(0, 30) : [];
+    const cleanItems = submittedItems.map((item) => {
       const name = String(item.name || '').trim().slice(0, 100);
       const category = String(item.category || '').trim().slice(0, 80);
-      const source = menuItems.find((dish) => String(dish.name || '').trim().toLowerCase() === name.toLowerCase() && String(dish.category || '').trim().toLowerCase() === category.toLowerCase());
+      const source = menuItems.find((dish) => displayItemName(dish.name).toLowerCase() === name.toLowerCase() && String(dish.category || '').trim().toLowerCase() === category.toLowerCase());
       if (!source) return null;
       const style = /^(gravy|semi-gravy)$/i.test(String(item.style || '').trim()) && (source.gravyStyleAvailable || source.gravyAvailable || source.semiGravyAvailable) ? String(item.style).trim() : '';
       const price = portionPrice(source, item.portion);
-      return { name: String(source.name || '').slice(0, 100), category: String(source.category || '').slice(0, 80), portion: String(item.portion || '').slice(0, 40), style, quantity: Math.min(20, Number(item.quantity) || 0), price: price ? `₹${priceNumber(price)}` : '' };
-    }).filter(Boolean) : [];
-    if (!cleanItems.length || cleanItems.some((item) => !item.name)) return res.status(400).json({ error: 'Add at least one valid menu item.' });
+      if (!priceNumber(price)) return null;
+      return { name: displayItemName(source.name).slice(0, 100), category: String(source.category || '').slice(0, 80), portion: String(item.portion || '').slice(0, 40), style, quantity: Math.min(20, Number(item.quantity) || 0), price: `₹${priceNumber(price)}`, availabilityKey: `${String(source.category || '').toLowerCase()}::${String(source.name || '').toLowerCase()}` };
+    }).filter(Boolean);
+    if (!cleanItems.length || cleanItems.length !== submittedItems.length || cleanItems.some((item) => !item.name)) return res.status(400).json({ error: 'One or more selected items are no longer available. Refresh the menu and try again.' });
     await ensureDirectOrdersTable();
+    await ensureMenuAvailabilityTable();
+    const unavailableRows = await sql`SELECT item_key FROM menu_availability WHERE unavailable_until > NOW()`;
+    const unavailableKeys = new Set(unavailableRows.map((row) => row.item_key));
+    if (cleanItems.some((item) => unavailableKeys.has(item.availabilityKey))) return res.status(409).json({ error: 'One or more selected items have just gone out of stock. Please refresh the menu.' });
     const id = `RL${Date.now().toString(36).toUpperCase()}${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
     const total = cleanItems.reduce((sum, item) => sum + item.quantity * (priceNumber(item.price) + (item.style ? 10 : 0)), 0);
-    await sql`INSERT INTO direct_orders (id, mode, customer_name, customer_phone, special_request, items, total) VALUES (${id}, ${mode}, ${String(customerName || '').trim().slice(0, 80)}, ${phone}, ${String(specialRequest || '').trim().slice(0, 240)}, ${JSON.stringify(cleanItems)}, ${total})`;
+    const savedItems = cleanItems.map(({ availabilityKey, ...item }) => item);
+    await sql`INSERT INTO direct_orders (id, mode, customer_name, customer_phone, special_request, items, total) VALUES (${id}, ${mode}, ${String(customerName || '').trim().slice(0, 80)}, ${phone}, ${String(specialRequest || '').trim().slice(0, 240)}, ${JSON.stringify(savedItems)}, ${total})`;
     res.json({ id, status: 'new' });
   } catch (error) { res.status(500).json({ error: 'Unable to place the order. Please call us instead.' }); }
 });
@@ -1920,7 +1928,7 @@ app.get('/api/orders', async (req, res) => { try { await ensureDirectOrdersTable
 app.patch('/api/orders/:id', async (req, res) => { try { await ensureDirectOrdersTable(); const status = ['new','accepted','preparing','ready','completed','rejected'].includes(req.body.status) ? req.body.status : 'new'; await sql`UPDATE direct_orders SET status=${status}, updated_at=NOW() WHERE id=${req.params.id}`; res.json({ ok:true }); } catch (error) { res.status(500).json({ error:error.message }); } });
 app.get('/api/orders/availability', async (req,res)=>{try{await ensureMenuAvailabilityTable();res.json(await sql`SELECT * FROM menu_availability WHERE unavailable_until > NOW()`)}catch(e){res.status(500).json({error:e.message})}});
 app.get('/api/orders/menu', async (req,res)=>{try{const menu=await getSection('airMenu');res.json([...(menu.items||[]),...(menu.barItems||[])].map(item=>({name:item.name,category:item.category,key:`${String(item.category||'').toLowerCase()}::${String(item.name||'').toLowerCase()}`})).filter(item=>item.name))}catch(e){res.status(500).json({error:e.message})}});
-app.put('/api/orders/availability/:key', async (req,res)=>{try{await ensureMenuAvailabilityTable();const until=new Date(req.body.unavailableUntil);if(Number.isNaN(+until))return res.status(400).json({error:'Choose a valid restock time.'});await sql`INSERT INTO menu_availability (item_key,unavailable_until) VALUES (${req.params.key},${until.toISOString()}) ON CONFLICT (item_key) DO UPDATE SET unavailable_until=EXCLUDED.unavailable_until`;res.json({ok:true})}catch(e){res.status(500).json({error:e.message})}});
+app.put('/api/orders/availability/:key', async (req,res)=>{try{await ensureMenuAvailabilityTable();const until=new Date(req.body.unavailableUntil);if(Number.isNaN(+until)||until<=new Date())return res.status(400).json({error:'Choose a future restock time.'});const menu=await getSection('airMenu');const menuKeys=new Set([...(menu.items||[]),...(menu.barItems||[])].map(item=>`${String(item.category||'').toLowerCase()}::${String(item.name||'').toLowerCase()}`));if(!menuKeys.has(req.params.key))return res.status(404).json({error:'That menu item no longer exists.'});await sql`INSERT INTO menu_availability (item_key,unavailable_until) VALUES (${req.params.key},${until.toISOString()}) ON CONFLICT (item_key) DO UPDATE SET unavailable_until=EXCLUDED.unavailable_until`;res.json({ok:true})}catch(e){res.status(500).json({error:e.message})}});
 app.delete('/api/orders/availability/:key', async (req,res)=>{try{await ensureMenuAvailabilityTable();await sql`DELETE FROM menu_availability WHERE item_key=${req.params.key}`;res.json({ok:true})}catch(e){res.status(500).json({error:e.message})}});
 
 app.get('/api/admin/air-menu/export', async (req, res) => {

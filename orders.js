@@ -23,7 +23,7 @@ async function loadOrders() {
     if (!response.ok) throw new Error('Unable to refresh orders.');
     const rows = await response.json();
     const ids = new Set(rows.map((order) => order.id));
-    if (!firstLoad && Notification.permission === 'granted') rows.filter((order) => !known.has(order.id) && order.status === 'new').forEach((order) => new Notification('New Direct Order', { body: `${order.customer_name || 'Guest'} · ${order.customer_phone}`, icon: '/images/red-lantern-logo-600.webp' }));
+    if (!firstLoad && 'Notification' in window && Notification.permission === 'granted') rows.filter((order) => !known.has(order.id) && order.status === 'new').forEach((order) => new Notification('New Direct Order', { body: `${order.customer_name || 'Guest'} · ${order.customer_phone}`, icon: '/images/red-lantern-logo-600.webp' }));
     known = ids;
     firstLoad = false;
     root.innerHTML = rows.map(renderOrder).join('') || '<div class="empty-state">No direct orders yet.</div>';
