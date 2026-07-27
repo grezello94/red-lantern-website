@@ -31,6 +31,11 @@
 .availability-heading h2 { margin: 4px 0; font-size: 21px; }
 .availability-heading p { margin: 0; color: #68778e; }
 .quiet-button { background: #eef2f7; color: #263d68; }
+.menu-type-tabs { display: inline-flex; gap: 4px; margin-top: 20px; padding: 4px; border: 1px solid #dde5ef; border-radius: 11px; background: #f4f7fb; }
+.menu-type-tab { display: inline-flex; align-items: center; gap: 8px; padding: 9px 13px; border: 0; border-radius: 8px; color: #5e6d84; background: transparent; font-size: 12px; }
+.menu-type-tab span { display: grid; min-width: 18px; height: 18px; place-items: center; border-radius: 999px; color: #6b7890; background: #e5ebf4; font-size: 10px; }
+.menu-type-tab.is-active { color: #fff; background: #263d68; box-shadow: 0 3px 8px rgba(38, 61, 104, .25); }
+.menu-type-tab.is-active span { color: #263d68; background: #fff; }
 .availability-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 20px 0 12px; }
 .search-field { display: flex; align-items: center; width: min(100%, 540px); padding: 0 13px; border: 1px solid #ced8e5; border-radius: 10px; background: #fff; transition: border-color .18s, box-shadow .18s; }
 .search-field:focus-within { border-color: #376ce5; box-shadow: 0 0 0 3px rgba(55, 108, 229, .12); }

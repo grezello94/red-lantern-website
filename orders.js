@@ -7,6 +7,7 @@ let firstLoad = true;
 let menuItems = [];
 let unavailable = new Map();
 let availabilityFilter = 'all';
+let menuType = 'food';
 
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#039;' })[char]);
 const money = (value) => `₹${Number(value || 0).toFixed(0)}`;
@@ -66,11 +67,15 @@ async function loadAvailability() {
 
 function renderAvailability() {
   const query = String(menuSearch.value || '').trim().toLowerCase();
+  const typeItems = menuItems.filter((item) => item.menuType === menuType);
   const activeUnavailable = new Set([...unavailable].filter(([, until]) => new Date(until) > new Date()).map(([key]) => key));
-  const inStockCount = menuItems.length - activeUnavailable.size;
-  document.getElementById('availability-counts').innerHTML = `<span class="stock-count in">${inStockCount} in stock</span><span class="stock-count out">${activeUnavailable.size} unavailable</span>`;
+  const unavailableForType = typeItems.filter((item) => activeUnavailable.has(item.key)).length;
+  const inStockCount = typeItems.length - unavailableForType;
+  document.getElementById('menu-type-tabs').innerHTML = [['food', 'Food Menu'], ['bar', 'Bar Menu']].map(([value, label]) => `<button class="menu-type-tab ${menuType === value ? 'is-active' : ''}" data-menu-type="${value}" aria-pressed="${menuType === value}">${label}<span>${menuItems.filter((item) => item.menuType === value).length}</span></button>`).join('');
+  menuSearch.placeholder = `Search ${menuType === 'food' ? 'food' : 'bar'} menu`;
+  document.getElementById('availability-counts').innerHTML = `<span class="stock-count in">${inStockCount} in stock</span><span class="stock-count out">${unavailableForType} unavailable</span>`;
   document.getElementById('availability-filters').innerHTML = [['all', 'All items'], ['in', 'In stock'], ['out', 'Unavailable']].map(([value, label]) => `<button class="filter-button ${availabilityFilter === value ? 'is-active' : ''}" data-availability-filter="${value}" aria-pressed="${availabilityFilter === value}">${label}</button>`).join('');
-  const visible = menuItems.filter((item) => {
+  const visible = typeItems.filter((item) => {
     const isOut = activeUnavailable.has(item.key);
     return `${item.name} ${item.category}`.toLowerCase().includes(query) && (availabilityFilter === 'all' || (availabilityFilter === 'out' ? isOut : !isOut));
   }).sort((a, b) => `${a.category} ${a.name}`.localeCompare(`${b.category} ${b.name}`));
@@ -100,6 +105,14 @@ document.getElementById('availability-filters')?.addEventListener('click', (even
   const button = event.target.closest('[data-availability-filter]');
   if (!button) return;
   availabilityFilter = button.dataset.availabilityFilter;
+  renderAvailability();
+});
+document.getElementById('menu-type-tabs')?.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-menu-type]');
+  if (!button) return;
+  menuType = button.dataset.menuType;
+  availabilityFilter = 'all';
+  menuSearch.value = '';
   renderAvailability();
 });
 menuResults?.addEventListener('click', async (event) => {
