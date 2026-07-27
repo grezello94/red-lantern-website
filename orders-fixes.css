@@ -13,11 +13,22 @@
   font-size: 13px;
 }
 .totals { min-height: 54px; box-sizing: border-box; }
+.order-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 4px; }
+.daily-order-number { color: #1f2b41; font-size: 19px; font-weight: 800; letter-spacing: -.02em; }
+.order-status { padding: 5px 8px; border-radius: 999px; color: #a52a29; background: #fff0ef; font-size: 10px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }
+.order-reference { margin-bottom: 8px; color: #78859a; font-size: 10px; font-weight: 700; letter-spacing: .03em; }
 
 .header-actions { display: flex; align-items: center; gap: 8px; }
 .install-shortcut { background: #ffffff; color: #263d68; }
 .availability-toggle { background: #f8b133; color: #1d2b46; }
 .availability-toggle span { margin-right: 4px; font-size: 16px; line-height: 0; }
+.order-search-panel { display: flex; align-items: center; gap: 10px; margin: 20px 28px 0; padding: 11px 13px; border: 1px solid #e1e8f0; border-radius: 13px; background: #fff; box-shadow: 0 6px 18px rgba(27, 48, 81, .06); }
+.order-search-field { display: flex; flex: 1; align-items: center; min-width: 0; }
+.order-search-field > span { color: #66768c; font-size: 21px; transform: rotate(-20deg); }
+.order-search-field input { width: 100%; padding: 9px 10px; border: 0; outline: 0; color: #1f2b41; background: transparent; font: 600 13px Manrope, sans-serif; }
+.order-search-field:focus-within { border-radius: 8px; box-shadow: 0 0 0 3px rgba(55, 108, 229, .11); }
+.clear-order-search { padding: 7px 10px; color: #4c5d76; background: #edf2f7; font-size: 11px; }
+#order-search-status { color: #718097; font-size: 11px; font-weight: 800; white-space: nowrap; }
 #availability {
   margin: 22px 28px 0;
   padding: 24px;
@@ -77,6 +88,8 @@
 @media (max-width: 600px) {
   .header-actions { gap: 5px; }
   .header-actions button { padding: 7px 8px; font-size: 10px; }
+  .order-search-panel { margin: 14px 16px 0; }
+  #order-search-status { display: none; }
   #availability { margin: 14px 16px 0; padding: 16px; }
   #menu-results { grid-template-columns: 1fr; }
   .availability-heading p { font-size: 12px; }

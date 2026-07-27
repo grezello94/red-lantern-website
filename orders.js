@@ -2,6 +2,7 @@ const root = document.getElementById('orders');
 const availability = document.getElementById('availability');
 const menuSearch = document.getElementById('menu-search');
 const menuResults = document.getElementById('menu-results');
+const orderSearch = document.getElementById('order-search');
 let known = new Set();
 let firstLoad = true;
 let menuItems = [];
@@ -9,6 +10,7 @@ let unavailable = new Map();
 let availabilityFilter = 'all';
 let menuType = 'food';
 let installPrompt = null;
+let orderSearchTimer = null;
 
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#039;' })[char]);
 const money = (value) => `₹${Number(value || 0).toFixed(0)}`;
@@ -45,7 +47,8 @@ document.getElementById('enable-notifications')?.addEventListener('click', async
 
 async function loadOrders() {
   try {
-    const response = await fetch('/api/orders', { cache: 'no-store' });
+    const query = String(orderSearch?.value || '').replace(/\D/g, '').slice(0, 16);
+    const response = await fetch(`/api/orders?search=${encodeURIComponent(query)}`, { cache: 'no-store' });
     if (!response.ok) throw new Error('Unable to refresh orders.');
     const rows = await response.json();
     const ids = new Set(rows.map((order) => order.id));
@@ -53,7 +56,9 @@ async function loadOrders() {
     if (!firstLoad && notificationApi && notificationApi.permission === 'granted') rows.filter((order) => !known.has(order.id) && order.status === 'new').forEach((order) => new notificationApi('New Direct Order', { body: `${order.customer_name || 'Guest'} · ${order.customer_phone}`, icon: '/images/red-lantern-logo-600.webp' }));
     known = ids;
     firstLoad = false;
-    root.innerHTML = rows.map(renderOrder).join('') || '<div class="empty-state">No direct orders yet.</div>';
+    root.innerHTML = rows.map(renderOrder).join('') || `<div class="empty-state">${query ? 'No orders match that number.' : 'No direct orders yet.'}</div>`;
+    document.getElementById('clear-order-search').hidden = !query;
+    document.getElementById('order-search-status').textContent = query ? `${rows.length} matching order${rows.length === 1 ? '' : 's'}` : 'Latest orders';
   } catch (error) {
     root.innerHTML = `<div class="empty-state">${esc(error.message)}</div>`;
   }
@@ -68,8 +73,10 @@ function renderOrder(order) {
   const age = Math.max(0, Math.floor((Date.now() - new Date(order.created_at)) / 60000));
   const orderCount = Number(order.customer_order_count || 1);
   const history = order.customer_last_order_at ? `Last ordered: ${new Date(order.customer_last_order_at).toLocaleDateString('en-IN')}` : 'First order';
+  const dailyNumber = Number(order.daily_order_number);
+  const orderNumber = Number.isFinite(dailyNumber) && dailyNumber > 0 ? String(dailyNumber).padStart(2, '0') : '—';
   const controls = ['accepted', 'preparing', 'ready', 'completed', 'rejected'].map((status) => `<button onclick="setStatus('${esc(order.id)}','${status}')">${status}</button>`).join('');
-  return `<article class="order"><h2>${esc(order.id)} · ${esc(order.status)}</h2><div class="order-time">${age} min ago</div><div class="meta">${esc(order.customer_name || 'Guest')} · <b class="phone">${esc(order.customer_phone)}</b></div><div class="customer-trust"><b>${orderCount === 1 ? 'New customer' : `${orderCount} orders from this number`}</b><span>${history}</span></div>${order.special_request ? `<div class="request">Special request: ${esc(order.special_request)}</div>` : ''}<div class="items">${items.map((item) => `<div><b>${Number(item.quantity || 0)}×</b> ${esc(item.name)} ${item.portion ? `(${esc(item.portion)})` : ''}${item.style ? ` — ${esc(item.style)} (+₹10)` : ''}</div>`).join('')}</div><div class="totals"><b>${itemCount} item${itemCount === 1 ? '' : 's'}</b><strong>Total ${money(total)}</strong></div><div class="actions">${controls}<button class="print" onclick="printOrder('${esc(order.id)}')">Print</button></div></article>`;
+  return `<article class="order" data-order-id="${esc(order.id)}"><div class="order-heading"><span class="daily-order-number">Order #${orderNumber}</span><span class="order-status">${esc(order.status)}</span></div><div class="order-reference">Ref ${esc(order.id)}</div><div class="order-time">${age} min ago</div><div class="meta">${esc(order.customer_name || 'Guest')} · <b class="phone">${esc(order.customer_phone)}</b></div><div class="customer-trust"><b>${orderCount === 1 ? 'New customer' : `${orderCount} orders from this number`}</b><span>${history}</span></div>${order.special_request ? `<div class="request">Special request: ${esc(order.special_request)}</div>` : ''}<div class="items">${items.map((item) => `<div><b>${Number(item.quantity || 0)}×</b> ${esc(item.name)} ${item.portion ? `(${esc(item.portion)})` : ''}${item.style ? ` — ${esc(item.style)} (+₹10)` : ''}</div>`).join('')}</div><div class="totals"><b>${itemCount} item${itemCount === 1 ? '' : 's'}</b><strong>Total ${money(total)}</strong></div><div class="actions">${controls}<button class="print" onclick="printOrder('${esc(order.id)}')">Print</button></div></article>`;
 }
 
 async function setStatus(id, status) {
@@ -78,7 +85,7 @@ async function setStatus(id, status) {
 }
 
 function printOrder(id) {
-  document.querySelectorAll('.order').forEach((order) => { order.style.display = order.querySelector('h2').textContent.includes(id) ? 'block' : 'none'; });
+  document.querySelectorAll('.order').forEach((order) => { order.style.display = order.dataset.orderId === id ? 'block' : 'none'; });
   window.print();
   document.querySelectorAll('.order').forEach((order) => { order.style.display = ''; });
 }
@@ -164,6 +171,8 @@ document.getElementById('install-shortcut')?.addEventListener('click', async () 
   else alert(`${message.textContent}\n\n${steps.textContent}`);
 });
 document.getElementById('shortcut-close')?.addEventListener('click', () => document.getElementById('shortcut-dialog')?.close());
+orderSearch?.addEventListener('input', () => { clearTimeout(orderSearchTimer); orderSearchTimer = setTimeout(loadOrders, 180); });
+document.getElementById('clear-order-search')?.addEventListener('click', () => { orderSearch.value = ''; loadOrders(); orderSearch.focus(); });
 menuResults?.addEventListener('click', async (event) => {
   const button = event.target.closest('[data-stock-action]');
   if (!button) return;
