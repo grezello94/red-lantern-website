@@ -496,6 +496,10 @@ app.use(express.static(__dirname, {
   index: false,
   maxAge: '1h',
   setHeaders: (res, filePath) => {
+    if (/\/orders(?:\.html|\.js|\.css|-fixes\.css|-logo\.css|-sw\.js|\.webmanifest)$/i.test(filePath)) {
+      res.set('Cache-Control', 'no-store, max-age=0');
+      return;
+    }
     if (/\.(?:avif|webp|png|jpe?g|gif|svg|ico)$/i.test(filePath)) {
       res.set('Cache-Control', 'public, max-age=604800, immutable');
     } else if (/\.(?:css|js)$/i.test(filePath)) {

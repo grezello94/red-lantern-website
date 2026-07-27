@@ -8,14 +8,16 @@ let menuItems = [];
 let unavailable = new Map();
 let availabilityFilter = 'all';
 let menuType = 'food';
+let installPrompt = null;
 
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#039;' })[char]);
 const money = (value) => `₹${Number(value || 0).toFixed(0)}`;
 const tomorrowLocal = () => { const date = new Date(Date.now() + 86400000); date.setSeconds(0, 0); return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
 
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('/orders-sw.js');
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/orders-sw.js?v=3');
 document.getElementById('enable-notifications')?.addEventListener('click', async () => {
-  if ('Notification' in window) await Notification.requestPermission();
+  const notificationApi = window.Notification;
+  if (notificationApi && typeof notificationApi.requestPermission === 'function') await notificationApi.requestPermission();
 });
 
 async function loadOrders() {
@@ -24,7 +26,8 @@ async function loadOrders() {
     if (!response.ok) throw new Error('Unable to refresh orders.');
     const rows = await response.json();
     const ids = new Set(rows.map((order) => order.id));
-    if (!firstLoad && 'Notification' in window && Notification.permission === 'granted') rows.filter((order) => !known.has(order.id) && order.status === 'new').forEach((order) => new Notification('New Direct Order', { body: `${order.customer_name || 'Guest'} · ${order.customer_phone}`, icon: '/images/red-lantern-logo-600.webp' }));
+    const notificationApi = window.Notification;
+    if (!firstLoad && notificationApi && notificationApi.permission === 'granted') rows.filter((order) => !known.has(order.id) && order.status === 'new').forEach((order) => new notificationApi('New Direct Order', { body: `${order.customer_name || 'Guest'} · ${order.customer_phone}`, icon: '/images/red-lantern-logo-600.webp' }));
     known = ids;
     firstLoad = false;
     root.innerHTML = rows.map(renderOrder).join('') || '<div class="empty-state">No direct orders yet.</div>';
@@ -115,6 +118,29 @@ document.getElementById('menu-type-tabs')?.addEventListener('click', (event) => 
   menuSearch.value = '';
   renderAvailability();
 });
+window.addEventListener('beforeinstallprompt', (event) => { event.preventDefault(); installPrompt = event; });
+document.getElementById('install-shortcut')?.addEventListener('click', async () => {
+  const dialog = document.getElementById('shortcut-dialog');
+  const message = document.getElementById('shortcut-message');
+  const steps = document.getElementById('shortcut-steps');
+  const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  if (installPrompt) {
+    installPrompt.prompt();
+    await installPrompt.userChoice;
+    installPrompt = null;
+    return;
+  }
+  if (isIOS) {
+    message.textContent = 'Add a secure Direct Orders icon to this iPhone.';
+    steps.innerHTML = '<li>Tap the Share button in Safari.</li><li>Choose <strong>Add to Home Screen</strong>.</li><li>Name it “RL Orders”, then tap Add.</li>';
+  } else {
+    message.textContent = 'Create a desktop shortcut for Direct Orders.';
+    steps.innerHTML = '<li>Open the browser menu (⋮).</li><li>Choose <strong>Install app</strong> or <strong>Create shortcut</strong>.</li><li>Pin “RL Orders” to the taskbar or desktop.</li>';
+  }
+  if (typeof dialog.showModal === 'function') dialog.showModal();
+  else alert(`${message.textContent}\n\n${steps.textContent}`);
+});
+document.getElementById('shortcut-close')?.addEventListener('click', () => document.getElementById('shortcut-dialog')?.close());
 menuResults?.addEventListener('click', async (event) => {
   const button = event.target.closest('[data-stock-action]');
   if (!button) return;
