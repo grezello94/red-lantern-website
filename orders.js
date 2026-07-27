@@ -6,6 +6,7 @@ let known = new Set();
 let firstLoad = true;
 let menuItems = [];
 let unavailable = new Map();
+let availabilityFilter = 'all';
 
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#039;' })[char]);
 const money = (value) => `₹${Number(value || 0).toFixed(0)}`;
@@ -65,11 +66,18 @@ async function loadAvailability() {
 
 function renderAvailability() {
   const query = String(menuSearch.value || '').trim().toLowerCase();
-  const visible = menuItems.filter((item) => `${item.name} ${item.category}`.toLowerCase().includes(query)).sort((a, b) => `${a.category} ${a.name}`.localeCompare(`${b.category} ${b.name}`)).slice(0, 80);
+  const activeUnavailable = new Set([...unavailable].filter(([, until]) => new Date(until) > new Date()).map(([key]) => key));
+  const inStockCount = menuItems.length - activeUnavailable.size;
+  document.getElementById('availability-counts').innerHTML = `<span class="stock-count in">${inStockCount} in stock</span><span class="stock-count out">${activeUnavailable.size} unavailable</span>`;
+  document.getElementById('availability-filters').innerHTML = [['all', 'All items'], ['in', 'In stock'], ['out', 'Unavailable']].map(([value, label]) => `<button class="filter-button ${availabilityFilter === value ? 'is-active' : ''}" data-availability-filter="${value}" aria-pressed="${availabilityFilter === value}">${label}</button>`).join('');
+  const visible = menuItems.filter((item) => {
+    const isOut = activeUnavailable.has(item.key);
+    return `${item.name} ${item.category}`.toLowerCase().includes(query) && (availabilityFilter === 'all' || (availabilityFilter === 'out' ? isOut : !isOut));
+  }).sort((a, b) => `${a.category} ${a.name}`.localeCompare(`${b.category} ${b.name}`));
   menuResults.innerHTML = visible.length ? visible.map((item) => {
-    const until = unavailable.get(item.key);
+    const until = activeUnavailable.has(item.key) ? unavailable.get(item.key) : null;
     const status = until ? `Out until ${new Date(until).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}` : 'In stock';
-    return `<article class="menu-item ${until ? 'is-out' : ''}" data-key="${esc(item.key)}"><div class="menu-item-name"><b>${esc(item.name)}</b><span>${esc(item.category || 'Menu')}</span></div><div class="availability-state">${status}</div><div class="availability-controls">${until ? `<button class="stock-in" data-stock-action="restore">Mark in stock</button>` : `<button class="stock-tomorrow" data-stock-action="tomorrow">Out until tomorrow</button><label>Specific time <input type="datetime-local" value="${tomorrowLocal()}" data-stock-until></label><button class="stock-date" data-stock-action="date">Mark out</button>`}</div></article>`;
+    return `<article class="menu-item ${until ? 'is-out' : ''}" data-key="${esc(item.key)}"><div class="menu-item-name"><b>${esc(item.name)}</b><span>${esc(item.category || 'Menu')}</span></div><div class="availability-state"><i aria-hidden="true"></i>${status}</div><div class="availability-controls">${until ? `<button class="stock-in" data-stock-action="restore">Mark in stock</button>` : `<button class="stock-tomorrow" data-stock-action="tomorrow">Out until tomorrow</button><label><span>Custom restock</span><input type="datetime-local" value="${tomorrowLocal()}" data-stock-until></label><button class="stock-date" data-stock-action="date">Mark unavailable</button>`}</div></article>`;
   }).join('') : '<div class="empty-state">No menu items match that search.</div>';
 }
 
@@ -88,6 +96,12 @@ document.getElementById('availability-toggle')?.addEventListener('click', async 
 });
 document.getElementById('availability-close')?.addEventListener('click', () => { availability.hidden = true; document.getElementById('availability-toggle').setAttribute('aria-expanded', 'false'); });
 menuSearch?.addEventListener('input', renderAvailability);
+document.getElementById('availability-filters')?.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-availability-filter]');
+  if (!button) return;
+  availabilityFilter = button.dataset.availabilityFilter;
+  renderAvailability();
+});
 menuResults?.addEventListener('click', async (event) => {
   const button = event.target.closest('[data-stock-action]');
   if (!button) return;
