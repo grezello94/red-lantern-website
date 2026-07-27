@@ -422,6 +422,7 @@ function airItemMarkup(item = {}, index = 0) {
     <tr class="air-item-entry" data-row="${index}">
       <td><label class="sheet-check"><input type="hidden" name="airItemBestSeller[]" value="${item.bestSeller ? 'true' : 'false'}"><input type="checkbox" data-item-flag="bestSeller" ${item.bestSeller ? 'checked' : ''} aria-label="Best Seller"></label></td>
       <td><label class="sheet-check"><input type="hidden" name="airItemMustHave[]" value="${item.mustHave ? 'true' : 'false'}"><input type="checkbox" data-item-flag="mustHave" ${item.mustHave ? 'checked' : ''} aria-label="Must Have"></label></td>
+      <td><label class="sheet-check"><input type="hidden" name="airItemGravyStyleAvailable[]" value="${item.gravyStyleAvailable || item.gravyAvailable || item.semiGravyAvailable ? 'true' : 'false'}"><input type="checkbox" data-item-flag="gravyStyleAvailable" ${item.gravyStyleAvailable || item.gravyAvailable || item.semiGravyAvailable ? 'checked' : ''} aria-label="Gravy or Semi-Gravy available"></label></td>
       <td><input type="text" name="airItemName[]" value="${escapeHtml(cleanAirSheetText(item.name))}" placeholder="Item name" required></td>
       <td><input type="text" name="airItemPrice[]" value="${escapeHtml(item.price || '')}" placeholder="₹250"></td>
       <td><input type="text" name="airItemFullPrice[]" value="${escapeHtml(item.fullPrice || '')}" placeholder="₹450"></td>
@@ -523,7 +524,8 @@ function airSheetItems() {
       dietary: row.querySelector('[name="airItemDietary[]"]')?.value || dietaryFromAirCategory(category),
       description: row.querySelector('[name="airItemDescription[]"]')?.value.trim() || '',
       bestSeller: row.querySelector('[data-item-flag="bestSeller"]')?.checked || false,
-      mustHave: row.querySelector('[data-item-flag="mustHave"]')?.checked || false
+      mustHave: row.querySelector('[data-item-flag="mustHave"]')?.checked || false,
+      gravyStyleAvailable: row.querySelector('[data-item-flag="gravyStyleAvailable"]')?.checked || false
     };
   }).filter((item) => item.name);
 }
@@ -662,8 +664,8 @@ function setupAirMenuEditor() {
     if (!target || (!clipboard.includes('\t') && !clipboard.includes('\n'))) return;
     event.preventDefault();
     const pastedRows = clipboard.replace(/\r/g, '').split('\n').filter((row) => row.trim()).map((row) => row.split('\t'));
-    const fields = ['bestSeller', 'mustHave', 'airItemName[]', 'airItemPrice[]', 'airItemFullPrice[]', 'airItemHalfPrice[]', 'airItemWithBonePrice[]', 'airItemBonelessPrice[]', 'airItemCategory[]', 'airItemType[]', 'dietary', 'airItemDescription[]'];
-    const startColumn = Math.max(0, Math.min(11, target.closest('td')?.cellIndex || 0));
+    const fields = ['bestSeller', 'mustHave', 'gravyStyleAvailable', 'airItemName[]', 'airItemPrice[]', 'airItemFullPrice[]', 'airItemHalfPrice[]', 'airItemWithBonePrice[]', 'airItemBonelessPrice[]', 'airItemCategory[]', 'airItemType[]', 'dietary', 'airItemDescription[]'];
+    const startColumn = Math.max(0, Math.min(12, target.closest('td')?.cellIndex || 0));
     let tableRows = [...container.querySelectorAll('.air-item-entry')];
     const startRow = Math.max(0, tableRows.indexOf(target.closest('.air-item-entry')));
     container.querySelector('.air-empty-row')?.remove();
@@ -674,7 +676,7 @@ function setupAirMenuEditor() {
         tableRows = [...container.querySelectorAll('.air-item-entry')];
       }
       const row = tableRows[startRow + rowOffset];
-      cells.slice(0, 12 - startColumn).forEach((value, columnOffset) => {
+      cells.slice(0, 13 - startColumn).forEach((value, columnOffset) => {
         const fieldName = fields[startColumn + columnOffset];
         if (fieldName === 'dietary') {
           const dietaryValue = /non[\s-]?veg/i.test(value) ? 'nonveg' : /veg/i.test(value) ? 'veg' : '';
@@ -682,9 +684,9 @@ function setupAirMenuEditor() {
           if (checkbox) { checkbox.checked = true; checkbox.dispatchEvent(new Event('change', { bubbles:true })); }
           return;
         }
-        if (fieldName === 'bestSeller' || fieldName === 'mustHave') {
+        if (['bestSeller', 'mustHave', 'gravyStyleAvailable'].includes(fieldName)) {
           const checkbox = row.querySelector(`[data-item-flag="${fieldName}"]`);
-          const checked = /^(1|true|yes|y|checked|best seller|must have|must try|popular)$/i.test(value.trim());
+          const checked = /^(1|true|yes|y|checked|best seller|must have|must try|popular|gravy|semi[-\s]?gravy)$/i.test(value.trim());
           if (checkbox) { checkbox.checked = checked; checkbox.dispatchEvent(new Event('change', { bubbles: true })); }
           return;
         }

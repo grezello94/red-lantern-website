@@ -32,6 +32,17 @@ function displayPrice(dish) {
   return amount ? `₹${amount}` : '';
 }
 
+function orderPriceWithStyle(item) {
+  const price = String(item.price || '').trim();
+  if (!item.style || !price) return price;
+  const amount = price.match(/(?:₹|Rs\.?|INR)?\s*(\d{1,5}(?:\.\d{1,2})?)/i)?.[1];
+  return amount ? `₹${Number(amount) + 10}` : price;
+}
+
+function styleLabel(item) {
+  return item.style ? `${item.style} (+₹10)` : '';
+}
+
 function portionPriceHtml(dish) {
   const normalize = (value) => {
     const amount = String(value || '').match(/(?:₹|Rs\.?|INR)?\s*(\d{2,5}(?:\.\d{1,2})?)/i)?.[1];
@@ -93,10 +104,21 @@ function registerOrderOptions(dish, category, index, showPrices) {
   }
   if (!variants.length) variants.push({ portion: '', price: dish.price || displayPrice(dish) });
   return `<div class="order-pickers">${variants.map((variant) => {
-    const key = encodeURIComponent(`${category}|${displayName(dish.name)}|${variant.portion}`);
-    orderCatalog.set(key, { key, name: displayName(dish.name), category, portion: variant.portion, price: variant.price || '', showPrices });
-    const quantity = Number(orderSelections[key] || 0);
-    return `<div class="order-picker"><span>${variant.portion || 'Add'}</span><div class="quantity-control"><button type="button" data-order-action="minus" data-order-key="${key}" aria-label="Remove one">−</button><strong data-order-quantity="${key}">${quantity}</strong><button type="button" data-order-action="plus" data-order-key="${key}" aria-label="Add one">+</button></div></div>`;
+    const styles = [{ label: 'Dry (default)', value: '' }];
+    const hasGravyStyles = dish.gravyStyleAvailable || dish.gravyAvailable || dish.semiGravyAvailable;
+    if (hasGravyStyles) styles.push({ label: 'Gravy', value: 'Gravy' }, { label: 'Semi-Gravy', value: 'Semi-Gravy' });
+    const baseKey = `${category}|${displayName(dish.name)}|${variant.portion}`;
+    const styleOptions = styles.map((style) => {
+      const key = encodeURIComponent(`${baseKey}|${style.value || 'Dry'}`);
+      orderCatalog.set(key, { key, name: displayName(dish.name), category, portion: variant.portion, style: style.value, price: variant.price || '', showPrices, gravyStyleAvailable: hasGravyStyles });
+      return { ...style, key };
+    });
+    const selected = styleOptions.find((style) => Number(orderSelections[style.key] || 0) > 0) || styleOptions[0];
+    const quantity = Number(orderSelections[selected.key] || 0);
+    const customisation = styleOptions.length > 1
+      ? `<fieldset class="order-customisation"><legend>Choose style <em>(optional · Dry by default)</em></legend>${styleOptions.slice(1).map((style) => `<label><input type="radio" name="menu-style-${index}-${slug(`${category}-${dish.name}-${variant.portion}`)}" data-order-style value="${style.key}" ${style.key === selected.key ? 'checked' : ''}><span>${escapeHtml(style.label)}</span></label>`).join('')}</fieldset>`
+      : '';
+    return `<div class="order-picker" data-order-key="${selected.key}"><span>${variant.portion || 'Add'}</span><div class="quantity-control"><button type="button" data-order-action="minus" data-order-key="${selected.key}" aria-label="Remove one">−</button><strong data-order-quantity="${selected.key}">${quantity}</strong><button type="button" data-order-action="plus" data-order-key="${selected.key}" aria-label="Add one">+</button></div>${customisation}</div>`;
   }).join('')}</div>`;
 }
 
@@ -109,7 +131,8 @@ function orderSummaryText() {
   Object.entries(orderSelections).forEach(([key, quantity]) => {
     const item = orderCatalog.get(key);
     if (!item || quantity <= 0) return;
-    lines.push(`${quantity} × ${item.name}${item.portion ? ` (${item.portion})` : ''}${orderShowsPrices && item.price ? ` – ${item.price}${quantity > 1 ? ` each` : ''}` : ''}`);
+    const price = orderPriceWithStyle(item);
+    lines.push(`${quantity} × ${item.name}${item.portion ? ` (${item.portion})` : ''}${item.style ? ` — ${styleLabel(item)}` : ''}${orderShowsPrices && price ? ` – ${price}${quantity > 1 ? ` each` : ''}` : ''}`);
   });
   if (orderIsBusinessCard) {
     lines.push('');
@@ -123,12 +146,11 @@ function orderSummaryText() {
 }
 
 function updateOrderUI() {
-  let totalCount = 0;
+  const totalCount = Object.entries(orderSelections).reduce((total, [key, quantity]) => total + (orderCatalog.has(key) ? Number(quantity || 0) : 0), 0);
   document.querySelectorAll('[data-order-quantity]').forEach((element) => {
     const quantity = Number(orderSelections[element.dataset.orderQuantity] || 0);
     element.textContent = quantity;
     element.closest('.order-picker')?.classList.toggle('selected', quantity > 0);
-    totalCount += quantity;
   });
   sessionStorage.setItem(orderStorageKey, JSON.stringify(orderSelections));
   const fab = document.getElementById('open-order-summary');
@@ -142,7 +164,12 @@ function renderOrderSummary() {
   const items = Object.entries(orderSelections).filter(([key, quantity]) => quantity > 0 && orderCatalog.has(key));
   container.innerHTML = items.length ? items.map(([key, quantity]) => {
     const item = orderCatalog.get(key);
-    return `<div class="summary-item"><div><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml([item.category, item.portion].filter(Boolean).join(' · '))}</span></div><div class="summary-quantity"><button type="button" data-order-action="minus" data-order-key="${key}">−</button><b>${quantity}</b><button type="button" data-order-action="plus" data-order-key="${key}">+</button></div></div>`;
+    const styleChoices = item.gravyStyleAvailable ? ['Gravy', 'Semi-Gravy'].map((style) => {
+      const styleKey = encodeURIComponent(`${item.category}|${item.name}|${item.portion}|${style}`);
+      return `<label><input type="radio" name="summary-style-${key}" data-order-style value="${styleKey}" ${item.style === style ? 'checked' : ''}><span>${style} <em>+₹10</em></span></label>`;
+    }).join('') : '';
+    const customisation = styleChoices ? `<fieldset class="summary-style-options"><legend>Style <em>(optional · Dry by default)</em></legend>${styleChoices}</fieldset>` : '';
+    return `<div class="summary-item"><div><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml([item.category, item.portion, styleLabel(item)].filter(Boolean).join(' · '))}</span>${customisation}</div><div class="summary-quantity"><button type="button" data-order-action="minus" data-order-key="${key}">−</button><b>${quantity}</b><button type="button" data-order-action="plus" data-order-key="${key}">+</button></div></div>`;
   }).join('') : '<p class="empty">No dishes selected yet.</p>';
   const customerDetails = document.getElementById('order-customer-details');
   const customerPhone = document.getElementById('order-customer-phone');
@@ -158,6 +185,25 @@ function changeOrderQuantity(key, change) {
   updateOrderUI();
 }
 
+function changeOrderStyle(control) {
+  const picker = control.closest('.order-picker');
+  const previousKey = picker?.dataset.orderKey || control.closest('.summary-item')?.querySelector('[data-order-action]')?.dataset.orderKey;
+  const nextKey = control.value;
+  if (!previousKey || !nextKey || previousKey === nextKey) return;
+  const quantity = Number(orderSelections[previousKey] || 0);
+  if (quantity) {
+    orderSelections[nextKey] = Number(orderSelections[nextKey] || 0) + quantity;
+    delete orderSelections[previousKey];
+  }
+  if (picker) {
+    picker.dataset.orderKey = nextKey;
+    picker.querySelectorAll('[data-order-key]').forEach((element) => { element.dataset.orderKey = nextKey; });
+    const quantityLabel = picker.querySelector('[data-order-quantity]');
+    if (quantityLabel) quantityLabel.dataset.orderQuantity = nextKey;
+  }
+  updateOrderUI();
+}
+
 function setupOrderShortlist() {
   const dialog = document.getElementById('order-summary');
   const handleQuantity = (event) => {
@@ -166,6 +212,14 @@ function setupOrderShortlist() {
     changeOrderQuantity(button.dataset.orderKey, button.dataset.orderAction === 'plus' ? 1 : -1);
   };
   document.getElementById('menu-content').addEventListener('click', handleQuantity);
+  document.getElementById('menu-content').addEventListener('change', (event) => {
+    const radio = event.target.closest('[data-order-style]');
+    if (radio) changeOrderStyle(radio);
+  });
+  document.getElementById('order-summary-items').addEventListener('change', (event) => {
+    const radio = event.target.closest('[data-order-style]');
+    if (radio) changeOrderStyle(radio);
+  });
   document.getElementById('order-summary-items').addEventListener('click', handleQuantity);
   document.getElementById('open-order-summary').addEventListener('click', () => dialog.showModal());
   document.getElementById('close-order-summary').addEventListener('click', () => dialog.close());

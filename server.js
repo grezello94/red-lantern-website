@@ -639,6 +639,7 @@ function normalizeAirMenu(body) {
   const dietaryValues = asArray(body.airItemDietary);
   const bestSellers = asArray(body.airItemBestSeller);
   const mustHaves = asArray(body.airItemMustHave);
+  const gravyStyleAvailable = asArray(body.airItemGravyStyleAvailable);
   const barNames = asArray(body.airBarItemName);
   const barPrices = asArray(body.airBarItemPrice);
   const bar30mlPrices = asArray(body.airBarItem30mlPrice);
@@ -681,7 +682,8 @@ function normalizeAirMenu(body) {
       description: String(descriptions[index] || '').trim(),
       dietary: dietaryValues[index] === 'nonveg' ? 'nonveg' : dietaryValues[index] === 'veg' ? 'veg' : dietaryFromMenuCategory(categories[index]),
       bestSeller: bestSellers[index] === 'true',
-      mustHave: mustHaves[index] === 'true'
+      mustHave: mustHaves[index] === 'true',
+      gravyStyleAvailable: gravyStyleAvailable[index] === 'true'
     })).filter((item) => item.name)),
     barItems: dedupeMenuItems(barNames.map((name, index) => ({
       name: String(name || '').trim(),
@@ -699,6 +701,111 @@ function normalizeAirMenu(body) {
       isBar: true
     })).filter((item) => item.name))
   };
+}
+
+function addAirMenuExportSheet(workbook, name, columns, rows) {
+  const sheet = workbook.addWorksheet(name, {
+    views: [{ state: 'frozen', ySplit: 1, showGridLines: false }],
+    properties: { tabColor: { argb: name === 'Food Menu' ? 'FFB4533C' : 'FF9A6B3D' } }
+  });
+  sheet.columns = columns.map((column) => ({ header: column.label, key: column.key, width: column.width }));
+  sheet.autoFilter = { from: 'A1', to: `${String.fromCharCode(64 + columns.length)}1` };
+
+  const header = sheet.getRow(1);
+  header.height = 27;
+  header.eachCell((cell) => {
+    cell.font = { bold: true, color: { argb: 'FFFFFFFF' }, name: 'Arial', size: 11 };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF5A4037' } };
+    cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+    cell.border = { bottom: { style: 'medium', color: { argb: 'FFC8A27A' } } };
+  });
+
+  rows.forEach((row, index) => {
+    const excelRow = sheet.addRow(row);
+    excelRow.height = 22;
+    excelRow.eachCell((cell) => {
+      cell.font = { name: 'Arial', size: 10, color: { argb: 'FF1F2937' } };
+      cell.alignment = { vertical: 'middle', wrapText: true };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: index % 2 ? 'FFFBF8F5' : 'FFFFFFFF' } };
+      cell.border = { bottom: { style: 'thin', color: { argb: 'FFEAE3DC' } } };
+    });
+  });
+  return sheet;
+}
+
+function exportMenuPrice(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  const number = text.replace(/[₹,\s]/g, '').replace(/^rs\.?/i, '');
+  return /^\d+(?:\.\d+)?$/.test(number) ? Number(number) : text;
+}
+
+function formatExportPriceColumns(sheet, columns) {
+  columns.forEach((column) => {
+    sheet.getColumn(column).numFmt = '"₹"#,##0';
+    sheet.getColumn(column).alignment = { horizontal: 'right', vertical: 'middle' };
+  });
+}
+
+async function createAirMenuExport(menu = {}) {
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = 'Red Lantern Restaurant';
+  workbook.created = new Date();
+  workbook.properties.title = 'Red Lantern Air Menu';
+  workbook.properties.subject = 'Editable food and bar menu export';
+
+  const instructions = workbook.addWorksheet('Read Me');
+  instructions.columns = [{ width: 28 }, { width: 105 }];
+  instructions.addRows([
+    ['RED LANTERN AIR MENU', 'Editable Food and Bar Menu Workbook'],
+    ['How to use', 'Edit the Food Menu and Bar Menu sheets, then upload this same file through the matching Import Food Menu or Import Bar Menu control in Admin. The correct sheet is selected automatically.'],
+    ['Food flags', 'Use Yes or No for Best Seller, Must Have, and Gravy / Semi-Gravy. Enable the Gravy / Semi-Gravy option only for dishes that can be ordered either way. Use Veg, Non-Veg, or leave Dietary blank; category names containing Veg or Non-Veg also set the dietary mark automatically.'],
+    ['Prices', 'Enter a number or a price with ₹. Leave a pricing column blank when it does not apply.'],
+    ['Important', 'Save this file as .xlsx. Publish the Air Menu in Admin after importing your changes.']
+  ]);
+  instructions.getRow(1).height = 30;
+  instructions.getRow(1).eachCell((cell) => {
+    cell.font = { bold: true, color: { argb: 'FFFFFFFF' }, name: 'Arial', size: 12 };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF5A4037' } };
+  });
+  instructions.eachRow((row, rowNumber) => row.eachCell((cell) => {
+    cell.alignment = { vertical: 'middle', wrapText: true };
+    if (rowNumber > 1) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: rowNumber % 2 ? 'FFFFFBF8' : 'FFFFFFFF' } };
+  }));
+  instructions.getColumn(1).eachCell((cell) => { cell.font = { ...(cell.font || {}), bold: true, name: 'Arial' }; });
+
+  const foodSheet = addAirMenuExportSheet(workbook, 'Food Menu', [
+    { key: 'name', label: 'Item Name', width: 31 }, { key: 'category', label: 'Category', width: 22 },
+    { key: 'dietary', label: 'Veg / Non-Veg', width: 15 }, { key: 'price', label: 'Price', width: 12 },
+    { key: 'halfPrice', label: 'Half', width: 11 }, { key: 'fullPrice', label: 'Full', width: 11 },
+    { key: 'withBonePrice', label: 'With Bone', width: 13 }, { key: 'bonelessPrice', label: 'Boneless', width: 13 },
+    { key: 'description', label: 'Description', width: 38 }, { key: 'bestSeller', label: 'Best Seller', width: 13 },
+    { key: 'mustHave', label: 'Must Have', width: 13 }, { key: 'gravyStyleAvailable', label: 'Gravy / Semi-Gravy', width: 18 },
+    { key: 'type', label: 'Type', width: 12 }
+  ], (menu.items || []).map((item) => ({
+    name: item.name || '', category: item.category || 'Menu', dietary: item.dietary === 'nonveg' ? 'Non-Veg' : item.dietary === 'veg' ? 'Veg' : '',
+    price: exportMenuPrice(item.price), halfPrice: exportMenuPrice(item.halfPrice), fullPrice: exportMenuPrice(item.fullPrice), withBonePrice: exportMenuPrice(item.withBonePrice), bonelessPrice: exportMenuPrice(item.bonelessPrice),
+    description: item.description || '', bestSeller: item.bestSeller ? 'Yes' : 'No', mustHave: item.mustHave ? 'Yes' : 'No', gravyStyleAvailable: item.gravyStyleAvailable || item.gravyAvailable || item.semiGravyAvailable ? 'Yes' : 'No', type: item.type === 'beverage' ? 'Beverage' : 'Food'
+  })));
+  formatExportPriceColumns(foodSheet, ['D', 'E', 'F', 'G', 'H']);
+  foodSheet.dataValidations.add('C2:C1000', { type: 'list', allowBlank: true, formulae: ['"Veg,Non-Veg"'] });
+  foodSheet.dataValidations.add('J2:L1000', { type: 'list', allowBlank: false, formulae: ['"Yes,No"'] });
+  foodSheet.dataValidations.add('M2:M1000', { type: 'list', allowBlank: false, formulae: ['"Food,Beverage"'] });
+
+  const barSheet = addAirMenuExportSheet(workbook, 'Bar Menu', [
+    { key: 'name', label: 'Item Name', width: 31 }, { key: 'category', label: 'Category', width: 22 },
+    { key: 'price', label: 'Price', width: 12 }, { key: 'price30ml', label: '30 ML', width: 12 },
+    { key: 'price60ml', label: '60 ML', width: 12 }, { key: 'price90ml', label: '90 ML', width: 12 },
+    { key: 'price180ml', label: '180 ML', width: 12 }, { key: 'description', label: 'Description', width: 38 },
+    { key: 'bestSeller', label: 'Best Seller', width: 13 }, { key: 'type', label: 'Type', width: 12 }
+  ], (menu.barItems || []).map((item) => ({
+    name: item.name || '', category: item.category || 'Bar Menu', price: exportMenuPrice(item.price), price30ml: exportMenuPrice(item.price30ml), price60ml: exportMenuPrice(item.price60ml), price90ml: exportMenuPrice(item.price90ml), price180ml: exportMenuPrice(item.price180ml),
+    description: item.description || '', bestSeller: item.bestSeller ? 'Yes' : 'No', type: item.type === 'food' ? 'Food' : 'Beverage'
+  })));
+  formatExportPriceColumns(barSheet, ['C', 'D', 'E', 'F', 'G']);
+  barSheet.dataValidations.add('I2:I1000', { type: 'list', allowBlank: false, formulae: ['"Yes,No"'] });
+  barSheet.dataValidations.add('J2:J1000', { type: 'list', allowBlank: false, formulae: ['"Food,Beverage"'] });
+  return workbook;
 }
 
 function menuItemKey(item = {}) {
@@ -1377,7 +1484,9 @@ function extractAirMenuFromCsv(file) {
   let dietaryIndex = findHeader(['dietary', 'diet', 'vegornonveg', 'vegnonveg', 'foodpreference']);
   let bestSellerIndex = findHeader(['bestseller', 'bestselling', 'popular', 'isbestSeller']);
   let mustHaveIndex = findHeader(['musthave', 'musttry', 'recommended', 'chefchoice']);
-  const hasHeaders = nameIndex >= 0 || priceIndex >= 0 || fullPriceIndex >= 0 || halfPriceIndex >= 0 || withBonePriceIndex >= 0 || bonelessPriceIndex >= 0 || categoryIndex >= 0 || typeIndex >= 0 || descriptionIndex >= 0 || dietaryIndex >= 0 || bestSellerIndex >= 0 || mustHaveIndex >= 0;
+  let gravyStyleIndex = findHeader(['gravystyleavailable', 'gravystyle', 'gravysemigravy', 'gravy', 'gravyavailable']);
+  let semiGravyIndex = findHeader(['semigravy', 'semigravyavailable']);
+  const hasHeaders = nameIndex >= 0 || priceIndex >= 0 || fullPriceIndex >= 0 || halfPriceIndex >= 0 || withBonePriceIndex >= 0 || bonelessPriceIndex >= 0 || categoryIndex >= 0 || typeIndex >= 0 || descriptionIndex >= 0 || dietaryIndex >= 0 || bestSellerIndex >= 0 || mustHaveIndex >= 0 || gravyStyleIndex >= 0 || semiGravyIndex >= 0;
   if (nameIndex < 0) nameIndex = 0;
   if (priceIndex < 0) priceIndex = 1;
   if (categoryIndex < 0) categoryIndex = 2;
@@ -1408,7 +1517,8 @@ function extractAirMenuFromCsv(file) {
       description: descriptionIndex >= 0 ? String(columns[descriptionIndex] || '').trim() : '',
       dietary: importedDietary || dietaryFromMenuCategory(resolvedCategory),
       bestSeller: bestSellerIndex >= 0 && /^(1|true|yes|y|checked|best seller|popular)$/i.test(String(columns[bestSellerIndex] || '').trim()),
-      mustHave: mustHaveIndex >= 0 && /^(1|true|yes|y|checked|must have|must try|recommended)$/i.test(String(columns[mustHaveIndex] || '').trim())
+      mustHave: mustHaveIndex >= 0 && /^(1|true|yes|y|checked|must have|must try|recommended)$/i.test(String(columns[mustHaveIndex] || '').trim()),
+      gravyStyleAvailable: (gravyStyleIndex >= 0 && /^(1|true|yes|y|checked|gravy|semi[-\s]?gravy)$/i.test(String(columns[gravyStyleIndex] || '').trim())) || (semiGravyIndex >= 0 && /^(1|true|yes|y|checked|semi[-\s]?gravy)$/i.test(String(columns[semiGravyIndex] || '').trim()))
     };
   }).filter((item) => item.name);
 
@@ -1425,10 +1535,11 @@ function spreadsheetCellText(value) {
   return String(value).trim();
 }
 
-async function workbookRows(file) {
+async function workbookRows(file, preferredSheetNames = []) {
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(file.buffer);
-  const worksheet = workbook.worksheets[0];
+  const preferredNames = preferredSheetNames.map((name) => String(name).toLowerCase());
+  const worksheet = workbook.worksheets.find((sheet) => preferredNames.includes(String(sheet.name).toLowerCase())) || workbook.worksheets[0];
   if (!worksheet) return [];
   const rows = [];
   worksheet.eachRow({ includeEmpty: false }, (row) => {
@@ -1443,7 +1554,7 @@ function rowsAsCsv(rows) {
 }
 
 async function extractAirMenuFromXlsx(file) {
-  const extraction = extractAirMenuFromCsv({ buffer: Buffer.from(rowsAsCsv(await workbookRows(file))) });
+  const extraction = extractAirMenuFromCsv({ buffer: Buffer.from(rowsAsCsv(await workbookRows(file, ['Food Menu', 'Food'])) ) });
   return { ...extraction, extractionMethod: 'xlsx' };
 }
 
@@ -1577,7 +1688,7 @@ function parseBarMenuText(rawText) {
 async function extractBarMenu(file) {
   const extension = path.extname(file.originalname).toLowerCase();
   if (extension === '.csv') return extractBarMenuFromRows(parseCsvRows(file.buffer.toString('utf8')), 'csv');
-  if (extension === '.xlsx') return extractBarMenuFromRows(await workbookRows(file), 'xlsx');
+  if (extension === '.xlsx') return extractBarMenuFromRows(await workbookRows(file, ['Bar Menu', 'Bar']), 'xlsx');
   const pdfExtraction = await extractAirMenuFromPdf(file);
   const parsedBarItems = parseBarMenuText(pdfExtraction.rawText || '');
   return {
@@ -1733,6 +1844,26 @@ app.get('/api/air-menu', async (req, res) => {
     expires: Number(req.query.expires),
     dishes: visibleDishes
   });
+});
+
+app.get('/api/admin/air-menu/export', async (req, res) => {
+  try {
+    const workbook = await createAirMenuExport(await getSection('airMenu'));
+    const fileDate = new Date().toISOString().slice(0, 10);
+    res.set({
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': `attachment; filename="red-lantern-air-menu-${fileDate}.xlsx"`,
+      'Cache-Control': 'no-store'
+    });
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (error) {
+    logDiagnostic({
+      level: 'error', category: 'cms-save', message: `Air Menu export failed: ${error.message}`,
+      method: req.method, path: req.path, statusCode: 500, ipHash: hashIp(req), userAgent: req.headers['user-agent'] || ''
+    });
+    res.status(500).json({ error: 'Unable to export the Air Menu workbook.' });
+  }
 });
 
 app.post('/api/admin/air-menu/extract', menuFileUpload.single('menuFile'), async (req, res) => {

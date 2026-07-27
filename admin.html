@@ -56,14 +56,14 @@
       .air-sheet th { position: sticky; top: 0; z-index: 1; padding: 11px 10px; border-right: 1px solid #dfe3e8; border-bottom: 2px solid #cfd5dd; background: #f3f4f6; color: #1f2937; text-align: left; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .03em; }
       .air-sheet th:nth-child(1) { width: 15%; } .air-sheet th:nth-child(2), .air-sheet th:nth-child(3), .air-sheet th:nth-child(4), .air-sheet th:nth-child(5), .air-sheet th:nth-child(6) { width: 7%; } .air-sheet th:nth-child(7) { width: 13%; } .air-sheet th:nth-child(8) { width: 8%; } .air-sheet th:nth-child(9) { width: 11%; text-align:center; } .air-sheet th:nth-child(10) { width: 18%; } .air-sheet th:nth-child(11), .air-sheet th:nth-child(12) { width: 6%; text-align:center; } .air-sheet th:nth-child(13) { width:48px; }
       /* Food-sheet flags are deliberately narrow, leaving room for the dish name. */
-      .food-sheet th:nth-child(1), .food-sheet th:nth-child(2) { width: 5%; text-align: center; }
-      .food-sheet th:nth-child(3) { width: 15%; }
-      .food-sheet th:nth-child(4), .food-sheet th:nth-child(5), .food-sheet th:nth-child(6), .food-sheet th:nth-child(7), .food-sheet th:nth-child(8) { width: 7%; }
-      .food-sheet th:nth-child(9) { width: 13%; }
-      .food-sheet th:nth-child(10) { width: 8%; }
-      .food-sheet th:nth-child(11) { width: 11%; text-align: center; }
-      .food-sheet th:nth-child(12) { width: 18%; }
-      .food-sheet th:nth-child(13) { width: 48px; }
+      .food-sheet th:nth-child(1), .food-sheet th:nth-child(2), .food-sheet th:nth-child(3) { width: 5%; text-align: center; }
+      .food-sheet th:nth-child(4) { width: 15%; }
+      .food-sheet th:nth-child(5), .food-sheet th:nth-child(6), .food-sheet th:nth-child(7), .food-sheet th:nth-child(8), .food-sheet th:nth-child(9) { width: 7%; }
+      .food-sheet th:nth-child(10) { width: 13%; }
+      .food-sheet th:nth-child(11) { width: 8%; }
+      .food-sheet th:nth-child(12) { width: 11%; text-align: center; }
+      .food-sheet th:nth-child(13) { width: 18%; }
+      .food-sheet th:nth-child(14) { width: 48px; }
       .bar-sheet { min-width: 1720px; }
       .bar-sheet th:nth-child(1) { width:16%; } .bar-sheet th:nth-child(2), .bar-sheet th:nth-child(3), .bar-sheet th:nth-child(4), .bar-sheet th:nth-child(5), .bar-sheet th:nth-child(6) { width:7%; } .bar-sheet th:nth-child(7) { width:14%; text-align:left; } .bar-sheet th:nth-child(8) { width:9%; } .bar-sheet th:nth-child(9) { width:20%; } .bar-sheet th:nth-child(10) { width:7%; text-align:center; } .bar-sheet th:nth-child(11) { width:48px; }
       .air-sheet th span { color: #6b7280; font-weight: 600; text-transform: none; }
@@ -142,6 +142,11 @@
       .air-upload-field label { margin-bottom: 7px; }
       .air-upload-field input[type="file"] { width: 100%; margin: 0; color: #6b7280; font-size: 12px; }
       .air-upload-field input[type="file"]::file-selector-button { margin-right: 10px; padding: 8px 11px; border: 0; border-radius: 6px; background: #fee2e2; color: #991b1b; font: 800 12px Manrope, sans-serif; cursor: pointer; }
+      .air-export-row { display:flex; align-items:center; justify-content:space-between; gap:18px; margin:0 0 22px; padding:16px 18px; border:1px solid #fed7aa; border-radius:12px; background:#fffaf5; }
+      .air-export-row strong { display:block; color:#7c2d12; margin-bottom:3px; }
+      .air-export-row .help-text { margin:0; }
+      .air-export-button { flex:0 0 auto; display:inline-flex; align-items:center; justify-content:center; padding:11px 15px; border-radius:8px; background:#d62828; color:#fff; font:800 13px Manrope,sans-serif; text-decoration:none; white-space:nowrap; }
+      .air-export-button:hover { background:#b91c1c; color:#fff; }
       .air-import-card .growth-ai-button { position: relative; z-index: 1; width: 100%; margin-top: 14px !important; padding: 13px 16px; border-radius: 9px; }
       .air-import-card .growth-ai-status { position: relative; z-index: 1; min-height: 20px; margin: 10px 0 0; font-size: 12px; }
       #tab-air-menu form > .card { border-color: #eceff3; }
@@ -491,11 +496,16 @@
           <span class="air-workflow-step"><b>3</b> Publish QR menu</span>
         </div>
 
+        <div class="air-export-row">
+          <div><strong>Export the saved menu workbook</strong><p class="help-text">Download a colour-coded Excel file with separate Food Menu and Bar Menu sheets. Edit it, then use the matching import control below to upload the same file.</p></div>
+          <a class="air-export-button" href="/api/admin/air-menu/export">Export Excel Menu</a>
+        </div>
+
         <div class="air-import-grid">
           <section class="card air-import-card">
             <span class="air-import-kicker">Food</span>
             <h2>Import Food Menu</h2>
-            <p class="help-text">Upload a menu PDF, CSV, or XLSX. PDFs use embedded text or local OCR; spreadsheet columns are mapped automatically.</p>
+            <p class="help-text">Upload a menu PDF, CSV, or XLSX. Re-upload the exported workbook here to import its Food Menu sheet automatically.</p>
             <div class="form-group air-upload-field">
               <label for="air-menu-file">Food menu file</label>
               <input id="air-menu-file" type="file" accept="application/pdf,.pdf,text/csv,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.xlsx">
@@ -507,7 +517,7 @@
           <section class="card air-import-card">
             <span class="air-import-kicker">Beverages</span>
             <h2>Import Bar Menu</h2>
-            <p class="help-text">Upload a separate bar list. Recommended columns: Item Name, Price, 30 ML, 60 ML, 90 ML, 180 ML, Category, and Type.</p>
+            <p class="help-text">Upload a separate bar list. Re-upload the exported workbook here to import its Bar Menu sheet automatically.</p>
             <div class="form-group air-upload-field">
               <label for="air-bar-menu-file">Bar menu file</label>
               <input id="air-bar-menu-file" type="file" accept="application/pdf,.pdf,text/csv,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.xlsx">
@@ -559,7 +569,7 @@
             <span class="help-text" style="margin-bottom:18px;">Use Price for single-price items. Add Full, Half, With Bone, or Boneless prices where applicable, and leave Price blank. Duplicate item/category combinations are removed automatically.</span>
             <div class="air-sheet-wrap">
               <table class="air-sheet food-sheet">
-                <thead><tr><th>Best Seller</th><th>Must Have</th><th>Item Name</th><th>Price</th><th>Full</th><th>Half</th><th>With Bone</th><th>Boneless</th><th>Category</th><th>Type</th><th>Veg / Non-Veg</th><th>Description <span>(optional)</span></th><th></th></tr></thead>
+                <thead><tr><th>Best Seller</th><th>Must Have</th><th>Gravy / Semi-Gravy</th><th>Item Name</th><th>Price</th><th>Full</th><th>Half</th><th>With Bone</th><th>Boneless</th><th>Category</th><th>Type</th><th>Veg / Non-Veg</th><th>Description <span>(optional)</span></th><th></th></tr></thead>
                 <tbody id="air-items-container"></tbody>
               </table>
             </div>
