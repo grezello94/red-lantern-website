@@ -235,7 +235,11 @@ function setupOrderShortlist() {
     if (radio) changeOrderStyle(radio);
   });
   document.getElementById('order-summary-items').addEventListener('click', handleQuantity);
-  document.getElementById('open-order-summary').addEventListener('click', () => dialog.showModal());
+  document.getElementById('open-order-summary').addEventListener('click', () => {
+    syncOrderVisibleHeight();
+    dialog.showModal();
+    dialog.scrollTop = 0;
+  });
   document.getElementById('close-order-summary').addEventListener('click', () => dialog.close());
   dialog.addEventListener('click', (event) => { if (event.target === dialog) dialog.close(); });
   document.getElementById('clear-order').addEventListener('click', () => { orderSelections = {}; updateOrderUI(); });
