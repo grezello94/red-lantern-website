@@ -9,6 +9,15 @@ let orderWhatsAppNumber = '';
 let orderIsBusinessCard = false;
 let orderCustomerPhone = localStorage.getItem('red-lantern-order-phone') || '';
 
+function syncOrderVisibleHeight() {
+  const height = window.visualViewport?.height || window.innerHeight;
+  document.documentElement.style.setProperty('--order-visible-height', `${Math.round(height)}px`);
+}
+
+syncOrderVisibleHeight();
+window.visualViewport?.addEventListener('resize', syncOrderVisibleHeight);
+window.addEventListener('resize', syncOrderVisibleHeight);
+
 try { orderSelections = JSON.parse(sessionStorage.getItem(orderStorageKey) || '{}'); } catch { orderSelections = {}; }
 
 const escapeHtml = (value) => String(value || '')
