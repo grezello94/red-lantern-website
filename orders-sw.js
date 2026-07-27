@@ -1,1 +1,4 @@
-self.addEventListener('install',()=>self.skipWaiting());self.addEventListener('activate',e=>e.waitUntil(self.clients.claim()));
+self.addEventListener('install',()=>self.skipWaiting());
+self.addEventListener('activate',event=>event.waitUntil(self.clients.claim()));
+self.addEventListener('push',(event)=>{let data={title:'New Direct Order',body:'Open Direct Orders to view it.',url:'/orders'};try{data={...data,...event.data.json()}}catch{}event.waitUntil(self.registration.showNotification(data.title,{body:data.body,icon:'/images/red-lantern-logo-600.webp',badge:'/images/red-lantern-logo-600.webp',tag:data.tag||'red-lantern-order',renotify:true,data:{url:data.url||'/orders'}}))});
+self.addEventListener('notificationclick',(event)=>{event.notification.close();event.waitUntil(clients.matchAll({type:'window',includeUncontrolled:true}).then((windows)=>{const current=windows.find((client)=>client.url.includes('/orders'));return current?current.focus():clients.openWindow(event.notification.data?.url||'/orders')}))});

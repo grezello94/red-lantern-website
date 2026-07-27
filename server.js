@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const { pathToFileURL } = require('url');
 const QRCode = require('qrcode');
 const ExcelJS = require('exceljs');
+const webpush = require('web-push');
 
 const envPath = path.join(__dirname, '.env');
 if (fs.existsSync(envPath)) {
@@ -541,6 +542,7 @@ const labels = {
 let publicContentCache = null;
 let directOrdersTableReady = null;
 let menuAvailabilityTableReady = null;
+let pushSubscriptionsTableReady = null;
 async function ensureMenuAvailabilityTable() {
   if (!sql) throw new Error('Orders database is not configured.');
   if (!menuAvailabilityTableReady) menuAvailabilityTableReady = sql`CREATE TABLE IF NOT EXISTS menu_availability (item_key TEXT PRIMARY KEY, unavailable_until TIMESTAMPTZ NOT NULL)`;
@@ -550,6 +552,33 @@ async function ensureDirectOrdersTable() {
   if (!sql) throw new Error('Orders database is not configured.');
   if (!directOrdersTableReady) directOrdersTableReady = sql`CREATE TABLE IF NOT EXISTS direct_orders (id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'new', mode TEXT NOT NULL, customer_name TEXT, customer_phone TEXT NOT NULL, special_request TEXT, items JSONB NOT NULL, total NUMERIC NOT NULL DEFAULT 0, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;
   return directOrdersTableReady;
+}
+async function ensurePushSubscriptionsTable() {
+  if (!sql) throw new Error('Orders database is not configured.');
+  if (!pushSubscriptionsTableReady) pushSubscriptionsTableReady = sql`CREATE TABLE IF NOT EXISTS order_push_subscriptions (endpoint TEXT PRIMARY KEY, subscription JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;
+  return pushSubscriptionsTableReady;
+}
+let pushEnabled = false;
+try {
+  if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY && process.env.VAPID_SUBJECT) {
+    webpush.setVapidDetails(process.env.VAPID_SUBJECT, process.env.VAPID_PUBLIC_KEY, process.env.VAPID_PRIVATE_KEY);
+    pushEnabled = true;
+  }
+} catch (error) { console.warn('Web push is disabled because VAPID settings are invalid:', error.message); }
+async function notifyDirectOrder(order) {
+  if (!pushEnabled || !sql) return;
+  try {
+    await ensurePushSubscriptionsTable();
+    const subscriptions = await sql`SELECT endpoint, subscription FROM order_push_subscriptions`;
+    const payload = JSON.stringify({ title: 'New Direct Order', body: `${order.id} · ${order.itemCount} item${order.itemCount === 1 ? '' : 's'} · ₹${Number(order.total || 0).toFixed(0)}`, url: '/orders', tag: `order-${order.id}` });
+    const results = await Promise.allSettled(subscriptions.map((row) => webpush.sendNotification(row.subscription, payload)));
+    await Promise.all(results.map((result, index) => {
+      const statusCode = result.status === 'rejected' ? result.reason?.statusCode : 0;
+      return statusCode === 404 || statusCode === 410 ? sql`DELETE FROM order_push_subscriptions WHERE endpoint=${subscriptions[index].endpoint}` : Promise.resolve();
+    }));
+  } catch (error) {
+    console.warn('Order push notification failed:', error.message);
+  }
 }
 const publicContentCacheMs = Number(process.env.PUBLIC_CONTENT_CACHE_MS || 60000);
 
@@ -1924,11 +1953,15 @@ app.post('/api/direct-orders', async (req, res) => {
     const total = cleanItems.reduce((sum, item) => sum + item.quantity * (priceNumber(item.price) + (item.style ? 10 : 0)), 0);
     const savedItems = cleanItems.map(({ availabilityKey, ...item }) => item);
     await sql`INSERT INTO direct_orders (id, mode, customer_name, customer_phone, special_request, items, total) VALUES (${id}, ${mode}, ${String(customerName || '').trim().slice(0, 80)}, ${phone}, ${String(specialRequest || '').trim().slice(0, 240)}, ${JSON.stringify(savedItems)}, ${total})`;
+    // The order is already safely stored. Push delivery must never delay or block it.
+    void notifyDirectOrder({ id, total, itemCount: savedItems.reduce((count, item) => count + Number(item.quantity || 0), 0) });
     res.json({ id, status: 'new' });
   } catch (error) { res.status(500).json({ error: 'Unable to place the order. Please call us instead.' }); }
 });
 
 app.get('/api/orders', async (req, res) => { try { await ensureDirectOrdersTable(); res.json(await sql`SELECT o.*, (SELECT COUNT(*) FROM direct_orders h WHERE h.customer_phone=o.customer_phone) AS customer_order_count, (SELECT MAX(h.created_at) FROM direct_orders h WHERE h.customer_phone=o.customer_phone AND h.id<>o.id) AS customer_last_order_at FROM direct_orders o ORDER BY o.created_at DESC LIMIT 100`); } catch (error) { res.status(500).json({ error: error.message }); } });
+app.get('/api/orders/push-key', (req, res) => { if (!pushEnabled) return res.status(503).json({ error: 'Push notifications have not been configured yet.' }); res.set('Cache-Control', 'no-store'); res.json({ publicKey: process.env.VAPID_PUBLIC_KEY }); });
+app.post('/api/orders/push-subscriptions', async (req, res) => { try { if (!pushEnabled) return res.status(503).json({ error: 'Push notifications have not been configured yet.' }); const subscription = req.body?.subscription; if (!subscription?.endpoint || !subscription?.keys?.p256dh || !subscription?.keys?.auth) return res.status(400).json({ error: 'Invalid push subscription.' }); await ensurePushSubscriptionsTable(); await sql`INSERT INTO order_push_subscriptions (endpoint, subscription) VALUES (${String(subscription.endpoint)}, ${JSON.stringify(subscription)}) ON CONFLICT (endpoint) DO UPDATE SET subscription=EXCLUDED.subscription, updated_at=NOW()`; res.json({ ok: true }); } catch (error) { res.status(500).json({ error: 'Unable to save push subscription.' }); } });
 app.patch('/api/orders/:id', async (req, res) => { try { await ensureDirectOrdersTable(); const status = ['new','accepted','preparing','ready','completed','rejected'].includes(req.body.status) ? req.body.status : 'new'; await sql`UPDATE direct_orders SET status=${status}, updated_at=NOW() WHERE id=${req.params.id}`; res.json({ ok:true }); } catch (error) { res.status(500).json({ error:error.message }); } });
 app.get('/api/orders/availability', async (req,res)=>{try{await ensureMenuAvailabilityTable();res.json(await sql`SELECT * FROM menu_availability WHERE unavailable_until > NOW()`)}catch(e){res.status(500).json({error:e.message})}});
 app.get('/api/orders/menu', async (req,res)=>{try{const menu=await getSection('airMenu');const format=(items,menuType)=>items.map(item=>({name:item.name,category:item.category,menuType,key:`${String(item.category||'').toLowerCase()}::${String(item.name||'').toLowerCase()}`})).filter(item=>item.name);res.json([...format(menu.items||[],'food'),...format(menu.barItems||[],'bar')])}catch(e){res.status(500).json({error:e.message})}});

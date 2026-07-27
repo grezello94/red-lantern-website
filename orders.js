@@ -13,11 +13,34 @@ let installPrompt = null;
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#039;' })[char]);
 const money = (value) => `₹${Number(value || 0).toFixed(0)}`;
 const tomorrowLocal = () => { const date = new Date(Date.now() + 86400000); date.setSeconds(0, 0); return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
+const toPushKey = (value) => { const padding = '='.repeat((4 - value.length % 4) % 4); const raw = atob((value + padding).replace(/-/g, '+').replace(/_/g, '/')); return Uint8Array.from(raw, (character) => character.charCodeAt(0)); };
 
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('/orders-sw.js?v=3');
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/orders-sw.js?v=4');
 document.getElementById('enable-notifications')?.addEventListener('click', async () => {
+  const button = document.getElementById('enable-notifications');
   const notificationApi = window.Notification;
-  if (notificationApi && typeof notificationApi.requestPermission === 'function') await notificationApi.requestPermission();
+  try {
+    if (!notificationApi || !('PushManager' in window) || !('serviceWorker' in navigator)) throw new Error('Push alerts need the installed Orders shortcut. Use Install shortcut first.');
+    button.disabled = true;
+    button.textContent = 'Enabling…';
+    const permission = await notificationApi.requestPermission();
+    if (permission !== 'granted') throw new Error('Alerts were not allowed. Enable notifications for RL Orders in this device’s settings.');
+    const keyResponse = await fetch('/api/orders/push-key', { cache: 'no-store' });
+    const keyBody = await keyResponse.json();
+    if (!keyResponse.ok) throw new Error(keyBody.error || 'Push alerts are not configured yet.');
+    const registration = await navigator.serviceWorker.ready;
+    const subscription = await registration.pushManager.getSubscription() || await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: toPushKey(keyBody.publicKey) });
+    const saveResponse = await fetch('/api/orders/push-subscriptions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ subscription }) });
+    const saveBody = await saveResponse.json();
+    if (!saveResponse.ok) throw new Error(saveBody.error || 'Unable to enable push alerts.');
+    button.textContent = 'Alerts enabled';
+  } catch (error) {
+    button.textContent = 'Enable alerts';
+    const dialog = document.getElementById('shortcut-dialog');
+    document.getElementById('shortcut-message').textContent = error.message;
+    document.getElementById('shortcut-steps').innerHTML = '<li>Install the RL Orders shortcut on this device.</li><li>Open it once and tap Enable alerts.</li><li>Allow notifications when your device asks.</li>';
+    if (typeof dialog?.showModal === 'function') dialog.showModal(); else alert(error.message);
+  } finally { button.disabled = false; }
 });
 
 async function loadOrders() {
