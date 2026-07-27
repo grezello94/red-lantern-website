@@ -556,6 +556,22 @@
           </div>
 
           <div class="card">
+            <h2>Restaurant hours &amp; closure</h2>
+            <p class="help-text" style="margin:0 0 18px;">QR ordering is available only during these service periods. Leave the second period blank if you do not serve a second session.</p>
+            <div class="form-grid">
+              <div class="form-group"><label>Service 1 opens</label><input type="time" name="airService1Open" value="12:30"></div>
+              <div class="form-group"><label>Service 1 closes</label><input type="time" name="airService1Close" value="15:00"></div>
+              <div class="form-group"><label>Service 2 opens <span class="help-text">(optional)</span></label><input type="time" name="airService2Open" value="18:30"></div>
+              <div class="form-group"><label>Service 2 closes <span class="help-text">(optional)</span></label><input type="time" name="airService2Close" value="00:00"></div>
+            </div>
+            <div class="form-grid">
+              <div class="switch-row"><div><strong>Restaurant closed / holiday</strong><span class="help-text" style="margin:4px 0 0;">Close QR ordering now until the reopening time below.</span></div><input type="checkbox" name="airRestaurantClosed"></div>
+              <div class="form-group"><label>Reopens on</label><input type="datetime-local" name="airReopensAt"><span class="help-text">Shown to guests while closed. India time.</span></div>
+            </div>
+            <div class="form-grid full"><div class="form-group"><label>Closure message</label><textarea name="airClosureMessage" rows="2" placeholder="We are closed today for a private event. We look forward to welcoming you soon."></textarea></div></div>
+          </div>
+
+          <div class="card">
             <h2>Bar Menu Spreadsheet</h2>
             <span class="help-text" style="margin-bottom:18px;">Use Price for bottles or single-price drinks. Add 30 ML and 60 ML prices where applicable; 90 ML and 180 ML are optional. Duplicate item/category combinations are removed automatically.</span>
             <div class="air-sheet-wrap">

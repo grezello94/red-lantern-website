@@ -98,6 +98,10 @@ main { width:min(100%,1420px); margin:0 auto; padding:0 16px 42px; }
 .order-action-status { min-height:18px; margin:5px 22px max(14px, env(safe-area-inset-bottom)); color:#166534; font-size:11px; font-weight:700; text-align:center; }
 button:focus-visible,a:focus-visible,input:focus-visible { outline:3px solid rgba(40,103,237,.42); outline-offset:2px; }
 .loading,.empty,.menu-note { padding:24px; color:var(--muted); text-align:center; }
+.restaurant-closed { max-width:620px; margin:52px auto; padding:34px 28px; border:1px solid #f0dbcf; border-radius:22px; background:linear-gradient(145deg,#fffdfb,#fff5ef); box-shadow:0 16px 38px rgba(96,44,23,.10); text-align:center; }
+.restaurant-closed .closed-icon { display:grid; width:58px; height:58px; margin:0 auto 15px; place-items:center; border-radius:50%; color:#b63b2d; background:#ffe8e2; font-size:30px; font-weight:800; }
+.restaurant-closed h2 { margin:5px 0 10px; color:var(--ink); font-size:clamp(21px,5vw,28px); line-height:1.25; }
+.restaurant-closed p:last-child { margin:0; color:var(--muted); font-weight:700; line-height:1.6; }
 .menu-note { margin:4px 0 0; font-size:11px; }
 footer { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:20px 18px; color:#e6ebf7; background:var(--red-dark); font-size:11px; }
 .access-pill { flex:none; padding:6px 9px; border:1px solid rgba(255,255,255,.2); border-radius:99px; }

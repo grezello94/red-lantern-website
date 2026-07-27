@@ -402,6 +402,12 @@ async function loadMenu() {
     document.getElementById('menu-title').textContent = 'Red Lantern';
     document.getElementById('menu-subtitle').textContent = menu.pageSubtitle;
     document.getElementById('menu-note').textContent = menu.note;
+    if (menu.closed) {
+      document.querySelector('.menu-tools').hidden = true;
+      document.getElementById('menu-content').innerHTML = `<section class="restaurant-closed"><span class="closed-icon" aria-hidden="true">◷</span><p class="eyebrow">Restaurant status</p><h2>${escapeHtml(menu.message || 'The restaurant is currently closed.')}</h2><p>${escapeHtml(menu.reopensAt || 'Please check back soon for our reopening time.')}</p></section>`;
+      document.getElementById('menu-note').textContent = '';
+      return;
+    }
     configureOrderActions(menu);
     orderCatalog.clear();
     orderShowsPrices = menu.showPrices;

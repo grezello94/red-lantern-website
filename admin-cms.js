@@ -571,6 +571,12 @@ function fillAirMenu(menu = {}) {
   setField('airSourceFileName', menu.sourceFileName);
   setField('airBarSourceFileName', menu.barSourceFileName);
   setField('airCardOrderPhone', menu.cardOrderPhone);
+  setField('airService1Open', menu.serviceWindows?.[0]?.open || '12:30');
+  setField('airService1Close', menu.serviceWindows?.[0]?.close || '15:00');
+  setField('airService2Open', menu.serviceWindows?.[1]?.open || '18:30');
+  setField('airService2Close', menu.serviceWindows?.[1]?.close || '00:00');
+  setField('airReopensAt', menu.reopensAt || '');
+  setField('airClosureMessage', menu.closureMessage || '');
   const toggles = {
     airTableLive: menu.tableLive !== false,
     airCardLive: menu.cardLive !== false,
@@ -578,7 +584,8 @@ function fillAirMenu(menu = {}) {
     airShowCardPrices: menu.showCardPrices === true,
     airCardCallEnabled: menu.cardCallEnabled === true,
     airTableDirectOrders: menu.tableDirectOrders === true,
-    airCardDirectOrders: menu.cardDirectOrders !== false
+    airCardDirectOrders: menu.cardDirectOrders !== false,
+    airRestaurantClosed: menu.restaurantClosed === true
   };
   Object.entries(toggles).forEach(([name, checked]) => {
     const field = document.querySelector(`[name="${name}"]`);

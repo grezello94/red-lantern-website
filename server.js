@@ -739,6 +739,11 @@ function normalizeAirMenu(body) {
   } catch {
     categoryVisibility = {};
   }
+  const isValidTime = (value) => /^([01]\d|2[0-3]):[0-5]\d$/.test(String(value || ''));
+  const scheduleWasSubmitted = ['airService1Open', 'airService1Close', 'airService2Open', 'airService2Close'].some((key) => Object.prototype.hasOwnProperty.call(body, key));
+  const serviceWindows = scheduleWasSubmitted
+    ? [[body.airService1Open, body.airService1Close], [body.airService2Open, body.airService2Close]].filter(([open, close]) => isValidTime(open) && isValidTime(close)).map(([open, close]) => ({ open, close }))
+    : [{ open: '12:30', close: '15:00' }, { open: '18:30', close: '00:00' }];
   return {
     pageTitle: body.airMenuTitle || 'Our Menu',
     pageSubtitle: body.airMenuSubtitle || 'Explore our freshly prepared food and beverages.',
@@ -751,6 +756,10 @@ function normalizeAirMenu(body) {
     showCardPrices: body.airShowCardPrices === 'on',
     cardCallEnabled: body.airCardCallEnabled === 'on',
     cardOrderPhone: String(body.airCardOrderPhone || '').trim(),
+    serviceWindows,
+    restaurantClosed: body.airRestaurantClosed === 'on',
+    reopensAt: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(String(body.airReopensAt || '')) ? String(body.airReopensAt) : '',
+    closureMessage: String(body.airClosureMessage || '').trim().slice(0, 240),
     categoryVisibility,
     sourceFileName: body.airSourceFileName || '',
     barSourceFileName: body.airBarSourceFileName || '',
@@ -1452,6 +1461,29 @@ function validAirMenuAccess(mode, expires, signature) {
   return secureCompare(signature, airMenuSignature(mode, expiresAt));
 }
 
+function formatIndiaTime(minutes) {
+  const hour = Math.floor(minutes / 60) % 24;
+  const minute = minutes % 60;
+  const suffix = hour >= 12 ? 'PM' : 'AM';
+  return `${hour % 12 || 12}:${String(minute).padStart(2, '0')} ${suffix}`;
+}
+
+function restaurantStatus(menu, now = new Date()) {
+  const localReopen = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(String(menu.reopensAt || '')) ? new Date(`${menu.reopensAt}:00+05:30`) : null;
+  const closureMessage = String(menu.closureMessage || '').trim() || 'The restaurant is currently closed.';
+  if (menu.restaurantClosed === true && (!localReopen || localReopen > now)) {
+    const reopen = localReopen ? new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' }).format(localReopen) : '';
+    return { open: false, message: closureMessage, reopensAt: reopen ? `We will reopen on ${reopen}.` : 'Please check back soon for our reopening time.' };
+  }
+  const windows = Array.isArray(menu.serviceWindows) && menu.serviceWindows.length ? menu.serviceWindows : [{ open: '12:30', close: '15:00' }, { open: '18:30', close: '00:00' }];
+  const clockParts = Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(now).filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
+  const currentMinutes = Number(clockParts.hour) * 60 + Number(clockParts.minute);
+  const parsed = windows.map((window) => { const open = String(window.open || ''); const close = String(window.close || ''); return { open: Number(open.slice(0, 2)) * 60 + Number(open.slice(3)), close: Number(close.slice(0, 2)) * 60 + Number(close.slice(3)) }; }).filter((window) => Number.isFinite(window.open) && Number.isFinite(window.close) && window.open !== window.close);
+  if (!parsed.length || parsed.some((window) => window.open < window.close ? currentMinutes >= window.open && currentMinutes < window.close : currentMinutes >= window.open || currentMinutes < window.close)) return { open: true };
+  const next = parsed.map((window) => ({ ...window, tomorrow: currentMinutes >= window.open })).sort((a, b) => Number(a.tomorrow) - Number(b.tomorrow) || a.open - b.open)[0];
+  return { open: false, message: 'The restaurant is currently closed.', reopensAt: `We will open ${next.tomorrow ? 'tomorrow' : 'today'} at ${formatIndiaTime(next.open)}.` };
+}
+
 function likelyMenuCategory(line) {
   if (!line || line.length < 2 || line.length > 55 || /\d/.test(line)) return false;
   const letters = line.replace(/[^a-z]/gi, '');
@@ -1909,6 +1941,8 @@ app.get('/api/air-menu', async (req, res) => {
   const isCard = req.query.mode === 'card';
   const isLive = isCard ? menu.cardLive !== false : menu.tableLive !== false;
   if (!isLive) return res.status(410).json({ unavailable: true, redirect: 'https://www.redlanternrestaurant.in/menu' });
+  const operatingStatus = restaurantStatus(menu);
+  if (!operatingStatus.open) return res.json({ closed: true, pageTitle: menu.pageTitle || 'Our Menu', pageSubtitle: menu.pageSubtitle || '', note: menu.note || '', message: operatingStatus.message, reopensAt: operatingStatus.reopensAt, mode: req.query.mode, expires: Number(req.query.expires), dishes: [] });
   const visibility = menu.categoryVisibility && typeof menu.categoryVisibility === 'object' ? menu.categoryVisibility : {};
   let unavailable = new Set();
   try { await ensureMenuAvailabilityTable(); const rows = await sql`SELECT item_key FROM menu_availability WHERE unavailable_until > NOW()`; unavailable = new Set(rows.map((row) => row.item_key)); } catch (error) { console.warn('Menu availability lookup failed:', error.message); }
@@ -1942,6 +1976,8 @@ app.post('/api/direct-orders', async (req, res) => {
     const menu = await getSection('airMenu');
     const enabled = mode === 'card' ? menu.cardDirectOrders !== false : menu.tableDirectOrders === true;
     if (!enabled) return res.status(403).json({ error: 'Direct ordering is unavailable for this QR menu.' });
+    const operatingStatus = restaurantStatus(menu);
+    if (!operatingStatus.open) return res.status(423).json({ error: `${operatingStatus.message} ${operatingStatus.reopensAt}`.trim() });
     const phone = String(customerPhone || '').replace(/\D/g, '');
     if (phone.length < 7) return res.status(400).json({ error: 'Enter a valid mobile number.' });
     const priceNumber = (value) => Number(String(value || '').replace(/[^0-9.]/g, '')) || 0;
