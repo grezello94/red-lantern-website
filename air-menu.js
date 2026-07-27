@@ -215,6 +215,11 @@ function changeOrderStyle(control) {
 
 function setupOrderShortlist() {
   const dialog = document.getElementById('order-summary');
+  const summaryItems = document.getElementById('order-summary-items');
+  const customerDetails = document.getElementById('order-customer-details');
+  const actions = dialog.querySelector('.order-summary-actions');
+  dialog.insertBefore(customerDetails, summaryItems);
+  dialog.insertBefore(actions, summaryItems);
   const handleQuantity = (event) => {
     const button = event.target.closest('[data-order-action]');
     if (!button) return;
