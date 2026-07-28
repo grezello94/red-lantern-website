@@ -16,6 +16,24 @@ let orderView = 'current';
 let activeOrderDay = '';
 let orderRecords = new Map();
 let historyAll = false;
+const orderSearchPanel = document.querySelector('.order-search-panel');
+const liveOrdersPanel = document.createElement('section');
+liveOrdersPanel.id = 'live-orders-panel';
+liveOrdersPanel.hidden = true;
+if (orderSearchPanel && root) {
+  orderSearchPanel.before(liveOrdersPanel);
+  liveOrdersPanel.append(orderSearchPanel, root);
+}
+const liveOrdersToggle = document.createElement('button');
+liveOrdersToggle.type = 'button';
+liveOrdersToggle.id = 'live-orders-toggle';
+liveOrdersToggle.className = 'live-orders-toggle';
+liveOrdersToggle.setAttribute('aria-expanded', 'false');
+liveOrdersToggle.innerHTML = '<span class="live-dot" aria-hidden="true"></span><span>Live orders</span><b id="live-orders-count">0</b>';
+document.querySelector('.header-actions')?.prepend(liveOrdersToggle);
+const liveOrdersStyles = document.createElement('style');
+liveOrdersStyles.textContent = `.live-orders-toggle{display:inline-flex;align-items:center;gap:8px;color:#15335b;background:#fff;box-shadow:0 3px 11px rgba(7,20,45,.16)}.live-orders-toggle:hover,.live-orders-toggle.is-open{color:#fff;background:#168451}.live-dot{width:8px;height:8px;border-radius:50%;background:#e3342f;box-shadow:0 0 0 3px rgba(227,52,47,.14)}.live-orders-toggle.is-open .live-dot{background:#d9ffe9;box-shadow:0 0 0 3px rgba(217,255,233,.2)}.live-orders-toggle b{display:grid;min-width:19px;height:19px;place-items:center;padding:0 4px;border-radius:999px;color:#fff;background:#e3342f;font-size:10px}.live-orders-toggle.is-open b{color:#168451;background:#fff}#live-orders-panel{margin-top:20px}#live-orders-panel[hidden]{display:none}#live-orders-panel .order-search-panel{margin-top:0}#live-orders-panel main{padding-top:20px}@media(max-width:600px){.live-orders-toggle span:not(.live-dot){display:none}.live-orders-toggle{padding-inline:9px}#live-orders-panel{margin-top:14px}}`;
+document.head.appendChild(liveOrdersStyles);
 
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#039;' })[char]);
 const money = (value) => `₹${Number(value || 0).toFixed(0)}`;
@@ -67,6 +85,8 @@ async function loadOrders() {
     const notificationApi = window.Notification;
     if (orderView === 'current' && !firstLoad && notificationApi && notificationApi.permission === 'granted') rows.filter((order) => !known.has(order.id) && order.status === 'new').forEach((order) => new notificationApi('New Direct Order', { body: `${order.customer_name || 'Guest'} · ${order.customer_phone}`, icon: '/images/red-lantern-logo-600.webp' }));
     if (orderView === 'current') known = ids;
+    const liveCount = document.getElementById('live-orders-count');
+    if (liveCount && orderView === 'current') liveCount.textContent = String(rows.length);
     firstLoad = false;
     const emptyMessage = query ? 'No orders match that number.' : orderView === 'current' && !sessionOpen ? 'The restaurant is closed. Today\'s orders are safely available in Order history.' : 'No direct orders yet.';
     root.innerHTML = rows.map(renderOrder).join('') || `<div class="empty-state">${emptyMessage}</div>`;
@@ -185,6 +205,21 @@ document.getElementById('availability-toggle')?.addEventListener('click', async 
   availability.hidden = !isOpening;
   document.getElementById('availability-toggle').setAttribute('aria-expanded', String(isOpening));
   if (isOpening) { try { await loadAvailability(); } catch (error) { menuResults.innerHTML = `<div class="empty-state">${esc(error.message)}</div>`; } }
+});
+liveOrdersToggle.addEventListener('click', () => {
+  const isOpening = liveOrdersPanel.hidden;
+  liveOrdersPanel.hidden = !isOpening;
+  liveOrdersToggle.classList.toggle('is-open', isOpening);
+  liveOrdersToggle.setAttribute('aria-expanded', String(isOpening));
+  if (isOpening) {
+    orderView = 'current';
+    historyAll = false;
+    document.querySelectorAll('[data-order-view]').forEach((tab) => tab.classList.toggle('is-active', tab.dataset.orderView === 'current'));
+    const dateWrap = document.getElementById('history-date-wrap');
+    if (dateWrap) dateWrap.hidden = true;
+    loadOrders();
+    liveOrdersPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
 });
 document.getElementById('availability-close')?.addEventListener('click', () => { availability.hidden = true; document.getElementById('availability-toggle').setAttribute('aria-expanded', 'false'); });
 menuSearch?.addEventListener('input', renderAvailability);
