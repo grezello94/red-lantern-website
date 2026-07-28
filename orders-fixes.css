@@ -23,12 +23,17 @@
 .availability-toggle { background: #f8b133; color: #1d2b46; }
 .availability-toggle span { margin-right: 4px; font-size: 16px; line-height: 0; }
 .order-search-panel { display: flex; align-items: center; gap: 10px; margin: 20px 28px 0; padding: 11px 13px; border: 1px solid #e1e8f0; border-radius: 13px; background: #fff; box-shadow: 0 6px 18px rgba(27, 48, 81, .06); }
+.order-view-tabs { display: inline-flex; gap: 3px; flex: none; padding: 3px; border-radius: 9px; background: #edf2f7; }
+.order-view-tab { padding: 7px 9px; border-radius: 7px; color: #617087; background: transparent; font-size: 11px; }
+.order-view-tab.is-active { color: #fff; background: #263d68; box-shadow: 0 2px 6px rgba(38,61,104,.2); }
 .order-search-field { display: flex; flex: 1; align-items: center; min-width: 0; }
 .order-search-field > span { color: #66768c; font-size: 21px; transform: rotate(-20deg); }
 .order-search-field input { width: 100%; padding: 9px 10px; border: 0; outline: 0; color: #1f2b41; background: transparent; font: 600 13px Manrope, sans-serif; }
 .order-search-field:focus-within { border-radius: 8px; box-shadow: 0 0 0 3px rgba(55, 108, 229, .11); }
 .clear-order-search { padding: 7px 10px; color: #4c5d76; background: #edf2f7; font-size: 11px; }
 #order-search-status { color: #718097; font-size: 11px; font-weight: 800; white-space: nowrap; }
+.history-date-wrap { display: flex; flex-direction: column; gap: 2px; flex: none; color: #66768c; font-size: 9px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+.history-date-wrap input { padding: 7px; border: 1px solid #d9e1eb; border-radius: 7px; color: #26344d; background: #fff; font: 12px Manrope, sans-serif; text-transform: none; }
 #availability {
   margin: 22px 28px 0;
   padding: 24px;
@@ -89,6 +94,10 @@
   .header-actions { gap: 5px; }
   .header-actions button { padding: 7px 8px; font-size: 10px; }
   .order-search-panel { margin: 14px 16px 0; }
+  .order-search-panel { flex-wrap: wrap; }
+  .order-view-tabs { order: -1; width: 100%; }
+  .order-view-tab { flex: 1; }
+  .history-date-wrap { flex: 1; }
   #order-search-status { display: none; }
   #availability { margin: 14px 16px 0; padding: 16px; }
   #menu-results { grid-template-columns: 1fr; }

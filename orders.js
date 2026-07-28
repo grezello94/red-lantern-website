@@ -3,6 +3,7 @@ const availability = document.getElementById('availability');
 const menuSearch = document.getElementById('menu-search');
 const menuResults = document.getElementById('menu-results');
 const orderSearch = document.getElementById('order-search');
+const historyDate = document.getElementById('history-date');
 let known = new Set();
 let firstLoad = true;
 let menuItems = [];
@@ -11,13 +12,15 @@ let availabilityFilter = 'all';
 let menuType = 'food';
 let installPrompt = null;
 let orderSearchTimer = null;
+let orderView = 'current';
+let activeOrderDay = '';
 
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#039;' })[char]);
 const money = (value) => `₹${Number(value || 0).toFixed(0)}`;
 const tomorrowLocal = () => { const date = new Date(Date.now() + 86400000); date.setSeconds(0, 0); return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
 const toPushKey = (value) => { const padding = '='.repeat((4 - value.length % 4) % 4); const raw = atob((value + padding).replace(/-/g, '+').replace(/_/g, '/')); return Uint8Array.from(raw, (character) => character.charCodeAt(0)); };
 
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('/orders-sw.js?v=4');
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/orders-sw.js?v=6');
 document.getElementById('enable-notifications')?.addEventListener('click', async () => {
   const button = document.getElementById('enable-notifications');
   const notificationApi = window.Notification;
@@ -47,18 +50,25 @@ document.getElementById('enable-notifications')?.addEventListener('click', async
 
 async function loadOrders() {
   try {
-    const query = String(orderSearch?.value || '').replace(/\D/g, '').slice(0, 16);
-    const response = await fetch(`/api/orders?search=${encodeURIComponent(query)}`, { cache: 'no-store' });
+    let query = String(orderSearch?.value || '').replace(/\D/g, '').slice(0, 16);
+    const date = String(historyDate?.value || '');
+    const response = await fetch(`/api/orders?search=${encodeURIComponent(query)}&history=${orderView === 'history' ? '1' : '0'}&date=${encodeURIComponent(date)}`, { cache: 'no-store' });
     if (!response.ok) throw new Error('Unable to refresh orders.');
     const rows = await response.json();
+    if (!Array.isArray(rows)) throw new Error('Unable to read orders. Please refresh.');
+    const orderDay = response.headers.get('X-Orders-Day') || '';
+    if (activeOrderDay && orderDay && activeOrderDay !== orderDay && orderSearch) { orderSearch.value = ''; query = ''; }
+    activeOrderDay = orderDay || activeOrderDay;
     const ids = new Set(rows.map((order) => order.id));
     const notificationApi = window.Notification;
-    if (!firstLoad && notificationApi && notificationApi.permission === 'granted') rows.filter((order) => !known.has(order.id) && order.status === 'new').forEach((order) => new notificationApi('New Direct Order', { body: `${order.customer_name || 'Guest'} · ${order.customer_phone}`, icon: '/images/red-lantern-logo-600.webp' }));
-    known = ids;
+    if (orderView === 'current' && !firstLoad && notificationApi && notificationApi.permission === 'granted') rows.filter((order) => !known.has(order.id) && order.status === 'new').forEach((order) => new notificationApi('New Direct Order', { body: `${order.customer_name || 'Guest'} · ${order.customer_phone}`, icon: '/images/red-lantern-logo-600.webp' }));
+    if (orderView === 'current') known = ids;
     firstLoad = false;
     root.innerHTML = rows.map(renderOrder).join('') || `<div class="empty-state">${query ? 'No orders match that number.' : 'No direct orders yet.'}</div>`;
-    document.getElementById('clear-order-search').hidden = !query;
-    document.getElementById('order-search-status').textContent = query ? `${rows.length} matching order${rows.length === 1 ? '' : 's'}` : 'Latest orders';
+    const clearButton = document.getElementById('clear-order-search');
+    const searchStatus = document.getElementById('order-search-status');
+    if (clearButton) clearButton.hidden = !query;
+    if (searchStatus) searchStatus.textContent = query ? `${rows.length} matching order${rows.length === 1 ? '' : 's'}` : orderView === 'history' ? `History · ${date || 'choose a date'}` : 'Current session';
   } catch (error) {
     root.innerHTML = `<div class="empty-state">${esc(error.message)}</div>`;
   }
@@ -172,7 +182,18 @@ document.getElementById('install-shortcut')?.addEventListener('click', async () 
 });
 document.getElementById('shortcut-close')?.addEventListener('click', () => document.getElementById('shortcut-dialog')?.close());
 orderSearch?.addEventListener('input', () => { clearTimeout(orderSearchTimer); orderSearchTimer = setTimeout(loadOrders, 180); });
-document.getElementById('clear-order-search')?.addEventListener('click', () => { orderSearch.value = ''; loadOrders(); orderSearch.focus(); });
+document.getElementById('clear-order-search')?.addEventListener('click', () => { if (orderSearch) { orderSearch.value = ''; orderSearch.focus(); } loadOrders(); });
+historyDate?.addEventListener('change', loadOrders);
+document.getElementById('order-view-tabs')?.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-order-view]');
+  if (!button) return;
+  orderView = button.dataset.orderView;
+  document.querySelectorAll('[data-order-view]').forEach((tab) => tab.classList.toggle('is-active', tab === button));
+  const dateWrap = document.getElementById('history-date-wrap');
+  if (dateWrap) dateWrap.hidden = orderView !== 'history';
+  if (orderView === 'history' && historyDate && !historyDate.value) { const date = new Date(); date.setDate(date.getDate() - 1); historyDate.value = date.toISOString().slice(0, 10); }
+  loadOrders();
+});
 menuResults?.addEventListener('click', async (event) => {
   const button = event.target.closest('[data-stock-action]');
   if (!button) return;
