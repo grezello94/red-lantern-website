@@ -17,6 +17,9 @@ let activeOrderDay = '';
 let orderRecords = new Map();
 let historyAll = false;
 let orderStatusFilter = 'all';
+let operationsConfig = { printers: [], routes: [] };
+let operationsMenu = [];
+let operationsTab = 'kots';
 const orderSearchPanel = document.querySelector('.order-search-panel');
 const liveOrdersPanel = document.createElement('section');
 liveOrdersPanel.id = 'live-orders-panel';
@@ -37,9 +40,24 @@ liveOrdersToggle.className = 'live-orders-toggle';
 liveOrdersToggle.setAttribute('aria-expanded', 'false');
 liveOrdersToggle.innerHTML = '<span class="live-dot" aria-hidden="true"></span><span>Live orders</span><b id="live-orders-count">0</b>';
 document.querySelector('.header-actions')?.prepend(liveOrdersToggle);
+const operationsPanel = document.createElement('section');
+operationsPanel.id = 'operations-panel';
+operationsPanel.hidden = true;
+operationsPanel.innerHTML = '<div class="operations-head"><div><span class="eyebrow">Staff workspace</span><h2>Operations</h2><p>Review routed KOTs and configure kitchen, tandoori, bar, and bill printers.</p></div><button type="button" id="operations-close" class="quiet-button">Close</button></div><div id="operations-tabs" class="operations-tabs"><button type="button" data-operations-tab="kots" class="is-active">KOT queue</button><button type="button" data-operations-tab="printers">Printer routing</button></div><div id="operations-content"></div>';
+availability.before(operationsPanel);
+const operationsToggle = document.createElement('button');
+operationsToggle.type = 'button';
+operationsToggle.id = 'operations-toggle';
+operationsToggle.className = 'operations-toggle';
+operationsToggle.setAttribute('aria-expanded', 'false');
+operationsToggle.innerHTML = '<span aria-hidden="true">⚙</span> Operations';
+document.querySelector('.header-actions')?.insertBefore(operationsToggle, document.getElementById('availability-toggle'));
 const liveOrdersStyles = document.createElement('style');
 liveOrdersStyles.textContent = `.live-orders-toggle{display:inline-flex;align-items:center;gap:8px;color:#15335b;background:#fff;box-shadow:0 3px 11px rgba(7,20,45,.16)}.live-orders-toggle:hover,.live-orders-toggle.is-open{color:#fff;background:#168451}.live-dot{width:8px;height:8px;border-radius:50%;background:#e3342f;box-shadow:0 0 0 3px rgba(227,52,47,.14)}.live-orders-toggle.is-open .live-dot{background:#d9ffe9;box-shadow:0 0 0 3px rgba(217,255,233,.2)}.live-orders-toggle b{display:grid;min-width:19px;height:19px;place-items:center;padding:0 4px;border-radius:999px;color:#fff;background:#e3342f;font-size:10px}.live-orders-toggle.is-open b{color:#168451;background:#fff}#live-orders-panel{margin-top:20px}#live-orders-panel[hidden]{display:none}#live-orders-panel .order-search-panel{margin-top:0}#live-orders-panel main{padding-top:20px}#order-status-filters{display:flex;flex-wrap:wrap;gap:8px;margin:12px 28px 0}.order-status-filter{padding:8px 12px;border:1px solid transparent;border-radius:9px;font-size:11px}.order-status-filter.status-all{color:#fff;background:#263d68}.order-status-filter.status-accepted{color:#fff;background:#e3342f}.order-status-filter.status-preparing{color:#3d2a00;background:#f5a21a}.order-status-filter.status-ready{color:#fff;background:#168451}.order-status-filter.status-completed{color:#fff;background:#506078}.order-status-filter.status-rejected{color:#fff;background:#9b2634}.order-status-filter:not(.is-active){color:#68778e;background:#fff;border-color:#dce4ee;box-shadow:none}.order-status-filter:hover{transform:none;filter:none;border-color:currentColor}.order-status-filter.is-active{box-shadow:0 4px 11px rgba(31,48,80,.2)}@media(max-width:600px){.live-orders-toggle span:not(.live-dot){display:none}.live-orders-toggle{padding-inline:9px}#live-orders-panel{margin-top:14px}#order-status-filters{margin:10px 16px 0;gap:6px}.order-status-filter{padding:7px 9px;font-size:10px}}`;
 document.head.appendChild(liveOrdersStyles);
+const operationsStyles = document.createElement('style');
+operationsStyles.textContent = `#operations-panel{margin:20px 28px 0;padding:24px;border:1px solid #dce4ee;border-radius:18px;background:#fff;box-shadow:0 14px 34px rgba(24,39,70,.09)}#operations-panel[hidden]{display:none}.operations-toggle{display:inline-flex;align-items:center;gap:7px;color:#fff;background:#53647e}.operations-toggle span{font-size:16px}.operations-toggle.is-open{background:#243b63}.operations-head{display:flex;justify-content:space-between;gap:16px}.operations-head h2{margin:4px 0;font-size:22px}.operations-head p{margin:0;color:#68778e}.operations-tabs{display:inline-flex;gap:4px;margin:20px 0 14px;padding:4px;border-radius:10px;background:#eef3f8}.operations-tabs button{padding:8px 12px;color:#627188;background:transparent;font-size:12px}.operations-tabs button.is-active{color:#fff;background:#263d68}.operations-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px}.operation-printer,.kot-ticket{padding:15px;border:1px solid #e1e8f0;border-radius:12px;background:#fff}.operation-printer-head,.kot-ticket-head{display:flex;justify-content:space-between;gap:10px;align-items:start}.operation-printer h3,.kot-ticket h3{margin:0;color:#23334e;font-size:15px}.printer-type{padding:4px 7px;border-radius:999px;color:#53647e;background:#eef3f8;font-size:10px;font-weight:900;text-transform:uppercase}.printer-type.kot{color:#087348;background:#e8f7ef}.operation-printer p{margin:8px 0 0;color:#6e7d91;font-size:12px}.operation-printer button{margin-top:12px;padding:7px 9px;color:#a52a39;background:#fff0f0;font-size:11px}.operations-form{display:grid;grid-template-columns:1.4fr .75fr auto;gap:9px;align-items:end;margin:13px 0}.operations-form label{display:grid;gap:4px;color:#5e6d83;font-size:10px;font-weight:900;letter-spacing:.04em;text-transform:uppercase}.operations-form input,.operations-form select{width:100%;padding:9px;border:1px solid #d4deea;border-radius:8px;color:#26344e;background:#fff;font:600 12px Manrope,sans-serif}.operations-form button{padding:10px 12px;background:#263d68;font-size:11px}.routing-list{display:grid;gap:8px;margin-top:13px}.route-row{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:11px 12px;border:1px solid #e5ebf2;border-radius:9px;background:#f9fbfd;font-size:12px}.route-row b{color:#23334e}.route-row span{color:#718097}.route-row button{padding:6px 8px;color:#a52a39;background:#fff0f0;font-size:10px}.operations-save{margin-top:15px;background:#168451}.kot-ticket{border-left:4px solid #e3342f}.kot-ticket p{margin:6px 0;color:#718097;font-size:11px}.kot-items{margin:12px 0;padding:10px 0;border-block:1px solid #edf0f4}.kot-items div{padding:4px 0;color:#2f3e55;font-size:12px}.kot-items b{color:#c42b28}.kot-ticket button{padding:8px 10px;background:#263d68;font-size:11px}.operations-empty{padding:25px;color:#718097;border:1px dashed #d4deea;border-radius:12px;text-align:center}@media(max-width:600px){#operations-panel{margin:14px 16px 0;padding:16px}.operations-head p{font-size:12px}.operations-form{grid-template-columns:1fr}.operations-form button{width:100%}.operations-grid{grid-template-columns:1fr}}`;
+document.head.appendChild(operationsStyles);
 
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#039;' })[char]);
 const money = (value) => `₹${Number(value || 0).toFixed(0)}`;
@@ -172,6 +190,61 @@ async function printOrder(id) {
   }
 }
 
+const operationId = () => `op_${Date.now().toString(36)}${Math.random().toString(36).slice(2,7)}`;
+const routePrinter = (item) => {
+  const printers = new Map(operationsConfig.printers.map((printer) => [printer.id, printer]));
+  const routes = operationsConfig.routes.filter((route) => printers.get(route.printerId)?.type === 'kot');
+  const route = routes.find((entry) => entry.category === item.category && entry.itemName === item.name) || routes.find((entry) => entry.category === item.category && !entry.itemName);
+  return route ? printers.get(route.printerId) : null;
+};
+function renderOperations() {
+  const content = document.getElementById('operations-content');
+  if (!content) return;
+  if (operationsTab === 'kots') {
+    const activeOrders = [...orderRecords.values()].filter((order) => !['completed','rejected','cancelled'].includes(order.status));
+    const tickets = new Map();
+    activeOrders.forEach((order) => (Array.isArray(order.items) ? order.items : []).forEach((item) => {
+      const printer = routePrinter(item);
+      const key = `${order.id}::${printer?.id || 'unassigned'}`;
+      if (!tickets.has(key)) tickets.set(key, { order, printer, items: [] });
+      tickets.get(key).items.push(item);
+    }));
+    content.innerHTML = `<p class="help-text">KOTs are grouped by the printer rules below. Items without a matching rule stay clearly marked as <strong>Unassigned</strong>.</p><div class="operations-grid">${[...tickets.values()].map((ticket) => { const number=String(ticket.order.daily_order_number||'—').padStart(2,'0'); return `<article class="kot-ticket"><div class="kot-ticket-head"><div><h3>Order #${esc(number)}</h3><p>${esc(ticket.order.customer_name || 'Guest')} · ${esc(ticket.order.customer_phone)}</p></div><span class="printer-type kot">${esc(ticket.printer?.name || 'Unassigned')}</span></div><div class="kot-items">${ticket.items.map((item) => `<div><b>${Number(item.quantity||0)}×</b> ${esc(item.name)}${item.portion?` · ${esc(item.portion)}`:''}${item.style?` · ${esc(item.style)}`:''}</div>`).join('')}</div><button type="button" data-print-kot="${esc(ticket.order.id)}" data-printer-id="${esc(ticket.printer?.id || '')}">Print KOT</button></article>`; }).join('') || '<div class="operations-empty">No live KOTs right now. New and active orders will appear here.</div>'}</div>`;
+  } else {
+    const kotPrinters = operationsConfig.printers.filter((printer) => printer.type === 'kot');
+    const categories = [...new Set(operationsMenu.map((item) => item.category).filter(Boolean))].sort();
+    const printerOptions = kotPrinters.map((printer) => `<option value="${esc(printer.id)}">${esc(printer.name)}</option>`).join('');
+    content.innerHTML = `<p class="help-text">Create your printer names first. Then assign a whole category or one specific item to a KOT printer. Bill printers are saved here for your counter setup.</p><div class="operations-form"><label>Printer name<input id="operation-printer-name" maxlength="60" placeholder="e.g. Tandoori Printer"></label><label>Printer type<select id="operation-printer-type"><option value="kot">KOT printer</option><option value="bill">Bill printer</option></select></label><button type="button" id="operation-add-printer">Add printer</button></div><div class="operations-grid">${operationsConfig.printers.map((printer) => `<article class="operation-printer"><div class="operation-printer-head"><div><h3>${esc(printer.name)}</h3><p>${printer.type === 'bill' ? 'Counter / bill receipt printer' : 'Kitchen order ticket printer'}</p></div><span class="printer-type ${esc(printer.type)}">${esc(printer.type)}</span></div><button type="button" data-delete-printer="${esc(printer.id)}">Remove</button></article>`).join('') || '<div class="operations-empty">No printers added yet.</div>'}</div><h3 style="margin:22px 0 0">KOT routing</h3><div class="operations-form"><label>Send to printer<select id="operation-route-printer"><option value="">Choose printer</option>${printerOptions}</select></label><label>Category<select id="operation-route-category"><option value="">Choose category</option>${categories.map((category) => `<option value="${esc(category)}">${esc(category)}</option>`).join('')}</select></label><label>Specific item <select id="operation-route-item"><option value="">Entire category</option></select></label><button type="button" id="operation-add-route">Add route</button></div><div class="routing-list">${operationsConfig.routes.map((route) => { const printer=operationsConfig.printers.find((item)=>item.id===route.printerId); return `<div class="route-row"><div><b>${esc(route.category)}${route.itemName ? ` · ${esc(route.itemName)}` : ' · all items'}</b><span> → ${esc(printer?.name || 'Missing printer')}</span></div><button type="button" data-delete-route="${esc(route.id)}">Remove</button></div>`; }).join('') || '<div class="operations-empty">No KOT routes yet. Add a category or item rule above.</div>'}</div><button type="button" id="operations-save" class="operations-save">Save printer configuration</button>`;
+  }
+}
+async function loadOperations() {
+  const response = await fetch('/api/orders/operations', { cache:'no-store' });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Unable to load Operations.');
+  operationsConfig = data.config || { printers:[], routes:[] };
+  operationsMenu = Array.isArray(data.menu) ? data.menu : [];
+  renderOperations();
+}
+async function saveOperations() {
+  const response = await fetch('/api/orders/operations', { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ config:operationsConfig }) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Unable to save printer configuration.');
+  operationsConfig = data.config;
+  renderOperations();
+}
+function printKot(orderId, printerId) {
+  const order = orderRecords.get(orderId);
+  if (!order) return;
+  const printer = operationsConfig.printers.find((item) => item.id === printerId);
+  const items = (Array.isArray(order.items) ? order.items : []).filter((item) => (routePrinter(item)?.id || '') === (printerId || ''));
+  if (!items.length) return;
+  const popup = window.open('', 'red-lantern-kot', 'popup=yes,width=390,height=600');
+  if (!popup) { alert('Please allow pop-ups to print this KOT.'); return; }
+  const number=String(order.daily_order_number||'—').padStart(2,'0');
+  popup.document.write(`<!doctype html><title>KOT #${esc(number)}</title><style>@page{size:80mm auto;margin:4mm}body{width:72mm;margin:0;font:12px Arial;color:#111}.center{text-align:center}.name{font-size:17px;font-weight:800}.rule{border:0;border-top:1px dashed #111;margin:9px 0}.item{padding:5px 0;font-size:13px}.item b{font-size:15px}small{color:#444}</style><div class="center"><div class="name">RED LANTERN RESTAURANT</div><b>KITCHEN ORDER TICKET</b><br><small>${esc(printer?.name || 'Unassigned')}</small></div><hr class="rule"><b>Token No: ${esc(number)}</b><br><small>${esc(order.customer_name || 'Guest')} · ${esc(order.fulfillment_type === 'pickup' ? 'Pick Up' : 'Delivery')}</small><hr class="rule">${items.map((item)=>`<div class="item"><b>${Number(item.quantity||0)}×</b> ${esc(item.name)}${item.portion?` (${esc(item.portion)})`:''}${item.style?` · ${esc(item.style)}`:''}</div>`).join('')}${order.special_request?`<hr class="rule"><b>Note:</b> ${esc(order.special_request)}`:''}<hr class="rule"><div class="center"><small>Order #${esc(number)}</small></div><script>window.onload=()=>setTimeout(()=>window.print(),120);window.onafterprint=()=>window.close();<\/script>`);
+  popup.document.close();
+}
+
 async function loadAvailability() {
   const [menuResponse, availabilityResponse] = await Promise.all([fetch('/api/orders/menu', { cache: 'no-store' }), fetch('/api/orders/availability', { cache: 'no-store' })]);
   if (!menuResponse.ok || !availabilityResponse.ok) throw new Error('Menu availability could not be loaded.');
@@ -230,6 +303,42 @@ liveOrdersToggle.addEventListener('click', () => {
   }
 });
 document.getElementById('availability-close')?.addEventListener('click', () => { availability.hidden = true; document.getElementById('availability-toggle').setAttribute('aria-expanded', 'false'); });
+operationsToggle.addEventListener('click', async () => {
+  const opening = operationsPanel.hidden;
+  operationsPanel.hidden = !opening;
+  operationsToggle.classList.toggle('is-open', opening);
+  operationsToggle.setAttribute('aria-expanded', String(opening));
+  if (!opening) return;
+  document.getElementById('operations-content').innerHTML = '<div class="operations-empty">Loading Operations…</div>';
+  try { await loadOrders(); await loadOperations(); operationsPanel.scrollIntoView({ behavior:'smooth', block:'start' }); } catch (error) { document.getElementById('operations-content').innerHTML = `<div class="operations-empty">${esc(error.message)}</div>`; }
+});
+document.getElementById('operations-close')?.addEventListener('click', () => { operationsPanel.hidden = true; operationsToggle.classList.remove('is-open'); operationsToggle.setAttribute('aria-expanded','false'); });
+document.getElementById('operations-tabs')?.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-operations-tab]');
+  if (!button) return;
+  operationsTab = button.dataset.operationsTab;
+  document.querySelectorAll('[data-operations-tab]').forEach((tab) => tab.classList.toggle('is-active', tab === button));
+  renderOperations();
+});
+document.getElementById('operations-content')?.addEventListener('change', (event) => {
+  if (event.target.id !== 'operation-route-category') return;
+  const itemSelect = document.getElementById('operation-route-item');
+  const category = event.target.value;
+  itemSelect.innerHTML = `<option value="">Entire category</option>${operationsMenu.filter((item) => item.category === category).sort((a,b)=>a.name.localeCompare(b.name)).map((item) => `<option value="${esc(item.name)}">${esc(item.name)}</option>`).join('')}`;
+});
+document.getElementById('operations-content')?.addEventListener('click', async (event) => {
+  const addPrinter = event.target.closest('#operation-add-printer');
+  if (addPrinter) { const name=String(document.getElementById('operation-printer-name')?.value||'').trim(); const type=document.getElementById('operation-printer-type')?.value==='bill'?'bill':'kot'; if (!name) { document.getElementById('operation-printer-name')?.focus(); return; } operationsConfig.printers.push({ id:operationId(), name, type }); renderOperations(); return; }
+  const removePrinter = event.target.closest('[data-delete-printer]');
+  if (removePrinter) { const id=removePrinter.dataset.deletePrinter; operationsConfig.printers=operationsConfig.printers.filter((printer)=>printer.id!==id); operationsConfig.routes=operationsConfig.routes.filter((route)=>route.printerId!==id); renderOperations(); return; }
+  const addRoute = event.target.closest('#operation-add-route');
+  if (addRoute) { const printerId=document.getElementById('operation-route-printer')?.value||''; const category=document.getElementById('operation-route-category')?.value||''; const itemName=document.getElementById('operation-route-item')?.value||''; if (!printerId || !category) { alert('Choose a KOT printer and a category first.'); return; } const duplicate=operationsConfig.routes.some((route)=>route.printerId===printerId&&route.category===category&&route.itemName===itemName); if (!duplicate) operationsConfig.routes.push({ id:operationId(), printerId, category, itemName }); renderOperations(); return; }
+  const removeRoute = event.target.closest('[data-delete-route]');
+  if (removeRoute) { operationsConfig.routes=operationsConfig.routes.filter((route)=>route.id!==removeRoute.dataset.deleteRoute); renderOperations(); return; }
+  if (event.target.closest('#operations-save')) { const button=event.target.closest('#operations-save'); button.disabled=true; button.textContent='Saving…'; try { await saveOperations(); } catch(error) { alert(error.message); button.disabled=false; button.textContent='Save printer configuration'; } return; }
+  const kot = event.target.closest('[data-print-kot]');
+  if (kot) printKot(kot.dataset.printKot, kot.dataset.printerId);
+});
 orderStatusFilters.addEventListener('click', (event) => {
   const button = event.target.closest('[data-order-status-filter]');
   if (!button) return;

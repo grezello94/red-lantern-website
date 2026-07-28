@@ -547,6 +547,12 @@ let loyaltyTableReady = null;
 let creditTableReady = null;
 let menuAvailabilityTableReady = null;
 let pushSubscriptionsTableReady = null;
+let operationsConfigTableReady = null;
+async function ensureOperationsConfigTable() {
+  if (!sql) throw new Error('Orders database is not configured.');
+  if (!operationsConfigTableReady) operationsConfigTableReady = sql`CREATE TABLE IF NOT EXISTS order_operations_config (config_key TEXT PRIMARY KEY, config JSONB NOT NULL DEFAULT '{"printers":[],"routes":[]}'::jsonb, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;
+  return operationsConfigTableReady;
+}
 async function ensureMenuAvailabilityTable() {
   if (!sql) throw new Error('Orders database is not configured.');
   if (!menuAvailabilityTableReady) menuAvailabilityTableReady = sql`CREATE TABLE IF NOT EXISTS menu_availability (item_key TEXT PRIMARY KEY, unavailable_until TIMESTAMPTZ NOT NULL)`;
@@ -2084,6 +2090,29 @@ app.patch('/api/orders/:id', async (req, res) => {
 });
 app.get('/api/orders/availability', async (req,res)=>{try{await ensureMenuAvailabilityTable();res.json(await sql`SELECT * FROM menu_availability WHERE unavailable_until > NOW()`)}catch(e){res.status(500).json({error:e.message})}});
 app.get('/api/orders/menu', async (req,res)=>{try{const menu=await getSection('airMenu');const format=(items,menuType)=>items.map(item=>({name:item.name,category:item.category,menuType,key:`${String(item.category||'').toLowerCase()}::${String(item.name||'').toLowerCase()}`})).filter(item=>item.name);res.json([...format(menu.items||[],'food'),...format(menu.barItems||[],'bar')])}catch(e){res.status(500).json({error:e.message})}});
+app.get('/api/orders/operations', async (req, res) => { try {
+  await ensureOperationsConfigTable();
+  const rows=await sql`SELECT config FROM order_operations_config WHERE config_key='default' LIMIT 1`;
+  const menu=await getSection('airMenu');
+  const format=(items,menuType)=>items.map((item)=>({ name:String(item.name||''), category:String(item.category||''), menuType })).filter((item)=>item.name);
+  const config=rows[0]?.config && typeof rows[0].config === 'object' ? rows[0].config : { printers:[], routes:[] };
+  res.set('Cache-Control','no-store');
+  res.json({ config:{ printers:Array.isArray(config.printers)?config.printers:[], routes:Array.isArray(config.routes)?config.routes:[] }, menu:[...format(menu.items||[],'food'),...format(menu.barItems||[],'bar')] });
+} catch (error) { res.status(500).json({ error:'Unable to load Operations configuration.' }); } });
+app.put('/api/orders/operations', async (req, res) => { try {
+  await ensureOperationsConfigTable();
+  const source=req.body?.config || {};
+  const printers=(Array.isArray(source.printers)?source.printers:[]).slice(0,20).map((printer)=>({ id:String(printer.id||crypto.randomUUID()).replace(/[^a-zA-Z0-9_-]/g,'').slice(0,60), name:String(printer.name||'').trim().slice(0,60), type:printer.type==='bill'?'bill':'kot' })).filter((printer)=>printer.id&&printer.name);
+  const printerIds=new Set(printers.map((printer)=>printer.id));
+  const menu=await getSection('airMenu');
+  const allItems=[...(menu.items||[]),...(menu.barItems||[])].map((item)=>({ name:String(item.name||''), category:String(item.category||'') }));
+  const categories=new Set(allItems.map((item)=>item.category));
+  const validItem=(category,name)=>allItems.some((item)=>item.category===category&&item.name===name);
+  const routes=(Array.isArray(source.routes)?source.routes:[]).slice(0,250).map((route)=>({ id:String(route.id||crypto.randomUUID()).replace(/[^a-zA-Z0-9_-]/g,'').slice(0,60), printerId:String(route.printerId||''), category:String(route.category||''), itemName:String(route.itemName||'') })).filter((route)=>route.id&&printerIds.has(route.printerId)&&categories.has(route.category)&&(!route.itemName||validItem(route.category,route.itemName)));
+  const config={ printers, routes };
+  await sql`INSERT INTO order_operations_config (config_key, config, updated_at) VALUES ('default', ${JSON.stringify(config)}, NOW()) ON CONFLICT (config_key) DO UPDATE SET config=EXCLUDED.config, updated_at=NOW()`;
+  res.json({ ok:true, config });
+} catch (error) { res.status(500).json({ error:'Unable to save Operations configuration.' }); } });
 app.put('/api/orders/availability/:key', async (req,res)=>{try{await ensureMenuAvailabilityTable();const until=new Date(req.body.unavailableUntil);if(Number.isNaN(+until)||until<=new Date())return res.status(400).json({error:'Choose a future restock time.'});const menu=await getSection('airMenu');const menuKeys=new Set([...(menu.items||[]),...(menu.barItems||[])].map(item=>`${String(item.category||'').toLowerCase()}::${String(item.name||'').toLowerCase()}`));if(!menuKeys.has(req.params.key))return res.status(404).json({error:'That menu item no longer exists.'});await sql`INSERT INTO menu_availability (item_key,unavailable_until) VALUES (${req.params.key},${until.toISOString()}) ON CONFLICT (item_key) DO UPDATE SET unavailable_until=EXCLUDED.unavailable_until`;res.json({ok:true})}catch(e){res.status(500).json({error:e.message})}});
 app.delete('/api/orders/availability/:key', async (req,res)=>{try{await ensureMenuAvailabilityTable();await sql`DELETE FROM menu_availability WHERE item_key=${req.params.key}`;res.json({ok:true})}catch(e){res.status(500).json({error:e.message})}});
 
