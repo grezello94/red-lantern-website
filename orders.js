@@ -15,6 +15,7 @@ let orderSearchTimer = null;
 let orderView = 'current';
 let activeOrderDay = '';
 let orderRecords = new Map();
+let historyAll = false;
 
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#039;' })[char]);
 const money = (value) => `₹${Number(value || 0).toFixed(0)}`;
@@ -52,7 +53,7 @@ document.getElementById('enable-notifications')?.addEventListener('click', async
 async function loadOrders() {
   try {
     let query = String(orderSearch?.value || '').replace(/\D/g, '').slice(0, 16);
-    const date = String(historyDate?.value || '');
+    const date = historyAll ? '' : String(historyDate?.value || '');
     const response = await fetch(`/api/orders?search=${encodeURIComponent(query)}&history=${orderView === 'history' ? '1' : '0'}&date=${encodeURIComponent(date)}`, { cache: 'no-store' });
     if (!response.ok) throw new Error('Unable to refresh orders.');
     const rows = await response.json();
@@ -201,7 +202,8 @@ document.getElementById('install-shortcut')?.addEventListener('click', async () 
 document.getElementById('shortcut-close')?.addEventListener('click', () => document.getElementById('shortcut-dialog')?.close());
 orderSearch?.addEventListener('input', () => { clearTimeout(orderSearchTimer); orderSearchTimer = setTimeout(loadOrders, 180); });
 document.getElementById('clear-order-search')?.addEventListener('click', () => { if (orderSearch) { orderSearch.value = ''; orderSearch.focus(); } loadOrders(); });
-historyDate?.addEventListener('change', loadOrders);
+historyDate?.addEventListener('change', () => { historyAll = false; loadOrders(); });
+document.getElementById('all-history')?.addEventListener('click', () => { historyAll = true; if (historyDate) historyDate.value = ''; loadOrders(); });
 document.getElementById('order-view-tabs')?.addEventListener('click', (event) => {
   const button = event.target.closest('[data-order-view]');
   if (!button) return;
@@ -209,7 +211,7 @@ document.getElementById('order-view-tabs')?.addEventListener('click', (event) =>
   document.querySelectorAll('[data-order-view]').forEach((tab) => tab.classList.toggle('is-active', tab === button));
   const dateWrap = document.getElementById('history-date-wrap');
   if (dateWrap) dateWrap.hidden = orderView !== 'history';
-  if (orderView === 'history' && historyDate && !historyDate.value) { const date = new Date(); date.setDate(date.getDate() - 1); historyDate.value = date.toISOString().slice(0, 10); }
+  if (orderView === 'history' && historyDate && !historyDate.value && !historyAll) { historyDate.value = new Date().toISOString().slice(0, 10); }
   loadOrders();
 });
 root.addEventListener('click', (event) => { const button = event.target.closest('[data-modify-order]'); if (button) openModifyOrder(button.dataset.modifyOrder); });
