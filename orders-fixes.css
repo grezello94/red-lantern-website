@@ -15,6 +15,16 @@
 .placed-at { margin: -2px 0 8px; color: #66768c; font-size: 11px; font-weight: 700; }
 .placed-at span { margin-right: 4px; color: #33445f; font-weight: 800; }
 .placed-at small { margin-left: 4px; color: #8a98aa; font-size: 10px; font-weight: 700; }
+.modify-order { color: #1e4c91; background: #eaf2ff; }
+.modify-order-dialog { width: min(460px, calc(100% - 28px)); padding: 26px; border: 0; border-radius: 18px; color: #1f2b41; box-shadow: 0 22px 70px rgba(15, 28, 53, .32); }
+.modify-order-dialog::backdrop { background: rgba(15, 27, 48, .55); backdrop-filter: blur(3px); }
+.modify-order-dialog h2 { margin: 4px 0 7px; font-size: 22px; }
+.modify-order-dialog > p { margin: 0 0 17px; color: #66768c; font-size: 12px; line-height: 1.5; }
+.modify-close { position: absolute; top: 12px; right: 13px; width: 34px; height: 34px; border-radius: 50%; color: #263d68; background: #edf2f7; font-size: 22px; }
+.modify-items { display: grid; gap: 8px; margin-bottom: 18px; }
+.modify-items label { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 10px 12px; border: 1px solid #e2e8f0; border-radius: 10px; font-size: 13px; font-weight: 800; }
+.modify-items input { width: 62px; padding: 7px; border: 1px solid #cbd7e6; border-radius: 7px; color: #1f2b41; font: 800 13px Manrope, sans-serif; }
+.modify-save { width: 100%; padding: 12px; color: #fff; background: #263d68; }
 .totals { min-height: 54px; box-sizing: border-box; }
 .order-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 4px; }
 .daily-order-number { color: #1f2b41; font-size: 19px; font-weight: 800; letter-spacing: -.02em; }
