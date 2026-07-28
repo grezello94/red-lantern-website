@@ -238,6 +238,9 @@
       .log-entry h3 { font-size: 16px; color: #111827; margin: 0; line-height: 1.4; }
       .log-badge { display: inline-flex; align-items: center; border-radius: 999px; padding: 4px 9px; font-size: 11px; font-weight: 900; text-transform: uppercase; background: #e5e7eb; color: #374151; white-space: nowrap; }
       .log-badge.error { background: #fee2e2; color: #991b1b; }
+      .insight-stats { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; margin-bottom:22px; }
+      .insight-stat { padding:17px; border:1px solid #e5eaf1; border-radius:12px; background:linear-gradient(145deg,#fff,#f8fafc); }.insight-stat strong{display:block;color:#b4232b;font-size:25px;line-height:1}.insight-stat span{display:block;margin-top:7px;color:#718097;font-size:11px;font-weight:800}
+      .insight-card{padding:24px}.insight-toolbar{display:flex;gap:12px;align-items:end;margin-bottom:14px}.insight-toolbar .form-group{flex:1}.insight-toolbar span{display:block;margin-bottom:5px;color:#596a83;font-size:11px;font-weight:800;text-transform:uppercase}.insight-toolbar input{width:100%;padding:10px;border:1px solid #d8e0eb;border-radius:8px;font:600 13px Manrope,sans-serif}.insight-table-wrap{overflow:auto;border:1px solid #e5eaf1;border-radius:10px}.insight-table{width:100%;min-width:900px;border-collapse:collapse}.insight-table th{padding:11px 12px;color:#5f6d82;background:#f5f7fa;text-align:left;font-size:10px;letter-spacing:.05em;text-transform:uppercase}.insight-table td{padding:12px;border-top:1px solid #edf0f4;color:#344158;font-size:12px}.insight-table td strong{color:#1f2b41}.insight-pill{display:inline-flex;padding:4px 7px;border-radius:99px;background:#edf3ff;color:#315487;font-size:10px;font-weight:900}.insight-pill.credit{background:#fff0ee;color:#b4232b}.customer-leaderboard{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.customer-leader{padding:15px;border:1px solid #e8e3d5;border-radius:10px;background:linear-gradient(135deg,#fffdf8,#fff8e8)}.customer-leader b,.customer-leader span{display:block}.customer-leader b{color:#725208;font-size:18px}.customer-leader span{margin-top:5px;color:#6f7280;font-size:12px}@media(max-width:760px){.insight-stats,.customer-leaderboard{grid-template-columns:1fr 1fr}.insight-toolbar{flex-direction:column;align-items:stretch}}
       .log-badge.warning { background: #fef3c7; color: #92400e; }
       .log-badge.info { background: #dbeafe; color: #1e40af; }
       .log-meta { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 16px; color: #4b5563; font-size: 13px; margin: 10px 0; }
@@ -257,6 +260,7 @@
         <div class="nav-item active" data-target="tab-home">Home Page</div>
         <div class="nav-item" data-target="tab-menu">Menu Page</div>
         <div class="nav-item" data-target="tab-air-menu">Air Menu</div>
+        <div class="nav-item" data-target="tab-customer-insights">Customer &amp; Orders</div>
         <div class="nav-item" data-target="tab-about">About Page</div>
         <div class="nav-item" data-target="tab-blogs">Blogs Page</div>
         <div class="nav-item" data-target="tab-contact">Contact Page</div>
@@ -658,6 +662,13 @@
       </div>
 
       <!-- ABOUT PAGE TAB -->
+      <div id="tab-customer-insights" class="tab-content">
+        <div class="header"><div><h1>Customer &amp; Order Insights</h1><p>Review direct-order history, loyalty points, and customer balances in one place.</p></div><button type="button" id="refresh-customer-insights" class="btn-refresh">Refresh data</button></div>
+        <div id="customer-insight-stats" class="insight-stats"><div class="insight-stat"><span>Loading order information…</span></div></div>
+        <div class="card insight-card"><div class="insight-toolbar"><label class="form-group"><span>Order date</span><input id="insight-date" type="date"></label><label class="form-group"><span>Find customer / mobile</span><input id="insight-search" type="search" placeholder="Name, number, or last 4 digits"></label></div><div id="customer-insight-status" class="growth-ai-status"></div><div class="insight-table-wrap"><table class="insight-table"><thead><tr><th>Order</th><th>Placed</th><th>Customer</th><th>Items</th><th>Bill</th><th>Points</th><th>Credit</th><th>Status</th></tr></thead><tbody id="customer-insight-orders"></tbody></table></div></div>
+        <div class="card insight-card"><h2>Top loyalty customers</h2><p class="help-text">Ranked by available Red Lantern points. Points are credited when an order is completed.</p><div id="customer-insight-leaderboard" class="customer-leaderboard"></div></div>
+      </div>
+
       <div id="tab-about" class="tab-content">
         <header class="header">
           <div>

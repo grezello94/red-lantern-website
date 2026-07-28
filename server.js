@@ -266,6 +266,7 @@ function isProtectedAdminPath(req) {
     || req.path === '/api/admin/logs'
     || req.path === '/api/admin/qr-scans'
     || req.path === '/api/admin/health'
+    || req.path === '/api/admin/customer-insights'
     || req.path.startsWith('/api/admin/qr/')
     || req.path.startsWith('/api/admin/air-menu/')
     || req.path.startsWith('/api/update-')
@@ -543,6 +544,7 @@ const labels = {
 let publicContentCache = null;
 let directOrdersTableReady = null;
 let loyaltyTableReady = null;
+let creditTableReady = null;
 let menuAvailabilityTableReady = null;
 let pushSubscriptionsTableReady = null;
 async function ensureMenuAvailabilityTable() {
@@ -575,6 +577,7 @@ async function ensureLoyaltyTable() {
   if (!loyaltyTableReady) loyaltyTableReady = sql`CREATE TABLE IF NOT EXISTS loyalty_accounts (customer_phone TEXT PRIMARY KEY, points INTEGER NOT NULL DEFAULT 0 CHECK (points >= 0), total_earned INTEGER NOT NULL DEFAULT 0, total_redeemed INTEGER NOT NULL DEFAULT 0, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;
   return loyaltyTableReady;
 }
+async function ensureCreditTable() { if (!sql) throw new Error('Orders database is not configured.'); if (!creditTableReady) creditTableReady=sql`CREATE TABLE IF NOT EXISTS customer_credit (customer_phone TEXT PRIMARY KEY, balance NUMERIC NOT NULL DEFAULT 0 CHECK (balance >= 0), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`; return creditTableReady; }
 function kolkataOrderDay(date = new Date()) {
   const parts = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(date);
   const value = Object.fromEntries(parts.filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
@@ -2267,6 +2270,8 @@ app.get('/api/content', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+app.get('/api/admin/customer-insights', async (req, res) => { try { await ensureDirectOrdersTable(); await ensureLoyaltyTable(); const date=/^\d{4}-\d{2}-\d{2}$/.test(String(req.query.date||''))?String(req.query.date):''; const search=String(req.query.search||'').trim().slice(0,80); const digits=search.replace(/\D/g,''); const like=`%${search}%`; const digitLike=`%${digits}%`; const orders=await sql`SELECT o.*, COALESCE(l.points,0) AS loyalty_points FROM direct_orders o LEFT JOIN loyalty_accounts l ON l.customer_phone=o.customer_phone WHERE (${date}='' OR o.order_day=${date}::date) AND (${search}='' OR o.customer_name ILIKE ${like} OR o.customer_phone LIKE ${digitLike} OR CAST(o.daily_order_number AS TEXT)=${digits}) ORDER BY o.created_at DESC LIMIT 200`; const leaderboard=await sql`SELECT customer_phone, points, total_earned, total_redeemed FROM loyalty_accounts ORDER BY points DESC, total_earned DESC LIMIT 12`; const total=orders.reduce((sum,row)=>sum+Number(row.total||0),0); const credit=0; res.set('Cache-Control','no-store'); res.json({orders,leaderboard,summary:{orders:orders.length,total,points:leaderboard.reduce((sum,row)=>sum+Number(row.points||0),0),credit}}); } catch(error){res.status(500).json({error:'Unable to load customer insights.'});} });
 
 app.get('/api/admin/content', async (req, res) => {
   try {
