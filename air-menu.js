@@ -9,6 +9,8 @@ let orderWhatsAppNumber = '';
 let orderIsBusinessCard = false;
 let orderCustomerPhone = localStorage.getItem('red-lantern-order-phone') || '';
 let directOrdersEnabled = false;
+let loyaltyPoints = 0;
+let loyaltyLookupTimer = null;
 
 function syncOrderVisibleHeight() {
   const height = window.visualViewport?.height || window.innerHeight;
@@ -185,8 +187,24 @@ function renderOrderSummary() {
   const customerPhone = document.getElementById('order-customer-phone');
   customerDetails.hidden = !(orderIsBusinessCard || directOrdersEnabled);
   if (customerPhone && customerPhone.value !== orderCustomerPhone) customerPhone.value = orderCustomerPhone;
+  const loyaltyPanel = document.getElementById('loyalty-panel');
+  const redeemWrap = document.getElementById('loyalty-redeem-wrap');
+  const redeemInput = document.getElementById('loyalty-redeem');
+  if (loyaltyPanel) loyaltyPanel.hidden = !(directOrdersEnabled && String(orderCustomerPhone).replace(/\D/g, '').length >= 7);
+  if (redeemWrap) redeemWrap.hidden = loyaltyPoints < 100;
+  if (redeemInput) redeemInput.max = String(loyaltyPoints);
   const whatsappTarget = orderWhatsAppNumber ? `https://wa.me/${orderWhatsAppNumber}` : 'https://wa.me/';
   document.getElementById('share-whatsapp').href = `${whatsappTarget}?text=${encodeURIComponent(orderSummaryText())}`;
+}
+
+async function loadLoyaltyPoints() {
+  const phone = String(orderCustomerPhone).replace(/\D/g, '');
+  const panel = document.getElementById('loyalty-panel');
+  const balance = document.getElementById('loyalty-balance');
+  if (!directOrdersEnabled || phone.length < 7) { loyaltyPoints = 0; if (panel) panel.hidden = true; return; }
+  if (panel) panel.hidden = false;
+  if (balance) balance.textContent = 'Checking points…';
+  try { const response = await fetch('/api/loyalty', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ phone }) }); const data = await response.json(); if (!response.ok) throw new Error(); loyaltyPoints = Number(data.points || 0); if (balance) balance.textContent = loyaltyPoints >= 100 ? `${loyaltyPoints} points = ₹${loyaltyPoints} available` : `${loyaltyPoints} points · collect ${100 - loyaltyPoints} more to redeem`; renderOrderSummary(); } catch { loyaltyPoints = 0; if (balance) balance.textContent = 'Points are unavailable right now.'; }
 }
 
 function changeOrderQuantity(key, change) {
@@ -258,7 +276,9 @@ function setupOrderShortlist() {
     orderCustomerPhone = event.target.value.trim();
     localStorage.setItem('red-lantern-order-phone', orderCustomerPhone);
     renderOrderSummary();
+    clearTimeout(loyaltyLookupTimer); loyaltyLookupTimer = setTimeout(loadLoyaltyPoints, 300);
   });
+  document.getElementById('loyalty-redeem').addEventListener('input', (event) => { const value=Math.max(0,Math.floor(Number(event.target.value)||0)); event.target.value=value ? String(value) : '0'; });
   document.getElementById('copy-order').addEventListener('click', async () => {
     const status = document.getElementById('order-action-status');
     try {
@@ -272,7 +292,7 @@ function setupOrderShortlist() {
     const items = Object.entries(orderSelections).filter(([, quantity]) => quantity > 0).map(([key, quantity]) => ({ ...orderCatalog.get(key), quantity }));
     if (!phone || phone.replace(/\D/g, '').length < 7) { status.textContent = 'Please enter a valid mobile number to place a direct order.'; return; }
     const button = document.getElementById('place-direct-order'); button.disabled = true; status.textContent = 'Placing your order…';
-    try { const response = await fetch('/api/direct-orders', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ mode:params.get('mode'), expires, signature:params.get('signature'), customerPhone:phone, customerName:document.getElementById('order-customer-name').value.trim(), specialRequest:document.getElementById('order-special-request').value.trim(), items }) }); const result = await response.json(); if (!response.ok) throw new Error(result.error); orderSelections={}; updateOrderUI(); document.getElementById('confirmation-order-number').textContent = `#${result.orderNumber || '—'}`; document.getElementById('view-order-status').href = result.trackingUrl || '#'; dialog.querySelector('.order-dialog-head').hidden = true; summaryItems.hidden = true; customerDetails.hidden = true; actions.hidden = true; status.hidden = true; confirmation.hidden = false; } catch(error) { status.textContent=error.message || 'Unable to place the order. Please call us.'; } finally { button.disabled=false; }
+    try { const loyaltyInput=document.getElementById('loyalty-redeem'); const loyaltyPointsToUse=Math.floor(Number(loyaltyInput?.value)||0); const response = await fetch('/api/direct-orders', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ mode:params.get('mode'), expires, signature:params.get('signature'), customerPhone:phone, customerName:document.getElementById('order-customer-name').value.trim(), specialRequest:document.getElementById('order-special-request').value.trim(), loyaltyPoints: loyaltyPointsToUse, items }) }); const result = await response.json(); if (!response.ok) throw new Error(result.error); orderSelections={}; loyaltyPoints=Math.max(0,loyaltyPoints-loyaltyPointsToUse); updateOrderUI(); document.getElementById('confirmation-order-number').textContent = `#${result.orderNumber || '—'}`; document.getElementById('view-order-status').href = result.trackingUrl || '#'; dialog.querySelector('.order-dialog-head').hidden = true; summaryItems.hidden = true; customerDetails.hidden = true; actions.hidden = true; status.hidden = true; confirmation.hidden = false; } catch(error) { status.textContent=error.message || 'Unable to place the order. Please call us.'; } finally { button.disabled=false; }
   });
   document.getElementById('place-another-order').addEventListener('click', () => { resetOrderDialog(); renderOrderSummary(); });
   updateOrderUI();
@@ -294,6 +314,7 @@ function configureOrderActions(menu) {
   const showCall = isCard && menu.cardCallEnabled && phoneDigits.length >= 7;
   call.hidden = !showCall;
   call.href = showCall ? `tel:${dialNumber}` : '#';
+  if (directOrdersEnabled && String(orderCustomerPhone).replace(/\D/g, '').length >= 7) loadLoyaltyPoints();
 }
 
 function setupMenuControls() {
