@@ -574,7 +574,12 @@ async function ensureDirectOrdersTable() {
 }
 async function ensureLoyaltyTable() {
   if (!sql) throw new Error('Orders database is not configured.');
-  if (!loyaltyTableReady) loyaltyTableReady = sql`CREATE TABLE IF NOT EXISTS loyalty_accounts (customer_phone TEXT PRIMARY KEY, points INTEGER NOT NULL DEFAULT 0 CHECK (points >= 0), total_earned INTEGER NOT NULL DEFAULT 0, total_redeemed INTEGER NOT NULL DEFAULT 0, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;
+  if (!loyaltyTableReady) loyaltyTableReady = (async () => {
+    await sql`CREATE TABLE IF NOT EXISTS loyalty_accounts (customer_phone TEXT PRIMARY KEY, points INTEGER NOT NULL DEFAULT 0 CHECK (points >= 0), total_earned INTEGER NOT NULL DEFAULT 0, total_redeemed INTEGER NOT NULL DEFAULT 0, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;
+    await sql`ALTER TABLE loyalty_accounts ADD COLUMN IF NOT EXISTS total_earned INTEGER NOT NULL DEFAULT 0`;
+    await sql`ALTER TABLE loyalty_accounts ADD COLUMN IF NOT EXISTS total_redeemed INTEGER NOT NULL DEFAULT 0`;
+    await sql`ALTER TABLE loyalty_accounts ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`;
+  })();
   return loyaltyTableReady;
 }
 async function ensureCreditTable() { if (!sql) throw new Error('Orders database is not configured.'); if (!creditTableReady) creditTableReady=sql`CREATE TABLE IF NOT EXISTS customer_credit (customer_phone TEXT PRIMARY KEY, balance NUMERIC NOT NULL DEFAULT 0 CHECK (balance >= 0), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`; return creditTableReady; }
@@ -2271,7 +2276,24 @@ app.get('/api/content', async (req, res) => {
   }
 });
 
-app.get('/api/admin/customer-insights', async (req, res) => { try { await ensureDirectOrdersTable(); await ensureLoyaltyTable(); const date=/^\d{4}-\d{2}-\d{2}$/.test(String(req.query.date||''))?String(req.query.date):''; const search=String(req.query.search||'').trim().slice(0,80); const digits=search.replace(/\D/g,''); const like=`%${search}%`; const digitLike=`%${digits}%`; const orders=await sql`SELECT o.*, COALESCE(l.points,0) AS loyalty_points FROM direct_orders o LEFT JOIN loyalty_accounts l ON l.customer_phone=o.customer_phone WHERE (${date}='' OR o.order_day=${date}::date) AND (${search}='' OR o.customer_name ILIKE ${like} OR o.customer_phone LIKE ${digitLike} OR CAST(o.daily_order_number AS TEXT)=${digits}) ORDER BY o.created_at DESC LIMIT 200`; const leaderboard=await sql`SELECT customer_phone, points, total_earned, total_redeemed FROM loyalty_accounts ORDER BY points DESC, total_earned DESC LIMIT 12`; const total=orders.reduce((sum,row)=>sum+Number(row.total||0),0); const credit=0; res.set('Cache-Control','no-store'); res.json({orders,leaderboard,summary:{orders:orders.length,total,points:leaderboard.reduce((sum,row)=>sum+Number(row.points||0),0),credit}}); } catch(error){res.status(500).json({error:'Unable to load customer insights.'});} });
+app.get('/api/admin/customer-insights', async (req, res) => { try {
+  await ensureDirectOrdersTable();
+  await ensureLoyaltyTable();
+  const date=/^\d{4}-\d{2}-\d{2}$/.test(String(req.query.date||'')) ? String(req.query.date) : '';
+  const search=String(req.query.search||'').trim().slice(0,80);
+  const digits=search.replace(/\D/g,'');
+  const like=`%${search}%`;
+  const digitLike=`%${digits}%`;
+  let orders;
+  if (date && search) orders=await sql`SELECT o.*, COALESCE(l.points,0) AS loyalty_points FROM direct_orders o LEFT JOIN loyalty_accounts l ON l.customer_phone=o.customer_phone WHERE o.order_day=${date}::date AND (o.customer_name ILIKE ${like} OR o.customer_phone LIKE ${digitLike} OR CAST(o.daily_order_number AS TEXT) LIKE ${digitLike}) ORDER BY o.created_at DESC LIMIT 200`;
+  else if (date) orders=await sql`SELECT o.*, COALESCE(l.points,0) AS loyalty_points FROM direct_orders o LEFT JOIN loyalty_accounts l ON l.customer_phone=o.customer_phone WHERE o.order_day=${date}::date ORDER BY o.created_at DESC LIMIT 200`;
+  else if (search) orders=await sql`SELECT o.*, COALESCE(l.points,0) AS loyalty_points FROM direct_orders o LEFT JOIN loyalty_accounts l ON l.customer_phone=o.customer_phone WHERE o.customer_name ILIKE ${like} OR o.customer_phone LIKE ${digitLike} OR CAST(o.daily_order_number AS TEXT) LIKE ${digitLike} ORDER BY o.created_at DESC LIMIT 200`;
+  else orders=await sql`SELECT o.*, COALESCE(l.points,0) AS loyalty_points FROM direct_orders o LEFT JOIN loyalty_accounts l ON l.customer_phone=o.customer_phone ORDER BY o.created_at DESC LIMIT 200`;
+  const leaderboard=await sql`SELECT customer_phone, points, total_earned, total_redeemed FROM loyalty_accounts ORDER BY points DESC, total_earned DESC LIMIT 12`;
+  const total=orders.reduce((sum,row)=>sum+Number(row.total||0),0);
+  res.set('Cache-Control','no-store');
+  res.json({orders,leaderboard,summary:{orders:orders.length,total,points:leaderboard.reduce((sum,row)=>sum+Number(row.points||0),0),credit:0}});
+} catch(error) { console.error('Customer insights error:', error); res.status(500).json({error:'Unable to load customer insights.'}); } });
 
 app.get('/api/admin/content', async (req, res) => {
   try {
