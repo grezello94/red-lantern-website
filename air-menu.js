@@ -294,7 +294,14 @@ function setupOrderShortlist() {
     const items = Object.entries(orderSelections).filter(([, quantity]) => quantity > 0).map(([key, quantity]) => ({ ...orderCatalog.get(key), quantity }));
     if (!phone || phone.replace(/\D/g, '').length < 7) { status.textContent = 'Please enter a valid mobile number to place a direct order.'; return; }
     const button = document.getElementById('place-direct-order'); button.disabled = true; status.textContent = 'Placing your order…';
-    try { const loyaltyInput=document.getElementById('loyalty-redeem'); const loyaltyPointsToUse=Math.floor(Number(loyaltyInput?.value)||0); const response = await fetch('/api/direct-orders', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ mode:params.get('mode'), expires, signature:params.get('signature'), customerPhone:phone, customerName:document.getElementById('order-customer-name').value.trim(), specialRequest:document.getElementById('order-special-request').value.trim(), loyaltyPoints: loyaltyPointsToUse, items }) }); const result = await response.json(); if (!response.ok) throw new Error(result.error); orderSelections={}; loyaltyPoints=Math.max(0,loyaltyPoints-loyaltyPointsToUse); updateOrderUI(); document.getElementById('confirmation-order-number').textContent = `#${result.orderNumber || '—'}`; document.getElementById('view-order-status').href = result.trackingUrl || '#'; dialog.querySelector('.order-dialog-head').hidden = true; summaryItems.hidden = true; customerDetails.hidden = true; actions.hidden = true; status.hidden = true; confirmation.hidden = false; } catch(error) { status.textContent=error.message || 'Unable to place the order. Please call us.'; } finally { button.disabled=false; }
+    try {
+      const loyaltyInput=document.getElementById('loyalty-redeem');
+      const loyaltyPointsToUse=Math.floor(Number(loyaltyInput?.value)||0);
+      const response = await fetch('/api/direct-orders', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ mode:params.get('mode'), expires, signature:params.get('signature'), customerPhone:phone, customerName:document.getElementById('order-customer-name').value.trim(), specialRequest:document.getElementById('order-special-request').value.trim(), fulfillmentType: document.getElementById('order-fulfillment-type')?.value, loyaltyPoints: loyaltyPointsToUse, items }) });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error);
+      orderSelections={}; loyaltyPoints=Math.max(0,loyaltyPoints-loyaltyPointsToUse); updateOrderUI(); document.getElementById('confirmation-order-number').textContent = `#${result.orderNumber || '—'}`; document.getElementById('view-order-status').href = result.trackingUrl || '#'; dialog.querySelector('.order-dialog-head').hidden = true; summaryItems.hidden = true; customerDetails.hidden = true; actions.hidden = true; status.hidden = true; confirmation.hidden = false;
+    } catch(error) { status.textContent=error.message || 'Unable to place the order. Please call us.'; } finally { button.disabled=false; }
   });
   document.getElementById('place-another-order').addEventListener('click', () => { resetOrderDialog(); renderOrderSummary(); });
   updateOrderUI();
@@ -303,6 +310,8 @@ function setupOrderShortlist() {
 function configureOrderActions(menu) {
   const isCard = menu.mode === 'card';
   orderIsBusinessCard = isCard;
+  const fulfillmentType = document.getElementById('order-fulfillment-type');
+  if (fulfillmentType) fulfillmentType.value = isCard ? 'delivery' : 'pickup';
   document.body.classList.toggle('card-menu-mode', isCard);
   const whatsapp = document.getElementById('share-whatsapp');
   directOrdersEnabled = menu.directOrdersEnabled === true;

@@ -76,8 +76,8 @@ main { width:min(100%,1420px); margin:0 auto; padding:0 16px 42px; }
 .summary-item { display:flex; align-items:center; justify-content:space-between; gap:14px; padding:13px 0; border-bottom:1px solid var(--line); }
 .order-customer-details { margin:8px 22px 0; padding:13px; border:1px solid #dce6dc; border-radius:12px; background:#f5fbf6; }
 .order-customer-details label { display:block; color:var(--ink); font-size:12px; font-weight:800; }
-.order-customer-details input { width:100%; margin:8px 0 6px; padding:11px 12px; border:1px solid #cbd8cc; border-radius:8px; outline:0; color:var(--ink); background:#fff; font:700 13px Manrope,sans-serif; }
-.order-customer-details input:focus { border-color:#159447; box-shadow:0 0 0 3px rgba(21,148,71,.12); }
+.order-customer-details input,.order-customer-details select { width:100%; margin:8px 0 6px; padding:11px 12px; border:1px solid #cbd8cc; border-radius:8px; outline:0; color:var(--ink); background:#fff; font:700 13px Manrope,sans-serif; }
+.order-customer-details input:focus,.order-customer-details select:focus { border-color:#159447; box-shadow:0 0 0 3px rgba(21,148,71,.12); }
 .order-customer-details span { display:block; color:var(--muted); font-size:10px; line-height:1.45; }
 .loyalty-panel { margin:7px 0 14px; padding:14px; border:1px solid #efd69b; border-radius:12px; background:linear-gradient(135deg,#fff4d1,#fffdfa 62%,#f5f9ee); box-shadow:inset 0 1px rgba(255,255,255,.85); }
 .loyalty-panel-head { display:flex; align-items:center; justify-content:space-between; gap:10px; }
