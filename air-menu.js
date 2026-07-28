@@ -219,6 +219,15 @@ function setupOrderShortlist() {
   const summaryItems = document.getElementById('order-summary-items');
   const customerDetails = document.getElementById('order-customer-details');
   const actions = dialog.querySelector('.order-summary-actions');
+  const confirmation = document.getElementById('order-confirmation');
+  const resetOrderDialog = () => {
+    confirmation.hidden = true;
+    dialog.querySelector('.order-dialog-head').hidden = false;
+    summaryItems.hidden = false;
+    customerDetails.hidden = !(orderIsBusinessCard || directOrdersEnabled);
+    actions.hidden = false;
+    document.getElementById('order-action-status').hidden = false;
+  };
   dialog.insertBefore(customerDetails, summaryItems);
   dialog.insertBefore(actions, summaryItems);
   const handleQuantity = (event) => {
@@ -237,6 +246,7 @@ function setupOrderShortlist() {
   });
   document.getElementById('order-summary-items').addEventListener('click', handleQuantity);
   document.getElementById('open-order-summary').addEventListener('click', () => {
+    resetOrderDialog();
     syncOrderVisibleHeight();
     dialog.showModal();
     dialog.scrollTop = 0;
@@ -262,8 +272,9 @@ function setupOrderShortlist() {
     const items = Object.entries(orderSelections).filter(([, quantity]) => quantity > 0).map(([key, quantity]) => ({ ...orderCatalog.get(key), quantity }));
     if (!phone || phone.replace(/\D/g, '').length < 7) { status.textContent = 'Please enter a valid mobile number to place a direct order.'; return; }
     const button = document.getElementById('place-direct-order'); button.disabled = true; status.textContent = 'Placing your order…';
-    try { const response = await fetch('/api/direct-orders', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ mode:params.get('mode'), expires, signature:params.get('signature'), customerPhone:phone, customerName:document.getElementById('order-customer-name').value.trim(), specialRequest:document.getElementById('order-special-request').value.trim(), items }) }); const result = await response.json(); if (!response.ok) throw new Error(result.error); orderSelections={}; updateOrderUI(); status.textContent=`Order ${result.id} placed successfully. Our team will confirm it shortly.`; } catch(error) { status.textContent=error.message || 'Unable to place the order. Please call us.'; } finally { button.disabled=false; }
+    try { const response = await fetch('/api/direct-orders', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ mode:params.get('mode'), expires, signature:params.get('signature'), customerPhone:phone, customerName:document.getElementById('order-customer-name').value.trim(), specialRequest:document.getElementById('order-special-request').value.trim(), items }) }); const result = await response.json(); if (!response.ok) throw new Error(result.error); orderSelections={}; updateOrderUI(); document.getElementById('confirmation-order-number').textContent = `#${result.orderNumber || '—'}`; document.getElementById('view-order-status').href = result.trackingUrl || '#'; dialog.querySelector('.order-dialog-head').hidden = true; summaryItems.hidden = true; customerDetails.hidden = true; actions.hidden = true; status.hidden = true; confirmation.hidden = false; } catch(error) { status.textContent=error.message || 'Unable to place the order. Please call us.'; } finally { button.disabled=false; }
   });
+  document.getElementById('place-another-order').addEventListener('click', () => { resetOrderDialog(); renderOrderSummary(); });
   updateOrderUI();
 }
 

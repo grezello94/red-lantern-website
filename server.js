@@ -469,7 +469,8 @@ const cleanPageRoutes = new Map([
   ['/blogs', 'blogs.html'],
   ['/contact', 'contact.html'],
   ['/blog', 'blog-post.html'],
-  ['/orders', 'orders.html']
+  ['/orders', 'orders.html'],
+  ['/track-order', 'track-order.html']
 ]);
 
 const legacyPageRedirects = new Map([
@@ -497,7 +498,7 @@ app.use(express.static(__dirname, {
   index: false,
   maxAge: '1h',
   setHeaders: (res, filePath) => {
-    if (/\/orders(?:\.html|\.js|\.css|-fixes\.css|-logo\.css|-sw\.js|\.webmanifest)$/i.test(filePath)) {
+    if (/\/(?:orders|track-order)(?:\.html|\.js|\.css|-fixes\.css|-logo\.css|-sw\.js|\.webmanifest)$/i.test(filePath)) {
       res.set('Cache-Control', 'no-store, max-age=0');
       return;
     }
@@ -554,9 +555,11 @@ async function ensureDirectOrdersTable() {
     await sql`CREATE TABLE IF NOT EXISTS direct_orders (id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'new', mode TEXT NOT NULL, customer_name TEXT, customer_phone TEXT NOT NULL, special_request TEXT, items JSONB NOT NULL, total NUMERIC NOT NULL DEFAULT 0, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;
     await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS order_day DATE`;
     await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS daily_order_number INTEGER`;
+    await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS tracking_token TEXT`;
     await sql`UPDATE direct_orders SET order_day=(created_at AT TIME ZONE 'Asia/Kolkata')::date WHERE order_day IS NULL`;
     await sql`WITH numbered AS (SELECT id, ROW_NUMBER() OVER (PARTITION BY order_day ORDER BY created_at, id)::integer AS daily_number FROM direct_orders) UPDATE direct_orders AS orders SET daily_order_number=numbered.daily_number FROM numbered WHERE orders.id=numbered.id AND orders.daily_order_number IS NULL`;
     await sql`CREATE UNIQUE INDEX IF NOT EXISTS direct_orders_day_number_unique ON direct_orders (order_day, daily_order_number) WHERE daily_order_number IS NOT NULL`;
+    await sql`CREATE UNIQUE INDEX IF NOT EXISTS direct_orders_tracking_token_unique ON direct_orders (tracking_token) WHERE tracking_token IS NOT NULL`;
     await sql`CREATE TABLE IF NOT EXISTS direct_order_counters (order_day DATE PRIMARY KEY, next_number INTEGER NOT NULL)`;
   })();
   return directOrdersTableReady;
@@ -2007,16 +2010,18 @@ app.post('/api/direct-orders', async (req, res) => {
     if (cleanItems.some((item) => unavailableKeys.has(item.availabilityKey))) return res.status(409).json({ error: 'One or more selected items have just gone out of stock. Please refresh the menu.' });
     const { orderDay, number: dailyOrderNumber } = await nextDailyOrderNumber();
     const id = `RL${Date.now().toString(36).toUpperCase()}${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
+    const trackingToken = crypto.randomBytes(24).toString('base64url');
     const total = cleanItems.reduce((sum, item) => sum + item.quantity * (priceNumber(item.price) + (item.style ? 10 : 0)), 0);
     const savedItems = cleanItems.map(({ availabilityKey, ...item }) => item);
-    await sql`INSERT INTO direct_orders (id, mode, customer_name, customer_phone, special_request, items, total, order_day, daily_order_number) VALUES (${id}, ${mode}, ${String(customerName || '').trim().slice(0, 80)}, ${phone}, ${String(specialRequest || '').trim().slice(0, 240)}, ${JSON.stringify(savedItems)}, ${total}, ${orderDay}::date, ${dailyOrderNumber})`;
+    await sql`INSERT INTO direct_orders (id, mode, customer_name, customer_phone, special_request, items, total, order_day, daily_order_number, tracking_token) VALUES (${id}, ${mode}, ${String(customerName || '').trim().slice(0, 80)}, ${phone}, ${String(specialRequest || '').trim().slice(0, 240)}, ${JSON.stringify(savedItems)}, ${total}, ${orderDay}::date, ${dailyOrderNumber}, ${trackingToken})`;
     // The order is already safely stored. Push delivery must never delay or block it.
     void notifyDirectOrder({ id, dailyOrderNumber, total, itemCount: savedItems.reduce((count, item) => count + Number(item.quantity || 0), 0) });
-    res.json({ id, status: 'new' });
+    res.json({ id, status: 'new', orderNumber: String(dailyOrderNumber).padStart(2, '0'), trackingUrl: `/track-order?token=${encodeURIComponent(trackingToken)}` });
   } catch (error) { res.status(500).json({ error: 'Unable to place the order. Please call us instead.' }); }
 });
 
 app.get('/api/orders', async (req, res) => { try { await ensureDirectOrdersTable(); const search=String(req.query.search||'').replace(/\D/g,'').slice(0,16); const like=`%${search}%`; const today=kolkataOrderDay(); const history=req.query.history==='1'; const requestedDay=/^\d{4}-\d{2}-\d{2}$/.test(String(req.query.date||''))?String(req.query.date):today; const operatingStatus=restaurantStatus(await getSection('airMenu')); const selectedDay=history?requestedDay:(operatingStatus.open?today:null); res.set({ 'Cache-Control':'no-store', 'X-Orders-Day': today, 'X-Orders-View': history?'history':'current', 'X-Orders-Session': operatingStatus.open?'open':'closed' }); if (!selectedDay) return res.json([]); res.json(await sql`SELECT o.*, (SELECT COUNT(*) FROM direct_orders h WHERE h.customer_phone=o.customer_phone) AS customer_order_count, (SELECT MAX(h.created_at) FROM direct_orders h WHERE h.customer_phone=o.customer_phone AND h.id<>o.id) AS customer_last_order_at FROM direct_orders o WHERE o.order_day=${selectedDay}::date AND (${search}='' OR o.customer_phone LIKE ${like} OR CAST(o.daily_order_number AS TEXT) LIKE ${like}) ORDER BY o.created_at DESC LIMIT 100`); } catch (error) { res.status(500).json({ error: error.message }); } });
+app.get('/api/order-tracking/:token', async (req, res) => { try { await ensureDirectOrdersTable(); const token=String(req.params.token||''); if (!/^[A-Za-z0-9_-]{24,128}$/.test(token)) return res.status(404).json({ error: 'Order not found.' }); const rows=await sql`SELECT daily_order_number, order_day, status, items, total, special_request, created_at, updated_at FROM direct_orders WHERE tracking_token=${token} LIMIT 1`; if (!rows.length) return res.status(404).json({ error: 'Order not found.' }); res.set('Cache-Control', 'no-store'); res.json(rows[0]); } catch (error) { res.status(500).json({ error: 'Unable to load this order.' }); } });
 app.get('/api/orders/push-key', (req, res) => { if (!pushEnabled) return res.status(503).json({ error: 'Push notifications have not been configured yet.' }); res.set('Cache-Control', 'no-store'); res.json({ publicKey: process.env.VAPID_PUBLIC_KEY }); });
 app.post('/api/orders/push-subscriptions', async (req, res) => { try { if (!pushEnabled) return res.status(503).json({ error: 'Push notifications have not been configured yet.' }); const subscription = req.body?.subscription; if (!subscription?.endpoint || !subscription?.keys?.p256dh || !subscription?.keys?.auth) return res.status(400).json({ error: 'Invalid push subscription.' }); await ensurePushSubscriptionsTable(); await sql`INSERT INTO order_push_subscriptions (endpoint, subscription) VALUES (${String(subscription.endpoint)}, ${JSON.stringify(subscription)}) ON CONFLICT (endpoint) DO UPDATE SET subscription=EXCLUDED.subscription, updated_at=NOW()`; res.json({ ok: true }); } catch (error) { res.status(500).json({ error: 'Unable to save push subscription.' }); } });
 app.patch('/api/orders/:id', async (req, res) => { try { await ensureDirectOrdersTable(); const status = ['new','accepted','preparing','ready','completed','rejected'].includes(req.body.status) ? req.body.status : 'new'; await sql`UPDATE direct_orders SET status=${status}, updated_at=NOW() WHERE id=${req.params.id}`; res.json({ ok:true }); } catch (error) { res.status(500).json({ error:error.message }); } });
