@@ -57,6 +57,7 @@ async function loadOrders() {
     const rows = await response.json();
     if (!Array.isArray(rows)) throw new Error('Unable to read orders. Please refresh.');
     const orderDay = response.headers.get('X-Orders-Day') || '';
+    const sessionOpen = response.headers.get('X-Orders-Session') !== 'closed';
     if (activeOrderDay && orderDay && activeOrderDay !== orderDay && orderSearch) { orderSearch.value = ''; query = ''; }
     activeOrderDay = orderDay || activeOrderDay;
     const ids = new Set(rows.map((order) => order.id));
@@ -64,11 +65,12 @@ async function loadOrders() {
     if (orderView === 'current' && !firstLoad && notificationApi && notificationApi.permission === 'granted') rows.filter((order) => !known.has(order.id) && order.status === 'new').forEach((order) => new notificationApi('New Direct Order', { body: `${order.customer_name || 'Guest'} · ${order.customer_phone}`, icon: '/images/red-lantern-logo-600.webp' }));
     if (orderView === 'current') known = ids;
     firstLoad = false;
-    root.innerHTML = rows.map(renderOrder).join('') || `<div class="empty-state">${query ? 'No orders match that number.' : 'No direct orders yet.'}</div>`;
+    const emptyMessage = query ? 'No orders match that number.' : orderView === 'current' && !sessionOpen ? 'The restaurant is closed. Today\'s orders are safely available in Order history.' : 'No direct orders yet.';
+    root.innerHTML = rows.map(renderOrder).join('') || `<div class="empty-state">${emptyMessage}</div>`;
     const clearButton = document.getElementById('clear-order-search');
     const searchStatus = document.getElementById('order-search-status');
     if (clearButton) clearButton.hidden = !query;
-    if (searchStatus) searchStatus.textContent = query ? `${rows.length} matching order${rows.length === 1 ? '' : 's'}` : orderView === 'history' ? `History · ${date || 'choose a date'}` : 'Current session';
+    if (searchStatus) searchStatus.textContent = query ? `${rows.length} matching order${rows.length === 1 ? '' : 's'}` : orderView === 'history' ? `History · ${date || 'choose a date'}` : sessionOpen ? 'Current session' : 'Session closed · orders archived';
   } catch (error) {
     root.innerHTML = `<div class="empty-state">${esc(error.message)}</div>`;
   }
