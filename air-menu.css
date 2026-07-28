@@ -79,12 +79,15 @@ main { width:min(100%,1420px); margin:0 auto; padding:0 16px 42px; }
 .order-customer-details input { width:100%; margin:8px 0 6px; padding:11px 12px; border:1px solid #cbd8cc; border-radius:8px; outline:0; color:var(--ink); background:#fff; font:700 13px Manrope,sans-serif; }
 .order-customer-details input:focus { border-color:#159447; box-shadow:0 0 0 3px rgba(21,148,71,.12); }
 .order-customer-details span { display:block; color:var(--muted); font-size:10px; line-height:1.45; }
-.loyalty-panel { margin:5px 0 12px; padding:11px; border:1px solid #f0d9a8; border-radius:9px; background:linear-gradient(135deg,#fff9e9,#fffdf7); }
-.loyalty-panel strong { display:block; color:#855600; font-size:12px; }
-.loyalty-panel > span { margin-top:3px; color:#805f22; font-weight:700; }
-.loyalty-panel label { margin-top:9px; }
+.loyalty-panel { margin:7px 0 14px; padding:14px; border:1px solid #efd69b; border-radius:12px; background:linear-gradient(135deg,#fff4d1,#fffdfa 62%,#f5f9ee); box-shadow:inset 0 1px rgba(255,255,255,.85); }
+.loyalty-panel-head { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.loyalty-panel strong { display:block; color:#735009; font-size:13px; }
+.loyalty-panel i { padding:4px 7px; border-radius:99px; color:#805a0d; background:rgba(255,255,255,.7); font-size:9px; font-style:normal; font-weight:900; letter-spacing:.04em; }
+.loyalty-panel > span { margin-top:4px; color:#805f22; font-size:11px; font-weight:800; }
+.loyalty-panel label { margin-top:11px; }
 .loyalty-panel small { color:#8a7650; font-weight:600; }
 .loyalty-panel input { margin-bottom:0; }
+.loyalty-panel b { display:block; margin-top:6px; color:#167546; font-size:11px; }
 .summary-item strong,.summary-item span { display:block; }
 .summary-item span { margin-top:3px; color:var(--muted); font-size:11px; }
 .summary-style-options { display:flex; flex-wrap:wrap; align-items:center; gap:8px 10px; margin:10px 0 0; padding:8px 10px; border:1px solid #dbe2ee; border-radius:8px; background:#f8fafc; }

@@ -193,6 +193,8 @@ function renderOrderSummary() {
   if (loyaltyPanel) loyaltyPanel.hidden = !(directOrdersEnabled && String(orderCustomerPhone).replace(/\D/g, '').length >= 7);
   if (redeemWrap) redeemWrap.hidden = loyaltyPoints < 100;
   if (redeemInput) redeemInput.max = String(loyaltyPoints);
+  const redeemPreview = document.getElementById('loyalty-redeem-preview');
+  if (redeemPreview) { const value = Math.floor(Number(redeemInput?.value) || 0); redeemPreview.textContent = value >= 100 ? `₹${Math.min(value, loyaltyPoints)} discount will be applied` : 'No points applied'; }
   const whatsappTarget = orderWhatsAppNumber ? `https://wa.me/${orderWhatsAppNumber}` : 'https://wa.me/';
   document.getElementById('share-whatsapp').href = `${whatsappTarget}?text=${encodeURIComponent(orderSummaryText())}`;
 }
@@ -278,7 +280,7 @@ function setupOrderShortlist() {
     renderOrderSummary();
     clearTimeout(loyaltyLookupTimer); loyaltyLookupTimer = setTimeout(loadLoyaltyPoints, 300);
   });
-  document.getElementById('loyalty-redeem').addEventListener('input', (event) => { const value=Math.max(0,Math.floor(Number(event.target.value)||0)); event.target.value=value ? String(value) : '0'; });
+  document.getElementById('loyalty-redeem').addEventListener('input', (event) => { const value=Math.max(0,Math.floor(Number(event.target.value)||0)); event.target.value=value ? String(value) : '0'; renderOrderSummary(); });
   document.getElementById('copy-order').addEventListener('click', async () => {
     const status = document.getElementById('order-action-status');
     try {
