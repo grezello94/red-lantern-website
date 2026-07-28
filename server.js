@@ -2102,13 +2102,13 @@ app.get('/api/orders/operations', async (req, res) => { try {
 app.put('/api/orders/operations', async (req, res) => { try {
   await ensureOperationsConfigTable();
   const source=req.body?.config || {};
-  const printers=(Array.isArray(source.printers)?source.printers:[]).slice(0,20).map((printer)=>({ id:String(printer.id||crypto.randomUUID()).replace(/[^a-zA-Z0-9_-]/g,'').slice(0,60), name:String(printer.name||'').trim().slice(0,60), type:printer.type==='bill'?'bill':'kot' })).filter((printer)=>printer.id&&printer.name);
+  const printers=(Array.isArray(source.printers)?source.printers:[]).slice(0,250).map((printer)=>({ id:String(printer.id||crypto.randomUUID()).replace(/[^a-zA-Z0-9_-]/g,'').slice(0,60), name:String(printer.name||'').trim().slice(0,60), type:printer.type==='bill'?'bill':'kot' })).filter((printer)=>printer.id&&printer.name);
   const printerIds=new Set(printers.map((printer)=>printer.id));
   const menu=await getSection('airMenu');
   const allItems=[...(menu.items||[]),...(menu.barItems||[])].map((item)=>({ name:String(item.name||''), category:String(item.category||'') }));
   const categories=new Set(allItems.map((item)=>item.category));
   const validItem=(category,name)=>allItems.some((item)=>item.category===category&&item.name===name);
-  const routes=(Array.isArray(source.routes)?source.routes:[]).slice(0,250).map((route)=>({ id:String(route.id||crypto.randomUUID()).replace(/[^a-zA-Z0-9_-]/g,'').slice(0,60), printerId:String(route.printerId||''), category:String(route.category||''), itemName:String(route.itemName||'') })).filter((route)=>route.id&&printerIds.has(route.printerId)&&categories.has(route.category)&&(!route.itemName||validItem(route.category,route.itemName)));
+  const routes=(Array.isArray(source.routes)?source.routes:[]).slice(0,2000).map((route)=>({ id:String(route.id||crypto.randomUUID()).replace(/[^a-zA-Z0-9_-]/g,'').slice(0,60), printerId:String(route.printerId||''), category:String(route.category||''), itemName:String(route.itemName||'') })).filter((route)=>route.id&&printerIds.has(route.printerId)&&categories.has(route.category)&&(!route.itemName||validItem(route.category,route.itemName)));
   const config={ printers, routes };
   await sql`INSERT INTO order_operations_config (config_key, config, updated_at) VALUES ('default', ${JSON.stringify(config)}, NOW()) ON CONFLICT (config_key) DO UPDATE SET config=EXCLUDED.config, updated_at=NOW()`;
   res.json({ ok:true, config });
