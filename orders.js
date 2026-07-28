@@ -16,6 +16,7 @@ let orderView = 'current';
 let activeOrderDay = '';
 let orderRecords = new Map();
 let historyAll = false;
+let orderStatusFilter = 'all';
 const orderSearchPanel = document.querySelector('.order-search-panel');
 const liveOrdersPanel = document.createElement('section');
 liveOrdersPanel.id = 'live-orders-panel';
@@ -24,6 +25,11 @@ if (orderSearchPanel && root) {
   orderSearchPanel.before(liveOrdersPanel);
   liveOrdersPanel.append(orderSearchPanel, root);
 }
+const orderStatusFilters = document.createElement('div');
+orderStatusFilters.id = 'order-status-filters';
+orderStatusFilters.setAttribute('aria-label', 'Filter live orders by status');
+orderStatusFilters.innerHTML = [['all', 'All orders'], ['accepted', 'Accepted'], ['preparing', 'Preparing'], ['ready', 'Ready'], ['completed', 'Completed'], ['rejected', 'Rejected']].map(([value, label]) => `<button type="button" class="order-status-filter ${value === 'all' ? 'is-active' : ''} status-${value}" data-order-status-filter="${value}" aria-pressed="${value === 'all'}">${label}</button>`).join('');
+orderSearchPanel?.after(orderStatusFilters);
 const liveOrdersToggle = document.createElement('button');
 liveOrdersToggle.type = 'button';
 liveOrdersToggle.id = 'live-orders-toggle';
@@ -32,7 +38,7 @@ liveOrdersToggle.setAttribute('aria-expanded', 'false');
 liveOrdersToggle.innerHTML = '<span class="live-dot" aria-hidden="true"></span><span>Live orders</span><b id="live-orders-count">0</b>';
 document.querySelector('.header-actions')?.prepend(liveOrdersToggle);
 const liveOrdersStyles = document.createElement('style');
-liveOrdersStyles.textContent = `.live-orders-toggle{display:inline-flex;align-items:center;gap:8px;color:#15335b;background:#fff;box-shadow:0 3px 11px rgba(7,20,45,.16)}.live-orders-toggle:hover,.live-orders-toggle.is-open{color:#fff;background:#168451}.live-dot{width:8px;height:8px;border-radius:50%;background:#e3342f;box-shadow:0 0 0 3px rgba(227,52,47,.14)}.live-orders-toggle.is-open .live-dot{background:#d9ffe9;box-shadow:0 0 0 3px rgba(217,255,233,.2)}.live-orders-toggle b{display:grid;min-width:19px;height:19px;place-items:center;padding:0 4px;border-radius:999px;color:#fff;background:#e3342f;font-size:10px}.live-orders-toggle.is-open b{color:#168451;background:#fff}#live-orders-panel{margin-top:20px}#live-orders-panel[hidden]{display:none}#live-orders-panel .order-search-panel{margin-top:0}#live-orders-panel main{padding-top:20px}@media(max-width:600px){.live-orders-toggle span:not(.live-dot){display:none}.live-orders-toggle{padding-inline:9px}#live-orders-panel{margin-top:14px}}`;
+liveOrdersStyles.textContent = `.live-orders-toggle{display:inline-flex;align-items:center;gap:8px;color:#15335b;background:#fff;box-shadow:0 3px 11px rgba(7,20,45,.16)}.live-orders-toggle:hover,.live-orders-toggle.is-open{color:#fff;background:#168451}.live-dot{width:8px;height:8px;border-radius:50%;background:#e3342f;box-shadow:0 0 0 3px rgba(227,52,47,.14)}.live-orders-toggle.is-open .live-dot{background:#d9ffe9;box-shadow:0 0 0 3px rgba(217,255,233,.2)}.live-orders-toggle b{display:grid;min-width:19px;height:19px;place-items:center;padding:0 4px;border-radius:999px;color:#fff;background:#e3342f;font-size:10px}.live-orders-toggle.is-open b{color:#168451;background:#fff}#live-orders-panel{margin-top:20px}#live-orders-panel[hidden]{display:none}#live-orders-panel .order-search-panel{margin-top:0}#live-orders-panel main{padding-top:20px}#order-status-filters{display:flex;flex-wrap:wrap;gap:8px;margin:12px 28px 0}.order-status-filter{padding:8px 12px;border:1px solid transparent;border-radius:9px;font-size:11px}.order-status-filter.status-all{color:#fff;background:#263d68}.order-status-filter.status-accepted{color:#fff;background:#e3342f}.order-status-filter.status-preparing{color:#3d2a00;background:#f5a21a}.order-status-filter.status-ready{color:#fff;background:#168451}.order-status-filter.status-completed{color:#fff;background:#506078}.order-status-filter.status-rejected{color:#fff;background:#9b2634}.order-status-filter:not(.is-active){color:#68778e;background:#fff;border-color:#dce4ee;box-shadow:none}.order-status-filter:hover{transform:none;filter:none;border-color:currentColor}.order-status-filter.is-active{box-shadow:0 4px 11px rgba(31,48,80,.2)}@media(max-width:600px){.live-orders-toggle span:not(.live-dot){display:none}.live-orders-toggle{padding-inline:9px}#live-orders-panel{margin-top:14px}#order-status-filters{margin:10px 16px 0;gap:6px}.order-status-filter{padding:7px 9px;font-size:10px}}`;
 document.head.appendChild(liveOrdersStyles);
 
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#039;' })[char]);
@@ -88,12 +94,14 @@ async function loadOrders() {
     const liveCount = document.getElementById('live-orders-count');
     if (liveCount && orderView === 'current') liveCount.textContent = String(rows.length);
     firstLoad = false;
+    const visibleRows = orderStatusFilter === 'all' ? rows : rows.filter((order) => order.status === orderStatusFilter);
     const emptyMessage = query ? 'No orders match that number.' : orderView === 'current' && !sessionOpen ? 'The restaurant is closed. Today\'s orders are safely available in Order history.' : 'No direct orders yet.';
-    root.innerHTML = rows.map(renderOrder).join('') || `<div class="empty-state">${emptyMessage}</div>`;
+    const filteredEmpty = orderStatusFilter !== 'all' ? `No ${orderStatusFilter} orders in this view.` : emptyMessage;
+    root.innerHTML = visibleRows.map(renderOrder).join('') || `<div class="empty-state">${filteredEmpty}</div>`;
     const clearButton = document.getElementById('clear-order-search');
     const searchStatus = document.getElementById('order-search-status');
     if (clearButton) clearButton.hidden = !query;
-    if (searchStatus) searchStatus.textContent = query ? `${rows.length} matching order${rows.length === 1 ? '' : 's'}` : orderView === 'history' ? `History · ${date || 'choose a date'}` : sessionOpen ? 'Current session' : 'Session closed · orders archived';
+    if (searchStatus) searchStatus.textContent = query ? `${visibleRows.length} matching order${visibleRows.length === 1 ? '' : 's'}` : orderView === 'history' ? `History · ${date || 'choose a date'}` : sessionOpen ? `${visibleRows.length} ${orderStatusFilter === 'all' ? 'current' : orderStatusFilter} order${visibleRows.length === 1 ? '' : 's'}` : 'Session closed · orders archived';
   } catch (error) {
     root.innerHTML = `<div class="empty-state">${esc(error.message)}</div>`;
   }
@@ -222,6 +230,17 @@ liveOrdersToggle.addEventListener('click', () => {
   }
 });
 document.getElementById('availability-close')?.addEventListener('click', () => { availability.hidden = true; document.getElementById('availability-toggle').setAttribute('aria-expanded', 'false'); });
+orderStatusFilters.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-order-status-filter]');
+  if (!button) return;
+  orderStatusFilter = button.dataset.orderStatusFilter;
+  orderStatusFilters.querySelectorAll('[data-order-status-filter]').forEach((filter) => {
+    const selected = filter === button;
+    filter.classList.toggle('is-active', selected);
+    filter.setAttribute('aria-pressed', String(selected));
+  });
+  loadOrders();
+});
 menuSearch?.addEventListener('input', renderAvailability);
 document.getElementById('availability-filters')?.addEventListener('click', (event) => {
   const button = event.target.closest('[data-availability-filter]');
