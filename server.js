@@ -2118,13 +2118,18 @@ app.post('/api/orders/:id/kots', async (req, res) => { try {
   const configRows=await sql`SELECT config FROM order_operations_config WHERE config_key='default' LIMIT 1`;
   const config=configRows[0]?.config || { printers:[], routes:[] };
   const printers=Array.isArray(config.printers)?config.printers:[]; const routes=Array.isArray(config.routes)?config.routes:[];
+  const previous=await sql`SELECT tickets FROM order_kots WHERE order_id=${orderRows[0].id}`;
+  const sent=new Map(); previous.forEach((kot)=>((Array.isArray(kot.tickets)?kot.tickets:[])).forEach((ticket)=>(Array.isArray(ticket.items)?ticket.items:[]).forEach((item)=>{const key=`${item.category||''}::${item.name||''}::${item.portion||''}::${item.style||''}`;sent.set(key,(sent.get(key)||0)+Number(item.quantity||0));})));
+  const pending=(Array.isArray(orderRows[0].items)?orderRows[0].items:[]).map((item)=>{const key=`${item.category||''}::${item.name||''}::${item.portion||''}::${item.style||''}`;const quantity=Math.max(0,Number(item.quantity||0)-(sent.get(key)||0));return quantity?{...item,quantity}:null;}).filter(Boolean);
+  if (!pending.length) return res.status(409).json({ error:'No new items to send. Reprint an existing KOT instead.' });
   const groups=new Map();
-  for (const item of (Array.isArray(orderRows[0].items)?orderRows[0].items:[])) { const route=routes.find((r)=>r.category===item.category && (!r.itemName || r.itemName===item.name)); const printer=printers.find((p)=>p.id===route?.printerId && p.type==='kot' && p.deviceName); if (printer) { if(!groups.has(printer.id)) groups.set(printer.id,{ printerName:printer.deviceName, printerLabel:printer.name, items:[] }); groups.get(printer.id).items.push(item); } }
+  for (const item of pending) { const route=routes.find((r)=>r.category===item.category && (!r.itemName || r.itemName===item.name)); const printer=printers.find((p)=>p.id===route?.printerId && p.type==='kot' && p.deviceName); if (printer) { if(!groups.has(printer.id)) groups.set(printer.id,{ printerName:printer.deviceName, printerLabel:printer.name, items:[] }); groups.get(printer.id).items.push(item); } }
   if (!groups.size) return res.status(400).json({ error:'No routed KOT items have an assigned system printer.' });
   const tickets=[...groups.values()];
   const created=await sql`INSERT INTO order_kots (order_id, order_number, tickets) VALUES (${orderRows[0].id}, ${orderRows[0].daily_order_number}, ${JSON.stringify(tickets)}) RETURNING kot_number`;
   res.status(201).json({ kotNumber:created[0].kot_number, order:orderRows[0], tickets });
 } catch (error) { res.status(500).json({ error:error.message || 'Unable to create KOT.' }); } });
+app.get('/api/orders/:id/kots', async (req,res)=>{try{await ensureKotsTable();res.json(await sql`SELECT kot_number, tickets, created_at FROM order_kots WHERE order_id=${req.params.id} ORDER BY kot_number DESC`)}catch(error){res.status(500).json({error:'Unable to load KOT history.'})}});
 app.put('/api/orders/operations', async (req, res) => { try {
   await ensureOperationsConfigTable();
   const source=req.body?.config || {};
