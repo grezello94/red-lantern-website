@@ -97,14 +97,18 @@ $lines = Get-Content -LiteralPath '${quote(file)}'
 $doc = New-Object System.Drawing.Printing.PrintDocument
 $doc.PrinterSettings.PrinterName = '${quote(printerName)}'
 if (-not $doc.PrinterSettings.IsValid) { throw 'The selected Windows printer is no longer available.' }
-$doc.DefaultPageSettings.Margins = New-Object System.Drawing.Printing.Margins(8, 8, 8, 8)
+# 79 mm rolls are configured by Windows drivers as 80 mm. Reuse that driver
+# form (rather than forcing a page length) and keep a 72 mm printable column.
+$thermalPaper = @($doc.PrinterSettings.PaperSizes | Where-Object { $_.Width -ge 300 -and $_.Width -le 320 } | Select-Object -First 1)
+if ($thermalPaper.Count) { $doc.DefaultPageSettings.PaperSize = $thermalPaper[0] }
+$doc.DefaultPageSettings.Margins = New-Object System.Drawing.Printing.Margins(14, 14, 8, 8)
 $doc.PrintController = New-Object System.Drawing.Printing.StandardPrintController
 $doc.add_PrintPage({ param($sender, $event)
   $g = $event.Graphics; $width = $event.MarginBounds.Width; $y = $event.MarginBounds.Top
   foreach ($line in $lines) {
     $style = [System.Drawing.FontStyle]::Regular; $size = 9
     if ($line -eq 'RED LANTERN RESTAURANT' -or $line -eq 'KITCHEN ORDER TICKET') { $style = [System.Drawing.FontStyle]::Bold; $size = 10 }
-    elseif ($line -match '^Order #') { $style = [System.Drawing.FontStyle]::Bold; $size = 15 }
+    elseif ($line -match '^KOT -') { $style = [System.Drawing.FontStyle]::Bold; $size = 15 }
     elseif ($line -match '^\\d+x ') { $style = [System.Drawing.FontStyle]::Bold; $size = 11 }
     $font = New-Object System.Drawing.Font('Arial', $size, $style)
     $format = New-Object System.Drawing.StringFormat; $format.Alignment = [System.Drawing.StringAlignment]::Center
@@ -127,7 +131,7 @@ function kotText(payload) {
   const order = payload.order || {};
   const items = Array.isArray(payload.items) ? payload.items : [];
   const line = '-'.repeat(34);
-  return ['RED LANTERN RESTAURANT', 'KITCHEN ORDER TICKET', line, `Order #${order.number || order.id || '—'}`, `${order.customer || 'Guest'} · ${order.fulfillment || 'Order'}`, line, ...items.map((item) => `${Number(item.quantity || 0)}x ${item.name || 'Item'}${item.portion ? ` (${item.portion})` : ''}${item.style ? ` · ${item.style}` : ''}`), order.note ? `${line}\nNote: ${order.note}` : '', line, new Date().toLocaleString(), '\n\n\n'].filter(Boolean).join('\n');
+  return ['RED LANTERN RESTAURANT', 'KITCHEN ORDER TICKET', line, `KOT - ${order.number || order.id || '—'}`, order.fulfillment || 'Order', `Captain: ${order.customer || 'Guest'}`, line, ...items.map((item) => `${Number(item.quantity || 0)}x ${item.name || 'Item'}${item.portion ? ` (${item.portion})` : ''}${item.style ? ` · ${item.style}` : ''}`), order.note ? `${line}\nNote: ${order.note}` : '', line, new Date().toLocaleString(), '\n\n\n'].filter(Boolean).join('\n');
 }
 
 function allowedOrigin(request) {
