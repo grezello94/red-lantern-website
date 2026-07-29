@@ -132,7 +132,7 @@ function kotText(payload) {
   const items = Array.isArray(payload.items) ? payload.items : [];
   const line = '-'.repeat(34);
   const guestLine = `Guest: ${order.customer || 'Guest'}${order.fulfillment ? ` · ${order.fulfillment}` : ''}${order.phone ? ` · ${order.phone}` : ''}`;
-  return ['RED LANTERN RESTAURANT', 'KITCHEN ORDER TICKET', line, `KOT #${order.kotNumber || '—'}`, `Order #${order.number || order.id || '—'}`, guestLine, line, ...items.map((item) => `${Number(item.quantity || 0)}x ${item.name || 'Item'}${item.portion ? ` (${item.portion})` : ''}${item.style ? ` · ${item.style}` : ''}`), order.note ? `${line}\nNote: ${order.note}` : '', line, new Date().toLocaleString(), '\n\n\n'].filter(Boolean).join('\n');
+  return ['RED LANTERN RESTAURANT', 'KITCHEN ORDER TICKET', order.reprint ? '*** REPRINT ***' : '', line, `KOT #${order.kotNumber || '—'}`, `Order #${order.number || order.id || '—'}`, guestLine, line, ...items.map((item) => `${Number(item.quantity || 0)}x ${item.name || 'Item'}${item.portion ? ` (${item.portion})` : ''}${item.style ? ` · ${item.style}` : ''}`), order.note ? `${line}\nNote: ${order.note}` : '', line, new Date().toLocaleString(), '\n\n\n'].filter(Boolean).join('\n');
 }
 
 function allowedOrigin(request) {
