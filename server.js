@@ -2106,7 +2106,7 @@ app.get('/api/orders/operations', async (req, res) => { try {
   await ensureOperationsConfigTable();
   const rows=await sql`SELECT config FROM order_operations_config WHERE config_key='default' LIMIT 1`;
   const menu=await getSection('airMenu');
-  const format=(items,menuType)=>items.map((item)=>({ name:String(item.name||''), category:String(item.category||''), menuType })).filter((item)=>item.name);
+  const format=(items,menuType)=>items.map((item)=>({ name:String(item.name||''), category:String(item.category||''), menuType, withBonePrice:String(item.withBonePrice||''), bonelessPrice:String(item.bonelessPrice||'') })).filter((item)=>item.name);
   const config=rows[0]?.config && typeof rows[0].config === 'object' ? rows[0].config : { printers:[], routes:[] };
   res.set('Cache-Control','no-store');
   res.json({ config:{ printers:Array.isArray(config.printers)?config.printers:[], routes:Array.isArray(config.routes)?config.routes:[] }, menu:[...format(menu.items||[],'food'),...format(menu.barItems||[],'bar')] });
@@ -2123,7 +2123,7 @@ app.post('/api/orders/:id/kots', async (req, res) => { try {
   const pending=(Array.isArray(orderRows[0].items)?orderRows[0].items:[]).map((item)=>{const key=`${item.category||''}::${item.name||''}::${item.portion||''}::${item.style||''}`;const quantity=Math.max(0,Number(item.quantity||0)-(sent.get(key)||0));return quantity?{...item,quantity}:null;}).filter(Boolean);
   if (!pending.length) { const latest=await sql`SELECT kot_number, tickets FROM order_kots WHERE order_id=${orderRows[0].id} ORDER BY kot_number DESC LIMIT 1`; return res.status(409).json({ error:'No new items to send.', latestKot:latest[0] || null, order:orderRows[0] }); }
   const groups=new Map();
-  for (const item of pending) { const route=routes.find((r)=>r.category===item.category && r.itemName===item.name) || routes.find((r)=>r.category===item.category && !r.itemName); const printer=printers.find((p)=>p.id===route?.printerId && p.type==='kot' && p.deviceName); if (printer) { if(!groups.has(printer.id)) groups.set(printer.id,{ printerName:printer.deviceName, printerLabel:printer.name, items:[] }); groups.get(printer.id).items.push(item); } }
+  for (const item of pending) { const route=routes.find((r)=>r.category===item.category && r.itemName===item.name && r.portion===item.portion) || routes.find((r)=>r.category===item.category && r.itemName===item.name && !r.portion) || routes.find((r)=>r.category===item.category && !r.itemName) || routes.find((r)=>r.category==='*' && !r.itemName); const printer=printers.find((p)=>p.id===route?.printerId && p.type==='kot' && p.deviceName); if (printer) { if(!groups.has(printer.id)) groups.set(printer.id,{ printerName:printer.deviceName, printerLabel:printer.name, items:[] }); groups.get(printer.id).items.push(item); } }
   if (!groups.size) return res.status(400).json({ error:'No routed KOT items have an assigned system printer.' });
   const tickets=[...groups.values()]; const fingerprint=crypto.createHash('sha256').update(JSON.stringify(pending)).digest('hex');
   const created=await sql`INSERT INTO order_kots (order_id, order_number, tickets, item_fingerprint) VALUES (${orderRows[0].id}, ${orderRows[0].daily_order_number}, ${JSON.stringify(tickets)}, ${fingerprint}) ON CONFLICT (order_id, item_fingerprint) WHERE item_fingerprint IS NOT NULL DO NOTHING RETURNING kot_number`;
@@ -2150,15 +2150,15 @@ app.put('/api/orders/operations', async (req, res) => { try {
   if (new Set(printers.map((printer)=>printer.id)).size !== printers.length) return res.status(400).json({ error:'Each configured printer must have a unique saved ID.' });
   const printerIds=new Set(printers.map((printer)=>printer.id));
   const menu=await getSection('airMenu');
-  const allItems=[...(menu.items||[]),...(menu.barItems||[])].map((item)=>({ name:String(item.name||''), category:String(item.category||'') }));
+  const allItems=[...(menu.items||[]),...(menu.barItems||[])].map((item)=>({ name:String(item.name||''), category:String(item.category||''), portions:[item.withBonePrice ? 'With Bone' : '', item.bonelessPrice ? 'Boneless' : ''].filter(Boolean) }));
   const categories=new Set(allItems.map((item)=>item.category));
-  const validItem=(category,name)=>allItems.some((item)=>item.category===category&&item.name===name);
-  const routes=(Array.isArray(source.routes)?source.routes:[]).slice(0,2000).map((route)=>({ id:String(route.id||crypto.randomUUID()).replace(/[^a-zA-Z0-9_-]/g,'').slice(0,60), printerId:String(route.printerId||''), category:String(route.category||''), itemName:String(route.itemName||'') })).filter((route)=>route.id&&printerIds.has(route.printerId)&&categories.has(route.category)&&(!route.itemName||validItem(route.category,route.itemName)));
+  const validItem=(category,name,portion='')=>allItems.some((item)=>item.category===category&&item.name===name&&(!portion||item.portions.includes(portion)));
+  const routes=(Array.isArray(source.routes)?source.routes:[]).slice(0,2000).map((route)=>({ id:String(route.id||crypto.randomUUID()).replace(/[^a-zA-Z0-9_-]/g,'').slice(0,60), printerId:String(route.printerId||''), category:String(route.category||''), itemName:String(route.itemName||''), portion:String(route.portion||'').trim().slice(0,40) })).filter((route)=>route.id&&printerIds.has(route.printerId)&&(route.category==='*' ? !route.itemName&&!route.portion : categories.has(route.category)&&(!route.itemName ? !route.portion : validItem(route.category,route.itemName,route.portion))));
   if (new Set(routes.map((route)=>route.id)).size !== routes.length) return res.status(400).json({ error:'Each routing rule must have a unique saved ID.' });
   const assignedTargets=new Set();
   for (const route of routes) {
-    const target=`${route.category}::${route.itemName || '*'}`;
-    if (assignedTargets.has(target)) return res.status(400).json({ error:`${route.itemName || route.category} is already routed to another printer. Remove its existing route first.` });
+    const target=`${route.category}::${route.itemName || '*'}::${route.portion || '*'}`;
+    if (assignedTargets.has(target)) return res.status(400).json({ error:`${route.itemName || route.category}${route.portion ? ` (${route.portion})` : ''} is already routed to another printer. Remove its existing route first.` });
     assignedTargets.add(target);
   }
   const config={ printers, routes };

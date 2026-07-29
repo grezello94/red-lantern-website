@@ -121,3 +121,49 @@
   .menu-item { grid-template-columns: 1fr; }
   .availability-state { justify-content: flex-start; text-align: left; }
 }
+
+/* Desktop staff app shell: deliberately calm and native-feeling on Windows and macOS. */
+html { min-height: 100%; background: #e9eef5; }
+body {
+  min-height: 100vh;
+  background: linear-gradient(145deg, #f7f9fc 0%, #eef3f9 58%, #f8fafc 100%);
+  color: #1d2b42;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+button, input, select, textarea { font-family: inherit; }
+button { transition: background-color .16s ease, border-color .16s ease, box-shadow .16s ease, transform .16s ease; }
+button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid rgba(45, 108, 224, .28); outline-offset: 2px; }
+header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  min-height: 76px !important;
+  padding: 15px 26px;
+  border-bottom: 1px solid rgba(255,255,255,.16);
+  box-shadow: 0 10px 25px rgba(20, 37, 67, .16);
+}
+.header-actions button, .live-orders-toggle {
+  min-height: 38px;
+  border-radius: 9px;
+  font-size: 12px;
+  letter-spacing: -.01em;
+}
+.order-search-panel {
+  max-width: 1920px;
+  min-height: 62px;
+  margin: 18px auto 0;
+  padding: 10px 14px;
+  border-color: #dbe4ef;
+  border-radius: 12px;
+  box-shadow: 0 4px 14px rgba(24, 46, 81, .06);
+}
+#orders { max-width: 1920px; margin: 0 auto; }
+.order { box-shadow: 0 5px 16px rgba(29, 48, 80, .07); }
+@media (min-width: 900px) {
+  body { padding: 10px; box-sizing: border-box; }
+  header { top: 10px; border-radius: 14px; }
+  .order-search-panel { margin-top: 16px; }
+}
+@media (max-width: 760px) { header { position: relative; } }
