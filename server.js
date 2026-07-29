@@ -138,6 +138,12 @@ function diagnosticSolution(category, message = '') {
   if (category === 'cms-save' && (text.includes('neon') || text.includes('database'))) return 'Check NEON_DATABASE_URL in Vercel and confirm the Neon database is active.';
   if (category === 'performance') return 'Open Vercel Observability for this path, check database/API calls, and reduce image or payload size if this repeats.';
   if (category === 'frontend') return 'Open the listed page in the browser, reproduce the action, and check the script/file named in the log details.';
+  if (category === 'orders') {
+    if (text.includes('printer') || text.includes('kot')) return 'Check that Print Bridge is running on the counter device, the LAN printer is online, and category routing is saved in Orders → Operations.';
+    if (text.includes('offline') || text.includes('network') || text.includes('internet')) return 'The order was kept safely on the device. Restore the internet connection and leave Orders open so it can sync automatically.';
+    if (text.includes('menu') || text.includes('availability')) return 'Open Orders → Menu availability, confirm the item is in stock, then refresh the counter menu.';
+    return 'Check the Orders console connection and Database Health. If this repeats, copy this log and inspect the listed Orders route.';
+  }
   if (category === 'server') return 'Check the exact route and stack/location in this log, then inspect the matching server route in server.js.';
   return 'Review the route, message, and details below. If repeated, fix the referenced page or server route first.';
 }
@@ -149,6 +155,7 @@ function diagnosticLocation(category, pathValue = '', details = {}) {
   if (category === 'auth') return 'Admin authentication middleware';
   if (category === 'security') return 'Request security middleware';
   if (category === 'performance') return `Slow route: ${pathValue || 'unknown'}`;
+  if (category === 'orders') return details.source || pathValue || 'Orders console';
   return pathValue || 'Server';
 }
 
@@ -264,6 +271,7 @@ function isProtectedAdminPath(req) {
     || req.path === '/admin-cms.js'
     || req.path === '/api/admin/content'
     || req.path === '/api/admin/logs'
+    || req.path === '/api/admin/orders-errors'
     || req.path === '/api/admin/qr-scans'
     || req.path === '/api/admin/health'
     || req.path === '/api/admin/customer-insights'
@@ -572,10 +580,12 @@ async function ensureDirectOrdersTable() {
     await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS loyalty_points_earned INTEGER NOT NULL DEFAULT 0`;
     await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS loyalty_awarded_at TIMESTAMPTZ`;
     await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS fulfillment_type TEXT`;
+    await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS client_request_id TEXT`;
     await sql`UPDATE direct_orders SET order_day=(created_at AT TIME ZONE 'Asia/Kolkata')::date WHERE order_day IS NULL`;
     await sql`WITH numbered AS (SELECT id, ROW_NUMBER() OVER (PARTITION BY order_day ORDER BY created_at, id)::integer AS daily_number FROM direct_orders) UPDATE direct_orders AS orders SET daily_order_number=numbered.daily_number FROM numbered WHERE orders.id=numbered.id AND orders.daily_order_number IS NULL`;
     await sql`CREATE UNIQUE INDEX IF NOT EXISTS direct_orders_day_number_unique ON direct_orders (order_day, daily_order_number) WHERE daily_order_number IS NOT NULL`;
     await sql`CREATE UNIQUE INDEX IF NOT EXISTS direct_orders_tracking_token_unique ON direct_orders (tracking_token) WHERE tracking_token IS NOT NULL`;
+    await sql`CREATE UNIQUE INDEX IF NOT EXISTS direct_orders_client_request_unique ON direct_orders (client_request_id) WHERE client_request_id IS NOT NULL`;
     await sql`CREATE TABLE IF NOT EXISTS direct_order_counters (order_day DATE PRIMARY KEY, next_number INTEGER NOT NULL)`;
   })();
   return directOrdersTableReady;
@@ -2079,6 +2089,7 @@ app.post('/api/direct-orders', async (req, res) => {
 app.post('/api/orders/counter', async (req, res) => {
   try {
     const { customerName, customerPhone, specialRequest, items = [] } = req.body || {};
+    const clientRequestId=String(req.get('X-Counter-Order-Id')||req.body?.clientRequestId||'').trim().slice(0,80);
     const menu = await getSection('airMenu');
     const priceNumber = (value) => Number(String(value || '').replace(/[^0-9.]/g, '')) || 0;
     const displayItemName = (value) => String(value || '').replace(/[.…·]{2,}/g, ' ').replace(/\s+\d{2,5}(?:\.\d{1,2})?\s*\/?\s*$/, '').replace(/\s+/g, ' ').trim();
@@ -2095,17 +2106,28 @@ app.post('/api/orders/counter', async (req, res) => {
     }).filter(Boolean);
     if (!clean.length || clean.length !== submitted.length) return res.status(400).json({ error:'Choose at least one current menu item.' });
     await ensureDirectOrdersTable(); await ensureMenuAvailabilityTable();
+    if (clientRequestId) {
+      const existing=await sql`SELECT id,daily_order_number,total FROM direct_orders WHERE client_request_id=${clientRequestId} LIMIT 1`;
+      if (existing.length) return res.json({ id:existing[0].id, orderNumber:String(existing[0].daily_order_number).padStart(2,'0'), total:Number(existing[0].total), duplicate:true });
+    }
     const unavailable=new Set((await sql`SELECT item_key FROM menu_availability WHERE unavailable_until > NOW()`).map((row)=>row.item_key));
     if (clean.some((item)=>unavailable.has(item.availabilityKey))) return res.status(409).json({ error:'One or more selected items are out of stock.' });
     const { orderDay, number }=await nextDailyOrderNumber(); const id=`RL${Date.now().toString(36).toUpperCase()}${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
     const saved=clean.map(({availabilityKey,...item})=>item), total=saved.reduce((sum,item)=>sum+item.quantity*(priceNumber(item.price)+(item.style?10:0)),0);
     const phone=String(customerPhone||'').replace(/\D/g,'').slice(0,16)||`walkin-${id}`;
-    await sql`INSERT INTO direct_orders (id,status,mode,customer_name,customer_phone,special_request,items,total,order_day,daily_order_number,tracking_token,loyalty_points_redeemed,loyalty_points_earned,fulfillment_type) VALUES (${id},'new','counter',${String(customerName||'Walk-in customer').trim().slice(0,80)},${phone},${String(specialRequest||'').trim().slice(0,240)},${JSON.stringify(saved)},${total},${orderDay}::date,${number},${crypto.randomBytes(24).toString('base64url')},0,${Math.floor(total/10)},'pickup')`;
+    await sql`INSERT INTO direct_orders (id,status,mode,customer_name,customer_phone,special_request,items,total,order_day,daily_order_number,tracking_token,loyalty_points_redeemed,loyalty_points_earned,fulfillment_type,client_request_id) VALUES (${id},'new','counter',${String(customerName||'Walk-in customer').trim().slice(0,80)},${phone},${String(specialRequest||'').trim().slice(0,240)},${JSON.stringify(saved)},${total},${orderDay}::date,${number},${crypto.randomBytes(24).toString('base64url')},0,${Math.floor(total/10)},'pickup',${clientRequestId||null})`;
     void notifyDirectOrder({ id, dailyOrderNumber:number, total, itemCount:saved.reduce((count,item)=>count+Number(item.quantity||0),0) });
     res.status(201).json({ id, orderNumber:String(number).padStart(2,'0'), total });
   } catch (error) { res.status(500).json({ error:'Unable to save the counter order.' }); }
 });
 app.get('/api/orders', async (req, res) => { try { await ensureDirectOrdersTable(); const search=String(req.query.search||'').replace(/\D/g,'').slice(0,16); const like=`%${search}%`; const today=kolkataOrderDay(); const history=req.query.history==='1'; const requestedDay=/^\d{4}-\d{2}-\d{2}$/.test(String(req.query.date||''))?String(req.query.date):''; const operatingStatus=restaurantStatus(await getSection('airMenu')); res.set({ 'Cache-Control':'no-store', 'X-Orders-Day': today, 'X-Orders-View': history?'history':'current', 'X-Orders-Session': operatingStatus.open?'open':'closed' }); if (!history && !operatingStatus.open) return res.json([]); const orders = history && !requestedDay ? await sql`SELECT o.*, (SELECT COUNT(*) FROM direct_orders h WHERE h.customer_phone=o.customer_phone) AS customer_order_count, (SELECT MAX(h.created_at) FROM direct_orders h WHERE h.customer_phone=o.customer_phone AND h.id<>o.id) AS customer_last_order_at FROM direct_orders o WHERE ${search}='' OR o.customer_phone LIKE ${like} OR CAST(o.daily_order_number AS TEXT) LIKE ${like} ORDER BY o.created_at DESC LIMIT 100` : await sql`SELECT o.*, (SELECT COUNT(*) FROM direct_orders h WHERE h.customer_phone=o.customer_phone) AS customer_order_count, (SELECT MAX(h.created_at) FROM direct_orders h WHERE h.customer_phone=o.customer_phone AND h.id<>o.id) AS customer_last_order_at FROM direct_orders o WHERE o.order_day=${history ? requestedDay || today : today}::date AND (${search}='' OR o.customer_phone LIKE ${like} OR CAST(o.daily_order_number AS TEXT) LIKE ${like}) ORDER BY o.created_at DESC LIMIT 100`; res.json(orders); } catch (error) { res.status(500).json({ error: error.message }); } });
+app.get('/api/orders/live-summary', async (req, res) => { try {
+  await ensureDirectOrdersTable();
+  const orderDay=kolkataOrderDay();
+  const rows=await sql`SELECT COUNT(*) FILTER (WHERE status IN ('new','accepted','preparing','ready'))::integer AS active_order_count, COALESCE(MAX(daily_order_number) FILTER (WHERE status IN ('new','accepted','preparing','ready')),0)::integer AS latest_active_order_number, COALESCE(MAX(daily_order_number),0)::integer AS latest_order_number FROM direct_orders WHERE order_day=${orderDay}::date`;
+  res.set('Cache-Control','no-store');
+  res.json({ orderDay, activeOrderCount:Number(rows[0]?.active_order_count||0), latestActiveOrderNumber:Number(rows[0]?.latest_active_order_number||0), latestOrderNumber:Number(rows[0]?.latest_order_number||0) });
+} catch (error) { res.status(500).json({ error:'Unable to load live order status.' }); } });
 app.get('/api/orders/:id/print', async (req, res) => { try {
   await ensureDirectOrdersTable();
   await ensureLoyaltyTable();
@@ -2597,6 +2619,38 @@ app.delete('/api/admin/logs', async (req, res) => {
   }
 });
 
+function ordersDiagnosticSolution(log = {}) {
+  const text = `${log.message || ''} ${log.path || ''}`.toLowerCase();
+  if (text.includes('printer') || text.includes('kot')) return 'Check Print Bridge, LAN connectivity, printer power, and category routing in Orders → Operations.';
+  if (text.includes('offline') || text.includes('network') || text.includes('fetch')) return 'Keep the Orders screen open, restore internet, and let queued counter orders sync automatically.';
+  if (text.includes('availability') || text.includes('menu')) return 'Check Menu availability and confirm the dish has a valid price in Air Menu.';
+  if (Number(log.status_code) >= 500) return 'Check Database Health first. If it is healthy, copy this event and inspect the matching Orders route in server.js.';
+  return log.solution || 'Review the route and time of this Orders event. If it repeats, copy the record for technical support.';
+}
+
+app.get('/api/admin/orders-errors', async (req, res) => {
+  try {
+    res.set('Cache-Control', 'no-store');
+    if (!sql) return res.status(503).json({ error: 'Neon is not configured, so Orders error logs cannot be loaded.' });
+    const limit = Math.min(Math.max(Number(req.query.limit || 100), 1), 200);
+    await ensureDiagnosticsTable();
+    const rows = await sql`SELECT id,created_at,level,category,message,solution,location,method,path,status_code,duration_ms,details FROM website_diagnostics WHERE (category='orders' OR path LIKE '/api/orders%') AND level IN ('error','warning') ORDER BY created_at DESC LIMIT ${limit}`;
+    res.json({ logs: rows.map((log) => ({ ...log, solution: ordersDiagnosticSolution(log) })) });
+  } catch (error) {
+    console.error('Orders diagnostics read error:', error);
+    res.status(500).json({ error: 'Unable to load Orders error logs.' });
+  }
+});
+
+app.delete('/api/admin/orders-errors', async (req, res) => {
+  try {
+    if (!sql) return res.status(503).json({ error: 'Neon is not configured, so Orders error logs cannot be cleared.' });
+    await ensureDiagnosticsTable();
+    await sql`DELETE FROM website_diagnostics WHERE category='orders' OR path LIKE '/api/orders%'`;
+    res.json({ ok: true });
+  } catch (error) { res.status(500).json({ error: 'Unable to clear Orders error logs.' }); }
+});
+
 app.get('/api/admin/health', async (req, res) => {
   const checks = {
     server: { ok: true, message: 'Server function responded.' },
@@ -2604,13 +2658,44 @@ app.get('/api/admin/health', async (req, res) => {
     cloudinary: { ok: false, message: 'Not checked.' },
     environment: { ok: false, message: 'Not checked.' }
   };
+  let databaseMetrics = null;
 
   try {
     if (!sql) {
       checks.database.message = 'NEON_DATABASE_URL is missing or invalid.';
     } else {
+      const startedAt = Date.now();
       await sql`SELECT 1`;
-      checks.database = { ok: true, message: 'Neon database responded.' };
+      const latencyMs = Date.now() - startedAt;
+      await Promise.all([ensureDirectOrdersTable(), ensureKotsTable(), ensureOperationsConfigTable(), ensureMenuAvailabilityTable(), ensureLoyaltyTable(), ensurePushSubscriptionsTable()]);
+      const [orders, kots, printers, availability, loyalty, subscriptions, latestOrder, databaseSize] = await Promise.all([
+        sql`SELECT COUNT(*)::int AS count FROM direct_orders`,
+        sql`SELECT COUNT(*)::int AS count FROM order_kots`,
+        sql`SELECT COUNT(*)::int AS count FROM order_operations_config`,
+        sql`SELECT COUNT(*)::int AS count FROM menu_availability WHERE unavailable_until > NOW()`,
+        sql`SELECT COUNT(*)::int AS count FROM loyalty_accounts`,
+        sql`SELECT COUNT(*)::int AS count FROM order_push_subscriptions`,
+        sql`SELECT MAX(created_at) AS created_at FROM direct_orders`,
+        sql`SELECT pg_database_size(current_database())::bigint AS bytes`
+      ]);
+      const warningBytes = Math.max(0, Number(process.env.DB_STORAGE_WARNING_BYTES || 536870912));
+      const sizeBytes = Number(databaseSize[0]?.bytes || 0);
+      databaseMetrics = {
+        latencyMs,
+        sizeBytes,
+        warningBytes,
+        latestOrderAt: latestOrder[0]?.created_at || null,
+        counts: {
+          orders: Number(orders[0]?.count || 0),
+          kots: Number(kots[0]?.count || 0),
+          printerConfigs: Number(printers[0]?.count || 0),
+          unavailableItems: Number(availability[0]?.count || 0),
+          loyaltyAccounts: Number(loyalty[0]?.count || 0),
+          alertDevices: Number(subscriptions[0]?.count || 0)
+        },
+        storageWarning: warningBytes > 0 && sizeBytes >= warningBytes
+      };
+      checks.database = { ok: !databaseMetrics.storageWarning && latencyMs < 1000, message: `Neon responded in ${latencyMs} ms${databaseMetrics.storageWarning ? ' · storage warning' : ''}.` };
     }
 
     const cloudinaryConfig = cloudinary.config();
@@ -2626,7 +2711,8 @@ app.get('/api/admin/health', async (req, res) => {
     res.status(ok ? 200 : 503).json({
       ok,
       checkedAt: new Date().toISOString(),
-      checks
+      checks,
+      databaseMetrics
     });
   } catch (error) {
     logDiagnostic({
@@ -2652,7 +2738,7 @@ app.get('/api/admin/health', async (req, res) => {
 app.post('/api/client-log', async (req, res) => {
   try {
     const body = req.body || {};
-    const category = body.category === 'performance' ? 'performance' : 'frontend';
+    const category = body.category === 'performance' ? 'performance' : body.category === 'orders' ? 'orders' : 'frontend';
     const level = body.level === 'warning' || category === 'performance' ? 'warning' : 'error';
     await writeDiagnostic({
       level,

@@ -230,6 +230,12 @@
       .health-item span { color: #6b7280; font-size: 13px; line-height: 1.5; }
       .health-item.ok { border-color: #bbf7d0; background: #f0fdf4; }
       .health-item.bad { border-color: #fecaca; background: #fef2f2; }
+      .database-health-summary { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin-bottom:14px; }
+      .database-metric { padding:14px; border:1px solid #dfe7ef; border-radius:9px; background:#f8fafc; }
+      .database-metric strong, .database-metric span { display:block; }
+      .database-metric strong { color:#1f385d; font-size:20px; }
+      .database-metric span { margin-top:4px; color:#66768c; font-size:12px; font-weight:700; }
+      .database-metric.warning { border-color:#f3c66e; background:#fff8e7; }
       .log-list { display: grid; gap: 14px; }
       .log-entry { border: 1px solid #e5e7eb; border-left: 5px solid #6b7280; border-radius: 8px; padding: 16px; background: #fff; }
       .log-entry.selected { box-shadow: 0 0 0 2px rgba(17, 24, 39, 0.14); }
@@ -253,7 +259,7 @@
       .log-solution { padding: 12px; border-radius: 8px; background: #fff; border: 1px solid #e5e7eb; color: #374151; line-height: 1.5; font-size: 14px; }
       .log-details { margin-top: 10px; color: #4b5563; font-size: 12px; white-space: pre-wrap; word-break: break-word; }
       @media (max-width: 900px) {
-        .health-grid, .log-meta { grid-template-columns: 1fr; }
+        .health-grid, .log-meta, .database-health-summary { grid-template-columns: 1fr; }
       }
     </style>
   </head>
@@ -277,6 +283,8 @@
         <div class="nav-category">System</div>
         <div class="nav-item" data-target="tab-qr-scans">QR Scan Logs</div>
         <div class="nav-item" data-target="tab-logs">Site Logs</div>
+        <div class="nav-item" data-target="tab-orders-errors">Orders Error Logs</div>
+        <div class="nav-item" data-target="tab-database-health">Database Health</div>
       </nav>
     </aside>
 
@@ -1167,15 +1175,6 @@
         </header>
 
         <div class="card">
-          <h2>Health Check</h2>
-          <div class="log-toolbar">
-            <button type="button" id="refresh-health" class="btn-refresh">Refresh health</button>
-            <span id="health-status" class="log-status">Checking...</span>
-          </div>
-          <div id="health-grid" class="health-grid"></div>
-        </div>
-
-        <div class="card">
           <h2>Diagnostics Log</h2>
           <div class="log-toolbar">
             <button type="button" id="refresh-logs" class="btn-refresh">Refresh logs</button>
@@ -1195,6 +1194,52 @@
             <span id="log-copy-status" class="log-copy-status">0 selected</span>
           </div>
           <div id="logs-list" class="log-list"></div>
+        </div>
+      </div>
+
+      <!-- ORDERS ERROR LOGS TAB -->
+      <div id="tab-orders-errors" class="tab-content">
+        <header class="header">
+          <div>
+            <h1>Orders Error Logs</h1>
+            <p>Orders, KOT, printer, menu, and connection issues—with a practical suggested fix for each.</p>
+          </div>
+          <button class="logout-btn">Log Out</button>
+        </header>
+        <div class="card">
+          <h2>Orders diagnostics</h2>
+          <p class="help-text" style="margin-bottom:16px;">Only technical context is stored here. Customer details, dish names, and order contents are excluded.</p>
+          <div class="log-toolbar">
+            <button type="button" id="refresh-orders-errors" class="btn-refresh">Refresh Orders errors</button>
+            <button type="button" id="clear-orders-errors" class="logout-btn">Clear Orders errors</button>
+            <span id="orders-errors-status" class="log-status">Loading...</span>
+          </div>
+          <div id="orders-errors-list" class="log-list"></div>
+        </div>
+      </div>
+
+      <!-- DATABASE HEALTH TAB -->
+      <div id="tab-database-health" class="tab-content">
+        <header class="header">
+          <div>
+            <h1>Database Health</h1>
+            <p>Live, read-only health signals for the Orders database.</p>
+          </div>
+          <button class="logout-btn">Log Out</button>
+        </header>
+        <div class="card">
+          <h2>Database Overview</h2>
+          <div class="log-toolbar">
+            <button type="button" id="refresh-health" class="btn-refresh">Refresh database health</button>
+            <span id="health-status" class="log-status">Checking...</span>
+          </div>
+          <div id="health-grid" class="health-grid"></div>
+        </div>
+        <div class="card">
+          <h2>Storage &amp; Operations</h2>
+          <span class="help-text" style="margin-bottom:18px;">Read-only live signals. Storage is database usage only; check Neon for plan quota and billing.</span>
+          <div id="database-health-summary" class="database-health-summary"></div>
+          <div id="database-health-details" class="health-grid"></div>
         </div>
       </div>
 
@@ -1424,6 +1469,6 @@
         });
       }
     </script>
-    <script src="admin-cms.js?v=20260730-19" defer></script>
+    <script src="admin-cms.js?v=20260730-23" defer></script>
   </body>
 </html>

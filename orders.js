@@ -31,7 +31,69 @@ let counterMenu = [];
 let counterCart = [];
 let counterCategory = 'all';
 let counterChoiceItem = null;
+const offlineCounterOrdersKey = 'red-lantern-counter-orders';
+let counterSyncInProgress = false;
+const ordersDiagnosticRecent = new Map();
 const orderSearchPanel = document.querySelector('.order-search-panel');
+const connectivity = document.createElement('p');
+connectivity.id = 'orders-connectivity';
+document.querySelector('header')?.after(connectivity);
+function counterRequestId() { return `counter-${Date.now()}-${crypto.getRandomValues(new Uint32Array(1))[0].toString(36)}`; }
+function queuedCounterOrders() { try { return JSON.parse(localStorage.getItem(offlineCounterOrdersKey) || '[]'); } catch { return []; } }
+function saveQueuedCounterOrders(orders) { localStorage.setItem(offlineCounterOrdersKey, JSON.stringify(orders)); }
+function reportOrdersDiagnostic(payload = {}) {
+  const source = payload.source || 'orders.js';
+  const message = String(payload.message || 'Orders console issue.').slice(0, 400);
+  const fingerprint = `${source}:${message}`;
+  const previous = ordersDiagnosticRecent.get(fingerprint) || 0;
+  if (Date.now() - previous < 5 * 60 * 1000) return;
+  ordersDiagnosticRecent.set(fingerprint, Date.now());
+  const body = JSON.stringify({ category:'orders', level:payload.level || 'error', path:'/orders', source, message, stack:String(payload.stack || '').slice(0, 1000) });
+  fetch('/api/client-log', { method:'POST', headers:{ 'Content-Type':'application/json' }, body, keepalive:true }).catch(() => {});
+}
+window.addEventListener('error', (event) => reportOrdersDiagnostic({ message:event.message || 'Orders browser script error.', source:event.filename || 'orders browser', stack:event.error?.stack || '' }));
+window.addEventListener('unhandledrejection', (event) => reportOrdersDiagnostic({ message:event.reason?.message || 'Orders browser request failed.', source:'orders browser promise', stack:event.reason?.stack || String(event.reason || '') }));
+function updateConnectivity(message) {
+  const pending = queuedCounterOrders().length, online = navigator.onLine;
+  connectivity.hidden = online && !pending && !message;
+  connectivity.className = online ? 'is-online' : 'is-offline';
+  connectivity.textContent = message || (!online ? `Offline mode — orders are saved on this device and will sync when internet returns.${pending ? ` ${pending} waiting.` : ''}` : pending ? `${pending} order${pending === 1 ? '' : 's'} waiting to sync.` : '');
+}
+async function sendCounterOrder(payload) {
+  const response = await fetch('/api/orders/counter', { method:'POST', headers:{ 'Content-Type':'application/json', 'X-Counter-Order-Id':payload.clientRequestId }, body:JSON.stringify(payload) });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) { const error = new Error(result.error || 'Unable to save the order.'); error.status = response.status; throw error; }
+  return result;
+}
+async function flushQueuedCounterOrders() {
+  if (counterSyncInProgress || !navigator.onLine) return;
+  counterSyncInProgress = true;
+  try {
+    let queued = queuedCounterOrders();
+    while (queued.length && navigator.onLine) {
+      try { await sendCounterOrder(queued[0]); queued.shift(); saveQueuedCounterOrders(queued); }
+      catch (error) {
+        if (error.status >= 400 && error.status < 500 && error.status !== 409) { queued.shift(); saveQueuedCounterOrders(queued); continue; }
+        if (error.status === 409 && !queued[0].errorReported) { queued[0].errorReported = true; saveQueuedCounterOrders(queued); reportOrdersDiagnostic({ level:'warning', message:'Queued counter order needs review: an item is no longer available.', source:'offline order sync' }); }
+        break;
+      }
+    }
+    if (!queued.length) { updateConnectivity('Queued orders synced successfully.'); setTimeout(() => updateConnectivity(), 4000); loadOrders(); }
+    else updateConnectivity();
+  } finally { counterSyncInProgress = false; }
+}
+async function refreshAfterReconnect() {
+  // Deliberately refresh data in place: never reload the page or disturb a counter order being typed.
+  await Promise.allSettled([
+    loadOrders(),
+    counterPanel?.hidden ? Promise.resolve() : loadAvailability().then(() => { counterMenu = menuItems.filter((item) => !unavailable.has(item.key)); renderCounterOrder(); }),
+    counterPanel?.hidden ? Promise.resolve() : refreshCounterLiveStatus()
+  ]);
+}
+window.addEventListener('online', () => { updateConnectivity('Internet restored — syncing queued orders…'); refreshAfterReconnect(); flushQueuedCounterOrders(); });
+window.addEventListener('offline', () => { updateConnectivity(); reportOrdersDiagnostic({ level:'warning', message:'Orders console lost internet connection. Counter orders will be queued locally until reconnection.', source:'connection monitor' }); });
+updateConnectivity();
+if (navigator.onLine) setTimeout(flushQueuedCounterOrders, 300);
 document.querySelectorAll('[data-fulfillment-filter]').forEach((button) => {
   button.addEventListener('click', () => {
     const nextFilter = button.dataset.fulfillmentFilter || '';
@@ -86,6 +148,27 @@ counterPanel.id = 'counter-order-panel';
 counterPanel.hidden = true;
 counterPanel.innerHTML = '<div class="counter-order-head"><div><span class="eyebrow">Counter order</span><h2>Takeaway</h2><p>Build a walk-in or phone order, then send it directly to the kitchen.</p></div><button type="button" id="counter-order-close" class="quiet-button">Close</button></div><div class="counter-order-layout"><div class="counter-menu"><label class="counter-search"><span aria-hidden="true">⌕</span><input id="counter-menu-search" type="search" placeholder="Search menu items"></label><div id="counter-categories" class="counter-categories"></div><div id="counter-menu-items" class="counter-menu-items"></div></div><aside class="counter-cart"><div class="counter-cart-head"><h3>Current order</h3><button type="button" id="counter-clear" class="counter-clear">Clear</button></div><div id="counter-cart-items" class="counter-cart-items"></div><div class="counter-customer"><label>Customer name <input id="counter-customer-name" maxlength="80" placeholder="Walk-in customer"></label><label>Mobile number <input id="counter-customer-phone" inputmode="tel" maxlength="16" placeholder="Optional for walk-ins"></label><label>Kitchen note <textarea id="counter-special-request" maxlength="240" placeholder="e.g. less spicy"></textarea></label></div><div class="counter-total"><span>Total</span><b id="counter-total">₹0</b></div><button type="button" id="counter-place-order" class="counter-place-order">Place takeaway order</button><p id="counter-order-status" class="counter-order-status" aria-live="polite"></p></aside></div><dialog id="counter-choice-dialog" class="counter-choice-dialog"><button type="button" class="dialog-close" data-counter-choice-close aria-label="Close">×</button><div id="counter-choice-content"></div></dialog>';
 availability.before(counterPanel);
+const counterLiveStatus = document.createElement('div');
+counterLiveStatus.id = 'counter-live-status';
+counterLiveStatus.setAttribute('aria-live', 'polite');
+counterLiveStatus.innerHTML = '<span>Live counter status</span><b>Loading…</b>';
+counterPanel.querySelector('.counter-cart')?.prepend(counterLiveStatus);
+let counterLiveStatusLoading = false;
+async function refreshCounterLiveStatus() {
+  if (counterLiveStatusLoading || counterPanel.hidden) return;
+  counterLiveStatusLoading = true;
+  try {
+    const response = await fetch('/api/orders/live-summary', { cache:'no-store' });
+    if (!response.ok) throw new Error('Unavailable');
+    const live = await response.json();
+    const token = Number(live.latestActiveOrderNumber || live.latestOrderNumber || 0);
+    counterLiveStatus.classList.remove('is-offline');
+    counterLiveStatus.innerHTML = `<span>Live counter status</span><b>${token ? `Order #${String(token).padStart(2,'0')}` : 'No orders yet'}</b><small>${Number(live.activeOrderCount || 0)} active order${Number(live.activeOrderCount || 0) === 1 ? '' : 's'}</small>`;
+  } catch {
+    counterLiveStatus.classList.add('is-offline');
+    counterLiveStatus.innerHTML = '<span>Live counter status</span><b>Offline</b><small>Updates resume automatically</small>';
+  } finally { counterLiveStatusLoading = false; }
+}
 const operationsToggle = document.createElement('button');
 operationsToggle.type = 'button';
 operationsToggle.id = 'operations-toggle';
@@ -149,7 +232,7 @@ async function openCounterOrder() {
   closeOpenPanels('counter');
   counterPanel.hidden = false;
   document.getElementById('counter-menu-items').innerHTML = '<p class="counter-empty">Loading menu…</p>';
-  try { await loadAvailability(); counterMenu = menuItems.filter((item) => !unavailable.has(item.key)); renderCounterOrder(); counterPanel.scrollIntoView({ behavior:'smooth', block:'start' }); } catch (error) { document.getElementById('counter-menu-items').innerHTML = `<p class="counter-empty">${esc(error.message)}</p>`; }
+  try { await Promise.all([loadAvailability(), refreshCounterLiveStatus()]); counterMenu = menuItems.filter((item) => !unavailable.has(item.key)); renderCounterOrder(); counterPanel.scrollIntoView({ behavior:'smooth', block:'start' }); } catch (error) { document.getElementById('counter-menu-items').innerHTML = `<p class="counter-empty">${esc(error.message)}</p>`; if (navigator.onLine) reportOrdersDiagnostic({ message:`Counter menu could not load: ${error.message}`, source:'counter menu' }); }
 }
 if (installButton) installButton.innerHTML = `${actionIcon('install')}<span>Install shortcut</span>`;
 if (availabilityButton) availabilityButton.innerHTML = `${actionIcon('cutlery')}<span>Menu availability</span>`;
@@ -218,7 +301,7 @@ const money = (value) => `₹${Number(value || 0).toFixed(0)}`;
 const tomorrowLocal = () => { const date = new Date(Date.now() + 86400000); date.setSeconds(0, 0); return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
 const toPushKey = (value) => { const padding = '='.repeat((4 - value.length % 4) % 4); const raw = atob((value + padding).replace(/-/g, '+').replace(/_/g, '/')); return Uint8Array.from(raw, (character) => character.charCodeAt(0)); };
 
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('/orders-sw.js?v=6');
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/orders-sw.js?v=7');
 document.getElementById('enable-notifications')?.addEventListener('click', async () => {
   closeOpenPanels();
   const button = document.getElementById('enable-notifications');
@@ -278,6 +361,7 @@ async function loadOrders() {
     if (searchStatus) searchStatus.textContent = query ? `${visibleRows.length} matching order${visibleRows.length === 1 ? '' : 's'}` : orderView === 'history' ? `History · ${date || 'choose a date'}` : sessionOpen ? `${visibleRows.length} ${orderStatusFilter === 'all' ? 'current' : orderStatusFilter} order${visibleRows.length === 1 ? '' : 's'}` : 'Session closed · orders archived';
   } catch (error) {
     root.innerHTML = `<div class="empty-state">${esc(error.message)}</div>`;
+    if (navigator.onLine) reportOrdersDiagnostic({ message:`Live orders refresh failed: ${error.message}`, source:'live orders refresh' });
   }
 }
 
@@ -685,12 +769,21 @@ document.getElementById('counter-clear')?.addEventListener('click', () => { coun
 document.getElementById('counter-place-order')?.addEventListener('click', async () => {
   const status = document.getElementById('counter-order-status');
   if (!counterCart.length) { status.textContent = 'Add at least one menu item first.'; return; }
-  const button = document.getElementById('counter-place-order'); button.disabled = true; status.textContent = 'Saving takeaway order…';
+  const button = document.getElementById('counter-place-order'); button.disabled = true;
+  const payload = { clientRequestId:counterRequestId(), customerName:document.getElementById('counter-customer-name').value.trim(), customerPhone:document.getElementById('counter-customer-phone').value.trim(), specialRequest:document.getElementById('counter-special-request').value.trim(), items:counterCart.map((item) => ({ ...item })) };
+  status.textContent = navigator.onLine ? 'Saving takeaway order…' : 'Internet is unavailable — saving this order safely on this device…';
   try {
-    const response = await fetch('/api/orders/counter', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ customerName:document.getElementById('counter-customer-name').value.trim(), customerPhone:document.getElementById('counter-customer-phone').value.trim(), specialRequest:document.getElementById('counter-special-request').value.trim(), items:counterCart }) });
-    const result = await response.json(); if (!response.ok) throw new Error(result.error || 'Unable to save the order.');
-    status.textContent = `Takeaway order #${result.orderNumber} placed successfully.`; counterCart = []; document.getElementById('counter-customer-name').value = ''; document.getElementById('counter-customer-phone').value = ''; document.getElementById('counter-special-request').value = ''; renderCounterOrder(); loadOrders();
-  } catch (error) { status.textContent = error.message; } finally { button.disabled = false; }
+    let result;
+    if (!navigator.onLine) throw new TypeError('Offline');
+    result = await sendCounterOrder(payload);
+    status.textContent = `Takeaway order #${result.orderNumber} placed successfully.`; counterCart = []; document.getElementById('counter-customer-name').value = ''; document.getElementById('counter-customer-phone').value = ''; document.getElementById('counter-special-request').value = ''; renderCounterOrder(); loadOrders(); refreshCounterLiveStatus();
+  } catch (error) {
+    if (!navigator.onLine || !error.status || error.status >= 500) {
+      const queued = queuedCounterOrders(); queued.push(payload); saveQueuedCounterOrders(queued);
+      counterCart = []; document.getElementById('counter-customer-name').value = ''; document.getElementById('counter-customer-phone').value = ''; document.getElementById('counter-special-request').value = ''; renderCounterOrder();
+      status.textContent = 'Takeaway order saved offline. It will be sent automatically when internet returns.'; updateConnectivity();
+    } else status.textContent = error.message;
+  } finally { button.disabled = false; }
 });
 operationsToggle.addEventListener('click', async () => {
   const opening = operationsPanel.hidden;
@@ -769,7 +862,7 @@ document.getElementById('operations-content')?.addEventListener('click', async (
   if (removeRoute) { operationsConfig.routes=operationsConfig.routes.filter((route)=>route.id!==removeRoute.dataset.deleteRoute); renderOperations(); return; }
   if (event.target.closest('#operations-save')) { const button=event.target.closest('#operations-save'); try { addSelectedRoutes(); } catch (error) { alert(error.message); return; } button.disabled=true; button.textContent='Saving…'; try { await saveOperations(); } catch(error) { alert(error.message); button.disabled=false; button.textContent='Save printer configuration'; } return; }
   const kot = event.target.closest('[data-print-kot]');
-  if (kot) { try { await dispatchKot(kot.dataset.printKot, kot.dataset.printerId); await loadOperations(); } catch (error) { alert(error.message); } }
+  if (kot) { try { await dispatchKot(kot.dataset.printKot, kot.dataset.printerId); await loadOperations(); } catch (error) { reportOrdersDiagnostic({ message:`KOT printing failed: ${error.message}`, source:'KOT print bridge' }); alert(error.message); } }
 });
 orderStatusFilters.addEventListener('click', (event) => {
   const button = event.target.closest('[data-order-status-filter]');
@@ -847,8 +940,9 @@ menuResults?.addEventListener('click', async (event) => {
     const action = button.dataset.stockAction;
     const dateInput = row.querySelector('[data-stock-until]');
     await updateAvailability(key, action === 'restore' ? null : action === 'tomorrow' ? new Date(Date.now() + 86400000).toISOString() : new Date(dateInput.value).toISOString());
-  } catch (error) { alert(error.message); button.disabled = false; }
+  } catch (error) { reportOrdersDiagnostic({ message:`Menu availability update failed: ${error.message}`, source:'menu availability' }); alert(error.message); button.disabled = false; }
 });
 
 loadOrders();
 setInterval(loadOrders, 3000);
+setInterval(() => { if (!counterPanel.hidden) refreshCounterLiveStatus(); }, 1000);

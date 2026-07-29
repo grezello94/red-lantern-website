@@ -1419,6 +1419,7 @@ function setupGrowthRefreshButton() {
 }
 
 let diagnosticsLogs = [];
+let ordersErrorLogs = [];
 const selectedLogIds = new Set();
 
 function formatLogTime(value) {
@@ -1529,9 +1530,42 @@ function renderHealth(data = {}) {
   if (status) status.textContent = data.checkedAt
     ? `${data.ok ? 'Healthy' : 'Needs attention'} · ${formatLogTime(data.checkedAt)}`
     : 'Health check unavailable.';
+  renderDatabaseHealth(data.databaseMetrics);
+}
+
+function formatDatabaseBytes(bytes) {
+  const value = Number(bytes || 0);
+  if (!Number.isFinite(value) || value <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
+  return `${(value / (1024 ** index)).toFixed(index ? 1 : 0)} ${units[index]}`;
+}
+
+function renderDatabaseHealth(metrics) {
+  const summary = document.getElementById('database-health-summary');
+  const details = document.getElementById('database-health-details');
+  if (!summary || !details) return;
+  if (!metrics) {
+    summary.innerHTML = '<div class="database-metric warning"><strong>Unavailable</strong><span>Connect Neon to show database health.</span></div>';
+    details.innerHTML = '';
+    return;
+  }
+  const storageClass = metrics.storageWarning ? ' warning' : '';
+  summary.innerHTML = `
+    <div class="database-metric"><strong>${escapeHtml(String(metrics.latencyMs || 0))} ms</strong><span>Database response time</span></div>
+    <div class="database-metric${storageClass}"><strong>${escapeHtml(formatDatabaseBytes(metrics.sizeBytes))}</strong><span>${metrics.storageWarning ? 'Storage warning threshold reached' : 'Current database storage'}</span></div>
+    <div class="database-metric"><strong>${metrics.latestOrderAt ? escapeHtml(formatLogTime(metrics.latestOrderAt)) : 'No orders yet'}</strong><span>Latest saved order</span></div>`;
+  const counts = metrics.counts || {};
+  const entries = [
+    ['Orders', counts.orders], ['KOTs', counts.kots], ['Printer configurations', counts.printerConfigs],
+    ['Currently unavailable items', counts.unavailableItems], ['Loyalty accounts', counts.loyaltyAccounts], ['Alert devices', counts.alertDevices]
+  ];
+  details.innerHTML = entries.map(([label, value]) => `<div class="health-item ok"><strong>${escapeHtml(String(Number(value || 0).toLocaleString('en-IN')))}</strong><span>${escapeHtml(label)}</span></div>`).join('');
 }
 
 async function refreshHealth() {
+  if (refreshHealth.inFlight) return;
+  refreshHealth.inFlight = true;
   const status = document.getElementById('health-status');
   if (status) status.textContent = 'Checking...';
   try {
@@ -1547,6 +1581,8 @@ async function refreshHealth() {
       source: 'admin-cms.js refreshHealth',
       stack: error.stack || ''
     });
+  } finally {
+    refreshHealth.inFlight = false;
   }
 }
 
@@ -1618,6 +1654,53 @@ async function refreshLogs() {
       stack: error.stack || ''
     });
   }
+}
+
+function renderOrdersErrorLogs() {
+  const list = document.getElementById('orders-errors-list');
+  const status = document.getElementById('orders-errors-status');
+  if (!list) return;
+  if (status) status.textContent = `${ordersErrorLogs.length} Orders issue${ordersErrorLogs.length === 1 ? '' : 's'} loaded`;
+  if (!ordersErrorLogs.length) {
+    list.innerHTML = '<p class="log-status">No Orders errors recorded. Everything is running normally.</p>';
+    return;
+  }
+  list.innerHTML = ordersErrorLogs.map((log) => {
+    const details = log.details && Object.keys(log.details).length ? JSON.stringify(log.details, null, 2) : '';
+    return `<article class="log-entry ${escapeHtml(log.level || 'error')}">
+      <div class="log-entry-header"><h3>${escapeHtml(log.message || 'Orders issue')}</h3><span class="log-badge ${escapeHtml(log.level || 'error')}">${escapeHtml(log.level || 'error')}</span></div>
+      <div class="log-meta"><span><strong>When:</strong> ${escapeHtml(formatLogTime(log.created_at))}</span><span><strong>Area:</strong> ${escapeHtml(log.location || log.path || 'Orders console')}</span><span><strong>Route:</strong> ${escapeHtml(logRoute(log))}</span><span><strong>Status:</strong> ${escapeHtml(log.status_code || 'Browser/device')}</span><span><strong>Load time:</strong> ${log.duration_ms ? `${escapeHtml(log.duration_ms)}ms` : '—'}</span></div>
+      <div class="log-solution"><strong>How to resolve:</strong> ${escapeHtml(log.solution || 'Review the event details and retry the affected action.')}</div>
+      ${details ? `<pre class="log-details">${escapeHtml(details)}</pre>` : ''}
+    </article>`;
+  }).join('');
+}
+
+async function refreshOrdersErrorLogs() {
+  const status = document.getElementById('orders-errors-status');
+  if (status) status.textContent = 'Loading Orders errors...';
+  try {
+    const response = await fetch('/api/admin/orders-errors?limit=100', { cache: 'no-store' });
+    const raw = await response.text();
+    let data = {};
+    try { data = raw ? JSON.parse(raw) : {}; } catch {
+      throw new Error(response.status === 404 ? 'This server has not received the Orders Error Logs update yet. Restart or deploy the latest code.' : `Orders Error Logs service returned ${response.status}. Please check the admin login and server deployment.`);
+    }
+    if (!response.ok) throw new Error(data.error || 'Unable to load Orders error logs.');
+    ordersErrorLogs = data.logs || [];
+    renderOrdersErrorLogs();
+  } catch (error) { if (status) status.textContent = error.message || 'Unable to load Orders error logs.'; }
+}
+
+async function clearOrdersErrorLogs() {
+  if (!window.confirm('Clear all Orders error logs?')) return;
+  const status = document.getElementById('orders-errors-status');
+  if (status) status.textContent = 'Clearing Orders errors...';
+  try {
+    const response = await fetch('/api/admin/orders-errors', { method: 'DELETE' });
+    if (!response.ok) throw new Error('Unable to clear Orders error logs.');
+    await refreshOrdersErrorLogs();
+  } catch (error) { if (status) status.textContent = error.message || 'Unable to clear Orders error logs.'; }
 }
 
 async function clearLogs() {
@@ -1698,6 +1781,8 @@ function setupDiagnosticsDashboard() {
   document.getElementById('refresh-health')?.addEventListener('click', refreshHealth);
   document.getElementById('refresh-logs')?.addEventListener('click', refreshLogs);
   document.getElementById('clear-logs')?.addEventListener('click', clearLogs);
+  document.getElementById('refresh-orders-errors')?.addEventListener('click', refreshOrdersErrorLogs);
+  document.getElementById('clear-orders-errors')?.addEventListener('click', clearOrdersErrorLogs);
   document.getElementById('log-level-filter')?.addEventListener('change', renderLogs);
   document.getElementById('select-visible-logs')?.addEventListener('click', () => {
     getVisibleLogs().forEach((log) => selectedLogIds.add(getLogId(log)));
@@ -1731,6 +1816,12 @@ function setupDiagnosticsDashboard() {
   });
   refreshHealth();
   refreshLogs();
+  refreshOrdersErrorLogs();
+  document.querySelector('[data-target="tab-database-health"]')?.addEventListener('click', refreshHealth);
+  document.querySelector('[data-target="tab-orders-errors"]')?.addEventListener('click', refreshOrdersErrorLogs);
+  window.setInterval(() => {
+    if (document.visibilityState === 'visible' && document.getElementById('tab-database-health')?.classList.contains('active')) refreshHealth();
+  }, 30000);
 }
 
 function setupGoogleReviewsSync() {
