@@ -239,3 +239,44 @@ header {
   .order-search-panel { margin-top: 16px; }
 }
 @media (max-width: 760px) { header { position: relative; } }
+
+/* Responsive safety layer: prevent content escape across phones, tablets, and staff terminals. */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { max-width: 100%; overflow-x: hidden; }
+img, svg, video, canvas { max-width: 100%; }
+input, select, textarea, button { max-width: 100%; }
+dialog { max-height: calc(100dvh - 24px); overflow: auto; }
+
+@media (max-width: 1050px) {
+  header { gap: 12px; flex-wrap: wrap; }
+  .brand { min-width: 0; }
+  .header-actions { flex: 1 1 420px; flex-wrap: wrap; justify-content: flex-end; }
+  #operations-panel, #counter-order-panel { margin-inline: 16px !important; }
+}
+
+@media (max-width: 760px) {
+  body { min-width: 0; }
+  header { padding: 14px 16px; }
+  .brand { flex: 1 1 100%; }
+  .header-actions { flex: 1 1 100%; justify-content: space-between; }
+  .header-actions button, .live-orders-toggle { flex: 1 1 auto; min-width: 0; }
+  .fulfillment-actions { margin-inline: 12px; }
+  .order-search-panel, #availability, #operations-panel, #counter-order-panel { margin-inline: 12px !important; }
+  main { grid-template-columns: minmax(0, 1fr); padding: 16px 12px; }
+  #order-status-filters { margin-inline: 12px; }
+  #menu-results { grid-template-columns: minmax(0, 1fr); }
+  .availability-filters { overflow-x: auto; padding-bottom: 10px; }
+  .filter-button { flex: 0 0 auto; }
+  .availability-controls { align-items: stretch; }
+  .availability-controls label, .availability-controls input { min-width: 0; max-width: 100%; }
+  .modify-order-dialog, .shortcut-dialog { width: calc(100vw - 24px); padding: 20px 16px; }
+}
+
+@media (max-width: 420px) {
+  .brand img { width: 40px !important; height: 40px !important; }
+  .brand h1 { font-size: 23px; }
+  .header-actions { gap: 5px; }
+  .header-actions button, .live-orders-toggle { padding-inline: 7px !important; }
+  .fulfillment-action { min-width: 0; padding-inline: 10px; }
+  .order { padding: 16px; }
+}

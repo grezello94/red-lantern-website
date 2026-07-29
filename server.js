@@ -774,6 +774,13 @@ function normalizeAirMenu(body) {
   } catch {
     categoryVisibility = {};
   }
+  let categoryOrder = [];
+  try {
+    const parsed = JSON.parse(body.airCategoryOrder || '[]');
+    if (Array.isArray(parsed)) categoryOrder = parsed.map((category) => String(category || '').trim()).filter(Boolean).slice(0, 200);
+  } catch {
+    categoryOrder = [];
+  }
   const isValidTime = (value) => /^([01]\d|2[0-3]):[0-5]\d$/.test(String(value || ''));
   const scheduleWasSubmitted = ['airService1Open', 'airService1Close', 'airService2Open', 'airService2Close'].some((key) => Object.prototype.hasOwnProperty.call(body, key));
   const serviceWindows = scheduleWasSubmitted
@@ -796,6 +803,7 @@ function normalizeAirMenu(body) {
     reopensAt: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(String(body.airReopensAt || '')) ? String(body.airReopensAt) : '',
     closureMessage: String(body.airClosureMessage || '').trim().slice(0, 240),
     categoryVisibility,
+    categoryOrder,
     sourceFileName: body.airSourceFileName || '',
     barSourceFileName: body.airBarSourceFileName || '',
     items: dedupeMenuItems(names.map((name, index) => ({
@@ -2068,6 +2076,35 @@ app.post('/api/direct-orders', async (req, res) => {
   } catch (error) { res.status(500).json({ error: 'Unable to place the order. Please call us instead.' }); }
 });
 
+app.post('/api/orders/counter', async (req, res) => {
+  try {
+    const { customerName, customerPhone, specialRequest, items = [] } = req.body || {};
+    const menu = await getSection('airMenu');
+    const priceNumber = (value) => Number(String(value || '').replace(/[^0-9.]/g, '')) || 0;
+    const displayItemName = (value) => String(value || '').replace(/[.…·]{2,}/g, ' ').replace(/\s+\d{2,5}(?:\.\d{1,2})?\s*\/?\s*$/, '').replace(/\s+/g, ' ').trim();
+    const menuItems = [...(menu.items || []), ...(menu.barItems || [])];
+    const portionPrice = (item, portion) => ({ half:item.halfPrice, full:item.fullPrice, 'with bone':item.withBonePrice, boneless:item.bonelessPrice, '30 ml':item.price30ml, '60 ml':item.price60ml, '90 ml':item.price90ml, '180 ml':item.price180ml }[String(portion || '').trim().toLowerCase()] || item.price || '');
+    const submitted = Array.isArray(items) ? items.filter((item) => Number(item.quantity) > 0).slice(0, 30) : [];
+    const clean = submitted.map((item) => {
+      const name=String(item.name||'').trim().slice(0,100), category=String(item.category||'').trim().slice(0,80);
+      const source=menuItems.find((dish)=>displayItemName(dish.name).toLowerCase()===name.toLowerCase()&&String(dish.category||'').trim().toLowerCase()===category.toLowerCase());
+      const price=source && portionPrice(source,item.portion);
+      if (!source || !priceNumber(price)) return null;
+      const style=/^(gravy|semi-gravy)$/i.test(String(item.style||'').trim())&&(source.gravyStyleAvailable||source.gravyAvailable||source.semiGravyAvailable)?String(item.style).trim():'';
+      return { name:displayItemName(source.name).slice(0,100), category:String(source.category||'').slice(0,80), portion:String(item.portion||'').slice(0,40), style, quantity:Math.min(20,Number(item.quantity)||0), price:`₹${priceNumber(price)}`, availabilityKey:`${String(source.category||'').toLowerCase()}::${String(source.name||'').toLowerCase()}` };
+    }).filter(Boolean);
+    if (!clean.length || clean.length !== submitted.length) return res.status(400).json({ error:'Choose at least one current menu item.' });
+    await ensureDirectOrdersTable(); await ensureMenuAvailabilityTable();
+    const unavailable=new Set((await sql`SELECT item_key FROM menu_availability WHERE unavailable_until > NOW()`).map((row)=>row.item_key));
+    if (clean.some((item)=>unavailable.has(item.availabilityKey))) return res.status(409).json({ error:'One or more selected items are out of stock.' });
+    const { orderDay, number }=await nextDailyOrderNumber(); const id=`RL${Date.now().toString(36).toUpperCase()}${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
+    const saved=clean.map(({availabilityKey,...item})=>item), total=saved.reduce((sum,item)=>sum+item.quantity*(priceNumber(item.price)+(item.style?10:0)),0);
+    const phone=String(customerPhone||'').replace(/\D/g,'').slice(0,16)||`walkin-${id}`;
+    await sql`INSERT INTO direct_orders (id,status,mode,customer_name,customer_phone,special_request,items,total,order_day,daily_order_number,tracking_token,loyalty_points_redeemed,loyalty_points_earned,fulfillment_type) VALUES (${id},'new','counter',${String(customerName||'Walk-in customer').trim().slice(0,80)},${phone},${String(specialRequest||'').trim().slice(0,240)},${JSON.stringify(saved)},${total},${orderDay}::date,${number},${crypto.randomBytes(24).toString('base64url')},0,${Math.floor(total/10)},'pickup')`;
+    void notifyDirectOrder({ id, dailyOrderNumber:number, total, itemCount:saved.reduce((count,item)=>count+Number(item.quantity||0),0) });
+    res.status(201).json({ id, orderNumber:String(number).padStart(2,'0'), total });
+  } catch (error) { res.status(500).json({ error:'Unable to save the counter order.' }); }
+});
 app.get('/api/orders', async (req, res) => { try { await ensureDirectOrdersTable(); const search=String(req.query.search||'').replace(/\D/g,'').slice(0,16); const like=`%${search}%`; const today=kolkataOrderDay(); const history=req.query.history==='1'; const requestedDay=/^\d{4}-\d{2}-\d{2}$/.test(String(req.query.date||''))?String(req.query.date):''; const operatingStatus=restaurantStatus(await getSection('airMenu')); res.set({ 'Cache-Control':'no-store', 'X-Orders-Day': today, 'X-Orders-View': history?'history':'current', 'X-Orders-Session': operatingStatus.open?'open':'closed' }); if (!history && !operatingStatus.open) return res.json([]); const orders = history && !requestedDay ? await sql`SELECT o.*, (SELECT COUNT(*) FROM direct_orders h WHERE h.customer_phone=o.customer_phone) AS customer_order_count, (SELECT MAX(h.created_at) FROM direct_orders h WHERE h.customer_phone=o.customer_phone AND h.id<>o.id) AS customer_last_order_at FROM direct_orders o WHERE ${search}='' OR o.customer_phone LIKE ${like} OR CAST(o.daily_order_number AS TEXT) LIKE ${like} ORDER BY o.created_at DESC LIMIT 100` : await sql`SELECT o.*, (SELECT COUNT(*) FROM direct_orders h WHERE h.customer_phone=o.customer_phone) AS customer_order_count, (SELECT MAX(h.created_at) FROM direct_orders h WHERE h.customer_phone=o.customer_phone AND h.id<>o.id) AS customer_last_order_at FROM direct_orders o WHERE o.order_day=${history ? requestedDay || today : today}::date AND (${search}='' OR o.customer_phone LIKE ${like} OR CAST(o.daily_order_number AS TEXT) LIKE ${like}) ORDER BY o.created_at DESC LIMIT 100`; res.json(orders); } catch (error) { res.status(500).json({ error: error.message }); } });
 app.get('/api/orders/:id/print', async (req, res) => { try {
   await ensureDirectOrdersTable();
@@ -2101,7 +2138,7 @@ app.patch('/api/orders/:id', async (req, res) => {
   } catch (error) { res.status(500).json({ error:error.message }); }
 });
 app.get('/api/orders/availability', async (req,res)=>{try{await ensureMenuAvailabilityTable();res.json(await sql`SELECT * FROM menu_availability WHERE unavailable_until > NOW()`)}catch(e){res.status(500).json({error:e.message})}});
-app.get('/api/orders/menu', async (req,res)=>{try{const menu=await getSection('airMenu');const format=(items,menuType)=>items.map(item=>({name:item.name,category:item.category,menuType,key:`${String(item.category||'').toLowerCase()}::${String(item.name||'').toLowerCase()}`})).filter(item=>item.name);res.json([...format(menu.items||[],'food'),...format(menu.barItems||[],'bar')])}catch(e){res.status(500).json({error:e.message})}});
+app.get('/api/orders/menu', async (req,res)=>{try{const menu=await getSection('airMenu');const order=Array.isArray(menu.categoryOrder)?menu.categoryOrder:[];const format=(items,menuType)=>items.map(item=>({name:item.name,category:item.category,menuType,key:`${String(item.category||'').toLowerCase()}::${String(item.name||'').toLowerCase()}`,categoryOrderIndex:order.indexOf(item.category),price:item.price,halfPrice:item.halfPrice,fullPrice:item.fullPrice,withBonePrice:item.withBonePrice,bonelessPrice:item.bonelessPrice,price30ml:item.price30ml,price60ml:item.price60ml,price90ml:item.price90ml,price180ml:item.price180ml,gravyStyleAvailable:!!(item.gravyStyleAvailable||item.gravyAvailable||item.semiGravyAvailable)})).filter(item=>item.name);res.json([...format(menu.items||[],'food'),...format(menu.barItems||[],'bar')])}catch(e){res.status(500).json({error:e.message})}});
 app.get('/api/orders/operations', async (req, res) => { try {
   await ensureOperationsConfigTable();
   const rows=await sql`SELECT config FROM order_operations_config WHERE config_key='default' LIMIT 1`;

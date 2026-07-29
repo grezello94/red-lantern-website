@@ -455,6 +455,8 @@ function airBarItemMarkup(item = {}, index = 0) {
 }
 
 let airCategoryVisibility = {};
+let airCategoryOrder = [];
+let airCategoryGroups = new Map();
 
 function isAlcoholCategory(category) {
   return /\b(bar menu|alcohol|spirits?|feni|beer|wine|whisky|whiskey|scotch|bourbon|rum|vodka|gin|brandy|cognac|liqueur|tequila|cocktail)\b/i.test(category);
@@ -463,6 +465,25 @@ function isAlcoholCategory(category) {
 function syncAirCategoryVisibility() {
   const hidden = document.querySelector('[name="airCategoryVisibility"]');
   if (hidden) hidden.value = JSON.stringify(airCategoryVisibility);
+}
+
+function syncAirCategoryOrder() {
+  const hidden = document.querySelector('[name="airCategoryOrder"]');
+  if (hidden) hidden.value = JSON.stringify(airCategoryOrder);
+}
+
+function renderAirCategoryOrder(items = []) {
+  const container = document.getElementById('air-category-order-controls');
+  if (!container) return;
+  const categories = [...new Set(items.map((item) => item.category || 'Menu'))];
+  airCategoryGroups = new Map(categories.map((category) => [category, items.some((item) => (item.category || 'Menu') === category && item.isBar) ? 'bar' : 'food']));
+  airCategoryOrder = [...airCategoryOrder.filter((category) => categories.includes(category)), ...categories.filter((category) => !airCategoryOrder.includes(category))];
+  const food = airCategoryOrder.filter((category) => airCategoryGroups.get(category) !== 'bar');
+  const bar = airCategoryOrder.filter((category) => airCategoryGroups.get(category) === 'bar');
+  airCategoryOrder = [...food, ...bar];
+  const group = (label, list) => list.length ? `<div class="category-order-group"><b>${label}</b>${list.map((category) => { const index=airCategoryOrder.indexOf(category); return `<div class="category-control-row" data-category-order="${escapeHtml(category)}"><strong><span class="category-order-rank">${index + 1}</span>${escapeHtml(category)}</strong><span><button type="button" class="category-order-move" data-category-move="up" aria-label="Move ${escapeHtml(category)} up">↑</button><button type="button" class="category-order-move" data-category-move="down" aria-label="Move ${escapeHtml(category)} down">↓</button></span></div>`; }).join('')}</div>` : '';
+  container.innerHTML = group('Food menu', food) + group('Alcohol & bar', bar);
+  syncAirCategoryOrder();
 }
 
 function renderAirCategoryOptions(items = []) {
@@ -489,6 +510,7 @@ function renderAirCategoryControls(items = []) {
     }
   });
   renderAirCategoryOptions(items);
+  renderAirCategoryOrder(items);
   if (!container) return;
   container.innerHTML = categories.length ? categories.map((category) => {
     const setting = airCategoryVisibility[category];
@@ -592,6 +614,7 @@ function fillAirMenu(menu = {}) {
     if (field) field.checked = checked;
   });
   airCategoryVisibility = menu.categoryVisibility && typeof menu.categoryVisibility === 'object' ? { ...menu.categoryVisibility } : {};
+  airCategoryOrder = Array.isArray(menu.categoryOrder) ? menu.categoryOrder.map((category) => String(category || '').trim()).filter(Boolean) : [];
   renderAirItems(Array.isArray(menu.items) ? menu.items : []);
   renderAirBarItems(Array.isArray(menu.barItems) ? menu.barItems : []);
 }
@@ -739,6 +762,23 @@ function setupAirMenuEditor() {
     airCategoryVisibility[category] ||= { table: true, card: !isAlcoholCategory(category) };
     airCategoryVisibility[category][checkbox.dataset.view] = checkbox.checked;
     syncAirCategoryVisibility();
+  });
+
+  document.getElementById('air-category-order-controls')?.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-category-move]');
+    if (!button) return;
+    const category = button.closest('[data-category-order]')?.dataset.categoryOrder;
+    const group = airCategoryGroups.get(category) || 'food';
+    const groupCategories = airCategoryOrder.filter((item) => (airCategoryGroups.get(item) || 'food') === group);
+    const index = groupCategories.indexOf(category);
+    const direction = button.dataset.categoryMove === 'up' ? -1 : 1;
+    const next = index + direction;
+    if (index < 0 || next < 0 || next >= groupCategories.length) return;
+    [groupCategories[index], groupCategories[next]] = [groupCategories[next], groupCategories[index]];
+    const food = group === 'food' ? groupCategories : airCategoryOrder.filter((item) => (airCategoryGroups.get(item) || 'food') === 'food');
+    const bar = group === 'bar' ? groupCategories : airCategoryOrder.filter((item) => airCategoryGroups.get(item) === 'bar');
+    airCategoryOrder = [...food, ...bar];
+    renderAirCategoryOrder(airCategoryOrder.map((item) => ({ category: item, isBar: airCategoryGroups.get(item) === 'bar' })));
   });
 
   extractButton?.addEventListener('click', async () => {

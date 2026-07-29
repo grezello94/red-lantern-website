@@ -27,10 +27,15 @@ let printBridgeState = 'checking';
 let printBridgeConfigState = 'not-synced';
 let assignmentPrinterId = '';
 let assignmentMode = '';
+let counterMenu = [];
+let counterCart = [];
+let counterCategory = 'all';
+let counterChoiceItem = null;
 const orderSearchPanel = document.querySelector('.order-search-panel');
 document.querySelectorAll('[data-fulfillment-filter]').forEach((button) => {
   button.addEventListener('click', () => {
     const nextFilter = button.dataset.fulfillmentFilter || '';
+    if (nextFilter === 'pickup') { openCounterOrder(); return; }
     fulfillmentFilter = fulfillmentFilter === nextFilter ? '' : nextFilter;
     document.querySelectorAll('[data-fulfillment-filter]').forEach((item) => {
       const isActive = item.dataset.fulfillmentFilter === fulfillmentFilter;
@@ -76,6 +81,11 @@ operationsPanel.hidden = true;
 operationsPanel.innerHTML = '<div class="operations-head"><div><span class="eyebrow">Staff workspace</span><h2>Operations</h2><p>Review routed KOTs and configure kitchen, tandoori, bar, and bill printers.</p></div><button type="button" id="operations-close" class="quiet-button">Close</button></div><div id="operations-tabs" class="operation-launches"><button type="button" data-operations-tab="kots" class="operation-launch is-active"><span class="operation-icon kot-icon" aria-hidden="true">⌑</span><span><b>KOT queue</b><small>View and print live kitchen tickets</small></span><i aria-hidden="true">›</i></button><button type="button" data-operations-tab="printers" class="operation-launch"><span class="operation-icon printer-icon" aria-hidden="true">▣</span><span><b>Printer routing</b><small>Assign categories and items to printers</small></span><i aria-hidden="true">›</i></button></div><div id="operations-content"></div>';
 document.getElementById('operations-tabs')?.remove();
 availability.before(operationsPanel);
+const counterPanel = document.createElement('section');
+counterPanel.id = 'counter-order-panel';
+counterPanel.hidden = true;
+counterPanel.innerHTML = '<div class="counter-order-head"><div><span class="eyebrow">Counter order</span><h2>Takeaway</h2><p>Build a walk-in or phone order, then send it directly to the kitchen.</p></div><button type="button" id="counter-order-close" class="quiet-button">Close</button></div><div class="counter-order-layout"><div class="counter-menu"><label class="counter-search"><span aria-hidden="true">⌕</span><input id="counter-menu-search" type="search" placeholder="Search menu items"></label><div id="counter-categories" class="counter-categories"></div><div id="counter-menu-items" class="counter-menu-items"></div></div><aside class="counter-cart"><div class="counter-cart-head"><h3>Current order</h3><button type="button" id="counter-clear" class="counter-clear">Clear</button></div><div id="counter-cart-items" class="counter-cart-items"></div><div class="counter-customer"><label>Customer name <input id="counter-customer-name" maxlength="80" placeholder="Walk-in customer"></label><label>Mobile number <input id="counter-customer-phone" inputmode="tel" maxlength="16" placeholder="Optional for walk-ins"></label><label>Kitchen note <textarea id="counter-special-request" maxlength="240" placeholder="e.g. less spicy"></textarea></label></div><div class="counter-total"><span>Total</span><b id="counter-total">₹0</b></div><button type="button" id="counter-place-order" class="counter-place-order">Place takeaway order</button><p id="counter-order-status" class="counter-order-status" aria-live="polite"></p></aside></div><dialog id="counter-choice-dialog" class="counter-choice-dialog"><button type="button" class="dialog-close" data-counter-choice-close aria-label="Close">×</button><div id="counter-choice-content"></div></dialog>';
+availability.before(counterPanel);
 const operationsToggle = document.createElement('button');
 operationsToggle.type = 'button';
 operationsToggle.id = 'operations-toggle';
@@ -87,6 +97,60 @@ const installButton = document.getElementById('install-shortcut');
 const availabilityButton = document.getElementById('availability-toggle');
 const alertsButton = document.getElementById('enable-notifications');
 const refreshButton = document.querySelector('.header-actions button[onclick]');
+const closeOpenPanels = (except = null) => {
+  if (except !== 'live') {
+    liveOrdersPanel.hidden = true;
+    liveOrdersToggle.classList.remove('is-open');
+    liveOrdersToggle.setAttribute('aria-expanded', 'false');
+  }
+  if (except !== 'operations') {
+    operationsPanel.hidden = true;
+    operationsToggle.classList.remove('is-open');
+    operationsToggle.setAttribute('aria-expanded', 'false');
+  }
+  if (except !== 'availability') {
+    availability.hidden = true;
+    availabilityButton?.setAttribute('aria-expanded', 'false');
+  }
+  if (except !== 'counter') counterPanel.hidden = true;
+  const shortcutDialog = document.getElementById('shortcut-dialog');
+  if (except !== 'shortcut' && shortcutDialog?.open) shortcutDialog.close();
+};
+const counterPrice = (item) => {
+  const options = [['', item.price], ['Half', item.halfPrice], ['Full', item.fullPrice], ['With Bone', item.withBonePrice], ['Boneless', item.bonelessPrice], ['30 ml', item.price30ml], ['60 ml', item.price60ml], ['90 ml', item.price90ml], ['180 ml', item.price180ml]].filter(([, price]) => Number(String(price || '').replace(/[^0-9.]/g, '')) > 0);
+  return options[0] || ['', 0];
+};
+const counterPortionOptions = (item) => [['', 'Regular', item.price], ['Half', 'Half', item.halfPrice], ['Full', 'Full', item.fullPrice], ['With Bone', 'With Bone', item.withBonePrice], ['Boneless', 'Boneless', item.bonelessPrice], ['30 ml', '30 ml', item.price30ml], ['60 ml', '60 ml', item.price60ml], ['90 ml', '90 ml', item.price90ml], ['180 ml', '180 ml', item.price180ml]].filter(([, , price]) => Number(String(price || '').replace(/[^0-9.]/g, '')) > 0);
+function openCounterChoice(item) {
+  counterChoiceItem = item;
+  const options = counterPortionOptions(item);
+  const dialog = document.getElementById('counter-choice-dialog');
+  document.getElementById('counter-choice-content').innerHTML = `<span class="eyebrow">Add to parcel</span><h2>${esc(item.name)}</h2><p>${esc(item.category || 'Menu')}</p><div class="counter-choice-options">${options.map(([value, label, price], index) => `<label><input type="radio" name="counter-portion" value="${esc(value)}" data-counter-choice-price="${Number(String(price).replace(/[^0-9.]/g, ''))}" ${index === 0 ? 'checked' : ''}><span>${esc(label)} <b>${counterMoney(String(price).replace(/[^0-9.]/g, ''))}</b></span></label>`).join('')}</div>${item.gravyStyleAvailable ? '<fieldset class="counter-style-options"><legend>Preparation style</legend><label><input type="radio" name="counter-style" value="" checked> Regular</label><label><input type="radio" name="counter-style" value="Gravy"> Gravy <b>+₹10</b></label><label><input type="radio" name="counter-style" value="Semi-gravy"> Semi-gravy <b>+₹10</b></label></fieldset>' : ''}<button type="button" id="counter-choice-add" class="counter-place-order">Add to order</button>`;
+  if (typeof dialog.showModal === 'function') dialog.showModal();
+}
+const counterMoney = (value) => `₹${Math.round(Number(value) || 0)}`;
+function renderCounterOrder() {
+  const search = String(document.getElementById('counter-menu-search')?.value || '').trim().toLowerCase();
+  const categoryRank = (category) => { const value=String(category).toLowerCase(); return [/starter|appetizer/, /soup/, /salad/, /quick.?bite|snack/, /tandoor|kebab|grill/, /chinese/, /rice|noodle/, /indian gravy|curry/, /biryani/, /bread|naan/, /main|special/, /dessert/].findIndex((pattern)=>pattern.test(value)); };
+  const savedCategoryOrder = new Map(counterMenu.filter((item) => Number(item.categoryOrderIndex) >= 0).map((item) => [item.category || 'Menu', Number(item.categoryOrderIndex)]));
+  const categoriesFor = (menuType) => [...new Set(counterMenu.filter((item) => item.menuType === menuType).map((item) => item.category || 'Menu'))].sort((a,b) => { const savedA=savedCategoryOrder.has(a) ? savedCategoryOrder.get(a) : 999, savedB=savedCategoryOrder.has(b) ? savedCategoryOrder.get(b) : 999; const rankA=categoryRank(a), rankB=categoryRank(b); return savedA - savedB || (rankA < 0 ? 99 : rankA) - (rankB < 0 ? 99 : rankB) || a.localeCompare(b); });
+  const foodCategories = categoriesFor('food'), barCategories = categoriesFor('bar');
+  const categoryButton = (category, label = category) => `<button type="button" class="counter-category ${counterCategory === category ? 'is-active' : ''}" data-counter-category="${esc(category)}">${esc(label)}</button>`;
+  document.getElementById('counter-categories').innerHTML = `${categoryButton('all', 'All items')}<span class="counter-category-group">Food menu</span>${foodCategories.map((category) => categoryButton(category)).join('')}<span class="counter-category-group">Alcohol & bar</span>${barCategories.map((category) => categoryButton(category)).join('')}`;
+  const visible = counterMenu.filter((item) => (counterCategory === 'all' || (item.category || 'Menu') === counterCategory) && `${item.name} ${item.category}`.toLowerCase().includes(search));
+  document.getElementById('counter-menu-items').innerHTML = visible.map((item) => { const [portion, price] = counterPrice(item); return `<button type="button" class="counter-menu-item" data-counter-item="${counterMenu.indexOf(item)}"><span>${esc(item.category || 'Menu')}</span><b>${esc(item.name)}</b><small>${portion ? `${esc(portion)} · ` : ''}${counterMoney(String(price).replace(/[^0-9.]/g, ''))}</small><i aria-hidden="true">+</i></button>`; }).join('') || '<p class="counter-empty">No menu items match that search.</p>';
+  const items = counterCart.map((line, index) => { const unit = line.price + (line.style ? 10 : 0); return `<div class="counter-cart-line"><div><b>${esc(line.name)}</b><small>${esc(line.portion || 'Regular')}${line.style ? ` · ${esc(line.style)}` : ''} · ${counterMoney(unit)} each</small></div><div class="counter-quantity"><button type="button" data-counter-qty="${index}" data-counter-change="-1">−</button><b>${line.quantity}</b><button type="button" data-counter-qty="${index}" data-counter-change="1">+</button></div><strong>${counterMoney(unit * line.quantity)}</strong></div>`; }).join('');
+  document.getElementById('counter-cart-items').innerHTML = items || '<p class="counter-empty">Choose items from the menu to start an order.</p>';
+  document.getElementById('counter-total').textContent = counterMoney(counterCart.reduce((sum, line) => sum + (line.price + (line.style ? 10 : 0)) * line.quantity, 0));
+}
+async function openCounterOrder() {
+  const opening = counterPanel.hidden;
+  if (!opening) { counterPanel.hidden = true; return; }
+  closeOpenPanels('counter');
+  counterPanel.hidden = false;
+  document.getElementById('counter-menu-items').innerHTML = '<p class="counter-empty">Loading menu…</p>';
+  try { await loadAvailability(); counterMenu = menuItems.filter((item) => !unavailable.has(item.key)); renderCounterOrder(); counterPanel.scrollIntoView({ behavior:'smooth', block:'start' }); } catch (error) { document.getElementById('counter-menu-items').innerHTML = `<p class="counter-empty">${esc(error.message)}</p>`; }
+}
 if (installButton) installButton.innerHTML = `${actionIcon('install')}<span>Install shortcut</span>`;
 if (availabilityButton) availabilityButton.innerHTML = `${actionIcon('cutlery')}<span>Menu availability</span>`;
 if (alertsButton) alertsButton.innerHTML = `${actionIcon('bell')}<span>Enable alerts</span>`;
@@ -103,6 +167,15 @@ document.head.appendChild(operationsStyles);
 const operationsLauncherStyles = document.createElement('style');
 operationsLauncherStyles.textContent = `.operation-launches{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:22px 0 18px}.operation-launch{display:grid;grid-template-columns:44px minmax(0,1fr) auto;gap:12px;align-items:center;padding:15px;border:1px solid #dfe7f1;border-radius:13px;color:#273852;background:#fff;text-align:left;box-shadow:0 3px 10px rgba(31,52,88,.035)}.operation-launch:hover{transform:translateY(-1px);filter:none;border-color:#aebfd4;box-shadow:0 8px 18px rgba(31,52,88,.1)}.operation-launch.is-active{border-color:#263d68;background:linear-gradient(135deg,#263d68,#35578d);color:#fff}.operation-icon{display:grid;width:44px;height:44px;place-items:center;border-radius:12px;color:#263d68;background:#e9f0fa;font-size:26px;font-weight:900}.operation-launch.is-active .operation-icon{color:#263d68;background:#fff}.operation-launch b,.operation-launch small{display:block}.operation-launch b{font-size:14px}.operation-launch small{margin-top:3px;color:#74839a;font-size:11px;font-weight:600;line-height:1.35}.operation-launch.is-active small{color:#d9e5f7}.operation-launch i{font-size:25px;font-style:normal;font-weight:400}@media(max-width:600px){.operation-launches{grid-template-columns:1fr}.operation-launch{padding:13px}}`;
 document.head.appendChild(operationsLauncherStyles);
+const counterOrderStyles = document.createElement('style');
+counterOrderStyles.textContent = `#counter-order-panel{margin:20px 28px 0;padding:24px;border:1px solid #dce4ee;border-radius:18px;background:#f7f9fc;box-shadow:0 14px 34px rgba(24,39,70,.09)}#counter-order-panel[hidden]{display:none}.counter-order-head,.counter-cart-head{display:flex;justify-content:space-between;align-items:start;gap:14px}.counter-order-head h2{margin:4px 0;font-size:24px}.counter-order-head p{margin:0;color:#68778e}.counter-order-layout{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(300px,.8fr);gap:18px;margin-top:20px}.counter-menu,.counter-cart{padding:16px;border:1px solid #dfe7f0;border-radius:14px;background:#fff}.counter-menu{display:grid;grid-template-columns:235px minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);gap:14px}.counter-search{grid-column:1/-1;display:flex;gap:8px;align-items:center;padding:0 12px;border:1px solid #cfdbea;border-radius:10px;background:#fff}.counter-search input{width:100%;height:42px;border:0;outline:0;font:700 13px Manrope,sans-serif}.counter-categories{display:flex;flex-direction:column;gap:0;max-height:530px;overflow:auto;border:1px solid #e0e7ef;border-radius:11px;background:#fff}.counter-category{width:100%;min-height:58px;padding:12px 14px;border:0;border-bottom:1px solid #e9eef4;border-radius:0;color:#40516a;background:#fff;text-align:left;font-size:14px;font-weight:800}.counter-category:first-child{color:#a82a38;background:#fff0f1}.counter-category:last-child{border-bottom:0}.counter-category:hover{color:#263d68;background:#f3f7fc;transform:none;filter:none}.counter-category.is-active{color:#fff;background:#263d68}.counter-menu-items{display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:10px;max-height:530px;overflow:auto}.counter-menu-item{position:relative;min-height:108px;padding:13px;border:1px solid #dce5ef;border-left:4px solid #d93642;border-radius:10px;color:#25364f;background:#fff;text-align:left;box-shadow:0 3px 8px rgba(25,44,75,.04)}.counter-menu-item:hover{transform:translateY(-1px);border-color:#9bb1cc;border-left-color:#d93642;filter:none}.counter-menu-item span,.counter-menu-item b,.counter-menu-item small{display:block}.counter-menu-item span{color:#7c8ba0;font-size:9px;font-weight:900;text-transform:uppercase}.counter-menu-item b{margin:7px 22px 5px 0;font-size:13px;line-height:1.25}.counter-menu-item small{color:#178554;font-size:11px;font-weight:900}.counter-menu-item i{position:absolute;right:10px;bottom:9px;display:grid;width:23px;height:23px;place-items:center;border-radius:50%;color:#fff;background:#263d68;font-size:18px;font-style:normal}.counter-cart{display:flex;min-height:500px;flex-direction:column}.counter-cart-head h3{margin:0;font-size:16px}.counter-clear{padding:5px 8px;color:#a72c38;background:#fff0f1;font-size:10px}.counter-cart-items{display:grid;gap:9px;margin:14px 0}.counter-cart-line{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:8px;align-items:center;padding:10px 0;border-bottom:1px solid #edf1f5}.counter-cart-line b,.counter-cart-line small{display:block}.counter-cart-line b{font-size:12px}.counter-cart-line small{margin-top:3px;color:#718097;font-size:10px}.counter-cart-line strong{font-size:12px}.counter-quantity{display:flex;align-items:center;gap:6px}.counter-quantity button{display:grid;width:24px;height:24px;place-items:center;padding:0;color:#263d68;background:#edf3fb;font-size:16px}.counter-customer{display:grid;gap:9px;margin-top:auto}.counter-customer label{display:grid;gap:4px;color:#5d6d84;font-size:10px;font-weight:900;text-transform:uppercase}.counter-customer input,.counter-customer textarea{width:100%;padding:9px 10px;border:1px solid #d4deea;border-radius:8px;color:#26344e;font:600 12px Manrope,sans-serif}.counter-customer textarea{min-height:58px;resize:vertical}.counter-total{display:flex;justify-content:space-between;align-items:center;margin-top:14px;padding:13px 0;border-top:2px solid #e2e9f1;color:#5a6a80;font-weight:800}.counter-total b{color:#bd3038;font-size:21px}.counter-place-order{width:100%;padding:13px;color:#fff;background:linear-gradient(135deg,#d93642,#ab1e30);font-size:13px}.counter-order-status{min-height:18px;margin:9px 0 0;color:#53647e;font-size:11px;font-weight:700}.counter-empty{margin:20px 0;color:#75849a;font-size:12px;text-align:center}@media(max-width:800px){#counter-order-panel{margin:14px 16px 0;padding:16px}.counter-order-layout{grid-template-columns:1fr}.counter-menu{grid-template-columns:1fr}.counter-search{grid-column:auto}.counter-categories{display:flex;flex-direction:row;max-height:none;overflow:auto}.counter-category{width:auto;min-width:max-content;min-height:42px;border-bottom:0;border-right:1px solid #e9eef4;font-size:11px}.counter-cart{min-height:0}.counter-menu-items{max-height:none}}`;
+document.head.appendChild(counterOrderStyles);
+const counterChoiceStyles = document.createElement('style');
+counterChoiceStyles.textContent = `.counter-choice-dialog{width:min(430px,calc(100vw - 32px));padding:24px;border:0;border-radius:16px;color:#26344e;box-shadow:0 20px 60px rgba(14,29,55,.25)}.counter-choice-dialog::backdrop{background:rgba(21,34,58,.46)}.counter-choice-dialog h2{margin:4px 30px 3px 0;font-size:21px}.counter-choice-dialog p{margin:0;color:#718097;font-size:12px}.counter-choice-options{display:grid;gap:8px;margin:18px 0}.counter-choice-options label{cursor:pointer}.counter-choice-options input{position:absolute;opacity:0}.counter-choice-options span{display:flex;justify-content:space-between;padding:12px;border:1px solid #d9e3ef;border-radius:9px;font-size:13px;font-weight:800}.counter-choice-options input:checked+span{border-color:#263d68;color:#fff;background:#263d68}.counter-style-options{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0;padding:12px;border:1px solid #e0e7ef;border-radius:9px}.counter-style-options legend{padding:0 4px;color:#68778e;font-size:11px;font-weight:900}.counter-style-options label{font-size:12px;font-weight:700}.counter-style-options b{color:#148251}`;
+document.head.appendChild(counterChoiceStyles);
+const counterLayoutRefinements = document.createElement('style');
+counterLayoutRefinements.textContent = `.counter-menu-items{align-items:start;grid-auto-rows:150px}.counter-menu-item{height:150px;min-height:0}.counter-category-group{display:block;padding:13px 14px 7px;color:#9a2635;background:#f8fafc;font-size:10px;font-weight:900;letter-spacing:.09em;text-transform:uppercase}.counter-category-group~.counter-category{min-height:54px}.counter-cart{height:auto;min-height:0;align-self:start}.counter-cart-items{display:block;height:clamp(190px,28vh,260px);min-height:0;flex:0 0 auto;overflow-y:auto;margin:14px 0}.counter-cart-line{min-height:0;height:72px;padding:10px 0}.counter-customer{flex:0 0 auto;margin-top:0}.counter-customer textarea{resize:none}.counter-total,.counter-place-order,.counter-order-status{flex:0 0 auto}@media(max-width:800px){.counter-menu-items{grid-auto-rows:130px}.counter-menu-item{height:130px}.counter-category-group{display:none}.counter-cart-items{height:220px;max-height:45vh}}`;
+document.head.appendChild(counterLayoutRefinements);
 const operationsRoutingStyles = document.createElement('style');
 operationsRoutingStyles.textContent = `.operations-section{padding:20px;border:1px solid #e2e9f1;border-radius:15px;background:linear-gradient(145deg,#fff,#fbfcfe)}.operations-section+.operations-section{margin-top:16px}.operations-section-head{display:flex;align-items:start;justify-content:space-between;gap:16px}.operations-section-head h3{margin:3px 0 5px;color:#1f2e47;font-size:18px}.operations-section-head p{max-width:660px;margin:0;color:#6a7890;font-size:12px;line-height:1.5}.operations-count{padding:7px 9px;border-radius:999px;color:#36547d;background:#edf3fb;font-size:10px;font-weight:900;white-space:nowrap}.operations-printer-form,.operations-route-form{display:grid;gap:10px;align-items:end;margin:18px 0}.operations-printer-form{grid-template-columns:minmax(180px,1.2fr) minmax(130px,.55fr) minmax(180px,.9fr) 90px auto}.operations-route-form{grid-template-columns:minmax(180px,.8fr) minmax(320px,1.4fr) auto}.operations-printer-form label,.operations-route-form label{display:grid;gap:5px;color:#55657b;font-size:10px;font-weight:900;letter-spacing:.05em;text-transform:uppercase}.operations-printer-form input,.operations-printer-form select,.operations-route-form select{width:100%;min-height:42px;padding:10px 11px;border:1px solid #d5dfeb;border-radius:9px;color:#23334e;background:#fff;font:700 12px Manrope,sans-serif}.operations-printer-form input:focus,.operations-printer-form select:focus,.operations-route-form select:focus,.category-search:focus{outline:0;border-color:#2e67b1;box-shadow:0 0 0 3px rgba(46,103,177,.12)}.operations-printer-form button,.operations-route-form button{min-height:42px;padding:10px 13px;background:#263d68;font-size:11px;white-space:nowrap}.operations-printer-form button span{font-size:16px}.printer-grid{grid-template-columns:repeat(auto-fill,minmax(255px,1fr))}.operation-printer{min-height:146px;border-color:#dfe7f0;box-shadow:0 4px 12px rgba(30,51,83,.05)}.operation-printer-head{display:grid;grid-template-columns:38px minmax(0,1fr) auto;gap:10px}.printer-card-icon{display:grid;width:38px;height:38px;place-items:center;border-radius:10px;color:#087348;background:#e8f7ef;font-size:22px;font-weight:900}.printer-card-icon.bill{color:#315487;background:#eaf1ff}.operation-printer p{line-height:1.4}.printer-endpoint{margin:9px 0!important;padding:7px 9px;border-radius:8px;color:#56708f!important;background:#f2f6fb;font:800 10px ui-monospace,SFMono-Regular,Menlo,monospace!important}.printer-endpoint.is-pending{color:#9a6c20!important;background:#fff8e9}.routing-section{background:linear-gradient(145deg,#fffdf8,#fff)}.category-picker{border:1px solid #d5dfeb;border-radius:10px;background:#fff;padding:9px}.category-picker-top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}.category-picker-top b{color:#23334e;font-size:12px}.category-picker-top span{color:#64748b;font-size:10px;font-weight:800}.category-search{width:100%;min-height:37px;border:1px solid #d5dfeb;border-radius:8px;padding:8px 10px;font:700 12px Manrope,sans-serif}.category-checklist{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:7px;max-height:190px;overflow:auto;margin-top:9px;padding-right:2px}.category-choice{display:flex!important;align-items:center;gap:8px;padding:8px 9px;border:1px solid #e2e9f1;border-radius:8px;color:#33445f!important;background:#fbfcfe;font-size:11px!important;letter-spacing:0!important;text-transform:none!important;cursor:pointer}.category-choice:hover{border-color:#a9bdd8;background:#f1f6fd}.category-choice input{width:16px;height:16px;accent-color:#1e8b59}.category-choice.is-hidden{display:none!important}.route-row{display:grid;grid-template-columns:28px minmax(0,1fr) auto}.route-icon{display:grid;width:26px;height:26px;place-items:center;border-radius:7px;color:#087348;background:#e8f7ef;font-size:16px}.route-row span{display:block;margin-top:3px}.operations-save-bar{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:16px;padding:13px 15px;border:1px solid #cce8d8;border-radius:12px;background:#f3fbf6;color:#527260;font-size:12px;font-weight:700}.operations-save{margin:0!important;padding:10px 14px;white-space:nowrap}@media(max-width:900px){.operations-printer-form{grid-template-columns:1fr 1fr}.operations-printer-form button{width:100%}}@media(max-width:760px){.operations-printer-form,.operations-route-form{grid-template-columns:1fr}.operations-printer-form button,.operations-route-form button{width:100%}.operations-section{padding:16px}.operations-section-head{align-items:flex-start}.category-checklist{grid-template-columns:1fr}.operations-save-bar{align-items:stretch;flex-direction:column}.operations-save{width:100%}}`;
 document.head.appendChild(operationsRoutingStyles);
@@ -147,6 +220,7 @@ const toPushKey = (value) => { const padding = '='.repeat((4 - value.length % 4)
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/orders-sw.js?v=6');
 document.getElementById('enable-notifications')?.addEventListener('click', async () => {
+  closeOpenPanels();
   const button = document.getElementById('enable-notifications');
   const notificationApi = window.Notification;
   try {
@@ -548,12 +622,14 @@ async function updateAvailability(key, unavailableUntil) {
 
 document.getElementById('availability-toggle')?.addEventListener('click', async () => {
   const isOpening = availability.hidden;
+  if (isOpening) closeOpenPanels('availability');
   availability.hidden = !isOpening;
   document.getElementById('availability-toggle').setAttribute('aria-expanded', String(isOpening));
   if (isOpening) { try { await loadAvailability(); } catch (error) { menuResults.innerHTML = `<div class="empty-state">${esc(error.message)}</div>`; } }
 });
 liveOrdersToggle.addEventListener('click', () => {
   const isOpening = liveOrdersPanel.hidden;
+  if (isOpening) closeOpenPanels('live');
   liveOrdersPanel.hidden = !isOpening;
   liveOrdersToggle.classList.toggle('is-open', isOpening);
   liveOrdersToggle.setAttribute('aria-expanded', String(isOpening));
@@ -568,8 +644,57 @@ liveOrdersToggle.addEventListener('click', () => {
   }
 });
 document.getElementById('availability-close')?.addEventListener('click', () => { availability.hidden = true; document.getElementById('availability-toggle').setAttribute('aria-expanded', 'false'); });
+document.getElementById('counter-order-close')?.addEventListener('click', () => { counterPanel.hidden = true; });
+document.getElementById('counter-menu-search')?.addEventListener('input', renderCounterOrder);
+document.getElementById('counter-categories')?.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-counter-category]');
+  if (!button) return;
+  counterCategory = button.dataset.counterCategory || 'all'; renderCounterOrder();
+});
+document.getElementById('counter-menu-items')?.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-counter-item]');
+  if (!button) return;
+  const item = counterMenu[Number(button.dataset.counterItem)]; if (!item) return;
+  const options = counterPortionOptions(item);
+  if (options.length > 1 || item.gravyStyleAvailable) { openCounterChoice(item); return; }
+  const [portion, , rawPrice] = options[0] || ['', 'Regular', 0];
+  const price = Number(String(rawPrice).replace(/[^0-9.]/g, ''));
+  if (!price) { document.getElementById('counter-order-status').textContent = 'This item has no price set in Menu Admin yet.'; return; }
+  const existing = counterCart.find((line) => line.name === item.name && line.category === item.category && line.portion === portion && !line.style);
+  if (existing) existing.quantity += 1;
+  else counterCart.push({ name:item.name, category:item.category, portion, style:'', price, quantity:1 });
+  renderCounterOrder();
+});
+document.getElementById('counter-choice-dialog')?.addEventListener('click', (event) => {
+  if (event.target.closest('[data-counter-choice-close]')) { document.getElementById('counter-choice-dialog').close(); return; }
+  if (!event.target.closest('#counter-choice-add') || !counterChoiceItem) return;
+  const portionInput = document.querySelector('input[name="counter-portion"]:checked');
+  const portion = portionInput?.value || '', price = Number(portionInput?.dataset.counterChoicePrice || 0);
+  const style = document.querySelector('input[name="counter-style"]:checked')?.value || '';
+  const existing = counterCart.find((line) => line.name === counterChoiceItem.name && line.category === counterChoiceItem.category && line.portion === portion && line.style === style);
+  if (existing) existing.quantity += 1;
+  else counterCart.push({ name:counterChoiceItem.name, category:counterChoiceItem.category, portion, style, price, quantity:1 });
+  document.getElementById('counter-choice-dialog').close(); renderCounterOrder();
+});
+document.getElementById('counter-cart-items')?.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-counter-qty]'); if (!button) return;
+  const index = Number(button.dataset.counterQty), line = counterCart[index]; if (!line) return;
+  line.quantity += Number(button.dataset.counterChange); if (line.quantity <= 0) counterCart.splice(index, 1); renderCounterOrder();
+});
+document.getElementById('counter-clear')?.addEventListener('click', () => { counterCart = []; document.getElementById('counter-order-status').textContent = ''; renderCounterOrder(); });
+document.getElementById('counter-place-order')?.addEventListener('click', async () => {
+  const status = document.getElementById('counter-order-status');
+  if (!counterCart.length) { status.textContent = 'Add at least one menu item first.'; return; }
+  const button = document.getElementById('counter-place-order'); button.disabled = true; status.textContent = 'Saving takeaway order…';
+  try {
+    const response = await fetch('/api/orders/counter', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ customerName:document.getElementById('counter-customer-name').value.trim(), customerPhone:document.getElementById('counter-customer-phone').value.trim(), specialRequest:document.getElementById('counter-special-request').value.trim(), items:counterCart }) });
+    const result = await response.json(); if (!response.ok) throw new Error(result.error || 'Unable to save the order.');
+    status.textContent = `Takeaway order #${result.orderNumber} placed successfully.`; counterCart = []; document.getElementById('counter-customer-name').value = ''; document.getElementById('counter-customer-phone').value = ''; document.getElementById('counter-special-request').value = ''; renderCounterOrder(); loadOrders();
+  } catch (error) { status.textContent = error.message; } finally { button.disabled = false; }
+});
 operationsToggle.addEventListener('click', async () => {
   const opening = operationsPanel.hidden;
+  if (opening) closeOpenPanels('operations');
   operationsPanel.hidden = !opening;
   operationsToggle.classList.toggle('is-open', opening);
   operationsToggle.setAttribute('aria-expanded', String(opening));
@@ -674,6 +799,7 @@ document.getElementById('menu-type-tabs')?.addEventListener('click', (event) => 
 });
 window.addEventListener('beforeinstallprompt', (event) => { event.preventDefault(); installPrompt = event; });
 document.getElementById('install-shortcut')?.addEventListener('click', async () => {
+  closeOpenPanels('shortcut');
   const dialog = document.getElementById('shortcut-dialog');
   const message = document.getElementById('shortcut-message');
   const steps = document.getElementById('shortcut-steps');

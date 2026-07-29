@@ -91,6 +91,11 @@
       .category-control-row strong { color: #1f2937; }
       .category-control-row label { display: inline-flex; align-items: center; gap: 7px; color: #4b5563; font-size: 13px; font-weight: 800; }
       .category-control-row input { width: 18px; height: 18px; accent-color: #d62828; }
+      .category-order-group { display:grid; gap:8px; margin-bottom:14px; }
+      .category-order-group > b { padding:6px 2px; color:#a32031; font-size:11px; letter-spacing:.08em; text-transform:uppercase; }
+      .category-order-rank { display:inline-grid; width:25px; height:25px; place-items:center; margin-right:9px; border-radius:50%; color:#fff; background:#263d68; font-size:11px; }
+      .category-order-move { width:34px; height:32px; margin-left:5px; border:1px solid #d5dfeb; border-radius:7px; color:#263d68; background:#fff; font-size:17px; font-weight:800; cursor:pointer; }
+      .category-order-move:hover { border-color:#263d68; background:#edf3fb; }
       .scan-stats { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:12px; margin-bottom:22px; }
       .scan-stat { padding:16px; border:1px solid #e5e7eb; border-radius:10px; background:#f9fafb; }
       .scan-stat strong { display:block; color:#d62828; font-size:24px; line-height:1; }
@@ -591,6 +596,7 @@
             </div>
             <div class="form-grid full"><div class="form-group"><label>Menu Note</label><textarea name="airMenuNote" rows="2">Availability may vary. Please ask our team about today’s specials.</textarea></div></div>
             <input type="hidden" name="airCategoryVisibility" value="{}">
+            <input type="hidden" name="airCategoryOrder" value="[]">
             <datalist id="air-category-options"></datalist>
             <div class="form-grid">
               <div class="switch-row"><div><strong>Table menu live</strong><span class="help-text" style="margin:4px 0 0;">Allow the in-store table QR to open.</span></div><input type="checkbox" name="airTableLive" checked></div>
@@ -647,6 +653,12 @@
             <h2>Category Visibility</h2>
             <span class="help-text" style="margin-bottom:18px;">Expose or hide each category independently on the Table and Business Card QR menus. Alcohol is hidden from the business-card menu by default.</span>
             <div id="air-category-controls" class="category-control-list"></div>
+          </div>
+
+          <div class="card">
+            <h2>Counter Menu Order</h2>
+            <span class="help-text" style="margin-bottom:18px;">Set the category sequence used by the Takeaway counter. Food stays above Alcohol &amp; Bar; use the arrows to arrange categories within each group.</span>
+            <div id="air-category-order-controls" class="category-control-list"></div>
           </div>
 
           <div class="card">
@@ -1412,6 +1424,6 @@
         });
       }
     </script>
-    <script src="admin-cms.js?v=20260716-17" defer></script>
+    <script src="admin-cms.js?v=20260730-19" defer></script>
   </body>
 </html>
