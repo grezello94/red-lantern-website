@@ -2036,6 +2036,12 @@ app.post('/api/direct-orders', async (req, res) => {
     const unavailableKeys = new Set(unavailableRows.map((row) => row.item_key));
     if (cleanItems.some((item) => unavailableKeys.has(item.availabilityKey))) return res.status(409).json({ error: 'One or more selected items have just gone out of stock. Please refresh the menu.' });
     const requestedLoyaltyPoints = Math.max(0, Math.floor(Number(req.body?.loyaltyPoints) || 0));
+    // Only a customer who has successfully completed an earlier order is trusted
+    // for auto-acceptance. A number with only cancelled/rejected attempts remains
+    // a new order for the counter to confirm first.
+    const trustedCustomerRows = await sql`SELECT EXISTS (SELECT 1 FROM direct_orders WHERE customer_phone=${phone} AND status='completed') AS is_trusted`;
+    const isTrustedCustomer = trustedCustomerRows[0]?.is_trusted === true || trustedCustomerRows[0]?.is_trusted === 't';
+    const initialStatus = isTrustedCustomer ? 'accepted' : 'new';
     const { orderDay, number: dailyOrderNumber } = await nextDailyOrderNumber();
     const id = `RL${Date.now().toString(36).toUpperCase()}${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
     const trackingToken = crypto.randomBytes(24).toString('base64url');
@@ -2046,13 +2052,13 @@ app.post('/api/direct-orders', async (req, res) => {
     const savedItems = cleanItems.map(({ availabilityKey, ...item }) => item);
     if (requestedLoyaltyPoints) {
       await ensureLoyaltyTable();
-      const inserted = await sql`WITH redeemed AS (UPDATE loyalty_accounts SET points=points-${requestedLoyaltyPoints}, total_redeemed=total_redeemed+${requestedLoyaltyPoints}, updated_at=NOW() WHERE customer_phone=${phone} AND points >= ${requestedLoyaltyPoints} AND points >= 100 RETURNING customer_phone) INSERT INTO direct_orders (id, mode, customer_name, customer_phone, special_request, items, total, order_day, daily_order_number, tracking_token, loyalty_points_redeemed, loyalty_points_earned) SELECT ${id}, ${mode}, ${String(customerName || '').trim().slice(0, 80)}, ${phone}, ${String(specialRequest || '').trim().slice(0, 240)}, ${JSON.stringify(savedItems)}, ${total}, ${orderDay}::date, ${dailyOrderNumber}, ${trackingToken}, ${requestedLoyaltyPoints}, ${loyaltyPointsEarned} FROM redeemed RETURNING id`;
+      const inserted = await sql`WITH redeemed AS (UPDATE loyalty_accounts SET points=points-${requestedLoyaltyPoints}, total_redeemed=total_redeemed+${requestedLoyaltyPoints}, updated_at=NOW() WHERE customer_phone=${phone} AND points >= ${requestedLoyaltyPoints} AND points >= 100 RETURNING customer_phone) INSERT INTO direct_orders (id, status, mode, customer_name, customer_phone, special_request, items, total, order_day, daily_order_number, tracking_token, loyalty_points_redeemed, loyalty_points_earned) SELECT ${id}, ${initialStatus}, ${mode}, ${String(customerName || '').trim().slice(0, 80)}, ${phone}, ${String(specialRequest || '').trim().slice(0, 240)}, ${JSON.stringify(savedItems)}, ${total}, ${orderDay}::date, ${dailyOrderNumber}, ${trackingToken}, ${requestedLoyaltyPoints}, ${loyaltyPointsEarned} FROM redeemed RETURNING id`;
       if (!inserted.length) return res.status(409).json({ error: 'Your points balance changed. Please check your points and try again.' });
-    } else await sql`INSERT INTO direct_orders (id, mode, customer_name, customer_phone, special_request, items, total, order_day, daily_order_number, tracking_token, loyalty_points_redeemed, loyalty_points_earned) VALUES (${id}, ${mode}, ${String(customerName || '').trim().slice(0, 80)}, ${phone}, ${String(specialRequest || '').trim().slice(0, 240)}, ${JSON.stringify(savedItems)}, ${total}, ${orderDay}::date, ${dailyOrderNumber}, ${trackingToken}, 0, ${loyaltyPointsEarned})`;
+    } else await sql`INSERT INTO direct_orders (id, status, mode, customer_name, customer_phone, special_request, items, total, order_day, daily_order_number, tracking_token, loyalty_points_redeemed, loyalty_points_earned) VALUES (${id}, ${initialStatus}, ${mode}, ${String(customerName || '').trim().slice(0, 80)}, ${phone}, ${String(specialRequest || '').trim().slice(0, 240)}, ${JSON.stringify(savedItems)}, ${total}, ${orderDay}::date, ${dailyOrderNumber}, ${trackingToken}, 0, ${loyaltyPointsEarned})`;
     await sql`UPDATE direct_orders SET fulfillment_type=${fulfilment} WHERE id=${id}`;
     // The order is already safely stored. Push delivery must never delay or block it.
     void notifyDirectOrder({ id, dailyOrderNumber, total, itemCount: savedItems.reduce((count, item) => count + Number(item.quantity || 0), 0) });
-    res.json({ id, status: 'new', orderNumber: String(dailyOrderNumber).padStart(2, '0'), trackingUrl: `/track-order?token=${encodeURIComponent(trackingToken)}`, loyaltyPointsEarned, loyaltyPointsRedeemed: requestedLoyaltyPoints });
+    res.json({ id, status: initialStatus, autoAccepted: isTrustedCustomer, orderNumber: String(dailyOrderNumber).padStart(2, '0'), trackingUrl: `/track-order?token=${encodeURIComponent(trackingToken)}`, loyaltyPointsEarned, loyaltyPointsRedeemed: requestedLoyaltyPoints });
   } catch (error) { res.status(500).json({ error: 'Unable to place the order. Please call us instead.' }); }
 });
 
