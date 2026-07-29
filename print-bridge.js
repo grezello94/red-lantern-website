@@ -86,6 +86,27 @@ async function writeJson(file, value) {
   await fs.rename(temporary, file);
 }
 
+async function printText(printerName, text) {
+  const file = path.join(os.tmpdir(), `red-lantern-kot-${crypto.randomUUID()}.txt`);
+  await fs.writeFile(file, text, 'utf8');
+  try {
+    if (process.platform === 'win32') {
+      const quote = (value) => String(value).replace(/'/g, "''");
+      const script = `$content = Get-Content -LiteralPath '${quote(file)}' -Raw; $content | Out-Printer -Name '${quote(printerName)}'`;
+      await run('powershell.exe', ['-NoProfile', '-Command', script]);
+    } else {
+      await run('lp', ['-d', printerName, file]);
+    }
+  } finally { await fs.unlink(file).catch(() => {}); }
+}
+
+function kotText(payload) {
+  const order = payload.order || {};
+  const items = Array.isArray(payload.items) ? payload.items : [];
+  const line = '-'.repeat(34);
+  return ['RED LANTERN RESTAURANT', 'KITCHEN ORDER TICKET', line, `Order #${order.number || order.id || '—'}`, `${order.customer || 'Guest'} · ${order.fulfillment || 'Order'}`, line, ...items.map((item) => `${Number(item.quantity || 0)}x ${item.name || 'Item'}${item.portion ? ` (${item.portion})` : ''}${item.style ? ` · ${item.style}` : ''}`), order.note ? `${line}\nNote: ${order.note}` : '', line, new Date().toLocaleString(), '\n\n\n'].filter(Boolean).join('\n');
+}
+
 function allowedOrigin(request) {
   const origin = request.headers.origin || '';
   if (!origin || /^https:\/\/(www\.)?redlanternrestaurant\.in$/i.test(origin) || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)) return origin || '*';
@@ -106,7 +127,7 @@ function reply(res, status, body, origin = '') {
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
     ...(origin ? { 'Access-Control-Allow-Origin': origin, Vary: 'Origin' } : {}),
-    'Access-Control-Allow-Methods': 'GET, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
     'Cache-Control': 'no-store'
   });
@@ -157,6 +178,16 @@ const server = http.createServer(async (req, res) => {
       await writeJson(queueFile, jobs.slice(-1000));
       return reply(res, 201, { ok: true, job }, origin);
     } catch (error) { return reply(res, 400, { error: error.message || 'Unable to queue KOT.' }, origin); }
+  }
+  if (req.method === 'POST' && req.url === '/v1/print-kot') {
+    try {
+      const payload = await readBody(req);
+      const printerName = String(payload.printerName || '').trim().slice(0, 160);
+      const items = Array.isArray(payload.items) ? payload.items.slice(0, 100) : [];
+      if (!printerName || !items.length) throw new Error('A printer and at least one KOT item are required.');
+      await printText(printerName, kotText({ ...payload, items }));
+      return reply(res, 201, { ok: true, printerName }, origin);
+    } catch (error) { return reply(res, 400, { error: error.message || 'Unable to print KOT.' }, origin); }
   }
   return reply(res, 404, { error: 'Not found.' }, origin);
 });

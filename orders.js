@@ -425,6 +425,19 @@ function printKot(orderId, printerId) {
   popup.document.close();
 }
 
+async function dispatchKot(orderId, printerId) {
+  const order = orderRecords.get(orderId);
+  const printer = operationsConfig.printers.find((item) => item.id === printerId);
+  const items = (Array.isArray(order?.items) ? order.items : []).filter((item) => (routePrinter(item)?.id || '') === printerId);
+  if (!printer || !printer.deviceName || !items.length) throw new Error('This KOT needs an assigned system printer and at least one routed item.');
+  const response = await fetch('http://127.0.0.1:9124/v1/print-kot', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ printerName:printer.deviceName, items, order:{ id:order.id, number:String(order.daily_order_number || '').padStart(2, '0'), customer:order.customer_name, fulfillment:order.fulfillment_type === 'pickup' ? 'Pick up' : 'Delivery', note:order.special_request } })
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || 'The Print Bridge could not send this KOT to the printer.');
+}
+
 async function loadAvailability() {
   const [menuResponse, availabilityResponse] = await Promise.all([fetch('/api/orders/menu', { cache: 'no-store' }), fetch('/api/orders/availability', { cache: 'no-store' })]);
   if (!menuResponse.ok || !availabilityResponse.ok) throw new Error('Menu availability could not be loaded.');
@@ -535,7 +548,7 @@ document.getElementById('operations-content')?.addEventListener('click', async (
   if (removeRoute) { operationsConfig.routes=operationsConfig.routes.filter((route)=>route.id!==removeRoute.dataset.deleteRoute); renderOperations(); return; }
   if (event.target.closest('#operations-save')) { const button=event.target.closest('#operations-save'); try { addSelectedRoutes(); } catch (error) { alert(error.message); return; } button.disabled=true; button.textContent='Saving…'; try { await saveOperations(); } catch(error) { alert(error.message); button.disabled=false; button.textContent='Save printer configuration'; } return; }
   const kot = event.target.closest('[data-print-kot]');
-  if (kot) printKot(kot.dataset.printKot, kot.dataset.printerId);
+  if (kot) { try { await dispatchKot(kot.dataset.printKot, kot.dataset.printerId); kot.textContent='Sent to printer'; setTimeout(() => { kot.textContent='Print KOT'; }, 1800); } catch (error) { alert(error.message); } }
 });
 orderStatusFilters.addEventListener('click', (event) => {
   const button = event.target.closest('[data-order-status-filter]');
