@@ -17,15 +17,29 @@ let activeOrderDay = '';
 let orderRecords = new Map();
 let historyAll = false;
 let orderStatusFilter = 'all';
+let fulfillmentFilter = '';
 let operationsConfig = { printers: [], routes: [] };
 let operationsMenu = [];
-let operationsTab = 'kots';
+let operationKotHistory = new Map();
+let operationsTab = 'home';
 let installedSystemPrinters = [];
 let printBridgeState = 'checking';
 let printBridgeConfigState = 'not-synced';
 let assignmentPrinterId = '';
 let assignmentMode = '';
 const orderSearchPanel = document.querySelector('.order-search-panel');
+document.querySelectorAll('[data-fulfillment-filter]').forEach((button) => {
+  button.addEventListener('click', () => {
+    const nextFilter = button.dataset.fulfillmentFilter || '';
+    fulfillmentFilter = fulfillmentFilter === nextFilter ? '' : nextFilter;
+    document.querySelectorAll('[data-fulfillment-filter]').forEach((item) => {
+      const isActive = item.dataset.fulfillmentFilter === fulfillmentFilter;
+      item.classList.toggle('is-active', isActive);
+      item.setAttribute('aria-pressed', String(isActive));
+    });
+    loadOrders();
+  });
+});
 const liveOrdersPanel = document.createElement('section');
 liveOrdersPanel.id = 'live-orders-panel';
 liveOrdersPanel.hidden = true;
@@ -60,6 +74,7 @@ const operationsPanel = document.createElement('section');
 operationsPanel.id = 'operations-panel';
 operationsPanel.hidden = true;
 operationsPanel.innerHTML = '<div class="operations-head"><div><span class="eyebrow">Staff workspace</span><h2>Operations</h2><p>Review routed KOTs and configure kitchen, tandoori, bar, and bill printers.</p></div><button type="button" id="operations-close" class="quiet-button">Close</button></div><div id="operations-tabs" class="operation-launches"><button type="button" data-operations-tab="kots" class="operation-launch is-active"><span class="operation-icon kot-icon" aria-hidden="true">⌑</span><span><b>KOT queue</b><small>View and print live kitchen tickets</small></span><i aria-hidden="true">›</i></button><button type="button" data-operations-tab="printers" class="operation-launch"><span class="operation-icon printer-icon" aria-hidden="true">▣</span><span><b>Printer routing</b><small>Assign categories and items to printers</small></span><i aria-hidden="true">›</i></button></div><div id="operations-content"></div>';
+document.getElementById('operations-tabs')?.remove();
 availability.before(operationsPanel);
 const operationsToggle = document.createElement('button');
 operationsToggle.type = 'button';
@@ -107,7 +122,7 @@ const printBridgeSetupStyles = document.createElement('style');
 printBridgeSetupStyles.textContent = `.printer-setup-flow{max-width:1380px}.bridge-setup{margin-left:auto;display:grid;gap:5px;max-width:510px;padding:10px 12px;border:1px solid #cfe2d8;border-radius:10px;background:#fff}.bridge-setup b{color:#087348}.bridge-setup span{font-size:11px}.bridge-setup code{padding:6px 8px;border-radius:6px;color:#243958;background:#edf3f8;font:700 10px ui-monospace,monospace;word-break:break-word}.bridge-setup button{justify-self:start;padding:6px 9px;color:#fff;background:#284778;font-size:10px}@media(max-width:900px){.printer-setup-flow{align-items:flex-start;flex-wrap:wrap}.bridge-setup{width:100%;max-width:none;margin-left:0}}`;
 document.head.appendChild(printBridgeSetupStyles);
 const managePrintersStyles = document.createElement('style');
-managePrintersStyles.textContent = `.manage-printers,.printer-assignment{padding:24px;border:1px solid #dfe7f1;border-radius:16px;background:#fff}.manage-printers-head{display:flex;justify-content:space-between;gap:18px;align-items:start}.manage-printers h3,.printer-assignment h3{margin:4px 0;color:#1e3150;font-size:23px}.manage-printers p,.printer-assignment p{margin:0;color:#687a91}.bridge-status{max-width:370px;padding:9px 12px;border-radius:9px;color:#8a5b13;background:#fff5dc;font-size:12px;font-weight:700}.bridge-status.online{color:#087348;background:#e8f7ef}.add-system-printer{display:flex;gap:10px;margin:22px 0}.add-system-printer select{flex:1;min-height:44px;padding:10px;border:1px solid #cfdceb;border-radius:9px}.add-system-printer button,.printer-table-row button{padding:10px 14px;background:#246ce0;color:#fff}.printer-table{border:1px solid #dfe6ee;border-radius:12px;overflow:hidden}.printer-table-head,.printer-table-row{display:grid;grid-template-columns:1.5fr .8fr 1fr auto;gap:16px;align-items:center;padding:16px 18px}.printer-table-head{color:#526680;background:#eef2f6;font-size:11px;font-weight:900;text-transform:uppercase}.printer-table-row+.printer-table-row{border-top:1px solid #e1e7ee}.printer-table-row b,.printer-table-row small{display:block}.printer-table-row b{color:#1d2f4a}.printer-table-row small{margin-top:4px;color:#76869a;font-size:11px}.assignment-tag{display:inline-block;margin:2px;padding:5px 9px;border-radius:999px;color:#087348;background:#e8f7ef;font-size:11px;font-style:normal;font-weight:800}.printer-table-row .remove-printer{margin-left:6px;color:#a52a39;background:#fff0f0}.assignment-back{margin-bottom:17px;color:#27436b;background:#eef4fa}.assignment-choices{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;max-width:720px;margin-top:24px}.assignment-choices button{display:grid;gap:6px;padding:22px;text-align:left;color:#1e3150;background:#fff;border:1px solid #d6e0ea}.assignment-choices button:hover{border-color:#246ce0;background:#f4f8ff}.assignment-choices b{font-size:16px}.assignment-choices span{color:#718198}.assignment-category-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:22px}.assignment-category-grid label{display:flex;align-items:center;gap:9px;padding:12px;border:1px solid #dce5ee;border-radius:9px;color:#263b59;font-size:12px;font-weight:700}.assignment-category-grid input{width:17px;height:17px;accent-color:#168451}.assignment-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:22px}.assignment-actions button{padding:11px 15px;background:#eef3f8;color:#304562}.assignment-actions .operations-save{color:#fff;background:#168451}@media(max-width:760px){.manage-printers-head{display:grid}.printer-table-head{display:none}.printer-table-row{grid-template-columns:1fr;gap:8px}.add-system-printer{display:grid}.assignment-choices,.assignment-category-grid{grid-template-columns:1fr}}`;
+managePrintersStyles.textContent = `.manage-printers,.printer-assignment{padding:24px;border:1px solid #dfe7f1;border-radius:16px;background:#fff}.manage-printers-head{display:flex;justify-content:space-between;gap:18px;align-items:start}.manage-printers h3,.printer-assignment h3{margin:4px 0;color:#1e3150;font-size:23px}.manage-printers p,.printer-assignment p{margin:0;color:#687a91}.bridge-status{max-width:370px;padding:9px 12px;border-radius:9px;color:#8a5b13;background:#fff5dc;font-size:12px;font-weight:700}.bridge-status.online{color:#087348;background:#e8f7ef}.add-system-printer{display:flex;gap:10px;margin:22px 0}.add-system-printer select{flex:1;min-height:44px;padding:10px;border:1px solid #cfdceb;border-radius:9px}.add-system-printer button,.printer-table-row button{padding:10px 14px;background:#246ce0;color:#fff}.printer-table{border:1px solid #dfe6ee;border-radius:12px;overflow:hidden}.printer-table-head,.printer-table-row{display:grid;grid-template-columns:1.5fr .8fr 1fr auto;gap:16px;align-items:center;padding:16px 18px}.printer-table-head{color:#526680;background:#eef2f6;font-size:11px;font-weight:900;text-transform:uppercase}.printer-table-row+.printer-table-row{border-top:1px solid #e1e7ee}.printer-table-row b,.printer-table-row small{display:block}.printer-table-row b{color:#1d2f4a}.printer-table-row small{margin-top:4px;color:#76869a;font-size:11px}.assignment-tag{display:inline-block;margin:2px;padding:5px 9px;border-radius:999px;color:#087348;background:#e8f7ef;font-size:11px;font-style:normal;font-weight:800}.printer-table-row .remove-printer{margin-left:6px;color:#a52a39;background:#fff0f0}.assignment-back{display:inline-flex!important;align-items:center;min-height:38px;margin-bottom:17px;padding:8px 12px!important;border:1px solid #9bb7d9!important;border-radius:8px!important;color:#123a70!important;background:#dcecff!important;box-shadow:0 1px 2px rgba(18,58,112,.12);font-size:13px!important;font-weight:900!important}.assignment-back:hover,.assignment-back:focus-visible{border-color:#246ce0!important;color:#fff!important;background:#246ce0!important;outline:0;box-shadow:0 0 0 3px rgba(36,108,224,.2)}.assignment-choices{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;max-width:720px;margin-top:24px}.assignment-choices button{display:grid;gap:6px;padding:22px;text-align:left;color:#1e3150;background:#fff;border:1px solid #d6e0ea}.assignment-choices button:hover{border-color:#246ce0;background:#f4f8ff}.assignment-choices b{font-size:16px}.assignment-choices span{color:#718198}.assignment-category-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:22px}.assignment-category-grid label{display:flex;align-items:center;gap:9px;padding:12px;border:1px solid #dce5ee;border-radius:9px;color:#263b59;font-size:12px;font-weight:700}.assignment-category-grid input{width:17px;height:17px;accent-color:#168451}.assignment-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:22px}.assignment-actions button{padding:11px 15px;background:#eef3f8;color:#304562}.assignment-actions .operations-save{color:#fff;background:#168451}@media(max-width:760px){.manage-printers-head{display:grid}.printer-table-head{display:none}.printer-table-row{grid-template-columns:1fr;gap:8px}.add-system-printer{display:grid}.assignment-choices,.assignment-category-grid{grid-template-columns:1fr}}`;
 document.head.appendChild(managePrintersStyles);
 const printerRoutingSummaryStyles = document.createElement('style');
 printerRoutingSummaryStyles.textContent = `.printer-table-row .routing-summary{margin-top:9px;padding:7px 9px;border-radius:7px;color:#355577;background:#f1f6fb;line-height:1.5}.printer-table-row .routing-summary b{display:inline;color:#23436c;font-size:11px}`;
@@ -118,6 +133,12 @@ document.head.appendChild(windowsOperationsPolishStyles);
 const itemRoutingAssignmentStyles = document.createElement('style');
 itemRoutingAssignmentStyles.textContent = `.printer-assignment{max-width:1280px;margin:0 auto;padding:clamp(22px,3vw,36px)}.printer-assignment>p{max-width:720px;font-size:14px;line-height:1.5}.assignment-all-categories{display:flex;align-items:center;gap:12px;margin-top:24px;padding:14px 16px;border:1px solid #d7e6f4;border-radius:12px;background:linear-gradient(135deg,#f8fbff,#eef6ff);cursor:pointer}.assignment-all-categories input{width:19px;height:19px;accent-color:#168451}.assignment-all-categories span{display:grid;gap:3px}.assignment-all-categories b{color:#223b5d;font-size:14px}.assignment-all-categories small{color:#6d7e96;font-size:12px}.assignment-category-grid{grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:11px;max-width:none}.assignment-category-card{border:1px solid #dbe5ef;border-radius:10px;background:#fff;overflow:hidden}.assignment-category-card summary{display:flex;align-items:center;justify-content:space-between;min-height:50px;padding:0 12px;cursor:pointer;list-style:none}.assignment-category-card summary::-webkit-details-marker{display:none}.assignment-category-card summary>label{flex:1;margin:0;border:0;background:transparent}.assignment-category-card summary i{color:#67809d;font-size:16px;font-style:normal;transition:transform .15s ease}.assignment-category-card[open] summary i{transform:rotate(180deg)}.assignment-item-list{display:grid;gap:8px;padding:12px;border-top:1px solid #e6edf4;background:#f8fbfe}.assignment-item-list>b{color:#51647e;font-size:10px;letter-spacing:.07em;text-transform:uppercase}.assignment-item-list label{display:flex;align-items:center;gap:8px;padding:3px 0;color:#3b516f;font-size:12px;font-weight:700}.assignment-item-list input{width:16px;height:16px;accent-color:#168451}.assignment-item-list small{color:#7a899c;font-size:12px}.assignment-dish{display:grid;gap:6px;padding:7px 9px;border:1px solid #dce6f1;border-radius:9px;background:#fff}.assignment-dish>label small{margin-left:auto;color:#71839a;font-weight:600;text-transform:uppercase;font-size:10px;letter-spacing:.04em}.assignment-variants{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;padding:7px 0 0 24px;border-top:1px solid #edf1f5}.assignment-variants label{font-size:11px;color:#60748d}.assignment-actions{padding-top:20px;border-top:1px solid #e7edf4}@media(max-width:640px){.assignment-category-grid{grid-template-columns:1fr}.assignment-variants{grid-template-columns:1fr}.assignment-actions{align-items:stretch;flex-direction:column}.assignment-actions button{width:100%}}`;
 document.head.appendChild(itemRoutingAssignmentStyles);
+const operationsWorkspaceStyles = document.createElement('style');
+operationsWorkspaceStyles.textContent = `.operations-home{padding-top:20px}.operations-home-title h3,.kot-listing h3{margin:4px 0 5px;color:#192d4b;font-size:24px}.operations-home-title p,.kot-listing p{margin:0;color:#6a7b91;font-size:13px}.operations-home-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:22px}.operations-home-card{display:grid;grid-template-columns:52px minmax(0,1fr) auto;gap:15px;align-items:center;min-height:112px;padding:20px;border:1px solid #dce5ef;border-radius:14px;color:#1d3150;background:#fff;text-align:left;box-shadow:0 4px 14px rgba(25,49,80,.045)}.operations-home-card:hover{border-color:#92add0;background:#f8fbff;box-shadow:0 9px 22px rgba(25,49,80,.1);transform:translateY(-1px)}.operations-home-icon{display:grid;width:52px;height:52px;place-items:center;border-radius:50%;color:#7d1e35;background:#f9edf0;font-size:27px;font-weight:900}.operations-home-card b,.operations-home-card small{display:block}.operations-home-card b{font-size:17px}.operations-home-card small{margin-top:5px;color:#6d7f97;font-size:12px;line-height:1.45}.operations-home-card i{color:#7d1e35;font-size:25px;font-style:normal}.kot-listing{padding-top:10px}.kot-listing-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:20px}.kot-listing-head .assignment-back{margin-bottom:15px}.kot-table-wrap{overflow:auto;border:1px solid #dce5ef;border-radius:13px;background:#fff}.kot-table{width:100%;min-width:900px;border-collapse:collapse;text-align:left}.kot-table th{padding:14px 15px;color:#53677f;background:#f4f7fa;font-size:11px;font-weight:900;letter-spacing:.04em;text-transform:uppercase}.kot-table td{padding:15px;border-top:1px solid #e4eaf1;color:#263b57;font-size:12px;vertical-align:middle}.kot-table td>b,.kot-table td small{display:block}.kot-table td small{margin-top:4px;color:#74849a}.kot-table td:nth-child(4){display:grid;gap:5px;min-width:210px}.kot-status{display:inline-block;padding:5px 8px;border-radius:999px;color:#174e79;background:#e7f4ff;font-size:10px;font-weight:900;text-transform:capitalize}.kot-print-action{min-height:36px;padding:8px 11px;border-radius:8px;color:#fff;background:#7d1e35;font-size:11px;font-weight:900;white-space:nowrap}.kot-print-action:hover{background:#571023}.kot-table-empty{padding:30px!important;color:#718197!important;text-align:center}@media(max-width:720px){.operations-home-grid{grid-template-columns:1fr}.operations-home-card{min-height:96px;padding:16px}.kot-listing-head{display:grid}.kot-listing-head .operations-count{justify-self:start}}`;
+document.head.appendChild(operationsWorkspaceStyles);
+const kotListingPriorityStyles = document.createElement('style');
+kotListingPriorityStyles.textContent = `.kot-table{min-width:1280px}.kot-table td:nth-child(5){min-width:230px}.kot-table td:nth-child(6){min-width:145px}.kot-table td:nth-child(7){white-space:nowrap}.kot-number{color:#7d1e35;font-size:15px}.kot-table td:first-child{background:#fff8fa}.kot-table th:first-child{color:#7d1e35}`;
+document.head.appendChild(kotListingPriorityStyles);
 
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#039;' })[char]);
 const money = (value) => `₹${Number(value || 0).toFixed(0)}`;
@@ -172,7 +193,8 @@ async function loadOrders() {
     const liveCount = document.getElementById('live-orders-count');
     if (liveCount && orderView === 'current') liveCount.textContent = String(rows.length);
     firstLoad = false;
-    const visibleRows = orderStatusFilter === 'all' ? rows : rows.filter((order) => order.status === orderStatusFilter);
+    const statusRows = orderStatusFilter === 'all' ? rows : rows.filter((order) => order.status === orderStatusFilter);
+    const visibleRows = fulfillmentFilter ? statusRows.filter((order) => String(order.fulfillment_type || '').toLowerCase() === fulfillmentFilter) : statusRows;
     const emptyMessage = query ? 'No orders match that number.' : orderView === 'current' && !sessionOpen ? 'The restaurant is closed. Today\'s orders are safely available in Order history.' : 'No direct orders yet.';
     const filteredEmpty = orderStatusFilter !== 'all' ? `No ${orderStatusFilter} orders in this view.` : emptyMessage;
     root.innerHTML = visibleRows.map(renderOrder).join('') || `<div class="empty-state">${filteredEmpty}</div>`;
@@ -302,6 +324,11 @@ function renderPrinterManagement() {
 function renderOperations() {
   const content = document.getElementById('operations-content');
   if (!content) return;
+  if (operationsTab === 'home') {
+    const activeOrders = [...orderRecords.values()].filter((order) => !['completed','rejected','cancelled'].includes(order.status));
+    content.innerHTML = `<section class="operations-home"><div class="operations-home-title"><span class="eyebrow">Operations</span><h3>Orders &amp; printing</h3><p>Open a workspace to manage the restaurant’s live order flow.</p></div><div class="operations-home-grid"><button type="button" class="operations-home-card" data-operations-tab="kots"><span class="operations-home-icon" aria-hidden="true">⌑</span><span><b>KOTs</b><small>${activeOrders.length} active order${activeOrders.length===1?'':'s'} · View and print kitchen tickets</small></span><i aria-hidden="true">›</i></button><button type="button" class="operations-home-card" data-operations-tab="printers"><span class="operations-home-icon" aria-hidden="true">▣</span><span><b>Printer routing</b><small>${operationsConfig.printers.length} printer${operationsConfig.printers.length===1?'':'s'} · Configure kitchen and bill printing</small></span><i aria-hidden="true">›</i></button></div></section>`;
+    return;
+  }
   if (operationsTab === 'kots') {
     const activeOrders = [...orderRecords.values()].filter((order) => !['completed','rejected','cancelled'].includes(order.status));
     const tickets = new Map();
@@ -311,7 +338,7 @@ function renderOperations() {
       if (!tickets.has(key)) tickets.set(key, { order, printer, items: [] });
       tickets.get(key).items.push(item);
     }));
-    content.innerHTML = `<p class="help-text">KOTs are grouped by the printer rules below. Items without a matching rule stay clearly marked as <strong>Unassigned</strong>.</p><div class="operations-grid">${[...tickets.values()].map((ticket) => { const number=String(ticket.order.daily_order_number||'—').padStart(2,'0'); return `<article class="kot-ticket"><div class="kot-ticket-head"><div><h3>Order #${esc(number)}</h3><p>${esc(ticket.order.customer_name || 'Guest')} · ${esc(ticket.order.customer_phone)}</p></div><span class="printer-type kot">${esc(ticket.printer?.name || 'Unassigned')}</span></div><div class="kot-items">${ticket.items.map((item) => `<div><b>${Number(item.quantity||0)}×</b> ${esc(item.name)}${item.portion?` · ${esc(item.portion)}`:''}${item.style?` · ${esc(item.style)}`:''}</div>`).join('')}</div><button type="button" data-print-kot="${esc(ticket.order.id)}" data-printer-id="${esc(ticket.printer?.id || '')}">Print KOT</button></article>`; }).join('') || '<div class="operations-empty">No live KOTs right now. New and active orders will appear here.</div>'}</div>`;
+    content.innerHTML = `<section class="kot-listing"><div class="kot-listing-head"><div><button type="button" class="assignment-back" data-operations-tab="home">‹ Back</button><h3>KOT listing</h3><p>Live kitchen tickets grouped by their assigned printer. KOT number is the primary kitchen reference.</p></div><span class="operations-count">${tickets.size} live ticket${tickets.size===1?'':'s'}</span></div><div class="kot-table-wrap"><table class="kot-table"><thead><tr><th>KOT no.</th><th>Order no.</th><th>Order type</th><th>Customer</th><th>Items</th><th>Created</th><th>Elapsed</th><th>Printer</th><th>Status</th><th>Action</th></tr></thead><tbody>${[...tickets.values()].map((ticket) => { const orderNumber=String(ticket.order.daily_order_number||'—').padStart(2,'0'); const type=ticket.order.fulfillment_type==='pickup'?'Takeaway':'Delivery'; const history=Array.isArray(operationKotHistory.get(ticket.order.id))?operationKotHistory.get(ticket.order.id):[]; const savedKot=history.find((entry)=>Array.isArray(entry.tickets)&&entry.tickets.some((savedTicket)=>savedTicket.printerLabel===ticket.printer?.name)) || history[0]; const createdAt=savedKot?.created_at || ticket.order.created_at; const elapsedMinutes=createdAt?Math.max(0,Math.floor((Date.now()-new Date(createdAt).getTime())/60000)):null; const elapsed=elapsedMinutes===null?'—':elapsedMinutes<60?`${elapsedMinutes} min`:`${Math.floor(elapsedMinutes/60)} hr ${elapsedMinutes%60} min`; return `<tr><td><b class="kot-number">${savedKot?.kot_number ? `#${esc(savedKot.kot_number)}` : '—'}</b><small>${savedKot ? 'Printed KOT' : 'Not printed yet'}</small></td><td><b>#${esc(orderNumber)}</b></td><td>${type}</td><td><b>${esc(ticket.order.customer_name || 'Guest')}</b><small>${esc(ticket.order.customer_phone || '—')}</small></td><td>${ticket.items.map((item)=>`<span>${Number(item.quantity||0)}× ${esc(item.name)}${item.portion?` · ${esc(item.portion)}`:''}</span>`).join('')}</td><td>${createdAt ? new Date(createdAt).toLocaleString('en-IN',{dateStyle:'medium',timeStyle:'short'}) : '—'}</td><td><b>${elapsed}</b></td><td><span class="printer-type kot">${esc(ticket.printer?.name || 'Unassigned')}</span></td><td><span class="kot-status">${esc(ticket.order.status || 'new')}</span></td><td><button type="button" class="kot-print-action" data-print-kot="${esc(ticket.order.id)}" data-printer-id="${esc(ticket.printer?.id || '')}">${savedKot ? 'Reprint KOT' : 'Print KOT'}</button></td></tr>`; }).join('') || '<tr><td colspan="10" class="kot-table-empty">No live KOTs right now. New and active orders will appear here.</td></tr>'}</tbody></table></div></section>`;
   } else {
     renderPrinterManagement();
     return;
@@ -387,6 +414,14 @@ async function loadOperations() {
   if (!response.ok) throw new Error(data.error || 'Unable to load Operations.');
   operationsConfig = data.config || { printers:[], routes:[] };
   operationsMenu = Array.isArray(data.menu) ? data.menu : [];
+  const activeOrders = [...orderRecords.values()].filter((order) => !['completed','rejected','cancelled'].includes(order.status));
+  const histories = await Promise.all(activeOrders.map(async (order) => {
+    try {
+      const historyResponse = await fetch(`/api/orders/${encodeURIComponent(order.id)}/kots`, { cache:'no-store' });
+      return [order.id, historyResponse.ok ? await historyResponse.json() : []];
+    } catch (_) { return [order.id, []]; }
+  }));
+  operationKotHistory = new Map(histories);
   renderOperations();
 }
 async function discoverSystemPrinters() {
@@ -574,6 +609,14 @@ document.getElementById('operations-content')?.addEventListener('input', (event)
   });
 });
 document.getElementById('operations-content')?.addEventListener('click', async (event) => {
+  const operationsNavigation = event.target.closest('[data-operations-tab]');
+  if (operationsNavigation) {
+    operationsTab = operationsNavigation.dataset.operationsTab || 'home';
+    assignmentPrinterId = '';
+    assignmentMode = '';
+    renderOperations();
+    return;
+  }
   const expandCategory = event.target.closest('[data-route-category-expand]');
   if (expandCategory) {
     event.preventDefault();
@@ -601,7 +644,7 @@ document.getElementById('operations-content')?.addEventListener('click', async (
   if (removeRoute) { operationsConfig.routes=operationsConfig.routes.filter((route)=>route.id!==removeRoute.dataset.deleteRoute); renderOperations(); return; }
   if (event.target.closest('#operations-save')) { const button=event.target.closest('#operations-save'); try { addSelectedRoutes(); } catch (error) { alert(error.message); return; } button.disabled=true; button.textContent='Saving…'; try { await saveOperations(); } catch(error) { alert(error.message); button.disabled=false; button.textContent='Save printer configuration'; } return; }
   const kot = event.target.closest('[data-print-kot]');
-  if (kot) { try { await dispatchKot(kot.dataset.printKot, kot.dataset.printerId); kot.textContent='Sent to printer'; setTimeout(() => { kot.textContent='Print KOT'; }, 1800); } catch (error) { alert(error.message); } }
+  if (kot) { try { await dispatchKot(kot.dataset.printKot, kot.dataset.printerId); await loadOperations(); } catch (error) { alert(error.message); } }
 });
 orderStatusFilters.addEventListener('click', (event) => {
   const button = event.target.closest('[data-order-status-filter]');
