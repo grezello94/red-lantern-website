@@ -29,17 +29,46 @@ function run(command, args) {
 }
 
 async function installedPrinters() {
-  let names = [];
+  let output = '';
   if (process.platform === 'win32') {
-    const output = await run('powershell.exe', ['-NoProfile', '-Command', 'Get-Printer | Select-Object -ExpandProperty Name']);
-    names = output.split(/\r?\n/);
-  } else {
-    const output = await run('lpstat', ['-p']);
-    names = output.split(/\r?\n/).map((line) => {
+    // Different Windows installations expose printer data through different
+    // management providers, so try all supported built-in discovery routes.
+    const attempts = [
+      ['powershell.exe', ['-NoProfile', '-Command', 'Get-CimInstance -ClassName Win32_Printer | Select-Object -ExpandProperty Name']],
+      ['powershell.exe', ['-NoProfile', '-Command', 'Get-Printer | Select-Object -ExpandProperty Name']],
+      ['wmic.exe', ['printer', 'get', 'name', '/value']]
+    ];
+    const failures = [];
+    for (const [command, args] of attempts) {
+      try { output = await run(command, args); break; }
+      catch (error) { failures.push(error.message); }
+    }
+    if (!output && failures.length === attempts.length) {
+      throw new Error('Windows could not read installed printers. Confirm the Print Spooler is running and install the printer manufacturer’s Windows driver.');
+    }
+    const names = output.includes('Name=')
+      ? output.split(/\r?\n/).map((line) => line.replace(/^Name=/i, ''))
+      : output.split(/\r?\n/);
+    return formatPrinters(names);
+  }
+  if (process.platform === 'darwin') {
+    try { output = await run('lpstat', ['-p']); }
+    catch (_) { throw new Error('macOS printing is unavailable. Add the printer in System Settings > Printers & Scanners, then install its AirPrint or manufacturer driver.'); }
+    return formatPrinters(output.split(/\r?\n/).map((line) => {
       const match = line.match(/^printer\s+([^\s]+)/i);
       return match ? match[1] : '';
-    });
+    }));
+  } else {
+    try { output = await run('lpstat', ['-p']); }
+    catch (_) { throw new Error('CUPS printer discovery is unavailable. Install and configure CUPS and the printer driver.'); }
+    return formatPrinters(output.split(/\r?\n/).map((line) => {
+      const match = line.match(/^printer\s+([^\s]+)/i);
+      return match ? match[1] : '';
+    }));
   }
+}
+
+function formatPrinters(names) {
   return [...new Set(names.map((name) => name.trim()).filter(Boolean))]
     .sort((a, b) => a.localeCompare(b))
     .map((name) => ({ id: name, name }));

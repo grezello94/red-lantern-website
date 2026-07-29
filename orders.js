@@ -347,12 +347,33 @@ async function syncOperationsToPrintBridge(config) {
   }
 }
 async function saveOperations() {
-  const response = await fetch('/api/orders/operations', { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ config:operationsConfig }) });
-  const data = await response.json();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  let response;
+  try {
+    response = await fetch('/api/orders/operations', { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ config:operationsConfig }), signal:controller.signal });
+  } catch (error) {
+    if (error.name === 'AbortError') throw new Error('Saving took too long. Check the internet connection, then try again.');
+    throw new Error('Unable to reach the server. Check the internet connection, then try again.');
+  } finally { clearTimeout(timeout); }
+  const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || 'Unable to save printer configuration.');
   operationsConfig = data.config;
   await syncOperationsToPrintBridge(operationsConfig);
   renderOperations();
+}
+function addSelectedRoutes() {
+  const printerId=String(document.getElementById('operation-route-printer')?.value||'');
+  const categories=selectedRouteCategories();
+  const itemName=String(document.getElementById('operation-route-item')?.value||'');
+  if (!categories.length) return false;
+  if (!printerId) throw new Error('Choose a KOT printer before saving these categories.');
+  if (itemName && categories.length !== 1) throw new Error('Choose exactly one category to route a specific item.');
+  categories.forEach((category) => {
+    const duplicate=operationsConfig.routes.some((route)=>route.printerId===printerId&&route.category===category&&route.itemName===itemName);
+    if (!duplicate) operationsConfig.routes.push({ id:operationId(), printerId, category, itemName });
+  });
+  return true;
 }
 function printKot(orderId, printerId) {
   const order = orderRecords.get(orderId);
@@ -462,10 +483,10 @@ document.getElementById('operations-content')?.addEventListener('click', async (
   const removePrinter = event.target.closest('[data-delete-printer]');
   if (removePrinter) { const id=removePrinter.dataset.deletePrinter; operationsConfig.printers=operationsConfig.printers.filter((printer)=>printer.id!==id); operationsConfig.routes=operationsConfig.routes.filter((route)=>route.printerId!==id); renderOperations(); return; }
   const addRoute = event.target.closest('#operation-add-route');
-  if (addRoute) { const printerId=document.getElementById('operation-route-printer')?.value||''; const categories=selectedRouteCategories(); const itemName=document.getElementById('operation-route-item')?.value||''; if (!printerId || !categories.length) { alert('Choose a KOT printer and at least one category first.'); return; } if (itemName && categories.length !== 1) { alert('Choose exactly one category to route a specific item.'); return; } categories.forEach((category) => { const duplicate=operationsConfig.routes.some((route)=>route.printerId===printerId&&route.category===category&&route.itemName===itemName); if (!duplicate) operationsConfig.routes.push({ id:operationId(), printerId, category, itemName }); }); renderOperations(); return; }
+  if (addRoute) { try { if (!addSelectedRoutes()) { alert('Choose a KOT printer and at least one category first.'); return; } renderOperations(); } catch (error) { alert(error.message); } return; }
   const removeRoute = event.target.closest('[data-delete-route]');
   if (removeRoute) { operationsConfig.routes=operationsConfig.routes.filter((route)=>route.id!==removeRoute.dataset.deleteRoute); renderOperations(); return; }
-  if (event.target.closest('#operations-save')) { const button=event.target.closest('#operations-save'); button.disabled=true; button.textContent='Saving…'; try { await saveOperations(); } catch(error) { alert(error.message); button.disabled=false; button.textContent='Save printer configuration'; } return; }
+  if (event.target.closest('#operations-save')) { const button=event.target.closest('#operations-save'); try { addSelectedRoutes(); } catch (error) { alert(error.message); return; } button.disabled=true; button.textContent='Saving…'; try { await saveOperations(); } catch(error) { alert(error.message); button.disabled=false; button.textContent='Save printer configuration'; } return; }
   const kot = event.target.closest('[data-print-kot]');
   if (kot) printKot(kot.dataset.printKot, kot.dataset.printerId);
 });
