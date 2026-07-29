@@ -92,7 +92,30 @@ async function printText(printerName, text) {
   try {
     if (process.platform === 'win32') {
       const quote = (value) => String(value).replace(/'/g, "''");
-      const script = `$content = Get-Content -LiteralPath '${quote(file)}' -Raw; $content | Out-Printer -Name '${quote(printerName)}'`;
+      const script = `Add-Type -AssemblyName System.Drawing
+$lines = Get-Content -LiteralPath '${quote(file)}'
+$doc = New-Object System.Drawing.Printing.PrintDocument
+$doc.PrinterSettings.PrinterName = '${quote(printerName)}'
+if (-not $doc.PrinterSettings.IsValid) { throw 'The selected Windows printer is no longer available.' }
+$doc.DefaultPageSettings.Margins = New-Object System.Drawing.Printing.Margins(8, 8, 8, 8)
+$doc.PrintController = New-Object System.Drawing.Printing.StandardPrintController
+$doc.add_PrintPage({ param($sender, $event)
+  $g = $event.Graphics; $width = $event.MarginBounds.Width; $y = $event.MarginBounds.Top
+  foreach ($line in $lines) {
+    $style = [System.Drawing.FontStyle]::Regular; $size = 9
+    if ($line -eq 'RED LANTERN RESTAURANT' -or $line -eq 'KITCHEN ORDER TICKET') { $style = [System.Drawing.FontStyle]::Bold; $size = 10 }
+    elseif ($line -match '^Order #') { $style = [System.Drawing.FontStyle]::Bold; $size = 15 }
+    elseif ($line -match '^\\d+x ') { $style = [System.Drawing.FontStyle]::Bold; $size = 11 }
+    $font = New-Object System.Drawing.Font('Arial', $size, $style)
+    $format = New-Object System.Drawing.StringFormat; $format.Alignment = [System.Drawing.StringAlignment]::Center
+    if ($line -match '^\\d+x ') { $format.Alignment = [System.Drawing.StringAlignment]::Near }
+    $bounds = New-Object System.Drawing.RectangleF($event.MarginBounds.Left, $y, $width, 200)
+    $height = $g.MeasureString($line, $font, $width, $format).Height
+    $g.DrawString($line, $font, [System.Drawing.Brushes]::Black, $bounds, $format)
+    $y += [Math]::Ceiling($height) + 3; $font.Dispose(); $format.Dispose()
+  }
+})
+$doc.Print()`;
       await run('powershell.exe', ['-NoProfile', '-Command', script]);
     } else {
       await run('lp', ['-d', printerName, file]);
