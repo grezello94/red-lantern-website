@@ -12,6 +12,7 @@
     "build": "npm run check && npm run minify:css",
     "start": "node server.js",
     "dev": "node server.js",
+    "print-bridge": "node print-bridge.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {

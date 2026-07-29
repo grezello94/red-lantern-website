@@ -20,6 +20,9 @@ let orderStatusFilter = 'all';
 let operationsConfig = { printers: [], routes: [] };
 let operationsMenu = [];
 let operationsTab = 'kots';
+let installedSystemPrinters = [];
+let printBridgeState = 'checking';
+let printBridgeConfigState = 'not-synced';
 const orderSearchPanel = document.querySelector('.order-search-panel');
 const liveOrdersPanel = document.createElement('section');
 liveOrdersPanel.id = 'live-orders-panel';
@@ -33,12 +36,23 @@ orderStatusFilters.id = 'order-status-filters';
 orderStatusFilters.setAttribute('aria-label', 'Filter live orders by status');
 orderStatusFilters.innerHTML = [['all', 'All orders'], ['accepted', 'Accepted'], ['preparing', 'Preparing'], ['ready', 'Ready'], ['completed', 'Completed'], ['rejected', 'Rejected']].map(([value, label]) => `<button type="button" class="order-status-filter ${value === 'all' ? 'is-active' : ''} status-${value}" data-order-status-filter="${value}" aria-pressed="${value === 'all'}">${label}</button>`).join('');
 orderSearchPanel?.after(orderStatusFilters);
+const actionIcon = (name) => {
+  const paths = {
+    receipt: '<path d="M6 3h12v18l-3-2-3 2-3-2-3 2V3Z"/><path d="M9 8h6M9 12h6"/>',
+    install: '<path d="M14 3h7v7"/><path d="M21 3 10 14"/><path d="M12 5H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7"/>',
+    operations: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.12 2.12-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.04 1.56V20.3h-3v-.08A1.7 1.7 0 0 0 10.66 18.66a1.7 1.7 0 0 0-1.88.34l-.06.06L6.6 16.94l.06-.06A1.7 1.7 0 0 0 7 15a1.7 1.7 0 0 0-1.56-1.04H5.3v-3h.14A1.7 1.7 0 0 0 7 9.92a1.7 1.7 0 0 0-.34-1.88L6.6 7.98 8.72 5.86l.06.06a1.7 1.7 0 0 0 1.88.34 1.7 1.7 0 0 0 1.04-1.56V4.62h3v.08a1.7 1.7 0 0 0 1.04 1.56 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.12 2.12-.06.06A1.7 1.7 0 0 0 19.4 9.92a1.7 1.7 0 0 0 1.56 1.04h.14v3h-.14A1.7 1.7 0 0 0 19.4 15Z"/>',
+    cutlery: '<path d="M4 3v8M7 3v8M4 7h3M5.5 11v10M14 3v8M14 3c3 1 4.5 3.8 4.5 8H14M14 11v10"/>',
+    bell: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/>',
+    refresh: '<path d="M20 11a8 8 0 0 0-14.9-4M4 4v4h4M4 13a8 8 0 0 0 14.9 4M20 20v-4h-4"/>'
+  };
+  return `<svg class="header-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || ''}</svg>`;
+};
 const liveOrdersToggle = document.createElement('button');
 liveOrdersToggle.type = 'button';
 liveOrdersToggle.id = 'live-orders-toggle';
 liveOrdersToggle.className = 'live-orders-toggle';
 liveOrdersToggle.setAttribute('aria-expanded', 'false');
-liveOrdersToggle.innerHTML = '<span class="live-dot" aria-hidden="true"></span><span>Live orders</span><b id="live-orders-count">0</b>';
+liveOrdersToggle.innerHTML = `${actionIcon('receipt')}<span>Live orders</span><b id="live-orders-count">0</b>`;
 document.querySelector('.header-actions')?.prepend(liveOrdersToggle);
 const operationsPanel = document.createElement('section');
 operationsPanel.id = 'operations-panel';
@@ -50,11 +64,22 @@ operationsToggle.type = 'button';
 operationsToggle.id = 'operations-toggle';
 operationsToggle.className = 'operations-toggle';
 operationsToggle.setAttribute('aria-expanded', 'false');
-operationsToggle.innerHTML = '<span aria-hidden="true">⚙</span> Operations';
+operationsToggle.innerHTML = `${actionIcon('operations')}<span>Operations</span>`;
 document.querySelector('.header-actions')?.insertBefore(operationsToggle, document.getElementById('availability-toggle'));
+const installButton = document.getElementById('install-shortcut');
+const availabilityButton = document.getElementById('availability-toggle');
+const alertsButton = document.getElementById('enable-notifications');
+const refreshButton = document.querySelector('.header-actions button[onclick]');
+if (installButton) installButton.innerHTML = `${actionIcon('install')}<span>Install shortcut</span>`;
+if (availabilityButton) availabilityButton.innerHTML = `${actionIcon('cutlery')}<span>Menu availability</span>`;
+if (alertsButton) alertsButton.innerHTML = `${actionIcon('bell')}<span>Enable alerts</span>`;
+if (refreshButton) refreshButton.innerHTML = `${actionIcon('refresh')}<span>Refresh</span>`;
 const liveOrdersStyles = document.createElement('style');
 liveOrdersStyles.textContent = `.live-orders-toggle{display:inline-flex;align-items:center;gap:8px;color:#15335b;background:#fff;box-shadow:0 3px 11px rgba(7,20,45,.16)}.live-orders-toggle:hover,.live-orders-toggle.is-open{color:#fff;background:#168451}.live-dot{width:8px;height:8px;border-radius:50%;background:#e3342f;box-shadow:0 0 0 3px rgba(227,52,47,.14)}.live-orders-toggle.is-open .live-dot{background:#d9ffe9;box-shadow:0 0 0 3px rgba(217,255,233,.2)}.live-orders-toggle b{display:grid;min-width:19px;height:19px;place-items:center;padding:0 4px;border-radius:999px;color:#fff;background:#e3342f;font-size:10px}.live-orders-toggle.is-open b{color:#168451;background:#fff}#live-orders-panel{margin-top:20px}#live-orders-panel[hidden]{display:none}#live-orders-panel .order-search-panel{margin-top:0}#live-orders-panel main{padding-top:20px}#order-status-filters{display:flex;flex-wrap:wrap;gap:8px;margin:12px 28px 0}.order-status-filter{padding:8px 12px;border:1px solid transparent;border-radius:9px;font-size:11px}.order-status-filter.status-all{color:#fff;background:#263d68}.order-status-filter.status-accepted{color:#fff;background:#e3342f}.order-status-filter.status-preparing{color:#3d2a00;background:#f5a21a}.order-status-filter.status-ready{color:#fff;background:#168451}.order-status-filter.status-completed{color:#fff;background:#506078}.order-status-filter.status-rejected{color:#fff;background:#9b2634}.order-status-filter:not(.is-active){color:#68778e;background:#fff;border-color:#dce4ee;box-shadow:none}.order-status-filter:hover{transform:none;filter:none;border-color:currentColor}.order-status-filter.is-active{box-shadow:0 4px 11px rgba(31,48,80,.2)}@media(max-width:600px){.live-orders-toggle span:not(.live-dot){display:none}.live-orders-toggle{padding-inline:9px}#live-orders-panel{margin-top:14px}#order-status-filters{margin:10px 16px 0;gap:6px}.order-status-filter{padding:7px 9px;font-size:10px}}`;
 document.head.appendChild(liveOrdersStyles);
+const headerActionStyles = document.createElement('style');
+headerActionStyles.textContent = `.header-actions button,.live-orders-toggle{display:inline-flex;align-items:center;justify-content:center;gap:8px}.header-action-icon{width:20px;height:20px;flex:0 0 20px}.live-orders-toggle{color:#fff;background:linear-gradient(135deg,#158951,#0f7545)}.live-orders-toggle:hover,.live-orders-toggle.is-open{color:#fff;background:linear-gradient(135deg,#0e7544,#0b603a)}.live-orders-toggle b{color:#d22731;background:#fff}.operations-toggle{color:#fff!important;background:linear-gradient(135deg,#3267bd,#24529d)!important;border:1px solid rgba(255,255,255,.72)!important}.operations-toggle:hover,.operations-toggle.is-open{background:linear-gradient(135deg,#2554a2,#173d7d)!important}.install-shortcut{color:#18365f!important;background:#fff!important}.availability-toggle{color:#132b4c!important;background:linear-gradient(135deg,#ffc548,#f9a92a)!important}.header-actions #enable-notifications,.header-actions button[onclick]{color:#fff!important;background:linear-gradient(135deg,#e93838,#c9242d)!important}@media(max-width:600px){.header-action-icon{width:18px;height:18px;flex-basis:18px}.header-actions button span{display:none}.header-actions button{padding-inline:10px!important}.live-orders-toggle span{display:none}}`;
+document.head.appendChild(headerActionStyles);
 const operationsStyles = document.createElement('style');
 operationsStyles.textContent = `#operations-panel{margin:20px 28px 0;padding:24px;border:1px solid #dce4ee;border-radius:18px;background:#fff;box-shadow:0 14px 34px rgba(24,39,70,.09)}#operations-panel[hidden]{display:none}.operations-toggle{display:inline-flex;align-items:center;gap:7px;color:#fff;background:#53647e}.operations-toggle span{font-size:16px}.operations-toggle.is-open{background:#243b63}.operations-head{display:flex;justify-content:space-between;gap:16px}.operations-head h2{margin:4px 0;font-size:22px}.operations-head p{margin:0;color:#68778e}.operations-tabs{display:inline-flex;gap:4px;margin:20px 0 14px;padding:4px;border-radius:10px;background:#eef3f8}.operations-tabs button{padding:8px 12px;color:#627188;background:transparent;font-size:12px}.operations-tabs button.is-active{color:#fff;background:#263d68}.operations-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px}.operation-printer,.kot-ticket{padding:15px;border:1px solid #e1e8f0;border-radius:12px;background:#fff}.operation-printer-head,.kot-ticket-head{display:flex;justify-content:space-between;gap:10px;align-items:start}.operation-printer h3,.kot-ticket h3{margin:0;color:#23334e;font-size:15px}.printer-type{padding:4px 7px;border-radius:999px;color:#53647e;background:#eef3f8;font-size:10px;font-weight:900;text-transform:uppercase}.printer-type.kot{color:#087348;background:#e8f7ef}.operation-printer p{margin:8px 0 0;color:#6e7d91;font-size:12px}.operation-printer button{margin-top:12px;padding:7px 9px;color:#a52a39;background:#fff0f0;font-size:11px}.operations-form{display:grid;grid-template-columns:1.4fr .75fr auto;gap:9px;align-items:end;margin:13px 0}.operations-form label{display:grid;gap:4px;color:#5e6d83;font-size:10px;font-weight:900;letter-spacing:.04em;text-transform:uppercase}.operations-form input,.operations-form select{width:100%;padding:9px;border:1px solid #d4deea;border-radius:8px;color:#26344e;background:#fff;font:600 12px Manrope,sans-serif}.operations-form button{padding:10px 12px;background:#263d68;font-size:11px}.routing-list{display:grid;gap:8px;margin-top:13px}.route-row{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:11px 12px;border:1px solid #e5ebf2;border-radius:9px;background:#f9fbfd;font-size:12px}.route-row b{color:#23334e}.route-row span{color:#718097}.route-row button{padding:6px 8px;color:#a52a39;background:#fff0f0;font-size:10px}.operations-save{margin-top:15px;background:#168451}.kot-ticket{border-left:4px solid #e3342f}.kot-ticket p{margin:6px 0;color:#718097;font-size:11px}.kot-items{margin:12px 0;padding:10px 0;border-block:1px solid #edf0f4}.kot-items div{padding:4px 0;color:#2f3e55;font-size:12px}.kot-items b{color:#c42b28}.kot-ticket button{padding:8px 10px;background:#263d68;font-size:11px}.operations-empty{padding:25px;color:#718097;border:1px dashed #d4deea;border-radius:12px;text-align:center}@media(max-width:600px){#operations-panel{margin:14px 16px 0;padding:16px}.operations-head p{font-size:12px}.operations-form{grid-template-columns:1fr}.operations-form button{width:100%}.operations-grid{grid-template-columns:1fr}}`;
 document.head.appendChild(operationsStyles);
@@ -62,8 +87,17 @@ const operationsLauncherStyles = document.createElement('style');
 operationsLauncherStyles.textContent = `.operation-launches{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:22px 0 18px}.operation-launch{display:grid;grid-template-columns:44px minmax(0,1fr) auto;gap:12px;align-items:center;padding:15px;border:1px solid #dfe7f1;border-radius:13px;color:#273852;background:#fff;text-align:left;box-shadow:0 3px 10px rgba(31,52,88,.035)}.operation-launch:hover{transform:translateY(-1px);filter:none;border-color:#aebfd4;box-shadow:0 8px 18px rgba(31,52,88,.1)}.operation-launch.is-active{border-color:#263d68;background:linear-gradient(135deg,#263d68,#35578d);color:#fff}.operation-icon{display:grid;width:44px;height:44px;place-items:center;border-radius:12px;color:#263d68;background:#e9f0fa;font-size:26px;font-weight:900}.operation-launch.is-active .operation-icon{color:#263d68;background:#fff}.operation-launch b,.operation-launch small{display:block}.operation-launch b{font-size:14px}.operation-launch small{margin-top:3px;color:#74839a;font-size:11px;font-weight:600;line-height:1.35}.operation-launch.is-active small{color:#d9e5f7}.operation-launch i{font-size:25px;font-style:normal;font-weight:400}@media(max-width:600px){.operation-launches{grid-template-columns:1fr}.operation-launch{padding:13px}}`;
 document.head.appendChild(operationsLauncherStyles);
 const operationsRoutingStyles = document.createElement('style');
-operationsRoutingStyles.textContent = `.operations-section{padding:20px;border:1px solid #e2e9f1;border-radius:15px;background:linear-gradient(145deg,#fff,#fbfcfe)}.operations-section+.operations-section{margin-top:16px}.operations-section-head{display:flex;align-items:start;justify-content:space-between;gap:16px}.operations-section-head h3{margin:3px 0 5px;color:#1f2e47;font-size:18px}.operations-section-head p{max-width:660px;margin:0;color:#6a7890;font-size:12px;line-height:1.5}.operations-count{padding:7px 9px;border-radius:999px;color:#36547d;background:#edf3fb;font-size:10px;font-weight:900;white-space:nowrap}.operations-printer-form,.operations-route-form{display:grid;gap:10px;align-items:end;margin:18px 0}.operations-printer-form{grid-template-columns:minmax(260px,1.5fr) minmax(170px,.65fr) auto}.operations-route-form{grid-template-columns:minmax(180px,1fr) minmax(180px,1fr) minmax(180px,1fr) auto}.operations-printer-form label,.operations-route-form label{display:grid;gap:5px;color:#55657b;font-size:10px;font-weight:900;letter-spacing:.05em;text-transform:uppercase}.operations-printer-form input,.operations-printer-form select,.operations-route-form select{width:100%;min-height:42px;padding:10px 11px;border:1px solid #d5dfeb;border-radius:9px;color:#23334e;background:#fff;font:700 12px Manrope,sans-serif}.operations-printer-form input:focus,.operations-printer-form select:focus,.operations-route-form select:focus{outline:0;border-color:#2e67b1;box-shadow:0 0 0 3px rgba(46,103,177,.12)}.operations-printer-form button,.operations-route-form button{min-height:42px;padding:10px 13px;background:#263d68;font-size:11px;white-space:nowrap}.operations-printer-form button span{font-size:16px}.printer-grid{grid-template-columns:repeat(auto-fill,minmax(255px,1fr))}.operation-printer{min-height:134px;border-color:#dfe7f0;box-shadow:0 4px 12px rgba(30,51,83,.05)}.operation-printer-head{display:grid;grid-template-columns:38px minmax(0,1fr) auto;gap:10px}.printer-card-icon{display:grid;width:38px;height:38px;place-items:center;border-radius:10px;color:#087348;background:#e8f7ef;font-size:22px;font-weight:900}.printer-card-icon.bill{color:#315487;background:#eaf1ff}.operation-printer p{line-height:1.4}.routing-section{background:linear-gradient(145deg,#fffdf8,#fff)}.route-row{display:grid;grid-template-columns:28px minmax(0,1fr) auto}.route-icon{display:grid;width:26px;height:26px;place-items:center;border-radius:7px;color:#087348;background:#e8f7ef;font-size:16px}.route-row span{display:block;margin-top:3px}.operations-save-bar{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:16px;padding:13px 15px;border:1px solid #cce8d8;border-radius:12px;background:#f3fbf6;color:#527260;font-size:12px;font-weight:700}.operations-save{margin:0!important;padding:10px 14px;white-space:nowrap}@media(max-width:760px){.operations-printer-form,.operations-route-form{grid-template-columns:1fr}.operations-printer-form button,.operations-route-form button{width:100%}.operations-section{padding:16px}.operations-section-head{align-items:flex-start}.operations-save-bar{align-items:stretch;flex-direction:column}.operations-save{width:100%}}`;
+operationsRoutingStyles.textContent = `.operations-section{padding:20px;border:1px solid #e2e9f1;border-radius:15px;background:linear-gradient(145deg,#fff,#fbfcfe)}.operations-section+.operations-section{margin-top:16px}.operations-section-head{display:flex;align-items:start;justify-content:space-between;gap:16px}.operations-section-head h3{margin:3px 0 5px;color:#1f2e47;font-size:18px}.operations-section-head p{max-width:660px;margin:0;color:#6a7890;font-size:12px;line-height:1.5}.operations-count{padding:7px 9px;border-radius:999px;color:#36547d;background:#edf3fb;font-size:10px;font-weight:900;white-space:nowrap}.operations-printer-form,.operations-route-form{display:grid;gap:10px;align-items:end;margin:18px 0}.operations-printer-form{grid-template-columns:minmax(180px,1.2fr) minmax(130px,.55fr) minmax(180px,.9fr) 90px auto}.operations-route-form{grid-template-columns:minmax(180px,.8fr) minmax(320px,1.4fr) auto}.operations-printer-form label,.operations-route-form label{display:grid;gap:5px;color:#55657b;font-size:10px;font-weight:900;letter-spacing:.05em;text-transform:uppercase}.operations-printer-form input,.operations-printer-form select,.operations-route-form select{width:100%;min-height:42px;padding:10px 11px;border:1px solid #d5dfeb;border-radius:9px;color:#23334e;background:#fff;font:700 12px Manrope,sans-serif}.operations-printer-form input:focus,.operations-printer-form select:focus,.operations-route-form select:focus,.category-search:focus{outline:0;border-color:#2e67b1;box-shadow:0 0 0 3px rgba(46,103,177,.12)}.operations-printer-form button,.operations-route-form button{min-height:42px;padding:10px 13px;background:#263d68;font-size:11px;white-space:nowrap}.operations-printer-form button span{font-size:16px}.printer-grid{grid-template-columns:repeat(auto-fill,minmax(255px,1fr))}.operation-printer{min-height:146px;border-color:#dfe7f0;box-shadow:0 4px 12px rgba(30,51,83,.05)}.operation-printer-head{display:grid;grid-template-columns:38px minmax(0,1fr) auto;gap:10px}.printer-card-icon{display:grid;width:38px;height:38px;place-items:center;border-radius:10px;color:#087348;background:#e8f7ef;font-size:22px;font-weight:900}.printer-card-icon.bill{color:#315487;background:#eaf1ff}.operation-printer p{line-height:1.4}.printer-endpoint{margin:9px 0!important;padding:7px 9px;border-radius:8px;color:#56708f!important;background:#f2f6fb;font:800 10px ui-monospace,SFMono-Regular,Menlo,monospace!important}.printer-endpoint.is-pending{color:#9a6c20!important;background:#fff8e9}.routing-section{background:linear-gradient(145deg,#fffdf8,#fff)}.category-picker{border:1px solid #d5dfeb;border-radius:10px;background:#fff;padding:9px}.category-picker-top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}.category-picker-top b{color:#23334e;font-size:12px}.category-picker-top span{color:#64748b;font-size:10px;font-weight:800}.category-search{width:100%;min-height:37px;border:1px solid #d5dfeb;border-radius:8px;padding:8px 10px;font:700 12px Manrope,sans-serif}.category-checklist{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:7px;max-height:190px;overflow:auto;margin-top:9px;padding-right:2px}.category-choice{display:flex!important;align-items:center;gap:8px;padding:8px 9px;border:1px solid #e2e9f1;border-radius:8px;color:#33445f!important;background:#fbfcfe;font-size:11px!important;letter-spacing:0!important;text-transform:none!important;cursor:pointer}.category-choice:hover{border-color:#a9bdd8;background:#f1f6fd}.category-choice input{width:16px;height:16px;accent-color:#1e8b59}.category-choice.is-hidden{display:none!important}.route-row{display:grid;grid-template-columns:28px minmax(0,1fr) auto}.route-icon{display:grid;width:26px;height:26px;place-items:center;border-radius:7px;color:#087348;background:#e8f7ef;font-size:16px}.route-row span{display:block;margin-top:3px}.operations-save-bar{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:16px;padding:13px 15px;border:1px solid #cce8d8;border-radius:12px;background:#f3fbf6;color:#527260;font-size:12px;font-weight:700}.operations-save{margin:0!important;padding:10px 14px;white-space:nowrap}@media(max-width:900px){.operations-printer-form{grid-template-columns:1fr 1fr}.operations-printer-form button{width:100%}}@media(max-width:760px){.operations-printer-form,.operations-route-form{grid-template-columns:1fr}.operations-printer-form button,.operations-route-form button{width:100%}.operations-section{padding:16px}.operations-section-head{align-items:flex-start}.category-checklist{grid-template-columns:1fr}.operations-save-bar{align-items:stretch;flex-direction:column}.operations-save{width:100%}}`;
 document.head.appendChild(operationsRoutingStyles);
+const printerConnectionStyles = document.createElement('style');
+printerConnectionStyles.textContent = `.operations-printer-form{grid-template-columns:repeat(auto-fit,minmax(160px,1fr))}.operations-printer-form button{align-self:end}`;
+document.head.appendChild(printerConnectionStyles);
+const operationsPolishStyles = document.createElement('style');
+operationsPolishStyles.textContent = `#operations-panel{max-width:1680px;margin:24px auto;padding:30px}.operations-head h2{font-size:28px}.operations-head p{font-size:14px}.operation-launches{gap:14px;margin:24px 0}.operation-launch{min-height:84px;padding:18px}.operation-launch b{font-size:16px}.operation-launch small{font-size:12px}.operations-section{padding:24px}.operations-section-head h3{font-size:21px}.operations-section-head p{font-size:14px}.operations-count{padding:8px 11px;font-size:11px}.operations-printer-form{grid-template-columns:minmax(240px,1.3fr) minmax(175px,.7fr) minmax(300px,1.15fr) auto;gap:14px}.operations-printer-form label,.operations-route-form label{gap:7px;font-size:11px}.operations-printer-form input,.operations-printer-form select,.operations-route-form select{min-height:46px;padding:11px 13px;font-size:13px}.operations-printer-form button,.operations-route-form button{min-height:46px;padding:11px 16px;font-size:12px}.printer-grid{margin-top:20px}.operation-printer{min-height:156px;padding:18px}.operations-route-form{grid-template-columns:minmax(250px,.8fr) minmax(460px,1.55fr);gap:18px;align-items:start}.route-side-controls{display:grid;gap:13px}.route-side-controls button{width:100%;margin-top:3px}.category-picker{padding:15px;border-radius:12px;box-shadow:0 3px 12px rgba(29,51,83,.04)}.category-picker-top b{font-size:14px}.category-picker-top span{font-size:11px}.category-search{min-height:42px;font-size:13px}.category-checklist{grid-template-columns:repeat(3,minmax(150px,1fr));gap:9px;max-height:260px;padding:2px}.category-choice{min-height:42px;padding:10px 11px;font-size:12px!important}.category-choice input{width:18px;height:18px}.routing-list{margin-top:18px}.route-row{padding:13px 14px;font-size:13px}.operations-save-bar{margin-top:20px;padding:15px 17px;font-size:13px}@media(max-width:1100px){.operations-printer-form{grid-template-columns:1fr 1fr}.operations-route-form{grid-template-columns:1fr}.category-checklist{grid-template-columns:repeat(3,minmax(145px,1fr))}}@media(max-width:680px){#operations-panel{margin:14px 12px;padding:18px}.operations-head h2{font-size:24px}.operations-section{padding:17px}.operations-printer-form{grid-template-columns:1fr}.category-checklist{grid-template-columns:1fr}.operation-launches{grid-template-columns:1fr}.operations-save-bar{font-size:12px}}`;
+document.head.appendChild(operationsPolishStyles);
+const printerSetupStyles = document.createElement('style');
+printerSetupStyles.textContent = `.operations-section:first-child{background:linear-gradient(145deg,#fff,#f8fbff)}.printer-setup-flow{display:flex;align-items:center;gap:12px;max-width:980px;margin:18px 0 20px;padding:12px 14px;border:1px solid #dbe8f7;border-radius:12px;background:#f5f9fe}.printer-setup-flow i{display:grid;width:34px;height:34px;place-items:center;flex:0 0 34px;border-radius:10px;color:#fff;background:#284778;font-size:17px;font-style:normal}.printer-setup-flow b,.printer-setup-flow span{display:block}.printer-setup-flow b{color:#243958;font-size:13px}.printer-setup-flow span{margin-top:2px;color:#6d7d95;font-size:12px;line-height:1.4}.operations-printer-form{max-width:1380px;padding:16px;border:1px solid #e0eaf5;border-radius:14px;background:#fff;box-shadow:0 5px 15px rgba(31,57,93,.035)}.operations-printer-form>*{min-width:0}.operations-printer-form input,.operations-printer-form select{box-sizing:border-box}.operations-printer-form button{min-width:132px}.printer-grid .operations-empty{grid-column:1/-1;min-height:116px;display:grid;place-items:center;margin-top:4px;border-style:dashed;background:#fbfdff;font-size:13px}.printer-grid{margin-top:16px}@media(max-width:760px){.printer-setup-flow{align-items:flex-start}.operations-printer-form{padding:14px}.operations-printer-form button{min-width:0}}`;
+document.head.appendChild(printerSetupStyles);
 
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#039;' })[char]);
 const money = (value) => `₹${Number(value || 0).toFixed(0)}`;
@@ -77,7 +111,7 @@ document.getElementById('enable-notifications')?.addEventListener('click', async
   try {
     if (!notificationApi || !('PushManager' in window) || !('serviceWorker' in navigator)) throw new Error('Push alerts need the installed Orders shortcut. Use Install shortcut first.');
     button.disabled = true;
-    button.textContent = 'Enabling…';
+    button.innerHTML = `${actionIcon('bell')}<span>Enabling…</span>`;
     const permission = await notificationApi.requestPermission();
     if (permission !== 'granted') throw new Error('Alerts were not allowed. Enable notifications for RL Orders in this device’s settings.');
     const keyResponse = await fetch('/api/orders/push-key', { cache: 'no-store' });
@@ -88,9 +122,9 @@ document.getElementById('enable-notifications')?.addEventListener('click', async
     const saveResponse = await fetch('/api/orders/push-subscriptions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ subscription }) });
     const saveBody = await saveResponse.json();
     if (!saveResponse.ok) throw new Error(saveBody.error || 'Unable to enable push alerts.');
-    button.textContent = 'Alerts enabled';
+    button.innerHTML = `${actionIcon('bell')}<span>Alerts enabled</span>`;
   } catch (error) {
-    button.textContent = 'Enable alerts';
+    button.innerHTML = `${actionIcon('bell')}<span>Enable alerts</span>`;
     const dialog = document.getElementById('shortcut-dialog');
     document.getElementById('shortcut-message').textContent = error.message;
     document.getElementById('shortcut-steps').innerHTML = '<li>Install the RL Orders shortcut on this device.</li><li>Open it once and tap Enable alerts.</li><li>Allow notifications when your device asks.</li>';
@@ -203,6 +237,20 @@ const routePrinter = (item) => {
   const route = routes.find((entry) => entry.category === item.category && entry.itemName === item.name) || routes.find((entry) => entry.category === item.category && !entry.itemName);
   return route ? printers.get(route.printerId) : null;
 };
+const selectedRouteCategories = () => [...document.querySelectorAll('.operation-route-category-check:checked')].map((input) => input.value);
+function refreshRouteItemOptions() {
+  const itemSelect = document.getElementById('operation-route-item');
+  if (!itemSelect) return;
+  const selected = selectedRouteCategories();
+  if (selected.length !== 1) {
+    itemSelect.disabled = true;
+    itemSelect.innerHTML = `<option value="">${selected.length ? 'Choose one category for an item override' : 'Select a category first'}</option>`;
+    return;
+  }
+  const category = selected[0];
+  itemSelect.disabled = false;
+  itemSelect.innerHTML = `<option value="">All selected categories</option>${operationsMenu.filter((item) => item.category === category).sort((a,b)=>a.name.localeCompare(b.name)).map((item) => `<option value="${esc(item.name)}">${esc(item.name)}</option>`).join('')}`;
+}
 function renderOperations() {
   const content = document.getElementById('operations-content');
   if (!content) return;
@@ -220,7 +268,46 @@ function renderOperations() {
     const kotPrinters = operationsConfig.printers.filter((printer) => printer.type === 'kot');
     const categories = [...new Set(operationsMenu.map((item) => item.category).filter(Boolean))].sort();
     const printerOptions = kotPrinters.map((printer) => `<option value="${esc(printer.id)}">${esc(printer.name)}</option>`).join('');
-    content.innerHTML = `<section class="operations-section"><div class="operations-section-head"><div><span class="eyebrow">Step 1</span><h3>Printers</h3><p>Create every printer used by your restaurant. You can add as many KOT and Bill printers as needed.</p></div><span class="operations-count">${operationsConfig.printers.length} configured</span></div><div class="operations-printer-form"><label>Printer name<input id="operation-printer-name" maxlength="60" placeholder="e.g. Tandoori Printer"></label><label>Printer type<select id="operation-printer-type"><option value="kot">KOT printer</option><option value="bill">Bill printer</option></select></label><button type="button" id="operation-add-printer"><span aria-hidden="true">＋</span> Add printer</button></div><div class="operations-grid printer-grid">${operationsConfig.printers.map((printer) => `<article class="operation-printer"><div class="operation-printer-head"><span class="printer-card-icon ${esc(printer.type)}" aria-hidden="true">${printer.type === 'bill' ? '▣' : '⌑'}</span><div><h3>${esc(printer.name)}</h3><p>${printer.type === 'bill' ? 'Counter / bill receipt printer' : 'Kitchen order ticket printer'}</p></div><span class="printer-type ${esc(printer.type)}">${esc(printer.type)}</span></div><button type="button" data-delete-printer="${esc(printer.id)}">Remove</button></article>`).join('') || '<div class="operations-empty">Add your first printer to start routing KOTs.</div>'}</div></section><section class="operations-section routing-section"><div class="operations-section-head"><div><span class="eyebrow">Step 2</span><h3>KOT routing</h3><p>Send an entire category—or one specific item—to the right kitchen printer.</p></div><span class="operations-count">${operationsConfig.routes.length} rules</span></div><div class="operations-route-form"><label>Send to printer<select id="operation-route-printer"><option value="">Choose KOT printer</option>${printerOptions}</select></label><label>Category<select id="operation-route-category"><option value="">Choose category</option>${categories.map((category) => `<option value="${esc(category)}">${esc(category)}</option>`).join('')}</select></label><label>Specific item <select id="operation-route-item"><option value="">Entire category</option></select></label><button type="button" id="operation-add-route">Add route</button></div><div class="routing-list">${operationsConfig.routes.map((route) => { const printer=operationsConfig.printers.find((item)=>item.id===route.printerId); return `<div class="route-row"><span class="route-icon" aria-hidden="true">⌑</span><div><b>${esc(route.category)}${route.itemName ? ` · ${esc(route.itemName)}` : ' · all items'}</b><span>Print on ${esc(printer?.name || 'Missing printer')}</span></div><button type="button" data-delete-route="${esc(route.id)}">Remove</button></div>`; }).join('') || '<div class="operations-empty">No KOT routes yet. Add a category or item rule above.</div>'}</div></section><div class="operations-save-bar"><span>Changes are saved only when you confirm.</span><button type="button" id="operations-save" class="operations-save">Save printer configuration</button></div>`;
+    content.innerHTML = `<section class="operations-section"><div class="operations-section-head"><div><span class="eyebrow">Step 1</span><h3>Printers</h3><p>Create every printer used by your restaurant. You can add as many KOT and Bill printers as needed.</p></div><span class="operations-count">${operationsConfig.printers.length} configured</span></div><div class="operations-printer-form"><label>Printer name<input id="operation-printer-name" maxlength="60" placeholder="e.g. Tandoori Printer"></label><label>Printer type<select id="operation-printer-type"><option value="kot">KOT printer</option><option value="bill">Bill printer</option></select></label><button type="button" id="operation-add-printer"><span aria-hidden="true">＋</span> Add printer</button></div><div class="operations-grid printer-grid">${operationsConfig.printers.map((printer) => `<article class="operation-printer"><div class="operation-printer-head"><span class="printer-card-icon ${esc(printer.type)}" aria-hidden="true">${printer.type === 'bill' ? '▣' : '⌑'}</span><div><h3>${esc(printer.name)}</h3><p>${printer.type === 'bill' ? 'Counter / bill receipt printer' : 'Kitchen order ticket printer'}</p></div><span class="printer-type ${esc(printer.type)}">${esc(printer.type)}</span></div><button type="button" data-delete-printer="${esc(printer.id)}">Remove</button></article>`).join('') || '<div class="operations-empty">Add your first printer to start routing KOTs.</div>'}</div></section><section class="operations-section routing-section"><div class="operations-section-head"><div><span class="eyebrow">Step 2</span><h3>KOT routing</h3><p>Select every category this printer should receive. Use the item override only for a single-item exception.</p></div><span class="operations-count">${operationsConfig.routes.length} rules</span></div><div class="operations-route-form"><label>Send to printer<select id="operation-route-printer"><option value="">Choose KOT printer</option>${printerOptions}</select></label><div class="category-picker"><div class="category-picker-top"><b>Categories for this printer</b><span id="route-category-count">0 selected</span></div><input id="operation-route-category-search" class="category-search" type="search" placeholder="Search categories"><div id="operation-route-categories" class="category-checklist">${categories.map((category) => `<label class="category-choice"><input class="operation-route-category-check" type="checkbox" value="${esc(category)}"><span>${esc(category)}</span></label>`).join('')}</div></div><label>Specific item <select id="operation-route-item" disabled><option value="">Select one category first</option></select></label><button type="button" id="operation-add-route">Add selected routes</button></div><div class="routing-list">${operationsConfig.routes.map((route) => { const printer=operationsConfig.printers.find((item)=>item.id===route.printerId); return `<div class="route-row"><span class="route-icon" aria-hidden="true">⌑</span><div><b>${esc(route.category)}${route.itemName ? ` · ${esc(route.itemName)}` : ' · all items'}</b><span>Print on ${esc(printer?.name || 'Missing printer')}</span></div><button type="button" data-delete-route="${esc(route.id)}">Remove</button></div>`; }).join('') || '<div class="operations-empty">No KOT routes yet. Select one or more categories above to set up routing.</div>'}</div></section><div class="operations-save-bar"><span>Changes are saved only when you confirm.</span><button type="button" id="operations-save" class="operations-save">Save printer configuration</button></div>`;
+    const printerForm = document.querySelector('.operations-printer-form');
+    const addPrinterButton = document.getElementById('operation-add-printer');
+    if (printerForm && addPrinterButton) {
+      const setupFlow = document.createElement('div');
+      setupFlow.className = 'printer-setup-flow';
+      setupFlow.innerHTML = '<i aria-hidden="true">▣</i><div><b>Add a restaurant printer</b><span>Give it a clear role, select its installed system printer, then assign its menu categories in Step 2.</span></div>';
+      printerForm.before(setupFlow);
+      const deviceField = document.createElement('label');
+      const bridgeMessage = printBridgeState === 'checking' ? 'Detecting installed printers…' : printBridgeState === 'offline' ? 'Print Bridge not detected' : 'Choose installed printer';
+      deviceField.innerHTML = `Installed system printer<select id="operation-printer-device"><option value="">${bridgeMessage}</option>${installedSystemPrinters.map((printer) => `<option value="${esc(printer.id)}">${esc(printer.name)}</option>`).join('')}</select>`;
+      printerForm.insertBefore(deviceField, addPrinterButton);
+    }
+    document.querySelectorAll('.operation-printer').forEach((card, index) => {
+      const printer = operationsConfig.printers[index];
+      if (!printer) return;
+      const endpoint = document.createElement('p');
+      endpoint.className = `printer-endpoint${printer.deviceName ? '' : ' is-pending'}`;
+      endpoint.textContent = printer.deviceName ? `System printer · ${printer.deviceName}` : 'System printer to be assigned during installation';
+      card.querySelector('.operation-printer-head')?.after(endpoint);
+    });
+    const routeForm = document.querySelector('.operations-route-form');
+    const categoryPicker = routeForm?.querySelector('.category-picker');
+    const printerControl = document.getElementById('operation-route-printer')?.closest('label');
+    const itemControl = document.getElementById('operation-route-item')?.closest('label');
+    const addRouteButton = document.getElementById('operation-add-route');
+    if (routeForm && categoryPicker && printerControl && itemControl && addRouteButton) {
+      const controls = document.createElement('div');
+      controls.className = 'route-side-controls';
+      controls.append(printerControl, itemControl, addRouteButton);
+      routeForm.prepend(controls);
+    }
+    const saveStatus = document.querySelector('.operations-save-bar span');
+    if (saveStatus) {
+      saveStatus.textContent = printBridgeConfigState === 'synced'
+        ? 'Saved securely in the cloud and on this restaurant computer.'
+        : printBridgeConfigState === 'waiting-for-bridge'
+          ? 'Saved securely in the cloud. The local offline copy will sync when Print Bridge is running.'
+          : 'Save once. The local Print Bridge will retain this routing for offline use.';
+    }
   }
 }
 async function loadOperations() {
@@ -231,11 +318,40 @@ async function loadOperations() {
   operationsMenu = Array.isArray(data.menu) ? data.menu : [];
   renderOperations();
 }
+async function discoverSystemPrinters() {
+  printBridgeState = 'checking';
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 2200);
+    const response = await fetch('http://127.0.0.1:9124/v1/printers', { cache:'no-store', signal:controller.signal });
+    clearTimeout(timer);
+    const body = await response.json();
+    if (!response.ok || !Array.isArray(body.printers)) throw new Error('Print Bridge did not return installed printers.');
+    installedSystemPrinters = body.printers.map((printer) => ({ id:String(printer.id || printer.name || ''), name:String(printer.name || '') })).filter((printer) => printer.id && printer.name);
+    printBridgeState = 'available';
+  } catch (_) {
+    installedSystemPrinters = [];
+    printBridgeState = 'offline';
+  }
+}
+async function syncOperationsToPrintBridge(config) {
+  if (printBridgeState !== 'available') { printBridgeConfigState = 'waiting-for-bridge'; return false; }
+  try {
+    const response = await fetch('http://127.0.0.1:9124/v1/config', { method:'PUT', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify({ config }) });
+    if (!response.ok) throw new Error('Bridge sync failed.');
+    printBridgeConfigState = 'synced';
+    return true;
+  } catch (_) {
+    printBridgeConfigState = 'waiting-for-bridge';
+    return false;
+  }
+}
 async function saveOperations() {
   const response = await fetch('/api/orders/operations', { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ config:operationsConfig }) });
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || 'Unable to save printer configuration.');
   operationsConfig = data.config;
+  await syncOperationsToPrintBridge(operationsConfig);
   renderOperations();
 }
 function printKot(orderId, printerId) {
@@ -316,7 +432,7 @@ operationsToggle.addEventListener('click', async () => {
   operationsToggle.setAttribute('aria-expanded', String(opening));
   if (!opening) return;
   document.getElementById('operations-content').innerHTML = '<div class="operations-empty">Loading Operations…</div>';
-  try { await loadOrders(); await loadOperations(); operationsPanel.scrollIntoView({ behavior:'smooth', block:'start' }); } catch (error) { document.getElementById('operations-content').innerHTML = `<div class="operations-empty">${esc(error.message)}</div>`; }
+  try { await loadOrders(); await loadOperations(); await discoverSystemPrinters(); renderOperations(); operationsPanel.scrollIntoView({ behavior:'smooth', block:'start' }); } catch (error) { document.getElementById('operations-content').innerHTML = `<div class="operations-empty">${esc(error.message)}</div>`; }
 });
 document.getElementById('operations-close')?.addEventListener('click', () => { operationsPanel.hidden = true; operationsToggle.classList.remove('is-open'); operationsToggle.setAttribute('aria-expanded','false'); });
 document.getElementById('operations-tabs')?.addEventListener('click', (event) => {
@@ -327,18 +443,26 @@ document.getElementById('operations-tabs')?.addEventListener('click', (event) =>
   renderOperations();
 });
 document.getElementById('operations-content')?.addEventListener('change', (event) => {
-  if (event.target.id !== 'operation-route-category') return;
-  const itemSelect = document.getElementById('operation-route-item');
-  const category = event.target.value;
-  itemSelect.innerHTML = `<option value="">Entire category</option>${operationsMenu.filter((item) => item.category === category).sort((a,b)=>a.name.localeCompare(b.name)).map((item) => `<option value="${esc(item.name)}">${esc(item.name)}</option>`).join('')}`;
+  if (!event.target.matches('.operation-route-category-check')) return;
+  const selected = selectedRouteCategories();
+  const counter = document.getElementById('route-category-count');
+  if (counter) counter.textContent = `${selected.length} selected`;
+  refreshRouteItemOptions();
+});
+document.getElementById('operations-content')?.addEventListener('input', (event) => {
+  if (event.target.id !== 'operation-route-category-search') return;
+  const query = event.target.value.trim().toLowerCase();
+  document.querySelectorAll('.category-choice').forEach((choice) => {
+    choice.classList.toggle('is-hidden', !choice.textContent.toLowerCase().includes(query));
+  });
 });
 document.getElementById('operations-content')?.addEventListener('click', async (event) => {
   const addPrinter = event.target.closest('#operation-add-printer');
-  if (addPrinter) { const name=String(document.getElementById('operation-printer-name')?.value||'').trim(); const type=document.getElementById('operation-printer-type')?.value==='bill'?'bill':'kot'; if (!name) { document.getElementById('operation-printer-name')?.focus(); return; } operationsConfig.printers.push({ id:operationId(), name, type }); renderOperations(); return; }
+  if (addPrinter) { const name=String(document.getElementById('operation-printer-name')?.value||'').trim(); const type=document.getElementById('operation-printer-type')?.value==='bill'?'bill':'kot'; const deviceSelect=document.getElementById('operation-printer-device'); const deviceId=String(deviceSelect?.value||'').trim(); const deviceName=deviceId ? String(deviceSelect?.selectedOptions?.[0]?.textContent||'').trim() : ''; if (!name) { document.getElementById('operation-printer-name')?.focus(); return; } if (!deviceId && printBridgeState === 'available') { alert('Choose an installed system printer first.'); return; } operationsConfig.printers.push({ id:operationId(), name, type, connection:'system', deviceId, deviceName }); renderOperations(); return; }
   const removePrinter = event.target.closest('[data-delete-printer]');
   if (removePrinter) { const id=removePrinter.dataset.deletePrinter; operationsConfig.printers=operationsConfig.printers.filter((printer)=>printer.id!==id); operationsConfig.routes=operationsConfig.routes.filter((route)=>route.printerId!==id); renderOperations(); return; }
   const addRoute = event.target.closest('#operation-add-route');
-  if (addRoute) { const printerId=document.getElementById('operation-route-printer')?.value||''; const category=document.getElementById('operation-route-category')?.value||''; const itemName=document.getElementById('operation-route-item')?.value||''; if (!printerId || !category) { alert('Choose a KOT printer and a category first.'); return; } const duplicate=operationsConfig.routes.some((route)=>route.printerId===printerId&&route.category===category&&route.itemName===itemName); if (!duplicate) operationsConfig.routes.push({ id:operationId(), printerId, category, itemName }); renderOperations(); return; }
+  if (addRoute) { const printerId=document.getElementById('operation-route-printer')?.value||''; const categories=selectedRouteCategories(); const itemName=document.getElementById('operation-route-item')?.value||''; if (!printerId || !categories.length) { alert('Choose a KOT printer and at least one category first.'); return; } if (itemName && categories.length !== 1) { alert('Choose exactly one category to route a specific item.'); return; } categories.forEach((category) => { const duplicate=operationsConfig.routes.some((route)=>route.printerId===printerId&&route.category===category&&route.itemName===itemName); if (!duplicate) operationsConfig.routes.push({ id:operationId(), printerId, category, itemName }); }); renderOperations(); return; }
   const removeRoute = event.target.closest('[data-delete-route]');
   if (removeRoute) { operationsConfig.routes=operationsConfig.routes.filter((route)=>route.id!==removeRoute.dataset.deleteRoute); renderOperations(); return; }
   if (event.target.closest('#operations-save')) { const button=event.target.closest('#operations-save'); button.disabled=true; button.textContent='Saving…'; try { await saveOperations(); } catch(error) { alert(error.message); button.disabled=false; button.textContent='Save printer configuration'; } return; }

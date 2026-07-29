@@ -2102,13 +2102,33 @@ app.get('/api/orders/operations', async (req, res) => { try {
 app.put('/api/orders/operations', async (req, res) => { try {
   await ensureOperationsConfigTable();
   const source=req.body?.config || {};
-  const printers=(Array.isArray(source.printers)?source.printers:[]).slice(0,250).map((printer)=>({ id:String(printer.id||crypto.randomUUID()).replace(/[^a-zA-Z0-9_-]/g,'').slice(0,60), name:String(printer.name||'').trim().slice(0,60), type:printer.type==='bill'?'bill':'kot' })).filter((printer)=>printer.id&&printer.name);
+  const printers=(Array.isArray(source.printers)?source.printers:[]).slice(0,250).map((printer)=>{
+    const port=Number.parseInt(printer.port,10);
+    return {
+      id:String(printer.id||crypto.randomUUID()).replace(/[^a-zA-Z0-9_-]/g,'').slice(0,60),
+      name:String(printer.name||'').trim().slice(0,60),
+      type:printer.type==='bill'?'bill':'kot',
+      connection:'system',
+      host:String(printer.host||'').trim().slice(0,253),
+      port:Number.isInteger(port)&&port>0&&port<=65535 ? port : 9100,
+      deviceId:String(printer.deviceId||'').trim().slice(0,160),
+      deviceName:String(printer.deviceName||'').trim().slice(0,120)
+    };
+  }).filter((printer)=>printer.id&&printer.name);
+  if (new Set(printers.map((printer)=>printer.id)).size !== printers.length) return res.status(400).json({ error:'Each configured printer must have a unique saved ID.' });
   const printerIds=new Set(printers.map((printer)=>printer.id));
   const menu=await getSection('airMenu');
   const allItems=[...(menu.items||[]),...(menu.barItems||[])].map((item)=>({ name:String(item.name||''), category:String(item.category||'') }));
   const categories=new Set(allItems.map((item)=>item.category));
   const validItem=(category,name)=>allItems.some((item)=>item.category===category&&item.name===name);
   const routes=(Array.isArray(source.routes)?source.routes:[]).slice(0,2000).map((route)=>({ id:String(route.id||crypto.randomUUID()).replace(/[^a-zA-Z0-9_-]/g,'').slice(0,60), printerId:String(route.printerId||''), category:String(route.category||''), itemName:String(route.itemName||'') })).filter((route)=>route.id&&printerIds.has(route.printerId)&&categories.has(route.category)&&(!route.itemName||validItem(route.category,route.itemName)));
+  if (new Set(routes.map((route)=>route.id)).size !== routes.length) return res.status(400).json({ error:'Each routing rule must have a unique saved ID.' });
+  const assignedTargets=new Set();
+  for (const route of routes) {
+    const target=`${route.category}::${route.itemName || '*'}`;
+    if (assignedTargets.has(target)) return res.status(400).json({ error:`${route.itemName || route.category} is already routed to another printer. Remove its existing route first.` });
+    assignedTargets.add(target);
+  }
   const config={ printers, routes };
   await sql`INSERT INTO order_operations_config (config_key, config, updated_at) VALUES ('default', ${JSON.stringify(config)}, NOW()) ON CONFLICT (config_key) DO UPDATE SET config=EXCLUDED.config, updated_at=NOW()`;
   res.json({ ok:true, config });
