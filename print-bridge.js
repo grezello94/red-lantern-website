@@ -108,7 +108,7 @@ $doc.add_PrintPage({ param($sender, $event)
   foreach ($line in $lines) {
     $style = [System.Drawing.FontStyle]::Regular; $size = 9
     if ($line -eq 'RED LANTERN RESTAURANT' -or $line -eq 'KITCHEN ORDER TICKET') { $style = [System.Drawing.FontStyle]::Bold; $size = 10 }
-    elseif ($line -match '^KOT -') { $style = [System.Drawing.FontStyle]::Bold; $size = 15 }
+    elseif ($line -match '^Order #') { $style = [System.Drawing.FontStyle]::Bold; $size = 15 }
     elseif ($line -match '^\\d+x ') { $style = [System.Drawing.FontStyle]::Bold; $size = 11 }
     $font = New-Object System.Drawing.Font('Arial', $size, $style)
     $format = New-Object System.Drawing.StringFormat; $format.Alignment = [System.Drawing.StringAlignment]::Center
@@ -131,7 +131,8 @@ function kotText(payload) {
   const order = payload.order || {};
   const items = Array.isArray(payload.items) ? payload.items : [];
   const line = '-'.repeat(34);
-  return ['RED LANTERN RESTAURANT', 'KITCHEN ORDER TICKET', line, `KOT - ${order.number || order.id || '—'}`, order.fulfillment || 'Order', `Captain: ${order.customer || 'Guest'}`, line, ...items.map((item) => `${Number(item.quantity || 0)}x ${item.name || 'Item'}${item.portion ? ` (${item.portion})` : ''}${item.style ? ` · ${item.style}` : ''}`), order.note ? `${line}\nNote: ${order.note}` : '', line, new Date().toLocaleString(), '\n\n\n'].filter(Boolean).join('\n');
+  const guestLine = `Guest: ${order.customer || 'Guest'}${order.fulfillment ? ` · ${order.fulfillment}` : ''}${order.phone ? ` · ${order.phone}` : ''}`;
+  return ['RED LANTERN RESTAURANT', 'KITCHEN ORDER TICKET', line, `Order #${order.number || order.id || '—'}`, guestLine, line, ...items.map((item) => `${Number(item.quantity || 0)}x ${item.name || 'Item'}${item.portion ? ` (${item.portion})` : ''}${item.style ? ` · ${item.style}` : ''}`), order.note ? `${line}\nNote: ${order.note}` : '', line, new Date().toLocaleString(), '\n\n\n'].filter(Boolean).join('\n');
 }
 
 function allowedOrigin(request) {

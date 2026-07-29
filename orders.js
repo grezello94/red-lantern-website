@@ -432,7 +432,7 @@ async function dispatchKot(orderId, printerId) {
   if (!printer || !printer.deviceName || !items.length) throw new Error('This KOT needs an assigned system printer and at least one routed item.');
   const response = await fetch('http://127.0.0.1:9124/v1/print-kot', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ printerName:printer.deviceName, items, order:{ id:order.id, number:String(order.daily_order_number || '').padStart(2, '0'), customer:order.customer_name, fulfillment:order.fulfillment_type === 'pickup' ? 'Pick up' : 'Delivery', note:order.special_request } })
+    body: JSON.stringify({ printerName:printer.deviceName, items, order:{ id:order.id, number:String(order.daily_order_number || '').padStart(2, '0'), customer:order.customer_name, phone:order.customer_phone, fulfillment:order.fulfillment_type === 'pickup' ? 'Pick up' : 'Delivery', note:order.special_request } })
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || 'The Print Bridge could not send this KOT to the printer.');
