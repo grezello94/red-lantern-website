@@ -543,6 +543,7 @@ const labels = {
 
 let publicContentCache = null;
 let directOrdersTableReady = null;
+let kotsTableReady = null;
 let loyaltyTableReady = null;
 let creditTableReady = null;
 let menuAvailabilityTableReady = null;
@@ -578,6 +579,11 @@ async function ensureDirectOrdersTable() {
     await sql`CREATE TABLE IF NOT EXISTS direct_order_counters (order_day DATE PRIMARY KEY, next_number INTEGER NOT NULL)`;
   })();
   return directOrdersTableReady;
+}
+async function ensureKotsTable() {
+  if (!sql) throw new Error('Orders database is not configured.');
+  if (!kotsTableReady) kotsTableReady = sql`CREATE TABLE IF NOT EXISTS order_kots (kot_number BIGSERIAL PRIMARY KEY, order_id TEXT NOT NULL, order_number INTEGER, tickets JSONB NOT NULL DEFAULT '[]'::jsonb, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;
+  return kotsTableReady;
 }
 async function ensureLoyaltyTable() {
   if (!sql) throw new Error('Orders database is not configured.');
@@ -2105,6 +2111,20 @@ app.get('/api/orders/operations', async (req, res) => { try {
   res.set('Cache-Control','no-store');
   res.json({ config:{ printers:Array.isArray(config.printers)?config.printers:[], routes:Array.isArray(config.routes)?config.routes:[] }, menu:[...format(menu.items||[],'food'),...format(menu.barItems||[],'bar')] });
 } catch (error) { res.status(500).json({ error:'Unable to load Operations configuration.' }); } });
+app.post('/api/orders/:id/kots', async (req, res) => { try {
+  await ensureDirectOrdersTable(); await ensureOperationsConfigTable(); await ensureKotsTable();
+  const orderRows=await sql`SELECT id, daily_order_number, customer_name, customer_phone, fulfillment_type, special_request, items FROM direct_orders WHERE id=${req.params.id} LIMIT 1`;
+  if (!orderRows.length) return res.status(404).json({ error:'Order not found.' });
+  const configRows=await sql`SELECT config FROM order_operations_config WHERE config_key='default' LIMIT 1`;
+  const config=configRows[0]?.config || { printers:[], routes:[] };
+  const printers=Array.isArray(config.printers)?config.printers:[]; const routes=Array.isArray(config.routes)?config.routes:[];
+  const groups=new Map();
+  for (const item of (Array.isArray(orderRows[0].items)?orderRows[0].items:[])) { const route=routes.find((r)=>r.category===item.category && (!r.itemName || r.itemName===item.name)); const printer=printers.find((p)=>p.id===route?.printerId && p.type==='kot' && p.deviceName); if (printer) { if(!groups.has(printer.id)) groups.set(printer.id,{ printerName:printer.deviceName, printerLabel:printer.name, items:[] }); groups.get(printer.id).items.push(item); } }
+  if (!groups.size) return res.status(400).json({ error:'No routed KOT items have an assigned system printer.' });
+  const tickets=[...groups.values()];
+  const created=await sql`INSERT INTO order_kots (order_id, order_number, tickets) VALUES (${orderRows[0].id}, ${orderRows[0].daily_order_number}, ${JSON.stringify(tickets)}) RETURNING kot_number`;
+  res.status(201).json({ kotNumber:created[0].kot_number, order:orderRows[0], tickets });
+} catch (error) { res.status(500).json({ error:error.message || 'Unable to create KOT.' }); } });
 app.put('/api/orders/operations', async (req, res) => { try {
   await ensureOperationsConfigTable();
   const source=req.body?.config || {};
