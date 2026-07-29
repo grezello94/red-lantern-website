@@ -6,6 +6,7 @@ const orderSearch = document.getElementById('order-search');
 const historyDate = document.getElementById('history-date');
 let known = new Set();
 let firstLoad = true;
+let ordersRefreshInFlight = false;
 let menuItems = [];
 let unavailable = new Map();
 let availabilityFilter = 'all';
@@ -331,6 +332,8 @@ document.getElementById('enable-notifications')?.addEventListener('click', async
 });
 
 async function loadOrders() {
+  if (ordersRefreshInFlight) return;
+  ordersRefreshInFlight = true;
   try {
     let query = String(orderSearch?.value || '').replace(/\D/g, '').slice(0, 16);
     const date = historyAll ? '' : String(historyDate?.value || '');
@@ -362,7 +365,7 @@ async function loadOrders() {
   } catch (error) {
     root.innerHTML = `<div class="empty-state">${esc(error.message)}</div>`;
     if (navigator.onLine) reportOrdersDiagnostic({ message:`Live orders refresh failed: ${error.message}`, source:'live orders refresh' });
-  }
+  } finally { ordersRefreshInFlight = false; }
 }
 
 function renderOrder(order) {

@@ -586,6 +586,8 @@ async function ensureDirectOrdersTable() {
     await sql`CREATE UNIQUE INDEX IF NOT EXISTS direct_orders_day_number_unique ON direct_orders (order_day, daily_order_number) WHERE daily_order_number IS NOT NULL`;
     await sql`CREATE UNIQUE INDEX IF NOT EXISTS direct_orders_tracking_token_unique ON direct_orders (tracking_token) WHERE tracking_token IS NOT NULL`;
     await sql`CREATE UNIQUE INDEX IF NOT EXISTS direct_orders_client_request_unique ON direct_orders (client_request_id) WHERE client_request_id IS NOT NULL`;
+    await sql`CREATE INDEX IF NOT EXISTS direct_orders_day_created_index ON direct_orders (order_day, created_at DESC)`;
+    await sql`CREATE INDEX IF NOT EXISTS direct_orders_phone_created_index ON direct_orders (customer_phone, created_at DESC)`;
     await sql`CREATE TABLE IF NOT EXISTS direct_order_counters (order_day DATE PRIMARY KEY, next_number INTEGER NOT NULL)`;
   })();
   return directOrdersTableReady;
@@ -693,6 +695,7 @@ async function saveSection(section, data) {
     VALUES (${collections[section]}, ${merged})
     ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data
   `;
+  if (section === 'airMenu') ordersOperatingStatusCache.expiresAt = 0;
 }
 
 function normalizeHome(body, files) {
@@ -1537,6 +1540,14 @@ function restaurantStatus(menu, now = new Date()) {
   return { open: false, message: 'The restaurant is currently closed.', reopensAt: `We will open ${next.tomorrow ? 'tomorrow' : 'today'} at ${formatIndiaTime(next.open)}.` };
 }
 
+let ordersOperatingStatusCache = { expiresAt: 0, value: { open: true } };
+async function getOrdersOperatingStatus() {
+  if (ordersOperatingStatusCache.expiresAt > Date.now()) return ordersOperatingStatusCache.value;
+  const value = restaurantStatus(await getSection('airMenu'));
+  ordersOperatingStatusCache = { value, expiresAt: Date.now() + 15000 };
+  return value;
+}
+
 function likelyMenuCategory(line) {
   if (!line || line.length < 2 || line.length > 55 || /\d/.test(line)) return false;
   const letters = line.replace(/[^a-z]/gi, '');
@@ -2120,7 +2131,7 @@ app.post('/api/orders/counter', async (req, res) => {
     res.status(201).json({ id, orderNumber:String(number).padStart(2,'0'), total });
   } catch (error) { res.status(500).json({ error:'Unable to save the counter order.' }); }
 });
-app.get('/api/orders', async (req, res) => { try { await ensureDirectOrdersTable(); const search=String(req.query.search||'').replace(/\D/g,'').slice(0,16); const like=`%${search}%`; const today=kolkataOrderDay(); const history=req.query.history==='1'; const requestedDay=/^\d{4}-\d{2}-\d{2}$/.test(String(req.query.date||''))?String(req.query.date):''; const operatingStatus=restaurantStatus(await getSection('airMenu')); res.set({ 'Cache-Control':'no-store', 'X-Orders-Day': today, 'X-Orders-View': history?'history':'current', 'X-Orders-Session': operatingStatus.open?'open':'closed' }); if (!history && !operatingStatus.open) return res.json([]); const orders = history && !requestedDay ? await sql`SELECT o.*, (SELECT COUNT(*) FROM direct_orders h WHERE h.customer_phone=o.customer_phone) AS customer_order_count, (SELECT MAX(h.created_at) FROM direct_orders h WHERE h.customer_phone=o.customer_phone AND h.id<>o.id) AS customer_last_order_at FROM direct_orders o WHERE ${search}='' OR o.customer_phone LIKE ${like} OR CAST(o.daily_order_number AS TEXT) LIKE ${like} ORDER BY o.created_at DESC LIMIT 100` : await sql`SELECT o.*, (SELECT COUNT(*) FROM direct_orders h WHERE h.customer_phone=o.customer_phone) AS customer_order_count, (SELECT MAX(h.created_at) FROM direct_orders h WHERE h.customer_phone=o.customer_phone AND h.id<>o.id) AS customer_last_order_at FROM direct_orders o WHERE o.order_day=${history ? requestedDay || today : today}::date AND (${search}='' OR o.customer_phone LIKE ${like} OR CAST(o.daily_order_number AS TEXT) LIKE ${like}) ORDER BY o.created_at DESC LIMIT 100`; res.json(orders); } catch (error) { res.status(500).json({ error: error.message }); } });
+app.get('/api/orders', async (req, res) => { try { await ensureDirectOrdersTable(); const search=String(req.query.search||'').replace(/\D/g,'').slice(0,16); const like=`%${search}%`; const today=kolkataOrderDay(); const history=req.query.history==='1'; const requestedDay=/^\d{4}-\d{2}-\d{2}$/.test(String(req.query.date||''))?String(req.query.date):''; const operatingStatus=await getOrdersOperatingStatus(); res.set({ 'Cache-Control':'no-store', 'X-Orders-Day': today, 'X-Orders-View': history?'history':'current', 'X-Orders-Session': operatingStatus.open?'open':'closed' }); if (!history && !operatingStatus.open) return res.json([]); const orders = history && !requestedDay ? await sql`SELECT o.*, (SELECT COUNT(*) FROM direct_orders h WHERE h.customer_phone=o.customer_phone) AS customer_order_count, (SELECT MAX(h.created_at) FROM direct_orders h WHERE h.customer_phone=o.customer_phone AND h.id<>o.id) AS customer_last_order_at FROM direct_orders o WHERE ${search}='' OR o.customer_phone LIKE ${like} OR CAST(o.daily_order_number AS TEXT) LIKE ${like} ORDER BY o.created_at DESC LIMIT 100` : await sql`SELECT o.*, (SELECT COUNT(*) FROM direct_orders h WHERE h.customer_phone=o.customer_phone) AS customer_order_count, (SELECT MAX(h.created_at) FROM direct_orders h WHERE h.customer_phone=o.customer_phone AND h.id<>o.id) AS customer_last_order_at FROM direct_orders o WHERE o.order_day=${history ? requestedDay || today : today}::date AND (${search}='' OR o.customer_phone LIKE ${like} OR CAST(o.daily_order_number AS TEXT) LIKE ${like}) ORDER BY o.created_at DESC LIMIT 100`; res.json(orders); } catch (error) { res.status(500).json({ error: error.message }); } });
 app.get('/api/orders/live-summary', async (req, res) => { try {
   await ensureDirectOrdersTable();
   const orderDay=kolkataOrderDay();
