@@ -426,7 +426,7 @@ function printKot(orderId, printerId) {
 }
 
 async function dispatchKot(orderId, printerId) {
-  const created=await fetch(`/api/orders/${encodeURIComponent(orderId)}/kots`, { method:'POST' }); const data=await created.json(); if (!created.ok) throw new Error(data.error || 'Unable to create KOT.');
+  const created=await fetch(`/api/orders/${encodeURIComponent(orderId)}/kots`, { method:'POST' }); const data=await created.json(); if (!created.ok) throw new Error(data.error || 'Unable to create KOT.'); if (data.reused) throw new Error(`KOT #${data.kotNumber} was already sent. Use Reprint if another copy is needed.`);
   await Promise.all(data.tickets.map(async (ticket) => { const response=await fetch('http://127.0.0.1:9124/v1/print-kot',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({printerName:ticket.printerName,items:ticket.items,order:{number:data.order.daily_order_number, kotNumber:data.kotNumber, customer:data.order.customer_name, phone:data.order.customer_phone, fulfillment:data.order.fulfillment_type==='pickup'?'Pick up':'Delivery',note:data.order.special_request}})}); const body=await response.json().catch(()=>({})); if(!response.ok) throw new Error(body.error||'The Print Bridge could not send this KOT.'); }));
 }
 

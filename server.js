@@ -582,7 +582,7 @@ async function ensureDirectOrdersTable() {
 }
 async function ensureKotsTable() {
   if (!sql) throw new Error('Orders database is not configured.');
-  if (!kotsTableReady) kotsTableReady = sql`CREATE TABLE IF NOT EXISTS order_kots (kot_number BIGSERIAL PRIMARY KEY, order_id TEXT NOT NULL, order_number INTEGER, tickets JSONB NOT NULL DEFAULT '[]'::jsonb, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;
+  if (!kotsTableReady) kotsTableReady = (async()=>{ await sql`CREATE TABLE IF NOT EXISTS order_kots (kot_number BIGSERIAL PRIMARY KEY, order_id TEXT NOT NULL, order_number INTEGER, tickets JSONB NOT NULL DEFAULT '[]'::jsonb, item_fingerprint TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`; await sql`ALTER TABLE order_kots ADD COLUMN IF NOT EXISTS item_fingerprint TEXT`; await sql`CREATE UNIQUE INDEX IF NOT EXISTS order_kots_fingerprint_unique ON order_kots (order_id, item_fingerprint) WHERE item_fingerprint IS NOT NULL`; })();
   return kotsTableReady;
 }
 async function ensureLoyaltyTable() {
@@ -2125,8 +2125,9 @@ app.post('/api/orders/:id/kots', async (req, res) => { try {
   const groups=new Map();
   for (const item of pending) { const route=routes.find((r)=>r.category===item.category && (!r.itemName || r.itemName===item.name)); const printer=printers.find((p)=>p.id===route?.printerId && p.type==='kot' && p.deviceName); if (printer) { if(!groups.has(printer.id)) groups.set(printer.id,{ printerName:printer.deviceName, printerLabel:printer.name, items:[] }); groups.get(printer.id).items.push(item); } }
   if (!groups.size) return res.status(400).json({ error:'No routed KOT items have an assigned system printer.' });
-  const tickets=[...groups.values()];
-  const created=await sql`INSERT INTO order_kots (order_id, order_number, tickets) VALUES (${orderRows[0].id}, ${orderRows[0].daily_order_number}, ${JSON.stringify(tickets)}) RETURNING kot_number`;
+  const tickets=[...groups.values()]; const fingerprint=crypto.createHash('sha256').update(JSON.stringify(pending)).digest('hex');
+  const created=await sql`INSERT INTO order_kots (order_id, order_number, tickets, item_fingerprint) VALUES (${orderRows[0].id}, ${orderRows[0].daily_order_number}, ${JSON.stringify(tickets)}, ${fingerprint}) ON CONFLICT (order_id, item_fingerprint) WHERE item_fingerprint IS NOT NULL DO NOTHING RETURNING kot_number`;
+  if (!created.length) { const existing=await sql`SELECT kot_number, tickets FROM order_kots WHERE order_id=${orderRows[0].id} AND item_fingerprint=${fingerprint} LIMIT 1`; return res.status(200).json({ kotNumber:existing[0].kot_number, order:orderRows[0], tickets:existing[0].tickets, reused:true }); }
   res.status(201).json({ kotNumber:created[0].kot_number, order:orderRows[0], tickets });
 } catch (error) { res.status(500).json({ error:error.message || 'Unable to create KOT.' }); } });
 app.get('/api/orders/:id/kots', async (req,res)=>{try{await ensureKotsTable();res.json(await sql`SELECT kot_number, tickets, created_at FROM order_kots WHERE order_id=${req.params.id} ORDER BY kot_number DESC`)}catch(error){res.status(500).json({error:'Unable to load KOT history.'})}});
