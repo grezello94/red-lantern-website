@@ -98,6 +98,9 @@ document.head.appendChild(operationsPolishStyles);
 const printerSetupStyles = document.createElement('style');
 printerSetupStyles.textContent = `.operations-section:first-child{background:linear-gradient(145deg,#fff,#f8fbff)}.printer-setup-flow{display:flex;align-items:center;gap:12px;max-width:980px;margin:18px 0 20px;padding:12px 14px;border:1px solid #dbe8f7;border-radius:12px;background:#f5f9fe}.printer-setup-flow i{display:grid;width:34px;height:34px;place-items:center;flex:0 0 34px;border-radius:10px;color:#fff;background:#284778;font-size:17px;font-style:normal}.printer-setup-flow b,.printer-setup-flow span{display:block}.printer-setup-flow b{color:#243958;font-size:13px}.printer-setup-flow span{margin-top:2px;color:#6d7d95;font-size:12px;line-height:1.4}.operations-printer-form{max-width:1380px;padding:16px;border:1px solid #e0eaf5;border-radius:14px;background:#fff;box-shadow:0 5px 15px rgba(31,57,93,.035)}.operations-printer-form>*{min-width:0}.operations-printer-form input,.operations-printer-form select{box-sizing:border-box}.operations-printer-form button{min-width:132px}.printer-grid .operations-empty{grid-column:1/-1;min-height:116px;display:grid;place-items:center;margin-top:4px;border-style:dashed;background:#fbfdff;font-size:13px}.printer-grid{margin-top:16px}@media(max-width:760px){.printer-setup-flow{align-items:flex-start}.operations-printer-form{padding:14px}.operations-printer-form button{min-width:0}}`;
 document.head.appendChild(printerSetupStyles);
+const printBridgeSetupStyles = document.createElement('style');
+printBridgeSetupStyles.textContent = `.printer-setup-flow{max-width:1380px}.bridge-setup{margin-left:auto;display:grid;gap:5px;max-width:510px;padding:10px 12px;border:1px solid #cfe2d8;border-radius:10px;background:#fff}.bridge-setup b{color:#087348}.bridge-setup span{font-size:11px}.bridge-setup code{padding:6px 8px;border-radius:6px;color:#243958;background:#edf3f8;font:700 10px ui-monospace,monospace;word-break:break-word}.bridge-setup button{justify-self:start;padding:6px 9px;color:#fff;background:#284778;font-size:10px}@media(max-width:900px){.printer-setup-flow{align-items:flex-start;flex-wrap:wrap}.bridge-setup{width:100%;max-width:none;margin-left:0}}`;
+document.head.appendChild(printBridgeSetupStyles);
 
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#039;' })[char]);
 const money = (value) => `₹${Number(value || 0).toFixed(0)}`;
@@ -274,7 +277,10 @@ function renderOperations() {
     if (printerForm && addPrinterButton) {
       const setupFlow = document.createElement('div');
       setupFlow.className = 'printer-setup-flow';
-      setupFlow.innerHTML = '<i aria-hidden="true">▣</i><div><b>Add a restaurant printer</b><span>Give it a clear role, select its installed system printer, then assign its menu categories in Step 2.</span></div>';
+      const isMac = /macintosh|mac os x/i.test(navigator.userAgent);
+      const bridgeCommand = isMac ? 'bash ./install-print-bridge-macos.sh' : 'powershell -ExecutionPolicy Bypass -File .\\install-print-bridge-windows.ps1';
+      const bridgeLabel = printBridgeState === 'available' ? 'Print Bridge is running on this computer.' : 'Print Bridge is not running on this computer.';
+      setupFlow.innerHTML = `<i aria-hidden="true">▣</i><div><b>Add a restaurant printer</b><span>Give it a clear role, select its installed system printer, then assign its menu categories in Step 2.</span></div><div class="bridge-setup"><b>${bridgeLabel}</b><span>One-time setup on every computer that has printers. Open Terminal / PowerShell in the website folder, then run:</span><code>${esc(bridgeCommand)}</code><button type="button" id="copy-print-bridge-command" data-command="${esc(bridgeCommand)}">Copy setup command</button></div>`;
       printerForm.before(setupFlow);
       const deviceField = document.createElement('label');
       const bridgeMessage = printBridgeState === 'checking' ? 'Detecting installed printers…' : printBridgeState === 'offline' ? 'Print Bridge not detected' : 'Choose installed printer';
@@ -478,6 +484,8 @@ document.getElementById('operations-content')?.addEventListener('input', (event)
   });
 });
 document.getElementById('operations-content')?.addEventListener('click', async (event) => {
+  const copyBridgeCommand = event.target.closest('#copy-print-bridge-command');
+  if (copyBridgeCommand) { try { await navigator.clipboard.writeText(copyBridgeCommand.dataset.command || ''); copyBridgeCommand.textContent='Copied'; setTimeout(() => { copyBridgeCommand.textContent='Copy setup command'; }, 1600); } catch (_) { alert(`Run this command in Terminal / PowerShell:\n\n${copyBridgeCommand.dataset.command || ''}`); } return; }
   const addPrinter = event.target.closest('#operation-add-printer');
   if (addPrinter) { const name=String(document.getElementById('operation-printer-name')?.value||'').trim(); const type=document.getElementById('operation-printer-type')?.value==='bill'?'bill':'kot'; const deviceSelect=document.getElementById('operation-printer-device'); const deviceId=String(deviceSelect?.value||'').trim(); const deviceName=deviceId ? String(deviceSelect?.selectedOptions?.[0]?.textContent||'').trim() : ''; if (!name) { document.getElementById('operation-printer-name')?.focus(); return; } if (!deviceId && printBridgeState === 'available') { alert('Choose an installed system printer first.'); return; } operationsConfig.printers.push({ id:operationId(), name, type, connection:'system', deviceId, deviceName }); renderOperations(); return; }
   const removePrinter = event.target.closest('[data-delete-printer]');
