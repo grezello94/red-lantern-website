@@ -23,6 +23,8 @@ let operationsTab = 'kots';
 let installedSystemPrinters = [];
 let printBridgeState = 'checking';
 let printBridgeConfigState = 'not-synced';
+let assignmentPrinterId = '';
+let assignmentMode = '';
 const orderSearchPanel = document.querySelector('.order-search-panel');
 const liveOrdersPanel = document.createElement('section');
 liveOrdersPanel.id = 'live-orders-panel';
@@ -101,6 +103,9 @@ document.head.appendChild(printerSetupStyles);
 const printBridgeSetupStyles = document.createElement('style');
 printBridgeSetupStyles.textContent = `.printer-setup-flow{max-width:1380px}.bridge-setup{margin-left:auto;display:grid;gap:5px;max-width:510px;padding:10px 12px;border:1px solid #cfe2d8;border-radius:10px;background:#fff}.bridge-setup b{color:#087348}.bridge-setup span{font-size:11px}.bridge-setup code{padding:6px 8px;border-radius:6px;color:#243958;background:#edf3f8;font:700 10px ui-monospace,monospace;word-break:break-word}.bridge-setup button{justify-self:start;padding:6px 9px;color:#fff;background:#284778;font-size:10px}@media(max-width:900px){.printer-setup-flow{align-items:flex-start;flex-wrap:wrap}.bridge-setup{width:100%;max-width:none;margin-left:0}}`;
 document.head.appendChild(printBridgeSetupStyles);
+const managePrintersStyles = document.createElement('style');
+managePrintersStyles.textContent = `.manage-printers,.printer-assignment{padding:24px;border:1px solid #dfe7f1;border-radius:16px;background:#fff}.manage-printers-head{display:flex;justify-content:space-between;gap:18px;align-items:start}.manage-printers h3,.printer-assignment h3{margin:4px 0;color:#1e3150;font-size:23px}.manage-printers p,.printer-assignment p{margin:0;color:#687a91}.bridge-status{max-width:370px;padding:9px 12px;border-radius:9px;color:#8a5b13;background:#fff5dc;font-size:12px;font-weight:700}.bridge-status.online{color:#087348;background:#e8f7ef}.add-system-printer{display:flex;gap:10px;margin:22px 0}.add-system-printer select{flex:1;min-height:44px;padding:10px;border:1px solid #cfdceb;border-radius:9px}.add-system-printer button,.printer-table-row button{padding:10px 14px;background:#246ce0;color:#fff}.printer-table{border:1px solid #dfe6ee;border-radius:12px;overflow:hidden}.printer-table-head,.printer-table-row{display:grid;grid-template-columns:1.5fr .8fr 1fr auto;gap:16px;align-items:center;padding:16px 18px}.printer-table-head{color:#526680;background:#eef2f6;font-size:11px;font-weight:900;text-transform:uppercase}.printer-table-row+.printer-table-row{border-top:1px solid #e1e7ee}.printer-table-row b,.printer-table-row small{display:block}.printer-table-row b{color:#1d2f4a}.printer-table-row small{margin-top:4px;color:#76869a;font-size:11px}.assignment-tag{display:inline-block;margin:2px;padding:5px 9px;border-radius:999px;color:#087348;background:#e8f7ef;font-size:11px;font-style:normal;font-weight:800}.printer-table-row .remove-printer{margin-left:6px;color:#a52a39;background:#fff0f0}.assignment-back{margin-bottom:17px;color:#27436b;background:#eef4fa}.assignment-choices{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;max-width:720px;margin-top:24px}.assignment-choices button{display:grid;gap:6px;padding:22px;text-align:left;color:#1e3150;background:#fff;border:1px solid #d6e0ea}.assignment-choices button:hover{border-color:#246ce0;background:#f4f8ff}.assignment-choices b{font-size:16px}.assignment-choices span{color:#718198}.assignment-category-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:22px}.assignment-category-grid label{display:flex;align-items:center;gap:9px;padding:12px;border:1px solid #dce5ee;border-radius:9px;color:#263b59;font-size:12px;font-weight:700}.assignment-category-grid input{width:17px;height:17px;accent-color:#168451}.assignment-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:22px}.assignment-actions button{padding:11px 15px;background:#eef3f8;color:#304562}.assignment-actions .operations-save{color:#fff;background:#168451}@media(max-width:760px){.manage-printers-head{display:grid}.printer-table-head{display:none}.printer-table-row{grid-template-columns:1fr;gap:8px}.add-system-printer{display:grid}.assignment-choices,.assignment-category-grid{grid-template-columns:1fr}}`;
+document.head.appendChild(managePrintersStyles);
 
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#039;' })[char]);
 const money = (value) => `₹${Number(value || 0).toFixed(0)}`;
@@ -254,6 +259,27 @@ function refreshRouteItemOptions() {
   itemSelect.disabled = false;
   itemSelect.innerHTML = `<option value="">All selected categories</option>${operationsMenu.filter((item) => item.category === category).sort((a,b)=>a.name.localeCompare(b.name)).map((item) => `<option value="${esc(item.name)}">${esc(item.name)}</option>`).join('')}`;
 }
+function assignedKinds(printer) {
+  const kinds = [];
+  if (printer.type === 'bill') kinds.push('Bill');
+  if (operationsConfig.routes.some((route) => route.printerId === printer.id)) kinds.push('KOT');
+  return kinds;
+}
+function renderPrinterManagement() {
+  const content = document.getElementById('operations-content');
+  if (!content) return;
+  const printer = operationsConfig.printers.find((item) => item.id === assignmentPrinterId);
+  const categories = [...new Set(operationsMenu.map((item) => item.category).filter(Boolean))].sort();
+  if (printer && assignmentMode) {
+    const selected = new Set(operationsConfig.routes.filter((route) => route.printerId === printer.id && !route.itemName).map((route) => route.category));
+    content.innerHTML = assignmentMode === 'choose'
+      ? `<section class="printer-assignment"><button type="button" class="assignment-back" data-assignment-back>‹ Back</button><h3>Assign printer · ${esc(printer.name)}</h3><p>Choose how this installed printer will be used.</p><div class="assignment-choices"><button type="button" data-assign-bill><b>▤ Assign to Bill</b><span>Customer receipts and bills</span></button><button type="button" data-assign-kot><b>⌑ Assign to KOT</b><span>Kitchen order tickets</span></button></div></section>`
+      : `<section class="printer-assignment"><button type="button" class="assignment-back" data-assignment-back>‹ Back</button><h3>Assign KOT categories · ${esc(printer.name)}</h3><p>Select every category this printer should receive.</p><div class="assignment-category-grid">${categories.map((category) => `<label><input type="checkbox" data-assignment-category value="${esc(category)}" ${selected.has(category) ? 'checked' : ''}><span>${esc(category)}</span></label>`).join('')}</div><div class="assignment-actions"><button type="button" data-assignment-back>Cancel</button><button type="button" class="operations-save" data-save-kot-assignment>Save KOT assignment</button></div></section>`;
+    return;
+  }
+  const bridgeText = printBridgeState === 'available' ? 'Print Bridge is running — installed printers are available.' : 'Print Bridge is not detected on this computer.';
+  content.innerHTML = `<section class="manage-printers"><div class="manage-printers-head"><div><span class="eyebrow">Printer setup</span><h3>Manage printers</h3><p>Connect installed system printers, then assign each one to bills or KOT categories.</p></div><span class="bridge-status ${printBridgeState === 'available' ? 'online' : ''}">${bridgeText}</span></div><div class="add-system-printer"><select id="quick-system-printer"><option value="">Choose installed printer</option>${installedSystemPrinters.map((item) => `<option value="${esc(item.id)}">${esc(item.name)}</option>`).join('')}</select><button type="button" id="quick-add-printer">＋ Add printer</button></div><div class="printer-table"><div class="printer-table-head"><span>Printer name</span><span>Printer type</span><span>Assigned for</span><span>Actions</span></div>${operationsConfig.printers.map((item) => { const kinds=assignedKinds(item); return `<div class="printer-table-row"><div><b>${esc(item.name)}</b><small>${esc(item.deviceName || 'System printer not assigned')}</small></div><span>${item.type === 'bill' ? 'Bill printer' : 'General'}</span><div>${kinds.length ? kinds.map((kind) => `<em class="assignment-tag">${kind}</em>`).join(' ') : '<small>Not assigned</small>'}</div><div><button type="button" data-assign-printer="${esc(item.id)}">Assign</button><button type="button" class="remove-printer" data-delete-printer="${esc(item.id)}">Remove</button></div></div>`; }).join('') || '<div class="operations-empty">Add an installed printer to begin.</div>'}</div></section>`;
+}
 function renderOperations() {
   const content = document.getElementById('operations-content');
   if (!content) return;
@@ -268,6 +294,8 @@ function renderOperations() {
     }));
     content.innerHTML = `<p class="help-text">KOTs are grouped by the printer rules below. Items without a matching rule stay clearly marked as <strong>Unassigned</strong>.</p><div class="operations-grid">${[...tickets.values()].map((ticket) => { const number=String(ticket.order.daily_order_number||'—').padStart(2,'0'); return `<article class="kot-ticket"><div class="kot-ticket-head"><div><h3>Order #${esc(number)}</h3><p>${esc(ticket.order.customer_name || 'Guest')} · ${esc(ticket.order.customer_phone)}</p></div><span class="printer-type kot">${esc(ticket.printer?.name || 'Unassigned')}</span></div><div class="kot-items">${ticket.items.map((item) => `<div><b>${Number(item.quantity||0)}×</b> ${esc(item.name)}${item.portion?` · ${esc(item.portion)}`:''}${item.style?` · ${esc(item.style)}`:''}</div>`).join('')}</div><button type="button" data-print-kot="${esc(ticket.order.id)}" data-printer-id="${esc(ticket.printer?.id || '')}">Print KOT</button></article>`; }).join('') || '<div class="operations-empty">No live KOTs right now. New and active orders will appear here.</div>'}</div>`;
   } else {
+    renderPrinterManagement();
+    return;
     const kotPrinters = operationsConfig.printers.filter((printer) => printer.type === 'kot');
     const categories = [...new Set(operationsMenu.map((item) => item.category).filter(Boolean))].sort();
     const printerOptions = kotPrinters.map((printer) => `<option value="${esc(printer.id)}">${esc(printer.name)}</option>`).join('');
@@ -486,6 +514,14 @@ document.getElementById('operations-content')?.addEventListener('input', (event)
 document.getElementById('operations-content')?.addEventListener('click', async (event) => {
   const copyBridgeCommand = event.target.closest('#copy-print-bridge-command');
   if (copyBridgeCommand) { try { await navigator.clipboard.writeText(copyBridgeCommand.dataset.command || ''); copyBridgeCommand.textContent='Copied'; setTimeout(() => { copyBridgeCommand.textContent='Copy setup command'; }, 1600); } catch (_) { alert(`Run this command in Terminal / PowerShell:\n\n${copyBridgeCommand.dataset.command || ''}`); } return; }
+  const quickAdd = event.target.closest('#quick-add-printer');
+  if (quickAdd) { const select=document.getElementById('quick-system-printer'); const deviceId=String(select?.value||''); const deviceName=String(select?.selectedOptions?.[0]?.textContent||''); if (!deviceId) { alert('Choose an installed system printer first.'); return; } if (operationsConfig.printers.some((printer) => printer.deviceId === deviceId)) { alert('This system printer has already been added.'); return; } operationsConfig.printers.push({ id:operationId(), name:deviceName, type:'kot', connection:'system', deviceId, deviceName }); renderOperations(); return; }
+  const assignPrinter = event.target.closest('[data-assign-printer]');
+  if (assignPrinter) { assignmentPrinterId=assignPrinter.dataset.assignPrinter || ''; assignmentMode='choose'; renderOperations(); return; }
+  if (event.target.closest('[data-assignment-back]')) { assignmentPrinterId=''; assignmentMode=''; renderOperations(); return; }
+  if (event.target.closest('[data-assign-bill]')) { const printer=operationsConfig.printers.find((item)=>item.id===assignmentPrinterId); if (printer) { printer.type='bill'; operationsConfig.routes=operationsConfig.routes.filter((route)=>route.printerId!==printer.id); try { await saveOperations(); assignmentPrinterId=''; assignmentMode=''; renderOperations(); } catch (error) { alert(error.message); } } return; }
+  if (event.target.closest('[data-assign-kot]')) { assignmentMode='kot'; renderOperations(); return; }
+  if (event.target.closest('[data-save-kot-assignment]')) { const printer=operationsConfig.printers.find((item)=>item.id===assignmentPrinterId); const categories=[...document.querySelectorAll('[data-assignment-category]:checked')].map((input)=>input.value); if (!categories.length) { alert('Select at least one category.'); return; } if (printer) { printer.type='kot'; operationsConfig.routes=operationsConfig.routes.filter((route)=>route.printerId!==printer.id); categories.forEach((category)=>operationsConfig.routes.push({ id:operationId(), printerId:printer.id, category, itemName:'' })); try { await saveOperations(); assignmentPrinterId=''; assignmentMode=''; renderOperations(); } catch (error) { alert(error.message); } } return; }
   const addPrinter = event.target.closest('#operation-add-printer');
   if (addPrinter) { const name=String(document.getElementById('operation-printer-name')?.value||'').trim(); const type=document.getElementById('operation-printer-type')?.value==='bill'?'bill':'kot'; const deviceSelect=document.getElementById('operation-printer-device'); const deviceId=String(deviceSelect?.value||'').trim(); const deviceName=deviceId ? String(deviceSelect?.selectedOptions?.[0]?.textContent||'').trim() : ''; if (!name) { document.getElementById('operation-printer-name')?.focus(); return; } if (!deviceId && printBridgeState === 'available') { alert('Choose an installed system printer first.'); return; } operationsConfig.printers.push({ id:operationId(), name, type, connection:'system', deviceId, deviceName }); renderOperations(); return; }
   const removePrinter = event.target.closest('[data-delete-printer]');
