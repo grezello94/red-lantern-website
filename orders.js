@@ -8,6 +8,7 @@ let known = new Set();
 let firstLoad = true;
 let ordersRefreshInFlight = false;
 let renderedOrdersSignature = '';
+let hasRenderedOrders = false;
 let menuItems = [];
 let unavailable = new Map();
 let availabilityFilter = 'all';
@@ -393,15 +394,22 @@ async function loadOrders() {
     if (renderSignature !== renderedOrdersSignature) {
       root.innerHTML = visibleRows.map(renderOrder).join('') || `<div class="empty-state">${filteredEmpty}</div>`;
       renderedOrdersSignature = renderSignature;
+      hasRenderedOrders = true;
     }
+    root.classList.remove('is-stale');
     if (orderView === 'current') rows.filter((order) => new Date(order.created_at).getTime() >= ordersConsoleStartedAt - 15 * 60 * 1000).forEach(autoPrintOrder);
     const clearButton = document.getElementById('clear-order-search');
     const searchStatus = document.getElementById('order-search-status');
     if (clearButton) clearButton.hidden = !query;
     if (searchStatus) searchStatus.textContent = query ? `${visibleRows.length} matching order${visibleRows.length === 1 ? '' : 's'}` : orderView === 'history' ? `History · ${date || 'choose a date'}` : sessionOpen ? `${visibleRows.length} ${orderStatusFilter === 'all' ? 'current' : orderStatusFilter} order${visibleRows.length === 1 ? '' : 's'}` : 'Session closed · orders archived';
   } catch (error) {
-    root.innerHTML = `<div class="empty-state">${esc(error.message)}</div>`;
-    renderedOrdersSignature = '';
+    if (!hasRenderedOrders) {
+      root.innerHTML = `<div class="empty-state">${esc(error.message)}</div>`;
+      renderedOrdersSignature = '';
+    } else {
+      root.classList.add('is-stale');
+      updateConnectivity('Connection problem — showing the last loaded orders.');
+    }
     if (navigator.onLine) reportOrdersDiagnostic({ message:`Live orders refresh failed: ${error.message}`, source:'live orders refresh' });
   } finally { ordersRefreshInFlight = false; }
 }
