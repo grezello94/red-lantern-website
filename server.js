@@ -2273,7 +2273,6 @@ app.put('/api/orders/operations', async (req, res) => { try {
     assignedTargets.add(target);
   }
   const tableAreas=(Array.isArray(source.tableAreas)?source.tableAreas:[]).slice(0,60).map((area)=>({id:String(area.id||crypto.randomUUID()).replace(/[^a-zA-Z0-9_-]/g,'').slice(0,60),name:String(area.name||'').trim().slice(0,60),from:Number.parseInt(area.from,10),to:Number.parseInt(area.to,10)})).filter((area)=>area.id&&area.name&&Number.isInteger(area.from)&&Number.isInteger(area.to)&&area.from>0&&area.to>=area.from&&area.to<=9999);
-  const usedTables=new Set(); for(const area of tableAreas){for(let number=area.from;number<=area.to;number+=1){if(usedTables.has(number)) return res.status(400).json({error:`Table ${number} is assigned to more than one area.`});usedTables.add(number);}}
   const config={ printers, routes, tableAreas };
   await sql`INSERT INTO order_operations_config (config_key, config, updated_at) VALUES ('default', ${JSON.stringify(config)}, NOW()) ON CONFLICT (config_key) DO UPDATE SET config=EXCLUDED.config, updated_at=NOW()`;
   res.json({ ok:true, config });
