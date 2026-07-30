@@ -846,6 +846,11 @@ document.getElementById('counter-place-order')?.addEventListener('click', async 
   if (!counterCart.length) { status.textContent = 'Add at least one menu item first.'; return; }
   const button = document.getElementById('counter-place-order'); button.disabled = true;
   const payload = { clientRequestId:counterRequestId(), customerName:document.getElementById('counter-customer-name').value.trim(), customerPhone:document.getElementById('counter-customer-phone').value.trim(), specialRequest:document.getElementById('counter-special-request').value.trim(), loyaltyPoints:Math.floor(Number(document.getElementById('counter-wallet-redeem')?.value || 0)), items:counterCart.map((item) => ({ ...item })) };
+  if (payload.loyaltyPoints >= 100) {
+    const first = window.confirm(`Apply ₹${payload.loyaltyPoints} from this customer's wallet?`);
+    const second = first && window.confirm(`Final confirmation: deduct ${payload.loyaltyPoints} wallet points (₹${payload.loyaltyPoints}) from this order?`);
+    if (!second) { button.disabled = false; status.textContent = 'Wallet points were not applied. Review the amount before placing the order.'; return; }
+  }
   status.textContent = navigator.onLine ? 'Saving takeaway order…' : 'Internet is unavailable — saving this order safely on this device…';
   try {
     let result;
