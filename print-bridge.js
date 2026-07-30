@@ -86,12 +86,14 @@ async function writeJson(file, value) {
   await fs.rename(temporary, file);
 }
 
-async function printText(printerName, text) {
+async function printText(printerName, text, settings = {}) {
   const file = path.join(os.tmpdir(), `red-lantern-kot-${crypto.randomUUID()}.txt`);
   await fs.writeFile(file, text, 'utf8');
   try {
     if (process.platform === 'win32') {
       const quote = (value) => String(value).replace(/'/g, "''");
+      const paperWidth = Number(settings.paperWidth) === 58 ? 58 : 80;
+      const fontFamily = ['Arial','Calibri','Verdana','Tahoma','Trebuchet MS','Georgia','Times New Roman','Courier New','Consolas','Lucida Console'].includes(String(settings.fontFamily)) ? String(settings.fontFamily).replace(/'/g, "''") : 'Arial';
       const script = `Add-Type -AssemblyName System.Drawing
 $lines = Get-Content -LiteralPath '${quote(file)}' -Encoding UTF8
 $doc = New-Object System.Drawing.Printing.PrintDocument
@@ -99,26 +101,29 @@ $doc.PrinterSettings.PrinterName = '${quote(printerName)}'
 if (-not $doc.PrinterSettings.IsValid) { throw 'The selected Windows printer is no longer available.' }
 # 79 mm rolls are configured by Windows drivers as 80 mm. Reuse that driver
 # form (rather than forcing a page length) and keep a 72 mm printable column.
-$thermalPaper = @($doc.PrinterSettings.PaperSizes | Where-Object { $_.Width -ge 300 -and $_.Width -le 320 } | Select-Object -First 1)
+$minWidth = if (${paperWidth} -eq 58) { 220 } else { 300 }
+$maxWidth = if (${paperWidth} -eq 58) { 240 } else { 320 }
+$thermalPaper = @($doc.PrinterSettings.PaperSizes | Where-Object { $_.Width -ge $minWidth -and $_.Width -le $maxWidth } | Select-Object -First 1)
 if ($thermalPaper.Count) { $doc.DefaultPageSettings.PaperSize = $thermalPaper[0] }
-$doc.DefaultPageSettings.Margins = New-Object System.Drawing.Printing.Margins(14, 14, 8, 8)
+$doc.DefaultPageSettings.Margins = New-Object System.Drawing.Printing.Margins(4, 4, 2, 2)
 $doc.PrintController = New-Object System.Drawing.Printing.StandardPrintController
 $doc.add_PrintPage({ param($sender, $event)
   $g = $event.Graphics; $width = $event.MarginBounds.Width; $y = $event.MarginBounds.Top
   foreach ($line in $lines) {
     $displayLine = $line; $style = [System.Drawing.FontStyle]::Regular; $size = 9; $alignment = [System.Drawing.StringAlignment]::Center
-    if ($line.StartsWith('__KOT_PRINTER__')) { $displayLine = $line.Substring(15); $style = [System.Drawing.FontStyle]::Bold; $size = 11 }
-    elseif ($line.StartsWith('__TITLE__')) { $displayLine = $line.Substring(9); $style = [System.Drawing.FontStyle]::Bold; $size = 13 }
+    if ($line.StartsWith('__KOT_PRINTER__')) { $displayLine = $line.Substring(15); $style = [System.Drawing.FontStyle]::Bold; $size = ${Math.max(12, Math.min(18, Number(settings.headerFontSize) || 15))} }
+    elseif ($line.StartsWith('__TITLE__')) { $displayLine = $line.Substring(9); $style = [System.Drawing.FontStyle]::Bold; $size = ${Math.max(12, Math.min(18, Number(settings.headerFontSize) || 15))} }
     elseif ($line.StartsWith('__SUBTITLE__')) { $displayLine = $line.Substring(12); $size = 8 }
     elseif ($line.StartsWith('__CENTER__')) { $displayLine = $line.Substring(10) }
     elseif ($line.StartsWith('__LEFT__')) { $displayLine = $line.Substring(8); $alignment = [System.Drawing.StringAlignment]::Near }
     elseif ($line.StartsWith('__LABEL__')) { $displayLine = $line.Substring(9); $alignment = [System.Drawing.StringAlignment]::Near; $style = [System.Drawing.FontStyle]::Bold }
-    elseif ($line.StartsWith('__TABLE__')) { $displayLine = $line.Substring(9); $alignment = [System.Drawing.StringAlignment]::Near; $size = 8 }
-    elseif ($line.StartsWith('__TABLEHEAD__')) { $displayLine = $line.Substring(13); $alignment = [System.Drawing.StringAlignment]::Near; $style = [System.Drawing.FontStyle]::Bold; $size = 8 }
+    elseif ($line.StartsWith('__TABLE__')) { $displayLine = $line.Substring(9); $alignment = [System.Drawing.StringAlignment]::Near; $size = ${Math.max(8, Math.min(13, Number(settings.fontSize) || 10))} }
+    elseif ($line.StartsWith('__TABLEHEAD__')) { $displayLine = $line.Substring(13); $alignment = [System.Drawing.StringAlignment]::Near; $style = [System.Drawing.FontStyle]::Bold; $size = ${Math.max(8, Math.min(13, Number(settings.fontSize) || 10))} }
     elseif ($line.StartsWith('__TOTAL__')) { $displayLine = $line.Substring(9); $alignment = [System.Drawing.StringAlignment]::Near; $style = [System.Drawing.FontStyle]::Bold; $size = 13 }
     elseif ($line -match '^(KOT|Order) #') { $style = [System.Drawing.FontStyle]::Bold; $size = 15 }
     elseif ($line -match '^\\d+x ') { $style = [System.Drawing.FontStyle]::Bold; $size = 11 }
-    $font = New-Object System.Drawing.Font('Arial', $size, $style)
+    if ($line.StartsWith('__SUBTITLE__') -or $line.StartsWith('__CENTER__')) { $size = ${Math.max(8, Math.min(13, Number(settings.fontSize) || 10))} }
+    $font = New-Object System.Drawing.Font('${fontFamily}', $size, $style)
     $format = New-Object System.Drawing.StringFormat; $format.Alignment = $alignment
     if ($line -match '^\\d+x ') { $format.Alignment = [System.Drawing.StringAlignment]::Near }
     $bounds = New-Object System.Drawing.RectangleF($event.MarginBounds.Left, $y, $width, 200)
@@ -137,13 +142,16 @@ $doc.Print()`;
 
 function kotText(payload) {
   const order = payload.order || {};
+  const settings = payload.settings || {};
   const items = Array.isArray(payload.items) ? payload.items : [];
   const line = '-'.repeat(34);
   const guestLine = `Guest: ${order.customer || 'Guest'}${order.fulfillment ? ` · ${order.fulfillment}` : ''}${order.phone ? ` · ${order.phone}` : ''}`;
-  return [`__KOT_PRINTER__${String(payload.printerLabel || payload.printerName || 'Kitchen').trim()}`, order.reprint ? '*** REPRINT ***' : '', line, `KOT #${order.kotNumber || '—'}`, `Order #${order.number || order.id || '—'}`, guestLine, line, ...items.map((item) => `${Number(item.quantity || 0)}x ${item.name || 'Item'}${item.portion ? ` (${item.portion})` : ''}${item.style ? ` · ${item.style}` : ''}`), order.note ? `${line}\nNote: ${order.note}` : '', line, new Date().toLocaleString(), '\n\n\n'].filter(Boolean).join('\n');
+  const quantityFirst = settings.quantityFirst !== false;
+  const rows = items.map((item, index) => `${settings.showItemSerial ? `${index + 1}. ` : ''}${quantityFirst ? `${Number(item.quantity || 0)}x ` : ''}${item.name || 'Item'}${item.portion ? ` (${item.portion})` : ''}${item.style ? ` · ${item.style}` : ''}${quantityFirst ? '' : ` · ${Number(item.quantity || 0)}x`}`);
+  return [settings.receiptHeader || '', `__KOT_PRINTER__${String(payload.printerLabel || payload.printerName || 'Kitchen').trim()}`, order.reprint ? '*** REPRINT ***' : '', line, `KOT #${order.kotNumber || '—'}`, `Order #${order.number || order.id || '—'}`, settings.showCustomer !== false ? guestLine : '', line, ...rows, order.note && settings.showNotes !== false ? `${line}\nNote: ${order.note}` : '', line, settings.receiptFooter || '', '\n\n\n'].filter(Boolean).join('\n');
 }
 function billText(payload) {
-  const order = payload.order || {}, items = Array.isArray(order.items) ? order.items : [], line = '-'.repeat(34);
+  const order = payload.order || {}, settings = payload.settings || {}, items = Array.isArray(order.items) ? order.items : [], line = '-'.repeat(34);
   const money = (value) => `₹${Math.round(Number(value) || 0)}`;
   const itemPrice = (item) => Number(String(item.price || '').replace(/[^0-9.]/g, '')) + (item.style ? 10 : 0);
   const subtotal = items.reduce((sum, item) => sum + itemPrice(item) * Number(item.quantity || 0), 0);
@@ -153,13 +161,13 @@ function billText(payload) {
   const itemRows = items.flatMap((item) => {
     const label = `${item.name || 'Item'}${item.portion ? ` (${item.portion})` : ''}${item.style ? ` · ${item.style}` : ''}`;
     const quantity = Number(item.quantity || 0), unit = itemPrice(item), amount = quantity * unit;
-    return [`__TABLE__${label}`, `__TABLE__${''.padEnd(20)}${String(quantity).padStart(3)} ${money(unit).padStart(5)} ${money(amount).padStart(6)}`];
+    return [`__TABLE__${settings.showItemSerial ? `${items.indexOf(item)+1}. ` : ''}${label}`, `__TABLE__${''.padEnd(20)}${String(quantity).padStart(3)} ${money(unit).padStart(5)} ${money(amount).padStart(6)}`];
   });
   const token = String(order.daily_order_number || '—').padStart(2, '0');
   const phone = String(order.customer_phone || '').startsWith('walkin-') ? '—' : (order.customer_phone || '—');
   const placed = order.created_at ? new Intl.DateTimeFormat('en-IN', { timeZone:'Asia/Kolkata', day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit', hour12:true }).format(new Date(order.created_at)) : new Date().toLocaleString('en-IN');
   const quantity = items.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
-  return ['__TITLE__RED LANTERN RESTAURANT', '__SUBTITLE__Restaurant Mobile Number: 9922853605', '__SUBTITLE__DIRECT ORDER RECEIPT', line, `__CENTER__ORDER #${token}  ·  ${type}`, line, '__LABEL__Wallet Points: ' + Number(order.loyalty_points || 0), '__LABEL__Name: ' + (order.customer_name || 'Not provided'), '__LABEL__Mobile: ' + phone, '__LABEL__Token No: ' + token, '__LABEL__Placed: ' + placed, order.special_request ? '__LABEL__Note: ' + order.special_request : '', line, '__TABLEHEAD__Item                 Qty Price Amount', ...itemRows, line, `__LEFT__Total Qty: ${quantity}                         Items: ${items.length}`, `__LEFT__Subtotal                              ${money(subtotal)}`, walletDiscount ? `__LEFT__Wallet points discount              -${money(walletDiscount)}` : '', `__TOTAL__GRAND TOTAL                         ${money(total)}`, line, '__CENTER__Thank you for ordering with us!', '__SUBTITLE__Red Lantern Restaurant', '\n\n\n'].filter(Boolean).join('\n');
+  return [settings.showRestaurantName === false ? '' : `__TITLE__${settings.restaurantName || 'RED LANTERN RESTAURANT'}`, settings.receiptHeader ? `__SUBTITLE__${settings.receiptHeader}` : '__SUBTITLE__DIRECT ORDER RECEIPT', line, `__CENTER__ORDER #${token}  ·  ${type}`, line, '__LABEL__Wallet Points: ' + Number(order.loyalty_points || 0), '__LABEL__Name: ' + (order.customer_name || 'Not provided'), '__LABEL__Mobile: ' + phone, '__LABEL__Token No: ' + token, '__LABEL__Placed: ' + placed, order.special_request ? '__LABEL__Note: ' + order.special_request : '', line, '__TABLEHEAD__Item                 Qty Price Amount', ...itemRows, line, `__LEFT__Total Qty: ${quantity}                         Items: ${items.length}`, `__LEFT__Subtotal                              ${money(subtotal)}`, walletDiscount ? `__LEFT__Wallet points discount              -${money(walletDiscount)}` : '', `__TOTAL__GRAND TOTAL                         ${money(total)}`, line, `__CENTER__${settings.receiptFooter || 'Thank you for ordering with us!'}`, '\n\n\n'].filter(Boolean).join('\n');
 }
 
 function allowedOrigin(request) {
@@ -240,7 +248,7 @@ const server = http.createServer(async (req, res) => {
       const printerName = String(payload.printerName || '').trim().slice(0, 160);
       const items = Array.isArray(payload.items) ? payload.items.slice(0, 100) : [];
       if (!printerName || !items.length) throw new Error('A printer and at least one KOT item are required.');
-      await printText(printerName, kotText({ ...payload, items }));
+      await printText(printerName, kotText({ ...payload, items }), payload.settings || {});
       return reply(res, 201, { ok: true, printerName }, origin);
     } catch (error) { return reply(res, 400, { error: error.message || 'Unable to print KOT.' }, origin); }
   }
@@ -248,7 +256,7 @@ const server = http.createServer(async (req, res) => {
     try {
       const payload = await readBody(req); const printerName = String(payload.printerName || '').trim().slice(0, 160);
       if (!printerName || !payload.order?.id) throw new Error('A bill printer and order are required.');
-      await printText(printerName, billText(payload));
+      await printText(printerName, billText(payload), payload.settings || {});
       return reply(res, 201, { ok: true, printerName }, origin);
     } catch (error) { return reply(res, 400, { error: error.message || 'Unable to print bill.' }, origin); }
   }

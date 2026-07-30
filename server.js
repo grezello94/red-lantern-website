@@ -2275,7 +2275,21 @@ app.put('/api/orders/operations', async (req, res) => { try {
       host:String(printer.host||'').trim().slice(0,253),
       port:Number.isInteger(port)&&port>0&&port<=65535 ? port : 9100,
       deviceId:String(printer.deviceId||'').trim().slice(0,160),
-      deviceName:String(printer.deviceName||'').trim().slice(0,120)
+      deviceName:String(printer.deviceName||'').trim().slice(0,120),
+      paperWidth:Number(printer.paperWidth)===58?58:80,
+      receiptHeader:String(printer.receiptHeader||'').trim().slice(0,160),
+      receiptFooter:String(printer.receiptFooter||'').trim().slice(0,160),
+      showRestaurantName:printer.showRestaurantName!==false,
+      showItemSerial:!!printer.showItemSerial,
+      showCustomer:printer.showCustomer!==false,
+      quantityFirst:printer.quantityFirst!==false,
+      showNotes:printer.showNotes!==false,
+      extraSpace:Math.max(0,Math.min(2,Number(printer.extraSpace)||0)),
+      fontFamily:['Arial','Calibri','Verdana','Tahoma','Trebuchet MS','Georgia','Times New Roman','Courier New','Consolas','Lucida Console'].includes(String(printer.fontFamily)) ? String(printer.fontFamily) : 'Arial',
+      fontSize:Math.max(8,Math.min(13,Number(printer.fontSize)||10)),
+      headerFontSize:Math.max(12,Math.min(18,Number(printer.headerFontSize)||15)),
+      headerBold:printer.headerBold!==false,
+      footerBold:!!printer.footerBold
     };
   }).filter((printer)=>printer.id&&printer.name);
   if (new Set(printers.map((printer)=>printer.id)).size !== printers.length) return res.status(400).json({ error:'Each configured printer must have a unique saved ID.' });
