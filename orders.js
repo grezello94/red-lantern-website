@@ -531,6 +531,14 @@ function renderPrinterManagement() {
   }
   const bridgeText = printBridgeState === 'available' ? 'Print Bridge is running — installed printers are available.' : 'Print Bridge is not detected on this computer.';
   content.innerHTML = `<section class="manage-printers"><div class="manage-printers-head"><div><span class="eyebrow">Printer setup</span><h3>Manage printers</h3><p>Connect each installed printer once, then choose whether it handles bills or specific kitchen categories.</p></div><span class="bridge-status ${printBridgeState === 'available' ? 'online' : ''}">${bridgeText}</span></div><div class="add-system-printer"><div class="add-printer-copy"><b>Add an installed printer</b><span>Choose a printer already available on this Windows computer.</span></div><select id="quick-system-printer"><option value="">Choose installed printer</option>${installedSystemPrinters.map((item) => `<option value="${esc(item.id)}">${esc(item.name)}</option>`).join('')}</select><button type="button" id="quick-add-printer">＋ Add printer</button></div><div class="printer-card-list">${operationsConfig.printers.map((item) => { const kinds=assignedKinds(item); const routes=operationsConfig.routes.filter((route)=>route.printerId===item.id); const allCategories=routes.some((route)=>route.category==='*'&&!route.itemName); const categories=[...new Set(routes.filter((route)=>route.category!=='*'&&!route.itemName).map((route)=>route.category))]; const overrides=routes.filter((route)=>route.itemName); const overrideNames=overrides.map((route)=>`${route.itemName}${route.portion ? ` — ${route.portion}` : ' · all options'}`); const assignment=allCategories ? 'All categories' : [categories.length ? `${categories.length} categor${categories.length===1?'y':'ies'}` : '', overrides.length ? `${overrides.length} selected dish${overrides.length===1?'':'es'}` : ''].filter(Boolean).join(' · ') || 'Not assigned yet'; const summary=allCategories ? 'Receives every current and future menu category.' : [...categories, ...overrideNames].join(' · '); return `<article class="printer-card"><div class="printer-card-top"><span class="printer-card-mark ${item.type==='bill'?'is-bill':''}" aria-hidden="true">${item.type==='bill'?'▤':'⌑'}</span><div><span class="printer-card-label">${item.type==='bill'?'Bill printer':'KOT printer'}</span><h4>${esc(item.name)}</h4><p>${esc(item.deviceName || 'System printer not assigned')}</p></div><span class="printer-card-state ${kinds.length?'is-ready':''}">${kinds.length?'Configured':'Needs assignment'}</span></div><div class="printer-routing-summary"><b>${esc(assignment)}</b><span>${esc(summary || 'Choose Bill or KOT categories to complete setup.')}</span></div><div class="printer-card-actions"><button type="button" data-assign-printer="${esc(item.id)}">Configure routing</button><button type="button" class="remove-printer" data-delete-printer="${esc(item.id)}">Remove</button></div></article>`; }).join('') || '<div class="operations-empty">Choose an installed printer above to begin.</div>'}</div></section>`;
+  content.querySelectorAll('.printer-card').forEach((card, index) => {
+    const configured = operationsConfig.printers[index];
+    if (configured?.type !== 'bill') return;
+    const title = card.querySelector('.printer-routing-summary b');
+    const description = card.querySelector('.printer-routing-summary span');
+    if (title) title.textContent = 'Final bill printing enabled';
+    if (description) description.textContent = configured.deviceName ? `All final customer bills print on ${configured.deviceName}.` : 'Choose an installed system printer to enable final bill printing.';
+  });
 }
 function refreshBillPrinterSummary() {
   document.querySelectorAll('.printer-card').forEach((card, index) => {
@@ -540,8 +548,8 @@ function refreshBillPrinterSummary() {
     if (!summary) return;
     const title = summary.querySelector('b');
     const description = summary.querySelector('span');
-    if (title) title.textContent = 'Bill printing enabled';
-    if (description) description.textContent = printer.deviceName ? `Counter and takeaway receipts print automatically on ${printer.deviceName}.` : 'Choose an installed system printer to enable automatic bill printing.';
+    if (title) title.textContent = 'Final bill printing enabled';
+    if (description) description.textContent = printer.deviceName ? `All final customer bills print on ${printer.deviceName}.` : 'Choose an installed system printer to enable final bill printing.';
   });
 }
 function renderOperations() {
