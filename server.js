@@ -2241,6 +2241,7 @@ app.post('/api/orders/:id/kots', async (req, res) => { try {
   res.status(201).json({ kotNumber:created[0].kot_number, order:orderRows[0], tickets });
 } catch (error) { res.status(500).json({ error:error.message || 'Unable to create KOT.' }); } });
 app.get('/api/orders/:id/kots', async (req,res)=>{try{await ensureKotsTable();res.json(await sql`SELECT COALESCE(daily_kot_number, kot_number) AS kot_number, tickets, created_at FROM order_kots WHERE order_id=${req.params.id} ORDER BY created_at DESC, kot_number DESC`)}catch(error){res.status(500).json({error:'Unable to load KOT history.'})}});
+app.get('/api/orders/kot-history', async (req,res)=>{try{await ensureDirectOrdersTable();await ensureKotsTable();const day=/^\d{4}-\d{2}-\d{2}$/.test(String(req.query.date||''))?String(req.query.date):kolkataOrderDay();const rows=await sql`SELECT o.id,o.daily_order_number,o.mode,o.customer_name,o.customer_phone,o.fulfillment_type,o.status,o.completed_at,COALESCE(k.daily_kot_number,k.kot_number) AS kot_number,k.tickets,k.created_at FROM order_kots k JOIN direct_orders o ON o.id=k.order_id WHERE o.order_day=${day}::date ORDER BY k.created_at DESC,k.kot_number DESC LIMIT 400`;res.set('Cache-Control','no-store');res.json(rows)}catch(error){res.status(500).json({error:'Unable to load KOT history.'})}});
 app.put('/api/orders/operations', async (req, res) => { try {
   await ensureOperationsConfigTable();
   const source=req.body?.config || {};
