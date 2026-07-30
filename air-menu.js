@@ -280,7 +280,7 @@ function setupOrderShortlist() {
     renderOrderSummary();
     clearTimeout(loyaltyLookupTimer); loyaltyLookupTimer = setTimeout(loadLoyaltyPoints, 300);
   });
-  document.getElementById('loyalty-redeem').addEventListener('input', (event) => { const value=Math.max(0,Math.floor(Number(event.target.value)||0)); event.target.value=value ? String(value) : '0'; renderOrderSummary(); });
+  document.getElementById('loyalty-redeem').addEventListener('input', (event) => { const value=Math.max(0,Math.floor(Number(event.target.value)||0)); event.target.value=String(value >= 100 ? Math.min(value, loyaltyPoints) : 0); renderOrderSummary(); });
   document.getElementById('copy-order').addEventListener('click', async () => {
     const status = document.getElementById('order-action-status');
     try {

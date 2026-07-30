@@ -137,8 +137,10 @@ function kotText(payload) {
 function billText(payload) {
   const order = payload.order || {}, items = Array.isArray(order.items) ? order.items : [], line = '-'.repeat(34);
   const total = Number(order.total || 0).toFixed(0);
+  const subtotal = items.reduce((sum, item) => sum + (Number(String(item.price || '').replace(/[^0-9.]/g, '')) + (item.style ? 10 : 0)) * Number(item.quantity || 0), 0).toFixed(0);
+  const walletDiscount = Math.max(0, Math.floor(Number(order.loyalty_points_redeemed || 0)));
   const type = order.mode === 'counter' || order.fulfillment_type === 'takeaway' ? 'Takeaway' : order.fulfillment_type === 'delivery' ? 'Delivery' : 'Pick Up';
-  return ['RED LANTERN RESTAURANT', 'CUSTOMER RECEIPT', line, `Order #${String(order.daily_order_number || '—').padStart(2, '0')}`, `Type: ${type}`, `Customer: ${order.customer_name || 'Guest'}`, line, ...items.map((item) => `${Number(item.quantity || 0)}x ${item.name || 'Item'}${item.portion ? ` (${item.portion})` : ''}  ₹${Number(String(item.price || '').replace(/[^0-9.]/g, '')) * Number(item.quantity || 0) + (item.style ? 10 * Number(item.quantity || 0) : 0)}`), line, `TOTAL  ₹${total}`, order.special_request ? `Note: ${order.special_request}` : '', line, new Date().toLocaleString(), '\n\n\n'].filter(Boolean).join('\n');
+  return ['RED LANTERN RESTAURANT', 'CUSTOMER RECEIPT', line, `Order #${String(order.daily_order_number || '—').padStart(2, '0')}`, `Type: ${type}`, `Customer: ${order.customer_name || 'Guest'}`, line, ...items.map((item) => `${Number(item.quantity || 0)}x ${item.name || 'Item'}${item.portion ? ` (${item.portion})` : ''}  ₹${Number(String(item.price || '').replace(/[^0-9.]/g, '')) * Number(item.quantity || 0) + (item.style ? 10 * Number(item.quantity || 0) : 0)}`), line, `SUBTOTAL  ₹${subtotal}`, walletDiscount ? `WALLET POINTS DISCOUNT  -₹${walletDiscount}` : '', `TOTAL  ₹${total}`, order.special_request ? `Note: ${order.special_request}` : '', line, new Date().toLocaleString(), '\n\n\n'].filter(Boolean).join('\n');
 }
 
 function allowedOrigin(request) {
