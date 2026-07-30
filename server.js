@@ -600,7 +600,7 @@ async function ensureDirectOrdersTable() {
 }
 async function ensureKotsTable() {
   if (!sql) throw new Error('Orders database is not configured.');
-  if (!kotsTableReady) kotsTableReady = (async()=>{ await sql`CREATE TABLE IF NOT EXISTS order_kots (kot_number BIGSERIAL PRIMARY KEY, order_id TEXT NOT NULL, order_number INTEGER, tickets JSONB NOT NULL DEFAULT '[]'::jsonb, item_fingerprint TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`; await sql`ALTER TABLE order_kots ADD COLUMN IF NOT EXISTS item_fingerprint TEXT`; await sql`CREATE UNIQUE INDEX IF NOT EXISTS order_kots_fingerprint_unique ON order_kots (order_id, item_fingerprint) WHERE item_fingerprint IS NOT NULL`; })();
+  if (!kotsTableReady) kotsTableReady = (async()=>{ await sql`CREATE TABLE IF NOT EXISTS order_kots (kot_number BIGSERIAL PRIMARY KEY, order_id TEXT NOT NULL, order_number INTEGER, tickets JSONB NOT NULL DEFAULT '[]'::jsonb, item_fingerprint TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`; await sql`ALTER TABLE order_kots ADD COLUMN IF NOT EXISTS item_fingerprint TEXT`; await sql`ALTER TABLE order_kots ADD COLUMN IF NOT EXISTS kot_day DATE`; await sql`ALTER TABLE order_kots ADD COLUMN IF NOT EXISTS daily_kot_number INTEGER`; await sql`UPDATE order_kots SET kot_day=(created_at AT TIME ZONE 'Asia/Kolkata')::date WHERE kot_day IS NULL`; await sql`WITH numbered AS (SELECT kot_number, ROW_NUMBER() OVER (PARTITION BY kot_day ORDER BY created_at, kot_number)::integer AS daily_number FROM order_kots) UPDATE order_kots AS kots SET daily_kot_number=numbered.daily_number FROM numbered WHERE kots.kot_number=numbered.kot_number AND kots.daily_kot_number IS NULL`; await sql`CREATE UNIQUE INDEX IF NOT EXISTS order_kots_day_number_unique ON order_kots (kot_day, daily_kot_number) WHERE daily_kot_number IS NOT NULL`; await sql`CREATE UNIQUE INDEX IF NOT EXISTS order_kots_fingerprint_unique ON order_kots (order_id, item_fingerprint) WHERE item_fingerprint IS NOT NULL`; await sql`CREATE TABLE IF NOT EXISTS order_kot_counters (kot_day DATE PRIMARY KEY, next_number INTEGER NOT NULL)`; })();
   return kotsTableReady;
 }
 async function ensureLoyaltyTable() {
@@ -624,6 +624,12 @@ async function nextDailyOrderNumber() {
   const orderDay = kolkataOrderDay();
   const rows = await sql`INSERT INTO direct_order_counters (order_day, next_number) SELECT ${orderDay}::date, COALESCE(MAX(daily_order_number), 0) + 1 FROM direct_orders WHERE order_day=${orderDay}::date ON CONFLICT (order_day) DO UPDATE SET next_number=direct_order_counters.next_number + 1 RETURNING next_number`;
   return { orderDay, number: Number(rows[0].next_number) };
+}
+async function nextDailyKotNumber() {
+  await ensureKotsTable();
+  const kotDay = kolkataOrderDay();
+  const rows = await sql`INSERT INTO order_kot_counters (kot_day, next_number) SELECT ${kotDay}::date, COALESCE(MAX(daily_kot_number), 0) + 1 FROM order_kots WHERE kot_day=${kotDay}::date ON CONFLICT (kot_day) DO UPDATE SET next_number=order_kot_counters.next_number + 1 RETURNING next_number`;
+  return { kotDay, number: Number(rows[0].next_number) };
 }
 async function ensurePushSubscriptionsTable() {
   if (!sql) throw new Error('Orders database is not configured.');
@@ -2218,7 +2224,7 @@ app.post('/api/orders/:id/kots', async (req, res) => { try {
   const previous=await sql`SELECT tickets FROM order_kots WHERE order_id=${orderRows[0].id}`;
   const sent=new Map(); previous.forEach((kot)=>{ const quantities=new Map(); (Array.isArray(kot.tickets)?kot.tickets:[]).forEach((ticket)=>(Array.isArray(ticket.items)?ticket.items:[]).forEach((item)=>{ const key=`${item.category||''}::${item.name||''}::${item.portion||''}::${item.style||''}`; quantities.set(key,Math.max(quantities.get(key)||0,Number(item.quantity||0))); })); quantities.forEach((quantity,key)=>sent.set(key,(sent.get(key)||0)+quantity)); });
   const pending=(Array.isArray(orderRows[0].items)?orderRows[0].items:[]).map((item)=>{const key=`${item.category||''}::${item.name||''}::${item.portion||''}::${item.style||''}`;const quantity=Math.max(0,Number(item.quantity||0)-(sent.get(key)||0));return quantity?{...item,quantity}:null;}).filter(Boolean);
-  if (!pending.length) { const latest=await sql`SELECT kot_number, tickets FROM order_kots WHERE order_id=${orderRows[0].id} ORDER BY kot_number DESC LIMIT 1`; return res.status(409).json({ error:'No new items to send.', latestKot:latest[0] || null, order:orderRows[0] }); }
+  if (!pending.length) { const latest=await sql`SELECT COALESCE(daily_kot_number, kot_number) AS kot_number, tickets FROM order_kots WHERE order_id=${orderRows[0].id} ORDER BY created_at DESC, kot_number DESC LIMIT 1`; return res.status(409).json({ error:'No new items to send.', latestKot:latest[0] || null, order:orderRows[0] }); }
   const groups=new Map();
   for (const item of pending) {
     const matchingRoutes=routes.filter((route)=>route.category==='*' ? !route.itemName&&!route.portion : route.category===item.category&&(!route.itemName&&!route.portion || route.itemName===item.name&&(!route.portion||route.portion===item.portion)));
@@ -2227,11 +2233,12 @@ app.post('/api/orders/:id/kots', async (req, res) => { try {
   }
   if (!groups.size) return res.status(400).json({ error:'No routed KOT items have an assigned system printer.' });
   const tickets=[...groups.values()]; const fingerprint=crypto.createHash('sha256').update(JSON.stringify(pending)).digest('hex');
-  const created=await sql`INSERT INTO order_kots (order_id, order_number, tickets, item_fingerprint) VALUES (${orderRows[0].id}, ${orderRows[0].daily_order_number}, ${JSON.stringify(tickets)}, ${fingerprint}) ON CONFLICT (order_id, item_fingerprint) WHERE item_fingerprint IS NOT NULL DO NOTHING RETURNING kot_number`;
-  if (!created.length) { const existing=await sql`SELECT kot_number, tickets FROM order_kots WHERE order_id=${orderRows[0].id} AND item_fingerprint=${fingerprint} LIMIT 1`; return res.status(200).json({ kotNumber:existing[0].kot_number, order:orderRows[0], tickets:existing[0].tickets, reused:true }); }
+  const { kotDay, number: dailyKotNumber } = await nextDailyKotNumber();
+  const created=await sql`INSERT INTO order_kots (order_id, order_number, tickets, item_fingerprint, kot_day, daily_kot_number) VALUES (${orderRows[0].id}, ${orderRows[0].daily_order_number}, ${JSON.stringify(tickets)}, ${fingerprint}, ${kotDay}::date, ${dailyKotNumber}) ON CONFLICT (order_id, item_fingerprint) WHERE item_fingerprint IS NOT NULL DO NOTHING RETURNING daily_kot_number AS kot_number`;
+  if (!created.length) { const existing=await sql`SELECT COALESCE(daily_kot_number, kot_number) AS kot_number, tickets FROM order_kots WHERE order_id=${orderRows[0].id} AND item_fingerprint=${fingerprint} LIMIT 1`; return res.status(200).json({ kotNumber:existing[0].kot_number, order:orderRows[0], tickets:existing[0].tickets, reused:true }); }
   res.status(201).json({ kotNumber:created[0].kot_number, order:orderRows[0], tickets });
 } catch (error) { res.status(500).json({ error:error.message || 'Unable to create KOT.' }); } });
-app.get('/api/orders/:id/kots', async (req,res)=>{try{await ensureKotsTable();res.json(await sql`SELECT kot_number, tickets, created_at FROM order_kots WHERE order_id=${req.params.id} ORDER BY kot_number DESC`)}catch(error){res.status(500).json({error:'Unable to load KOT history.'})}});
+app.get('/api/orders/:id/kots', async (req,res)=>{try{await ensureKotsTable();res.json(await sql`SELECT COALESCE(daily_kot_number, kot_number) AS kot_number, tickets, created_at FROM order_kots WHERE order_id=${req.params.id} ORDER BY created_at DESC, kot_number DESC`)}catch(error){res.status(500).json({error:'Unable to load KOT history.'})}});
 app.put('/api/orders/operations', async (req, res) => { try {
   await ensureOperationsConfigTable();
   const source=req.body?.config || {};
