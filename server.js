@@ -587,6 +587,8 @@ async function ensureDirectOrdersTable() {
     await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS loyalty_awarded_at TIMESTAMPTZ`;
     await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS fulfillment_type TEXT`;
     await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS client_request_id TEXT`;
+    await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS table_area TEXT`;
+    await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS table_number INTEGER`;
     await sql`UPDATE direct_orders SET order_day=(created_at AT TIME ZONE 'Asia/Kolkata')::date WHERE order_day IS NULL`;
     await sql`WITH numbered AS (SELECT id, ROW_NUMBER() OVER (PARTITION BY order_day ORDER BY created_at, id)::integer AS daily_number FROM direct_orders) UPDATE direct_orders AS orders SET daily_order_number=numbered.daily_number FROM numbered WHERE orders.id=numbered.id AND orders.daily_order_number IS NULL`;
     await sql`CREATE UNIQUE INDEX IF NOT EXISTS direct_orders_day_number_unique ON direct_orders (order_day, daily_order_number) WHERE daily_order_number IS NOT NULL`;
@@ -2111,7 +2113,7 @@ app.post('/api/direct-orders', async (req, res) => {
 
 app.post('/api/orders/counter', async (req, res) => {
   try {
-    const { customerName, customerPhone, specialRequest, loyaltyPoints, items = [] } = req.body || {};
+    const { customerName, customerPhone, specialRequest, loyaltyPoints, tableArea, tableNumber, items = [] } = req.body || {};
     const clientRequestId=String(req.get('X-Counter-Order-Id')||req.body?.clientRequestId||'').trim().slice(0,80);
     const menu = await getSection('airMenu');
     const priceNumber = (value) => Number(String(value || '').replace(/[^0-9.]/g, '')) || 0;
@@ -2140,12 +2142,15 @@ app.post('/api/orders/counter', async (req, res) => {
     const suppliedPhone=String(customerPhone||'').replace(/\D/g,'').slice(0,16);
     const requestedLoyaltyPoints=Math.max(0,Math.floor(Number(loyaltyPoints)||0));
     if (requestedLoyaltyPoints && (suppliedPhone.length<7 || requestedLoyaltyPoints<100 || requestedLoyaltyPoints>subtotal)) return res.status(400).json({ error:'Use a valid mobile number and at least 100 points, up to the order total.' });
+    const dineInArea=String(tableArea||'').trim().slice(0,60), dineInNumber=Number.parseInt(tableNumber,10);
+    const isDineIn=!!dineInArea&&Number.isInteger(dineInNumber)&&dineInNumber>0&&dineInNumber<=9999;
+    const orderMode=isDineIn?'table':'counter', fulfillment=isDineIn?'dine_in':'takeaway';
     const phone=suppliedPhone||`walkin-${id}`, total=subtotal-requestedLoyaltyPoints, earned=Math.floor(total/10), trackingToken=crypto.randomBytes(24).toString('base64url');
     if (requestedLoyaltyPoints) {
       await ensureLoyaltyTable();
-      const inserted=await sql`WITH redeemed AS (UPDATE loyalty_accounts SET points=points-${requestedLoyaltyPoints},total_redeemed=total_redeemed+${requestedLoyaltyPoints},updated_at=NOW() WHERE customer_phone=${phone} AND points>=${requestedLoyaltyPoints} AND points>=100 RETURNING customer_phone) INSERT INTO direct_orders (id,status,mode,customer_name,customer_phone,special_request,items,total,order_day,daily_order_number,tracking_token,loyalty_points_redeemed,loyalty_points_earned,fulfillment_type,client_request_id) SELECT ${id},'accepted','counter',${String(customerName||'Walk-in customer').trim().slice(0,80)},${phone},${String(specialRequest||'').trim().slice(0,240)},${JSON.stringify(saved)},${total},${orderDay}::date,${number},${trackingToken},${requestedLoyaltyPoints},${earned},'takeaway',${clientRequestId||null} FROM redeemed RETURNING id`;
+      const inserted=await sql`WITH redeemed AS (UPDATE loyalty_accounts SET points=points-${requestedLoyaltyPoints},total_redeemed=total_redeemed+${requestedLoyaltyPoints},updated_at=NOW() WHERE customer_phone=${phone} AND points>=${requestedLoyaltyPoints} AND points>=100 RETURNING customer_phone) INSERT INTO direct_orders (id,status,mode,customer_name,customer_phone,special_request,items,total,order_day,daily_order_number,tracking_token,loyalty_points_redeemed,loyalty_points_earned,fulfillment_type,client_request_id,table_area,table_number) SELECT ${id},'accepted',${orderMode},${String(customerName||'Walk-in customer').trim().slice(0,80)},${phone},${String(specialRequest||'').trim().slice(0,240)},${JSON.stringify(saved)},${total},${orderDay}::date,${number},${trackingToken},${requestedLoyaltyPoints},${earned},${fulfillment},${clientRequestId||null},${isDineIn?dineInArea:null},${isDineIn?dineInNumber:null} FROM redeemed RETURNING id`;
       if (!inserted.length) return res.status(409).json({ error:'Wallet points changed. Check the customer balance and try again.' });
-    } else await sql`INSERT INTO direct_orders (id,status,mode,customer_name,customer_phone,special_request,items,total,order_day,daily_order_number,tracking_token,loyalty_points_redeemed,loyalty_points_earned,fulfillment_type,client_request_id) VALUES (${id},'accepted','counter',${String(customerName||'Walk-in customer').trim().slice(0,80)},${phone},${String(specialRequest||'').trim().slice(0,240)},${JSON.stringify(saved)},${total},${orderDay}::date,${number},${trackingToken},0,${earned},'takeaway',${clientRequestId||null})`;
+    } else await sql`INSERT INTO direct_orders (id,status,mode,customer_name,customer_phone,special_request,items,total,order_day,daily_order_number,tracking_token,loyalty_points_redeemed,loyalty_points_earned,fulfillment_type,client_request_id,table_area,table_number) VALUES (${id},'accepted',${orderMode},${String(customerName||'Walk-in customer').trim().slice(0,80)},${phone},${String(specialRequest||'').trim().slice(0,240)},${JSON.stringify(saved)},${total},${orderDay}::date,${number},${trackingToken},0,${earned},${fulfillment},${clientRequestId||null},${isDineIn?dineInArea:null},${isDineIn?dineInNumber:null})`;
     void notifyDirectOrder({ id, dailyOrderNumber:number, total, itemCount:saved.reduce((count,item)=>count+Number(item.quantity||0),0) });
     res.status(201).json({ id, status:'accepted', autoAccepted:true, orderNumber:String(number).padStart(2,'0'), total });
   } catch (error) { res.status(500).json({ error:'Unable to save the counter order.' }); }
@@ -2242,6 +2247,21 @@ app.post('/api/orders/:id/kots', async (req, res) => { try {
 } catch (error) { res.status(500).json({ error:error.message || 'Unable to create KOT.' }); } });
 app.get('/api/orders/:id/kots', async (req,res)=>{try{await ensureKotsTable();res.json(await sql`SELECT COALESCE(daily_kot_number, kot_number) AS kot_number, tickets, created_at FROM order_kots WHERE order_id=${req.params.id} ORDER BY created_at DESC, kot_number DESC`)}catch(error){res.status(500).json({error:'Unable to load KOT history.'})}});
 app.get('/api/orders/kot-history', async (req,res)=>{try{await ensureDirectOrdersTable();await ensureKotsTable();const day=/^\d{4}-\d{2}-\d{2}$/.test(String(req.query.date||''))?String(req.query.date):kolkataOrderDay();const rows=await sql`SELECT o.id,o.daily_order_number,o.mode,o.customer_name,o.customer_phone,o.fulfillment_type,o.status,o.completed_at,COALESCE(k.daily_kot_number,k.kot_number) AS kot_number,k.tickets,k.created_at FROM order_kots k JOIN direct_orders o ON o.id=k.order_id WHERE o.order_day=${day}::date ORDER BY k.created_at DESC,k.kot_number DESC LIMIT 400`;res.set('Cache-Control','no-store');res.json(rows)}catch(error){res.status(500).json({error:'Unable to load KOT history.'})}});
+app.put('/api/orders/operations/table-areas', async (req, res) => { try {
+  await ensureOperationsConfigTable();
+  const source = req.body || {};
+  const tableAreas = (Array.isArray(source.tableAreas) ? source.tableAreas : []).slice(0, 60).map((area) => ({
+    id: String(area.id || crypto.randomUUID()).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 60),
+    name: String(area.name || '').trim().slice(0, 60),
+    from: Number.parseInt(area.from, 10),
+    to: Number.parseInt(area.to, 10)
+  })).filter((area) => area.id && area.name && Number.isInteger(area.from) && Number.isInteger(area.to) && area.from > 0 && area.to >= area.from && area.to <= 9999);
+  const rows = await sql`SELECT config FROM order_operations_config WHERE config_key='default' LIMIT 1`;
+  const existing = rows[0]?.config && typeof rows[0].config === 'object' ? rows[0].config : { printers: [], routes: [] };
+  const config = { ...existing, tableAreas };
+  await sql`INSERT INTO order_operations_config (config_key, config, updated_at) VALUES ('default', ${JSON.stringify(config)}, NOW()) ON CONFLICT (config_key) DO UPDATE SET config=EXCLUDED.config, updated_at=NOW()`;
+  res.json({ ok: true, tableAreas });
+} catch (error) { res.status(500).json({ error: 'Unable to save table allocation.' }); } });
 app.put('/api/orders/operations', async (req, res) => { try {
   await ensureOperationsConfigTable();
   const source=req.body?.config || {};

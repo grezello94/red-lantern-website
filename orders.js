@@ -37,6 +37,7 @@ let counterCategory = 'all';
 let counterChoiceItem = null;
 let counterLoyaltyPoints = 0;
 let counterLoyaltyTimer = null;
+let counterTable = null;
 const offlineCounterOrdersKey = 'red-lantern-counter-orders';
 let counterSyncInProgress = false;
 const ordersDiagnosticRecent = new Map();
@@ -159,6 +160,10 @@ counterPanel.id = 'counter-order-panel';
 counterPanel.hidden = true;
 counterPanel.innerHTML = '<div class="counter-order-head"><div><span class="eyebrow">Counter order</span><h2>Takeaway</h2><p>Build a walk-in or phone order, then send it directly to the kitchen.</p></div><button type="button" id="counter-order-close" class="quiet-button">Close</button></div><div class="counter-order-layout"><div class="counter-menu"><label class="counter-search"><span aria-hidden="true">⌕</span><input id="counter-menu-search" type="search" placeholder="Search menu items"></label><div id="counter-categories" class="counter-categories"></div><div id="counter-menu-items" class="counter-menu-items"></div></div><aside class="counter-cart"><div class="counter-cart-head"><h3>Current order</h3><button type="button" id="counter-clear" class="counter-clear">Clear</button></div><div id="counter-cart-items" class="counter-cart-items"></div><div class="counter-customer"><label>Customer name <input id="counter-customer-name" maxlength="80" placeholder="Walk-in customer"></label><label>Mobile number <input id="counter-customer-phone" inputmode="tel" maxlength="16" placeholder="Optional for walk-ins"></label><label>Kitchen note <textarea id="counter-special-request" maxlength="240" placeholder="e.g. less spicy"></textarea></label></div><div class="counter-total"><span>Total</span><b id="counter-total">₹0</b></div><button type="button" id="counter-place-order" class="counter-place-order">Place takeaway order</button><p id="counter-order-status" class="counter-order-status" aria-live="polite"></p></aside></div><dialog id="counter-choice-dialog" class="counter-choice-dialog"><button type="button" class="dialog-close" data-counter-choice-close aria-label="Close">×</button><div id="counter-choice-content"></div></dialog>';
 availability.before(counterPanel);
+const tableViewPanel = document.createElement('section');
+tableViewPanel.id = 'table-view-panel';
+tableViewPanel.innerHTML = '<div class="table-view-head"><div><span class="eyebrow">Dine-in</span><h2>Table view</h2><p>Select an available table to start a dine-in order.</p></div></div><div id="table-view-content" class="table-view-content"><div class="table-view-empty">Loading allocated tables…</div></div>';
+availability.before(tableViewPanel);
 const counterWallet = document.createElement('div');
 counterWallet.id = 'counter-wallet';
 counterWallet.hidden = true;
@@ -212,6 +217,7 @@ const closeOpenPanels = (except = null) => {
     availabilityButton?.setAttribute('aria-expanded', 'false');
   }
   if (except !== 'counter') counterPanel.hidden = true;
+  if (except !== 'tables') tableViewPanel.hidden = true;
   const shortcutDialog = document.getElementById('shortcut-dialog');
   if (except !== 'shortcut' && shortcutDialog?.open) shortcutDialog.close();
 };
@@ -264,13 +270,38 @@ async function loadCounterLoyalty() {
   } catch { counterLoyaltyPoints = 0; if (walletBalance) walletBalance.textContent = 'Wallet points are unavailable right now.'; if (redeemWrap) redeemWrap.hidden = true; }
   renderCounterOrder();
 }
-async function openCounterOrder() {
+async function openCounterOrder(table = null) {
+  counterTable = table;
+  const isDineIn = !!table;
+  const title = document.querySelector('#counter-order-panel .counter-order-head h2');
+  const subtitle = document.querySelector('#counter-order-panel .counter-order-head p');
+  const placeButton = document.getElementById('counter-place-order');
+  if (title) title.textContent = isDineIn ? `${table.area} · Table ${String(table.number).padStart(2, '0')}` : 'Takeaway';
+  if (subtitle) subtitle.textContent = isDineIn ? 'Build a dine-in order, then send its KOT directly to the kitchen.' : 'Build a walk-in or phone order, then send it directly to the kitchen.';
+  if (placeButton) placeButton.textContent = isDineIn ? `Place order · Table ${String(table.number).padStart(2, '0')}` : 'Place takeaway order';
   const opening = counterPanel.hidden;
   if (!opening) { counterPanel.hidden = true; return; }
   closeOpenPanels('counter');
   counterPanel.hidden = false;
   document.getElementById('counter-menu-items').innerHTML = '<p class="counter-empty">Loading menu…</p>';
   try { await Promise.all([loadAvailability(), refreshCounterLiveStatus()]); counterMenu = menuItems.filter((item) => !unavailable.has(item.key)); renderCounterOrder(); counterPanel.scrollIntoView({ behavior:'smooth', block:'start' }); } catch (error) { document.getElementById('counter-menu-items').innerHTML = `<p class="counter-empty">${esc(error.message)}</p>`; if (navigator.onLine) reportOrdersDiagnostic({ message:`Counter menu could not load: ${error.message}`, source:'counter menu' }); }
+}
+function renderTableView() {
+  const content = document.getElementById('table-view-content');
+  if (!content) return;
+  const areas = Array.isArray(operationsConfig.tableAreas) ? operationsConfig.tableAreas : [];
+  if (!areas.length) {
+    content.innerHTML = '<div class="table-view-empty"><b>No tables have been allocated yet.</b><span>Open Operations → Table allocation to add your restaurant areas and table ranges.</span></div>';
+    return;
+  }
+  const legend = [['blank', 'Blank table'], ['running', 'Running table'], ['printed', 'KOT printed'], ['paid', 'Paid table'], ['kot', 'Running KOT']];
+  content.innerHTML = `<div class="table-view-legend" aria-label="Table status legend">${legend.map(([state, label]) => `<span><i class="is-${state}"></i>${label}</span>`).join('')}</div>${areas.map((area) => { const tables = Array.from({ length: Number(area.to) - Number(area.from) + 1 }, (_, index) => Number(area.from) + index); return `<section class="table-area"><div class="table-area-head"><h3>${esc(area.name)}</h3><span>${tables.length} table${tables.length === 1 ? '' : 's'}</span></div><div class="table-grid">${tables.map((number) => `<button type="button" class="table-tile is-blank" data-dine-table-area="${esc(area.name)}" data-dine-table-number="${number}"><span>Table</span><b>${String(number).padStart(2, '0')}</b><small>Available</small></button>`).join('')}</div></section>`; }).join('')}`;
+}
+async function showTableView() {
+  tableViewPanel.hidden = false;
+  document.getElementById('table-view-content').innerHTML = '<div class="table-view-empty">Loading allocated tables…</div>';
+  try { await loadOperations(); renderTableView(); }
+  catch (error) { document.getElementById('table-view-content').innerHTML = `<div class="table-view-empty">${esc(error.message)}</div>`; }
 }
 if (installButton) installButton.innerHTML = `${actionIcon('install')}<span>Install shortcut</span>`;
 if (availabilityButton) availabilityButton.innerHTML = `${actionIcon('cutlery')}<span>Menu availability</span>`;
@@ -291,6 +322,9 @@ document.head.appendChild(operationsLauncherStyles);
 const counterOrderStyles = document.createElement('style');
 counterOrderStyles.textContent = `#counter-order-panel{margin:20px 28px 0;padding:24px;border:1px solid #dce4ee;border-radius:18px;background:#f7f9fc;box-shadow:0 14px 34px rgba(24,39,70,.09)}#counter-order-panel[hidden]{display:none}.counter-order-head,.counter-cart-head{display:flex;justify-content:space-between;align-items:start;gap:14px}.counter-order-head h2{margin:4px 0;font-size:24px}.counter-order-head p{margin:0;color:#68778e}.counter-order-layout{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(300px,.8fr);gap:18px;margin-top:20px}.counter-menu,.counter-cart{padding:16px;border:1px solid #dfe7f0;border-radius:14px;background:#fff}.counter-menu{display:grid;grid-template-columns:235px minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);gap:14px}.counter-search{grid-column:1/-1;display:flex;gap:8px;align-items:center;padding:0 12px;border:1px solid #cfdbea;border-radius:10px;background:#fff}.counter-search input{width:100%;height:42px;border:0;outline:0;font:700 13px Manrope,sans-serif}.counter-categories{display:flex;flex-direction:column;gap:0;max-height:530px;overflow:auto;border:1px solid #e0e7ef;border-radius:11px;background:#fff}.counter-category{width:100%;min-height:58px;padding:12px 14px;border:0;border-bottom:1px solid #e9eef4;border-radius:0;color:#40516a;background:#fff;text-align:left;font-size:14px;font-weight:800}.counter-category:first-child{color:#a82a38;background:#fff0f1}.counter-category:last-child{border-bottom:0}.counter-category:hover{color:#263d68;background:#f3f7fc;transform:none;filter:none}.counter-category.is-active{color:#fff;background:#263d68}.counter-menu-items{display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:10px;max-height:530px;overflow:auto}.counter-menu-item{position:relative;min-height:108px;padding:13px;border:1px solid #dce5ef;border-left:4px solid #d93642;border-radius:10px;color:#25364f;background:#fff;text-align:left;box-shadow:0 3px 8px rgba(25,44,75,.04)}.counter-menu-item:hover{transform:translateY(-1px);border-color:#9bb1cc;border-left-color:#d93642;filter:none}.counter-menu-item span,.counter-menu-item b,.counter-menu-item small{display:block}.counter-menu-item span{color:#7c8ba0;font-size:9px;font-weight:900;text-transform:uppercase}.counter-menu-item b{margin:7px 22px 5px 0;font-size:13px;line-height:1.25}.counter-menu-item small{color:#178554;font-size:11px;font-weight:900}.counter-menu-item i{position:absolute;right:10px;bottom:9px;display:grid;width:23px;height:23px;place-items:center;border-radius:50%;color:#fff;background:#263d68;font-size:18px;font-style:normal}.counter-cart{display:flex;min-height:500px;flex-direction:column}.counter-cart-head h3{margin:0;font-size:16px}.counter-clear{padding:5px 8px;color:#a72c38;background:#fff0f1;font-size:10px}.counter-cart-items{display:grid;gap:9px;margin:14px 0}.counter-cart-line{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:8px;align-items:center;padding:10px 0;border-bottom:1px solid #edf1f5}.counter-cart-line b,.counter-cart-line small{display:block}.counter-cart-line b{font-size:12px}.counter-cart-line small{margin-top:3px;color:#718097;font-size:10px}.counter-cart-line strong{font-size:12px}.counter-quantity{display:flex;align-items:center;gap:6px}.counter-quantity button{display:grid;width:24px;height:24px;place-items:center;padding:0;color:#263d68;background:#edf3fb;font-size:16px}.counter-customer{display:grid;gap:9px;margin-top:auto}.counter-customer label{display:grid;gap:4px;color:#5d6d84;font-size:10px;font-weight:900;text-transform:uppercase}.counter-customer input,.counter-customer textarea{width:100%;padding:9px 10px;border:1px solid #d4deea;border-radius:8px;color:#26344e;font:600 12px Manrope,sans-serif}.counter-customer textarea{min-height:58px;resize:vertical}.counter-total{display:flex;justify-content:space-between;align-items:center;margin-top:14px;padding:13px 0;border-top:2px solid #e2e9f1;color:#5a6a80;font-weight:800}.counter-total b{color:#bd3038;font-size:21px}.counter-place-order{width:100%;padding:13px;color:#fff;background:linear-gradient(135deg,#d93642,#ab1e30);font-size:13px}.counter-order-status{min-height:18px;margin:9px 0 0;color:#53647e;font-size:11px;font-weight:700}.counter-empty{margin:20px 0;color:#75849a;font-size:12px;text-align:center}@media(max-width:800px){#counter-order-panel{margin:14px 16px 0;padding:16px}.counter-order-layout{grid-template-columns:1fr}.counter-menu{grid-template-columns:1fr}.counter-search{grid-column:auto}.counter-categories{display:flex;flex-direction:row;max-height:none;overflow:auto}.counter-category{width:auto;min-width:max-content;min-height:42px;border-bottom:0;border-right:1px solid #e9eef4;font-size:11px}.counter-cart{min-height:0}.counter-menu-items{max-height:none}}`;
 document.head.appendChild(counterOrderStyles);
+const tableViewStyles = document.createElement('style');
+tableViewStyles.textContent = `#table-view-panel{margin:20px 28px 0;padding:24px;border:1px solid #dce4ee;border-radius:18px;background:#f7f9fc;box-shadow:0 14px 34px rgba(24,39,70,.09)}#table-view-panel[hidden]{display:none}.table-view-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.table-view-head h2{margin:4px 0;font-size:24px;color:#243650}.table-view-head p{margin:0;color:#68778e}.table-view-content{margin-top:20px}.table-view-legend{display:flex;flex-wrap:wrap;align-items:center;gap:12px 18px;margin-bottom:18px;color:#52647c;font-size:12px;font-weight:800}.table-view-legend span{display:flex;align-items:center;gap:7px}.table-view-legend i{display:block;width:11px;height:11px;border-radius:50%;background:#e7ecf2}.table-view-legend .is-running{background:#5bc0eb}.table-view-legend .is-printed{background:#52c878}.table-view-legend .is-paid{background:#f4b860}.table-view-legend .is-kot{background:#f6c945}.table-area{padding:18px;border:1px solid #dfe7f0;border-radius:14px;background:#fff}.table-area+.table-area{margin-top:14px}.table-area-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px}.table-area-head h3{margin:0;color:#243650;font-size:17px}.table-area-head span{padding:5px 9px;border-radius:999px;color:#466381;background:#edf4fb;font-size:11px;font-weight:900}.table-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(116px,1fr));gap:12px}.table-tile{min-height:106px;padding:14px;border:1px dashed #cbd6e2;border-radius:12px;background:#fbfcfd;box-shadow:0 2px 5px rgba(28,50,80,.03)}.table-tile.is-blank{background:#fbfcfd;border-color:#d3dbe5}.table-tile.is-running{background:#e3f6fd;border-color:#5bc0eb}.table-tile.is-printed{background:#e7f8ec;border-color:#52c878}.table-tile.is-paid{background:#fff3df;border-color:#f4b860}.table-tile.is-kot{background:#fff8d8;border-color:#f6c945}.table-tile span,.table-tile b,.table-tile small{display:block}.table-tile span{color:#7b8ba0;font-size:10px;font-weight:900;letter-spacing:.07em;text-transform:uppercase}.table-tile b{margin:6px 0;color:#263d68;font-size:23px;line-height:1}.table-tile small{color:#168454;font-size:11px;font-weight:900}.table-view-empty{display:grid;gap:7px;min-height:160px;place-content:center;padding:20px;border:1px dashed #cfdae7;border-radius:14px;color:#74839a;text-align:center;font-size:13px}.table-view-empty b{color:#31445f;font-size:15px}@media(max-width:800px){#table-view-panel{margin:14px 16px 0;padding:16px}.table-view-legend{gap:9px 13px;font-size:11px}.table-grid{grid-template-columns:repeat(auto-fill,minmax(98px,1fr));gap:9px}.table-tile{min-height:92px;padding:12px}.table-tile b{font-size:20px}}`;
+document.head.appendChild(tableViewStyles);
 const counterChoiceStyles = document.createElement('style');
 counterChoiceStyles.textContent = `.counter-choice-dialog{width:min(430px,calc(100vw - 32px));padding:24px;border:0;border-radius:16px;color:#26344e;box-shadow:0 20px 60px rgba(14,29,55,.25)}.counter-choice-dialog::backdrop{background:rgba(21,34,58,.46)}.counter-choice-dialog h2{margin:4px 30px 3px 0;font-size:21px}.counter-choice-dialog p{margin:0;color:#718097;font-size:12px}.counter-choice-options{display:grid;gap:8px;margin:18px 0}.counter-choice-options label{cursor:pointer}.counter-choice-options input{position:absolute;opacity:0}.counter-choice-options span{display:flex;justify-content:space-between;padding:12px;border:1px solid #d9e3ef;border-radius:9px;font-size:13px;font-weight:800}.counter-choice-options input:checked+span{border-color:#263d68;color:#fff;background:#263d68}.counter-style-options{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0;padding:12px;border:1px solid #e0e7ef;border-radius:9px}.counter-style-options legend{padding:0 4px;color:#68778e;font-size:11px;font-weight:900}.counter-style-options label{font-size:12px;font-weight:700}.counter-style-options b{color:#148251}`;
 document.head.appendChild(counterChoiceStyles);
@@ -731,6 +765,30 @@ async function saveOperations() {
   await syncOperationsToPrintBridge(operationsConfig);
   renderOperations();
 }
+async function saveTableAllocation(button) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  const originalLabel = button?.textContent || 'Save table allocation';
+  if (button) { button.disabled = true; button.textContent = 'Saving…'; }
+  try {
+    const response = await fetch('/api/orders/operations/table-areas', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tableAreas: operationsConfig.tableAreas || [] }),
+      signal: controller.signal
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || 'Unable to save table allocation.');
+    operationsConfig.tableAreas = Array.isArray(data.tableAreas) ? data.tableAreas : [];
+    if (button) { button.textContent = 'Saved ✓'; setTimeout(() => { if (button.isConnected) { button.disabled = false; button.textContent = originalLabel; } }, 1600); }
+  } catch (error) {
+    if (button) { button.disabled = false; button.textContent = originalLabel; }
+    if (error.name === 'AbortError') throw new Error('Saving took too long. Check the internet connection, then try again.');
+    throw error instanceof TypeError ? new Error('Unable to reach the server. Check the internet connection, then try again.') : error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 function addSelectedRoutes() {
   const printerId=String(document.getElementById('operation-route-printer')?.value||'');
   const categories=selectedRouteCategories();
@@ -793,6 +851,7 @@ async function autoPrintOrder(order) {
       if (!created.ok && created.status !== 409) throw new Error(kot.error || 'Unable to create the automatic KOT.');
       } catch (error) { reportOrdersDiagnostic({ level:'warning', message:`Automatic KOT printing failed: ${error.message}`, source:'automatic KOT printing' }); }
     })();
+    if (order.mode === 'table') { await kotPromise; return { ok:true, kotOnly:true }; }
     // The bill starts at the same time as the KOT. Neither printer can delay the other.
     const billPromise = operationsPromise.then(async (printers) => {
       const billPrinter = printers.find((printer) => printer.type === 'bill' && printer.deviceName);
@@ -891,7 +950,8 @@ liveOrdersToggle.addEventListener('click', () => {
   }
 });
 document.getElementById('availability-close')?.addEventListener('click', () => { availability.hidden = true; document.getElementById('availability-toggle').setAttribute('aria-expanded', 'false'); });
-document.getElementById('counter-order-close')?.addEventListener('click', () => { counterPanel.hidden = true; });
+document.getElementById('counter-order-close')?.addEventListener('click', () => { counterPanel.hidden = true; showTableView(); });
+document.getElementById('table-view-content')?.addEventListener('click', (event) => { const table=event.target.closest('[data-dine-table-number]'); if (!table) return; openCounterOrder({ area:table.dataset.dineTableArea || 'Dining', number:Number(table.dataset.dineTableNumber) }); });
 document.getElementById('counter-menu-search')?.addEventListener('input', renderCounterOrder);
 document.getElementById('counter-customer-phone')?.addEventListener('input', () => { clearTimeout(counterLoyaltyTimer); counterLoyaltyTimer = setTimeout(loadCounterLoyalty, 300); });
 document.getElementById('counter-wallet-redeem')?.addEventListener('input', (event) => { const value=Math.max(0,Math.floor(Number(event.target.value)||0)); event.target.value=String(value >= 100 ? Math.min(value,counterLoyaltyPoints) : 0); renderCounterOrder(); });
@@ -935,18 +995,19 @@ document.getElementById('counter-place-order')?.addEventListener('click', async 
   const status = document.getElementById('counter-order-status');
   if (!counterCart.length) { status.textContent = 'Add at least one menu item first.'; return; }
   const button = document.getElementById('counter-place-order'); button.disabled = true;
-  const payload = { clientRequestId:counterRequestId(), customerName:document.getElementById('counter-customer-name').value.trim(), customerPhone:document.getElementById('counter-customer-phone').value.trim(), specialRequest:document.getElementById('counter-special-request').value.trim(), loyaltyPoints:Math.floor(Number(document.getElementById('counter-wallet-redeem')?.value || 0)), items:counterCart.map((item) => ({ ...item })) };
+  const payload = { clientRequestId:counterRequestId(), customerName:document.getElementById('counter-customer-name').value.trim(), customerPhone:document.getElementById('counter-customer-phone').value.trim(), specialRequest:document.getElementById('counter-special-request').value.trim(), loyaltyPoints:Math.floor(Number(document.getElementById('counter-wallet-redeem')?.value || 0)), tableArea:counterTable?.area || '', tableNumber:counterTable?.number || '', items:counterCart.map((item) => ({ ...item })) };
   if (payload.loyaltyPoints >= 100) {
     const first = window.confirm(`Apply ₹${payload.loyaltyPoints} from this customer's wallet?`);
     const second = first && window.confirm(`Final confirmation: deduct ${payload.loyaltyPoints} wallet points (₹${payload.loyaltyPoints}) from this order?`);
     if (!second) { button.disabled = false; status.textContent = 'Wallet points were not applied. Review the amount before placing the order.'; return; }
   }
-  status.textContent = navigator.onLine ? 'Saving takeaway order…' : 'Internet is unavailable — saving this order safely on this device…';
+  const orderLabel = counterTable ? `${counterTable.area} Table ${String(counterTable.number).padStart(2, '0')}` : 'takeaway';
+  status.textContent = navigator.onLine ? `Saving ${orderLabel} order…` : 'Internet is unavailable — saving this order safely on this device…';
   try {
     let result;
     if (!navigator.onLine) throw new TypeError('Offline');
     result = await sendCounterOrder(payload);
-    status.textContent = `Takeaway order #${result.orderNumber} accepted. Sending KOTs and final bill…`; counterCart = []; counterLoyaltyPoints = 0; document.getElementById('counter-customer-name').value = ''; document.getElementById('counter-customer-phone').value = ''; document.getElementById('counter-special-request').value = ''; document.getElementById('counter-wallet-redeem').value = '0'; counterWallet.hidden = true; renderCounterOrder(); void autoPrintOrder({ id:result.id, mode:'counter', status:result.status || 'accepted' }).then((printing) => { if (printing?.ok) status.textContent = `Takeaway order #${result.orderNumber} accepted. KOTs and final bill were sent to the configured printers.`; else if (printing?.reason) status.textContent = `Takeaway order #${result.orderNumber} accepted. ${printing.reason} Check Operations / Orders Error Logs.`; }); loadOrders(); refreshCounterLiveStatus();
+    status.textContent = `${counterTable ? `${counterTable.area} Table ${String(counterTable.number).padStart(2, '0')}` : `Takeaway order #${result.orderNumber}`} accepted. Sending KOTs…`; counterCart = []; counterLoyaltyPoints = 0; document.getElementById('counter-customer-name').value = ''; document.getElementById('counter-customer-phone').value = ''; document.getElementById('counter-special-request').value = ''; document.getElementById('counter-wallet-redeem').value = '0'; counterWallet.hidden = true; renderCounterOrder(); void autoPrintOrder({ id:result.id, mode:counterTable ? 'table' : 'counter', status:result.status || 'accepted' }).then((printing) => { if (printing?.ok) status.textContent = `${counterTable ? `${counterTable.area} Table ${String(counterTable.number).padStart(2, '0')}` : `Takeaway order #${result.orderNumber}`} accepted. KOTs were sent to the configured kitchens.`; else if (printing?.reason) status.textContent = `${orderLabel} order accepted. ${printing.reason} Check Operations / Orders Error Logs.`; }); loadOrders(); refreshCounterLiveStatus();
   } catch (error) {
     if (!navigator.onLine || !error.status || error.status >= 500) {
       const queued = queuedCounterOrders(); queued.push(payload); saveQueuedCounterOrders(queued);
@@ -1008,7 +1069,7 @@ document.getElementById('operations-content')?.addEventListener('click', async (
   if (event.target.closest('[data-add-table-area]')) { const name=String(document.getElementById('table-area-name')?.value||'').trim(); const fromInput=document.getElementById('table-area-from'); const toInput=document.getElementById('table-area-to'); const from=fromInput?.valueAsNumber; const to=toInput?.valueAsNumber; if(!name){alert('Enter an area name.');document.getElementById('table-area-name')?.focus();return;} if(!Number.isSafeInteger(from)||!Number.isSafeInteger(to)||from<1||to<from){alert('Enter whole table numbers. “To table” must be the same as or higher than “From table”.');fromInput?.focus();return;} operationsConfig.tableAreas=[...(operationsConfig.tableAreas||[]),{id:operationId(),name,from,to}]; renderTableAllocation(); return; }
   const removeTableArea=event.target.closest('[data-remove-table-area]');
   if (removeTableArea) { operationsConfig.tableAreas=(operationsConfig.tableAreas||[]).filter((area)=>area.id!==removeTableArea.dataset.removeTableArea); renderTableAllocation(); return; }
-  if (event.target.closest('[data-save-table-allocation]')) { try { await saveOperations(); } catch(error) { alert(error.message); } return; }
+  if (event.target.closest('[data-save-table-allocation]')) { const button=event.target.closest('[data-save-table-allocation]'); try { await saveTableAllocation(button); } catch(error) { alert(error.message); } return; }
   const expandCategory = event.target.closest('[data-route-category-expand]');
   if (expandCategory) {
     event.preventDefault();
@@ -1120,5 +1181,6 @@ menuResults?.addEventListener('click', async (event) => {
 });
 
 loadOrders();
+showTableView();
 setInterval(loadOrders, 3000);
 setInterval(() => { if (!counterPanel.hidden) refreshCounterLiveStatus(); }, 1000);
