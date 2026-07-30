@@ -333,7 +333,7 @@ const fulfillmentLabel = (order) => order?.mode === 'counter' || order?.fulfillm
 const tomorrowLocal = () => { const date = new Date(Date.now() + 86400000); date.setSeconds(0, 0); return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
 const toPushKey = (value) => { const padding = '='.repeat((4 - value.length % 4) % 4); const raw = atob((value + padding).replace(/-/g, '+').replace(/_/g, '/')); return Uint8Array.from(raw, (character) => character.charCodeAt(0)); };
 
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('/orders-sw.js?v=7');
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/orders-sw.js?v=8');
 document.getElementById('enable-notifications')?.addEventListener('click', async () => {
   closeOpenPanels();
   const button = document.getElementById('enable-notifications');
@@ -435,6 +435,23 @@ function openModifyOrder(id) {
 }
 
 async function printOrder(id) {
+  try {
+    const bridgeResponse = await fetch('http://127.0.0.1:9124/v1/printers', { cache:'no-store' });
+    if (!bridgeResponse.ok) throw new Error('Print Bridge is not available on this computer.');
+    const operationsResponse = await fetch('/api/orders/operations', { cache:'no-store' });
+    const operations = await operationsResponse.json();
+    if (!operationsResponse.ok) throw new Error(operations.error || 'Printer configuration could not load.');
+    const billPrinter = (operations.config?.printers || []).find((printer) => printer.type === 'bill' && printer.deviceName);
+    if (!billPrinter) throw new Error('No Bill printer is configured.');
+    const receiptResponse = await fetch(`/api/orders/${encodeURIComponent(id)}/print`, { cache:'no-store' });
+    const receipt = await receiptResponse.json();
+    if (!receiptResponse.ok) throw new Error(receipt.error || 'Unable to prepare the receipt.');
+    const printed = await fetch('http://127.0.0.1:9124/v1/print-bill', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ printerName:billPrinter.deviceName, order:receipt }) });
+    if (!printed.ok) throw new Error((await printed.json().catch(() => ({}))).error || 'Bill printer did not accept the job.');
+    return;
+  } catch (error) {
+    reportOrdersDiagnostic({ level:'warning', message:`Direct bill reprint failed: ${error.message}`, source:'manual bill printing' });
+  }
   const popup = window.open('', 'red-lantern-receipt', 'popup=yes,width=420,height=720');
   if (!popup) { alert('Please allow pop-ups to print the receipt.'); return; }
   try {
@@ -473,12 +490,12 @@ const operationItemOptions = (item) => {
   if (String(item.bonelessPrice || '').trim()) options.push({ label: 'Boneless', portion: 'Boneless' });
   return options;
 };
-const routePrinter = (item) => {
+const routePrinters = (item) => {
   const printers = new Map(operationsConfig.printers.map((printer) => [printer.id, printer]));
   const routes = operationsConfig.routes.filter((route) => printers.get(route.printerId)?.type === 'kot');
-  const route = routes.find((entry) => entry.category === item.category && entry.itemName === item.name && entry.portion === item.portion) || routes.find((entry) => entry.category === item.category && entry.itemName === item.name && !entry.portion) || routes.find((entry) => entry.category === item.category && !entry.itemName) || routes.find((entry) => entry.category === '*' && !entry.itemName);
-  return route ? printers.get(route.printerId) : null;
+  return [...new Map(routes.filter((route) => route.category === '*' ? !route.itemName && !route.portion : route.category === item.category && ((!route.itemName && !route.portion) || (route.itemName === item.name && (!route.portion || route.portion === item.portion)))).map((route) => [route.printerId, printers.get(route.printerId)])).values()].filter(Boolean);
 };
+const routePrinter = (item) => routePrinters(item)[0] || null;
 const selectedRouteCategories = () => [...document.querySelectorAll('.operation-route-category-check:checked')].map((input) => input.value);
 function refreshRouteItemOptions() {
   const itemSelect = document.getElementById('operation-route-item');
@@ -515,6 +532,18 @@ function renderPrinterManagement() {
   const bridgeText = printBridgeState === 'available' ? 'Print Bridge is running — installed printers are available.' : 'Print Bridge is not detected on this computer.';
   content.innerHTML = `<section class="manage-printers"><div class="manage-printers-head"><div><span class="eyebrow">Printer setup</span><h3>Manage printers</h3><p>Connect each installed printer once, then choose whether it handles bills or specific kitchen categories.</p></div><span class="bridge-status ${printBridgeState === 'available' ? 'online' : ''}">${bridgeText}</span></div><div class="add-system-printer"><div class="add-printer-copy"><b>Add an installed printer</b><span>Choose a printer already available on this Windows computer.</span></div><select id="quick-system-printer"><option value="">Choose installed printer</option>${installedSystemPrinters.map((item) => `<option value="${esc(item.id)}">${esc(item.name)}</option>`).join('')}</select><button type="button" id="quick-add-printer">＋ Add printer</button></div><div class="printer-card-list">${operationsConfig.printers.map((item) => { const kinds=assignedKinds(item); const routes=operationsConfig.routes.filter((route)=>route.printerId===item.id); const allCategories=routes.some((route)=>route.category==='*'&&!route.itemName); const categories=[...new Set(routes.filter((route)=>route.category!=='*'&&!route.itemName).map((route)=>route.category))]; const overrides=routes.filter((route)=>route.itemName); const overrideNames=overrides.map((route)=>`${route.itemName}${route.portion ? ` — ${route.portion}` : ' · all options'}`); const assignment=allCategories ? 'All categories' : [categories.length ? `${categories.length} categor${categories.length===1?'y':'ies'}` : '', overrides.length ? `${overrides.length} selected dish${overrides.length===1?'':'es'}` : ''].filter(Boolean).join(' · ') || 'Not assigned yet'; const summary=allCategories ? 'Receives every current and future menu category.' : [...categories, ...overrideNames].join(' · '); return `<article class="printer-card"><div class="printer-card-top"><span class="printer-card-mark ${item.type==='bill'?'is-bill':''}" aria-hidden="true">${item.type==='bill'?'▤':'⌑'}</span><div><span class="printer-card-label">${item.type==='bill'?'Bill printer':'KOT printer'}</span><h4>${esc(item.name)}</h4><p>${esc(item.deviceName || 'System printer not assigned')}</p></div><span class="printer-card-state ${kinds.length?'is-ready':''}">${kinds.length?'Configured':'Needs assignment'}</span></div><div class="printer-routing-summary"><b>${esc(assignment)}</b><span>${esc(summary || 'Choose Bill or KOT categories to complete setup.')}</span></div><div class="printer-card-actions"><button type="button" data-assign-printer="${esc(item.id)}">Configure routing</button><button type="button" class="remove-printer" data-delete-printer="${esc(item.id)}">Remove</button></div></article>`; }).join('') || '<div class="operations-empty">Choose an installed printer above to begin.</div>'}</div></section>`;
 }
+function refreshBillPrinterSummary() {
+  document.querySelectorAll('.printer-card').forEach((card, index) => {
+    const printer = operationsConfig.printers[index];
+    if (printer?.type !== 'bill') return;
+    const summary = card.querySelector('.printer-routing-summary');
+    if (!summary) return;
+    const title = summary.querySelector('b');
+    const description = summary.querySelector('span');
+    if (title) title.textContent = 'Bill printing enabled';
+    if (description) description.textContent = printer.deviceName ? `Counter and takeaway receipts print automatically on ${printer.deviceName}.` : 'Choose an installed system printer to enable automatic bill printing.';
+  });
+}
 function renderOperations() {
   const content = document.getElementById('operations-content');
   if (!content) return;
@@ -527,14 +556,13 @@ function renderOperations() {
     const activeOrders = [...orderRecords.values()].filter((order) => !['completed','rejected','cancelled'].includes(order.status));
     const tickets = new Map();
     activeOrders.forEach((order) => (Array.isArray(order.items) ? order.items : []).forEach((item) => {
-      const printer = routePrinter(item);
-      const key = `${order.id}::${printer?.id || 'unassigned'}`;
-      if (!tickets.has(key)) tickets.set(key, { order, printer, items: [] });
-      tickets.get(key).items.push(item);
+      const printers = routePrinters(item);
+      (printers.length ? printers : [null]).forEach((printer) => { const key = `${order.id}::${printer?.id || 'unassigned'}`; if (!tickets.has(key)) tickets.set(key, { order, printer, items: [] }); tickets.get(key).items.push(item); });
     }));
     content.innerHTML = `<section class="kot-listing"><div class="kot-listing-head"><div><button type="button" class="assignment-back" data-operations-tab="home">‹ Back</button><h3>KOT listing</h3><p>Live kitchen tickets grouped by their assigned printer. KOT number is the primary kitchen reference.</p></div><span class="operations-count">${tickets.size} live ticket${tickets.size===1?'':'s'}</span></div><div class="kot-table-wrap"><table class="kot-table"><thead><tr><th>KOT no.</th><th>Order no.</th><th>Order type</th><th>Customer</th><th>Items</th><th>Created</th><th>Elapsed</th><th>Printer</th><th>Status</th><th>Action</th></tr></thead><tbody>${[...tickets.values()].map((ticket) => { const orderNumber=String(ticket.order.daily_order_number||'—').padStart(2,'0'); const type=fulfillmentLabel(ticket.order); const history=Array.isArray(operationKotHistory.get(ticket.order.id))?operationKotHistory.get(ticket.order.id):[]; const savedKot=history.find((entry)=>Array.isArray(entry.tickets)&&entry.tickets.some((savedTicket)=>savedTicket.printerLabel===ticket.printer?.name)) || history[0]; const createdAt=savedKot?.created_at || ticket.order.created_at; const elapsedMinutes=createdAt?Math.max(0,Math.floor((Date.now()-new Date(createdAt).getTime())/60000)):null; const elapsed=elapsedMinutes===null?'—':elapsedMinutes<60?`${elapsedMinutes} min`:`${Math.floor(elapsedMinutes/60)} hr ${elapsedMinutes%60} min`; return `<tr><td><b class="kot-number">${savedKot?.kot_number ? `#${esc(savedKot.kot_number)}` : '—'}</b><small>${savedKot ? 'Printed KOT' : 'Not printed yet'}</small></td><td><b>#${esc(orderNumber)}</b></td><td>${type}</td><td><b>${esc(ticket.order.customer_name || 'Guest')}</b><small>${esc(ticket.order.customer_phone || '—')}</small></td><td>${ticket.items.map((item)=>`<span>${Number(item.quantity||0)}× ${esc(item.name)}${item.portion?` · ${esc(item.portion)}`:''}</span>`).join('')}</td><td>${createdAt ? new Date(createdAt).toLocaleString('en-IN',{dateStyle:'medium',timeStyle:'short'}) : '—'}</td><td><b>${elapsed}</b></td><td><span class="printer-type kot">${esc(ticket.printer?.name || 'Unassigned')}</span></td><td><span class="kot-status">${esc(ticket.order.status || 'new')}</span></td><td><button type="button" class="kot-print-action" data-print-kot="${esc(ticket.order.id)}" data-printer-id="${esc(ticket.printer?.id || '')}">${savedKot ? 'Reprint KOT' : 'Print KOT'}</button></td></tr>`; }).join('') || '<tr><td colspan="10" class="kot-table-empty">No live KOTs right now. New and active orders will appear here.</td></tr>'}</tbody></table></div></section>`;
   } else {
     renderPrinterManagement();
+    refreshBillPrinterSummary();
     return;
     const kotPrinters = operationsConfig.printers.filter((printer) => printer.type === 'kot');
     const categories = [...new Set(operationsMenu.map((item) => item.category).filter(Boolean))].sort();
@@ -690,7 +718,7 @@ function printKot(orderId, printerId) {
   const order = orderRecords.get(orderId);
   if (!order) return;
   const printer = operationsConfig.printers.find((item) => item.id === printerId);
-  const items = (Array.isArray(order.items) ? order.items : []).filter((item) => (routePrinter(item)?.id || '') === (printerId || ''));
+  const items = (Array.isArray(order.items) ? order.items : []).filter((item) => routePrinters(item).some((route) => route.id === (printerId || '')));
   if (!items.length) return;
   const popup = window.open('', 'red-lantern-kot', 'popup=yes,width=390,height=600');
   if (!popup) { alert('Please allow pop-ups to print this KOT.'); return; }
@@ -716,13 +744,17 @@ async function autoPrintOrder(order) {
     const operations = await operationsResponse.json();
     if (!operationsResponse.ok) throw new Error(operations.error || 'Printer configuration could not load.');
     const printers = Array.isArray(operations.config?.printers) ? operations.config.printers : [];
-    const created = await fetch(`/api/orders/${encodeURIComponent(order.id)}/kots`, { method:'POST' });
-    const kot = await created.json().catch(() => ({}));
-    if (created.ok && !kot.reused) await Promise.all((kot.tickets || []).map(async (ticket) => {
-      const response = await fetch('http://127.0.0.1:9124/v1/print-kot', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ printerName:ticket.printerName, items:ticket.items, order:{ number:kot.order?.daily_order_number, kotNumber:kot.kotNumber, customer:kot.order?.customer_name, phone:kot.order?.customer_phone, fulfillment:fulfillmentLabel(kot.order), note:kot.order?.special_request } }) });
-      if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || 'KOT printer did not accept the job.');
-    }));
-    if (!created.ok && created.status !== 409) throw new Error(kot.error || 'Unable to create the automatic KOT.');
+    try {
+      const created = await fetch(`/api/orders/${encodeURIComponent(order.id)}/kots`, { method:'POST' });
+      const kot = await created.json().catch(() => ({}));
+      if (created.ok && !kot.reused) await Promise.all((kot.tickets || []).map(async (ticket) => {
+        const response = await fetch('http://127.0.0.1:9124/v1/print-kot', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ printerName:ticket.printerName, items:ticket.items, order:{ number:kot.order?.daily_order_number, kotNumber:kot.kotNumber, customer:kot.order?.customer_name, phone:kot.order?.customer_phone, fulfillment:fulfillmentLabel(kot.order), note:kot.order?.special_request } }) });
+        if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || 'KOT printer did not accept the job.');
+      }));
+      if (!created.ok && created.status !== 409) throw new Error(kot.error || 'Unable to create the automatic KOT.');
+    } catch (error) {
+      reportOrdersDiagnostic({ level:'warning', message:`Automatic KOT printing failed: ${error.message}`, source:'automatic KOT printing' });
+    }
     const billPrinter = printers.find((printer) => printer.type === 'bill' && printer.deviceName);
     if (!billPrinter) return;
     const claimResponse = await fetch(`/api/orders/${encodeURIComponent(order.id)}/bill-print/claim`, { method:'POST' });
@@ -857,7 +889,7 @@ document.getElementById('counter-place-order')?.addEventListener('click', async 
     let result;
     if (!navigator.onLine) throw new TypeError('Offline');
     result = await sendCounterOrder(payload);
-    status.textContent = `Takeaway order #${result.orderNumber} placed successfully.`; counterCart = []; counterLoyaltyPoints = 0; document.getElementById('counter-customer-name').value = ''; document.getElementById('counter-customer-phone').value = ''; document.getElementById('counter-special-request').value = ''; document.getElementById('counter-wallet-redeem').value = '0'; counterWallet.hidden = true; renderCounterOrder(); autoPrintOrder({ id:result.id, status:'new' }); loadOrders(); refreshCounterLiveStatus();
+    status.textContent = `Takeaway order #${result.orderNumber} placed successfully.`; counterCart = []; counterLoyaltyPoints = 0; document.getElementById('counter-customer-name').value = ''; document.getElementById('counter-customer-phone').value = ''; document.getElementById('counter-special-request').value = ''; document.getElementById('counter-wallet-redeem').value = '0'; counterWallet.hidden = true; renderCounterOrder(); autoPrintOrder({ id:result.id, mode:'counter', status:'new' }); loadOrders(); refreshCounterLiveStatus();
   } catch (error) {
     if (!navigator.onLine || !error.status || error.status >= 500) {
       const queued = queuedCounterOrders(); queued.push(payload); saveQueuedCounterOrders(queued);
