@@ -7,6 +7,7 @@ const historyDate = document.getElementById('history-date');
 let known = new Set();
 let firstLoad = true;
 let ordersRefreshInFlight = false;
+let renderedOrdersSignature = '';
 let menuItems = [];
 let unavailable = new Map();
 let availabilityFilter = 'all';
@@ -388,7 +389,11 @@ async function loadOrders() {
     const visibleRows = fulfillmentFilter ? statusRows.filter((order) => String(order.fulfillment_type || '').toLowerCase() === fulfillmentFilter) : statusRows;
     const emptyMessage = query ? 'No orders match that number.' : orderView === 'current' && !sessionOpen ? 'The restaurant is closed. Today\'s orders are safely available in Order history.' : 'No direct orders yet.';
     const filteredEmpty = orderStatusFilter !== 'all' ? `No ${orderStatusFilter} orders in this view.` : emptyMessage;
-    root.innerHTML = visibleRows.map(renderOrder).join('') || `<div class="empty-state">${filteredEmpty}</div>`;
+    const renderSignature = JSON.stringify({ orderView, orderStatusFilter, fulfillmentFilter, query, date, sessionOpen, rows: visibleRows });
+    if (renderSignature !== renderedOrdersSignature) {
+      root.innerHTML = visibleRows.map(renderOrder).join('') || `<div class="empty-state">${filteredEmpty}</div>`;
+      renderedOrdersSignature = renderSignature;
+    }
     if (orderView === 'current') rows.filter((order) => new Date(order.created_at).getTime() >= ordersConsoleStartedAt - 15 * 60 * 1000).forEach(autoPrintOrder);
     const clearButton = document.getElementById('clear-order-search');
     const searchStatus = document.getElementById('order-search-status');
@@ -396,6 +401,7 @@ async function loadOrders() {
     if (searchStatus) searchStatus.textContent = query ? `${visibleRows.length} matching order${visibleRows.length === 1 ? '' : 's'}` : orderView === 'history' ? `History · ${date || 'choose a date'}` : sessionOpen ? `${visibleRows.length} ${orderStatusFilter === 'all' ? 'current' : orderStatusFilter} order${visibleRows.length === 1 ? '' : 's'}` : 'Session closed · orders archived';
   } catch (error) {
     root.innerHTML = `<div class="empty-state">${esc(error.message)}</div>`;
+    renderedOrdersSignature = '';
     if (navigator.onLine) reportOrdersDiagnostic({ message:`Live orders refresh failed: ${error.message}`, source:'live orders refresh' });
   } finally { ordersRefreshInFlight = false; }
 }
