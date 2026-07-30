@@ -557,6 +557,12 @@ let creditTableReady = null;
 let menuAvailabilityTableReady = null;
 let pushSubscriptionsTableReady = null;
 let operationsConfigTableReady = null;
+let orderPrintJobsTableReady = null;
+async function ensureOrderPrintJobsTable() {
+  if (!sql) throw new Error('Orders database is not configured.');
+  if (!orderPrintJobsTableReady) orderPrintJobsTableReady = sql`CREATE TABLE IF NOT EXISTS order_print_jobs (order_id TEXT NOT NULL, job_type TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'queued', lease_expires_at TIMESTAMPTZ, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (order_id, job_type))`;
+  return orderPrintJobsTableReady;
+}
 async function ensureOperationsConfigTable() {
   if (!sql) throw new Error('Orders database is not configured.');
   if (!operationsConfigTableReady) operationsConfigTableReady = sql`CREATE TABLE IF NOT EXISTS order_operations_config (config_key TEXT PRIMARY KEY, config JSONB NOT NULL DEFAULT '{"printers":[],"routes":[]}'::jsonb, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;
@@ -2147,6 +2153,20 @@ app.get('/api/orders/:id/print', async (req, res) => { try {
   res.set('Cache-Control', 'no-store');
   res.json(rows[0]);
 } catch (error) { res.status(500).json({ error: 'Unable to prepare this receipt.' }); } });
+app.post('/api/orders/:id/bill-print/claim', async (req, res) => { try {
+  await ensureDirectOrdersTable(); await ensureOrderPrintJobsTable();
+  const order=await sql`SELECT id FROM direct_orders WHERE id=${req.params.id} LIMIT 1`;
+  if (!order.length) return res.status(404).json({ error:'Order not found.' });
+  await sql`INSERT INTO order_print_jobs (order_id,job_type,status) VALUES (${req.params.id},'bill','queued') ON CONFLICT (order_id,job_type) DO NOTHING`;
+  const claimed=await sql`UPDATE order_print_jobs SET status='printing',lease_expires_at=NOW()+INTERVAL '45 seconds',updated_at=NOW() WHERE order_id=${req.params.id} AND job_type='bill' AND (status IN ('queued','failed') OR (status='printing' AND lease_expires_at<NOW())) RETURNING order_id`;
+  res.json({ claimed:!!claimed.length });
+} catch (error) { res.status(500).json({ error:'Unable to claim bill print job.' }); } });
+app.post('/api/orders/:id/bill-print/:result', async (req, res) => { try {
+  if (!['complete','failed'].includes(req.params.result)) return res.status(400).json({ error:'Invalid print result.' });
+  await ensureOrderPrintJobsTable();
+  await sql`UPDATE order_print_jobs SET status=${req.params.result==='complete'?'printed':'failed'},lease_expires_at=NULL,updated_at=NOW() WHERE order_id=${req.params.id} AND job_type='bill'`;
+  res.json({ ok:true });
+} catch (error) { res.status(500).json({ error:'Unable to update bill print job.' }); } });
 app.get('/api/order-tracking/:token', async (req, res) => { try { await ensureDirectOrdersTable(); const token=String(req.params.token||''); if (!/^[A-Za-z0-9_-]{24,128}$/.test(token)) return res.status(404).json({ error: 'Order not found.' }); const rows=await sql`SELECT daily_order_number, order_day, status, fulfillment_type, items, total, special_request, cancellation_reason, created_at, updated_at FROM direct_orders WHERE tracking_token=${token} LIMIT 1`; if (!rows.length) return res.status(404).json({ error: 'Order not found.' }); res.set('Cache-Control', 'no-store'); res.json(rows[0]); } catch (error) { res.status(500).json({ error: 'Unable to load this order.' }); } });
 app.post('/api/loyalty', async (req, res) => { try { await ensureLoyaltyTable(); const phone=String(req.body?.phone||'').replace(/\D/g,''); if(phone.length<7) return res.status(400).json({error:'Enter a valid mobile number.'}); const rows=await sql`SELECT points FROM loyalty_accounts WHERE customer_phone=${phone} LIMIT 1`; const points=Number(rows[0]?.points||0); res.set('Cache-Control','no-store'); res.json({points, eligible:points>=100}); } catch(error) { res.status(500).json({error:'Unable to load loyalty points.'}); } });
 app.post('/api/order-tracking/:token/cancel', async (req, res) => { try { await ensureDirectOrdersTable(); await ensureLoyaltyTable(); const token=String(req.params.token||''); const reason=String(req.body?.reason||'').trim().slice(0,240); if (!/^[A-Za-z0-9_-]{24,128}$/.test(token)) return res.status(404).json({ error: 'Order not found.' }); if (reason.length < 3) return res.status(400).json({ error: 'Please tell us why you need to cancel.' }); const rows=await sql`WITH cancelled AS (UPDATE direct_orders SET status='cancelled', cancellation_reason=${reason}, cancelled_at=NOW(), updated_at=NOW() WHERE tracking_token=${token} AND status='new' RETURNING customer_phone, loyalty_points_redeemed) UPDATE loyalty_accounts a SET points=a.points+cancelled.loyalty_points_redeemed, total_redeemed=GREATEST(0,a.total_redeemed-cancelled.loyalty_points_redeemed), updated_at=NOW() FROM cancelled WHERE a.customer_phone=cancelled.customer_phone RETURNING cancelled.customer_phone`; if (!rows.length) { const cancelled=await sql`SELECT id FROM direct_orders WHERE tracking_token=${token} AND status='cancelled'`; if(!cancelled.length) return res.status(409).json({ error: 'This order is already being handled. Please call the restaurant for help.' }); } res.json({ ok:true }); } catch (error) { res.status(500).json({ error: 'Unable to cancel this order. Please call the restaurant.' }); } });

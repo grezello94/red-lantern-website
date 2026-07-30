@@ -134,6 +134,11 @@ function kotText(payload) {
   const guestLine = `Guest: ${order.customer || 'Guest'}${order.fulfillment ? ` · ${order.fulfillment}` : ''}${order.phone ? ` · ${order.phone}` : ''}`;
   return ['RED LANTERN RESTAURANT', 'KITCHEN ORDER TICKET', order.reprint ? '*** REPRINT ***' : '', line, `KOT #${order.kotNumber || '—'}`, `Order #${order.number || order.id || '—'}`, guestLine, line, ...items.map((item) => `${Number(item.quantity || 0)}x ${item.name || 'Item'}${item.portion ? ` (${item.portion})` : ''}${item.style ? ` · ${item.style}` : ''}`), order.note ? `${line}\nNote: ${order.note}` : '', line, new Date().toLocaleString(), '\n\n\n'].filter(Boolean).join('\n');
 }
+function billText(payload) {
+  const order = payload.order || {}, items = Array.isArray(order.items) ? order.items : [], line = '-'.repeat(34);
+  const total = Number(order.total || 0).toFixed(0);
+  return ['RED LANTERN RESTAURANT', 'CUSTOMER RECEIPT', line, `Order #${String(order.daily_order_number || '—').padStart(2, '0')}`, `Type: ${order.fulfillment_type === 'pickup' ? 'Takeaway' : 'Delivery'}`, `Customer: ${order.customer_name || 'Guest'}`, line, ...items.map((item) => `${Number(item.quantity || 0)}x ${item.name || 'Item'}${item.portion ? ` (${item.portion})` : ''}  ₹${Number(String(item.price || '').replace(/[^0-9.]/g, '')) * Number(item.quantity || 0) + (item.style ? 10 * Number(item.quantity || 0) : 0)}`), line, `TOTAL  ₹${total}`, order.special_request ? `Note: ${order.special_request}` : '', line, new Date().toLocaleString(), '\n\n\n'].filter(Boolean).join('\n');
+}
 
 function allowedOrigin(request) {
   const origin = request.headers.origin || '';
@@ -216,6 +221,14 @@ const server = http.createServer(async (req, res) => {
       await printText(printerName, kotText({ ...payload, items }));
       return reply(res, 201, { ok: true, printerName }, origin);
     } catch (error) { return reply(res, 400, { error: error.message || 'Unable to print KOT.' }, origin); }
+  }
+  if (req.method === 'POST' && req.url === '/v1/print-bill') {
+    try {
+      const payload = await readBody(req); const printerName = String(payload.printerName || '').trim().slice(0, 160);
+      if (!printerName || !payload.order?.id) throw new Error('A bill printer and order are required.');
+      await printText(printerName, billText(payload));
+      return reply(res, 201, { ok: true, printerName }, origin);
+    } catch (error) { return reply(res, 400, { error: error.message || 'Unable to print bill.' }, origin); }
   }
   return reply(res, 404, { error: 'Not found.' }, origin);
 });

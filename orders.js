@@ -36,6 +36,7 @@ const offlineCounterOrdersKey = 'red-lantern-counter-orders';
 let counterSyncInProgress = false;
 const ordersDiagnosticRecent = new Map();
 const orderSearchPanel = document.querySelector('.order-search-panel');
+const ordersConsoleStartedAt = Date.now();
 const connectivity = document.createElement('p');
 connectivity.id = 'orders-connectivity';
 document.querySelector('header')?.after(connectivity);
@@ -358,6 +359,7 @@ async function loadOrders() {
     const emptyMessage = query ? 'No orders match that number.' : orderView === 'current' && !sessionOpen ? 'The restaurant is closed. Today\'s orders are safely available in Order history.' : 'No direct orders yet.';
     const filteredEmpty = orderStatusFilter !== 'all' ? `No ${orderStatusFilter} orders in this view.` : emptyMessage;
     root.innerHTML = visibleRows.map(renderOrder).join('') || `<div class="empty-state">${filteredEmpty}</div>`;
+    if (orderView === 'current') rows.filter((order) => new Date(order.created_at).getTime() >= ordersConsoleStartedAt - 15 * 60 * 1000).forEach(autoPrintOrder);
     const clearButton = document.getElementById('clear-order-search');
     const searchStatus = document.getElementById('order-search-status');
     if (clearButton) clearButton.hidden = !query;
@@ -671,6 +673,43 @@ async function dispatchKot(orderId, printerId) {
   await Promise.all(data.tickets.map(async (ticket) => { const response=await fetch('http://127.0.0.1:9124/v1/print-kot',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({printerName:ticket.printerName,items:ticket.items,order:{number:data.order.daily_order_number, kotNumber:data.kotNumber, reprint:!!data.reprint, customer:data.order.customer_name, phone:data.order.customer_phone, fulfillment:data.order.fulfillment_type==='pickup'?'Pick up':'Delivery',note:data.order.special_request}})}); const body=await response.json().catch(()=>({})); if(!response.ok) throw new Error(body.error||'The Print Bridge could not send this KOT.'); }));
 }
 
+const autoPrintInFlight = new Set();
+async function autoPrintOrder(order) {
+  if (!order?.id || autoPrintInFlight.has(order.id) || ['completed','rejected','cancelled'].includes(order.status)) return;
+  autoPrintInFlight.add(order.id);
+  try {
+    const bridge = await fetch('http://127.0.0.1:9124/v1/printers', { cache:'no-store' });
+    if (!bridge.ok) return;
+    const operationsResponse = await fetch('/api/orders/operations', { cache:'no-store' });
+    const operations = await operationsResponse.json();
+    if (!operationsResponse.ok) throw new Error(operations.error || 'Printer configuration could not load.');
+    const printers = Array.isArray(operations.config?.printers) ? operations.config.printers : [];
+    const created = await fetch(`/api/orders/${encodeURIComponent(order.id)}/kots`, { method:'POST' });
+    const kot = await created.json().catch(() => ({}));
+    if (created.ok && !kot.reused) await Promise.all((kot.tickets || []).map(async (ticket) => {
+      const response = await fetch('http://127.0.0.1:9124/v1/print-kot', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ printerName:ticket.printerName, items:ticket.items, order:{ number:kot.order?.daily_order_number, kotNumber:kot.kotNumber, customer:kot.order?.customer_name, phone:kot.order?.customer_phone, fulfillment:kot.order?.fulfillment_type==='pickup'?'Pick up':'Delivery', note:kot.order?.special_request } }) });
+      if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || 'KOT printer did not accept the job.');
+    }));
+    if (!created.ok && created.status !== 409) throw new Error(kot.error || 'Unable to create the automatic KOT.');
+    const billPrinter = printers.find((printer) => printer.type === 'bill' && printer.deviceName);
+    if (!billPrinter) return;
+    const claimResponse = await fetch(`/api/orders/${encodeURIComponent(order.id)}/bill-print/claim`, { method:'POST' });
+    const claim = await claimResponse.json().catch(() => ({}));
+    if (!claimResponse.ok || !claim.claimed) return;
+    try {
+      const receiptResponse = await fetch(`/api/orders/${encodeURIComponent(order.id)}/print`, { cache:'no-store' });
+      const receipt = await receiptResponse.json();
+      if (!receiptResponse.ok) throw new Error(receipt.error || 'Unable to prepare the receipt.');
+      const printed = await fetch('http://127.0.0.1:9124/v1/print-bill', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ printerName:billPrinter.deviceName, order:receipt }) });
+      if (!printed.ok) throw new Error((await printed.json().catch(() => ({}))).error || 'Bill printer did not accept the job.');
+      await fetch(`/api/orders/${encodeURIComponent(order.id)}/bill-print/complete`, { method:'POST' });
+    } catch (error) {
+      await fetch(`/api/orders/${encodeURIComponent(order.id)}/bill-print/failed`, { method:'POST' }).catch(() => {});
+      throw error;
+    }
+  } catch (error) { reportOrdersDiagnostic({ message:`Automatic printing failed: ${error.message}`, source:'automatic order printing' }); }
+  finally { autoPrintInFlight.delete(order.id); }
+}
 async function loadAvailability() {
   const [menuResponse, availabilityResponse] = await Promise.all([fetch('/api/orders/menu', { cache: 'no-store' }), fetch('/api/orders/availability', { cache: 'no-store' })]);
   if (!menuResponse.ok || !availabilityResponse.ok) throw new Error('Menu availability could not be loaded.');
@@ -779,7 +818,7 @@ document.getElementById('counter-place-order')?.addEventListener('click', async 
     let result;
     if (!navigator.onLine) throw new TypeError('Offline');
     result = await sendCounterOrder(payload);
-    status.textContent = `Takeaway order #${result.orderNumber} placed successfully.`; counterCart = []; document.getElementById('counter-customer-name').value = ''; document.getElementById('counter-customer-phone').value = ''; document.getElementById('counter-special-request').value = ''; renderCounterOrder(); loadOrders(); refreshCounterLiveStatus();
+    status.textContent = `Takeaway order #${result.orderNumber} placed successfully.`; counterCart = []; document.getElementById('counter-customer-name').value = ''; document.getElementById('counter-customer-phone').value = ''; document.getElementById('counter-special-request').value = ''; renderCounterOrder(); autoPrintOrder({ id:result.id, status:'new' }); loadOrders(); refreshCounterLiveStatus();
   } catch (error) {
     if (!navigator.onLine || !error.status || error.status >= 500) {
       const queued = queuedCounterOrders(); queued.push(payload); saveQueuedCounterOrders(queued);
