@@ -2132,7 +2132,7 @@ app.post('/api/orders/counter', async (req, res) => {
     const { orderDay, number }=await nextDailyOrderNumber(); const id=`RL${Date.now().toString(36).toUpperCase()}${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
     const saved=clean.map(({availabilityKey,...item})=>item), total=saved.reduce((sum,item)=>sum+item.quantity*(priceNumber(item.price)+(item.style?10:0)),0);
     const phone=String(customerPhone||'').replace(/\D/g,'').slice(0,16)||`walkin-${id}`;
-    await sql`INSERT INTO direct_orders (id,status,mode,customer_name,customer_phone,special_request,items,total,order_day,daily_order_number,tracking_token,loyalty_points_redeemed,loyalty_points_earned,fulfillment_type,client_request_id) VALUES (${id},'new','counter',${String(customerName||'Walk-in customer').trim().slice(0,80)},${phone},${String(specialRequest||'').trim().slice(0,240)},${JSON.stringify(saved)},${total},${orderDay}::date,${number},${crypto.randomBytes(24).toString('base64url')},0,${Math.floor(total/10)},'pickup',${clientRequestId||null})`;
+    await sql`INSERT INTO direct_orders (id,status,mode,customer_name,customer_phone,special_request,items,total,order_day,daily_order_number,tracking_token,loyalty_points_redeemed,loyalty_points_earned,fulfillment_type,client_request_id) VALUES (${id},'new','counter',${String(customerName||'Walk-in customer').trim().slice(0,80)},${phone},${String(specialRequest||'').trim().slice(0,240)},${JSON.stringify(saved)},${total},${orderDay}::date,${number},${crypto.randomBytes(24).toString('base64url')},0,${Math.floor(total/10)},'takeaway',${clientRequestId||null})`;
     void notifyDirectOrder({ id, dailyOrderNumber:number, total, itemCount:saved.reduce((count,item)=>count+Number(item.quantity||0),0) });
     res.status(201).json({ id, orderNumber:String(number).padStart(2,'0'), total });
   } catch (error) { res.status(500).json({ error:'Unable to save the counter order.' }); }
@@ -2203,7 +2203,7 @@ app.get('/api/orders/operations', async (req, res) => { try {
 } catch (error) { res.status(500).json({ error:'Unable to load Operations configuration.' }); } });
 app.post('/api/orders/:id/kots', async (req, res) => { try {
   await ensureDirectOrdersTable(); await ensureOperationsConfigTable(); await ensureKotsTable();
-  const orderRows=await sql`SELECT id, daily_order_number, customer_name, customer_phone, fulfillment_type, special_request, items FROM direct_orders WHERE id=${req.params.id} LIMIT 1`;
+  const orderRows=await sql`SELECT id, mode, daily_order_number, customer_name, customer_phone, fulfillment_type, special_request, items FROM direct_orders WHERE id=${req.params.id} LIMIT 1`;
   if (!orderRows.length) return res.status(404).json({ error:'Order not found.' });
   const configRows=await sql`SELECT config FROM order_operations_config WHERE config_key='default' LIMIT 1`;
   const config=configRows[0]?.config || { printers:[], routes:[] };
