@@ -572,14 +572,21 @@ function refreshBillPrinterSummary() {
     if (description) description.textContent = printer.deviceName ? `All final customer bills print on ${printer.deviceName}.` : 'Choose an installed system printer to enable final bill printing.';
   });
 }
+function renderTableAllocation() {
+  const content = document.getElementById('operations-content');
+  if (!content) return;
+  const areas = Array.isArray(operationsConfig.tableAreas) ? operationsConfig.tableAreas : [];
+  content.innerHTML = `<section class="printer-assignment"><button type="button" class="assignment-back" data-operations-tab="home">‹ Back</button><h3>▦ Table allocation</h3><p>Create each restaurant area, then give it an inclusive table-number range. Example: Garden tables 1–20 and AC Hall tables 21–35. A table number cannot exist in more than one area.</p><div class="table-allocation-form"><label>Area name<input id="table-area-name" maxlength="60" placeholder="e.g. Garden seating"></label><label>From table<input id="table-area-from" type="number" min="1" max="9999" inputmode="numeric" placeholder="1"></label><label>To table<input id="table-area-to" type="number" min="1" max="9999" inputmode="numeric" placeholder="20"></label><button type="button" class="operations-save" data-add-table-area>Add area</button></div><div class="table-allocation-list">${areas.map((area)=>`<article><div><b>${esc(area.name)}</b><span>Tables ${esc(area.from)} to ${esc(area.to)} · ${Number(area.to)-Number(area.from)+1} tables</span></div><button type="button" data-remove-table-area="${esc(area.id)}">Remove</button></article>`).join('') || '<p class="operations-empty">No table areas configured yet.</p>'}</div><div class="assignment-actions"><button type="button" class="operations-save" data-save-table-allocation>Save table allocation</button></div></section>`;
+}
 function renderOperations() {
   const content = document.getElementById('operations-content');
   if (!content) return;
   if (operationsTab === 'home') {
     const activeOrders = [...orderRecords.values()].filter((order) => !['completed','rejected','cancelled'].includes(order.status));
-    content.innerHTML = `<section class="operations-home"><div class="operations-home-title"><span class="eyebrow">Operations</span><h3>Orders &amp; printing</h3><p>Open a workspace to manage the restaurant’s live order flow.</p></div><div class="operations-home-grid"><button type="button" class="operations-home-card" data-operations-tab="kots"><span class="operations-home-icon" aria-hidden="true">⌑</span><span><b>KOTs</b><small>${activeOrders.length} active order${activeOrders.length===1?'':'s'} · View and print kitchen tickets</small></span><i aria-hidden="true">›</i></button><button type="button" class="operations-home-card" data-operations-tab="printers"><span class="operations-home-icon" aria-hidden="true">▣</span><span><b>Printer routing</b><small>${operationsConfig.printers.length} printer${operationsConfig.printers.length===1?'':'s'} · Configure kitchen and bill printing</small></span><i aria-hidden="true">›</i></button></div></section>`;
+    content.innerHTML = `<section class="operations-home"><div class="operations-home-title"><span class="eyebrow">Operations</span><h3>Orders &amp; printing</h3><p>Open a workspace to manage the restaurant’s live order flow.</p></div><div class="operations-home-grid"><button type="button" class="operations-home-card" data-operations-tab="kots"><span class="operations-home-icon" aria-hidden="true">⌑</span><span><b>KOTs</b><small>${activeOrders.length} active order${activeOrders.length===1?'':'s'} · View and print kitchen tickets</small></span><i aria-hidden="true">›</i></button><button type="button" class="operations-home-card" data-operations-tab="printers"><span class="operations-home-icon" aria-hidden="true">▣</span><span><b>Printer routing</b><small>${operationsConfig.printers.length} printer${operationsConfig.printers.length===1?'':'s'} · Configure kitchen and bill printing</small></span><i aria-hidden="true">›</i></button><button type="button" class="operations-home-card" data-operations-tab="tables"><span class="operations-home-icon" aria-hidden="true">▦</span><span><b>Table allocation</b><small>${(operationsConfig.tableAreas||[]).length} area${(operationsConfig.tableAreas||[]).length===1?'':'s'} · Name sections and assign table ranges</small></span><i aria-hidden="true">›</i></button></div></section>`;
     return;
   }
+  if (operationsTab === 'tables') { renderTableAllocation(); return; }
   if (operationsTab === 'kots') {
     const activeOrders = [...orderRecords.values()].filter((order) => !['completed','rejected','cancelled'].includes(order.status));
     const tickets = new Map();
@@ -995,6 +1002,10 @@ document.getElementById('operations-content')?.addEventListener('click', async (
     renderOperations();
     return;
   }
+  if (event.target.closest('[data-add-table-area]')) { const name=String(document.getElementById('table-area-name')?.value||'').trim(); const from=Number(document.getElementById('table-area-from')?.value); const to=Number(document.getElementById('table-area-to')?.value); if(!name||!Number.isInteger(from)||!Number.isInteger(to)||from<1||to<from){alert('Enter an area name and a valid table range.');return;} operationsConfig.tableAreas=[...(operationsConfig.tableAreas||[]),{id:operationId(),name,from,to}]; renderTableAllocation(); return; }
+  const removeTableArea=event.target.closest('[data-remove-table-area]');
+  if (removeTableArea) { operationsConfig.tableAreas=(operationsConfig.tableAreas||[]).filter((area)=>area.id!==removeTableArea.dataset.removeTableArea); renderTableAllocation(); return; }
+  if (event.target.closest('[data-save-table-allocation]')) { try { await saveOperations(); } catch(error) { alert(error.message); } return; }
   const expandCategory = event.target.closest('[data-route-category-expand]');
   if (expandCategory) {
     event.preventDefault();
