@@ -93,7 +93,7 @@ async function printText(printerName, text) {
     if (process.platform === 'win32') {
       const quote = (value) => String(value).replace(/'/g, "''");
       const script = `Add-Type -AssemblyName System.Drawing
-$lines = Get-Content -LiteralPath '${quote(file)}'
+$lines = Get-Content -LiteralPath '${quote(file)}' -Encoding UTF8
 $doc = New-Object System.Drawing.Printing.PrintDocument
 $doc.PrinterSettings.PrinterName = '${quote(printerName)}'
 if (-not $doc.PrinterSettings.IsValid) { throw 'The selected Windows printer is no longer available.' }
@@ -106,16 +106,24 @@ $doc.PrintController = New-Object System.Drawing.Printing.StandardPrintControlle
 $doc.add_PrintPage({ param($sender, $event)
   $g = $event.Graphics; $width = $event.MarginBounds.Width; $y = $event.MarginBounds.Top
   foreach ($line in $lines) {
-    $style = [System.Drawing.FontStyle]::Regular; $size = 9
-    if ($line -eq 'RED LANTERN RESTAURANT' -or $line -eq 'KITCHEN ORDER TICKET') { $style = [System.Drawing.FontStyle]::Bold; $size = 10 }
+    $displayLine = $line; $style = [System.Drawing.FontStyle]::Regular; $size = 9; $alignment = [System.Drawing.StringAlignment]::Center
+    if ($line.StartsWith('__KOT_PRINTER__')) { $displayLine = $line.Substring(15); $style = [System.Drawing.FontStyle]::Bold; $size = 11 }
+    elseif ($line.StartsWith('__TITLE__')) { $displayLine = $line.Substring(9); $style = [System.Drawing.FontStyle]::Bold; $size = 13 }
+    elseif ($line.StartsWith('__SUBTITLE__')) { $displayLine = $line.Substring(12); $size = 8 }
+    elseif ($line.StartsWith('__CENTER__')) { $displayLine = $line.Substring(10) }
+    elseif ($line.StartsWith('__LEFT__')) { $displayLine = $line.Substring(8); $alignment = [System.Drawing.StringAlignment]::Near }
+    elseif ($line.StartsWith('__LABEL__')) { $displayLine = $line.Substring(9); $alignment = [System.Drawing.StringAlignment]::Near; $style = [System.Drawing.FontStyle]::Bold }
+    elseif ($line.StartsWith('__TABLE__')) { $displayLine = $line.Substring(9); $alignment = [System.Drawing.StringAlignment]::Near; $size = 8 }
+    elseif ($line.StartsWith('__TABLEHEAD__')) { $displayLine = $line.Substring(13); $alignment = [System.Drawing.StringAlignment]::Near; $style = [System.Drawing.FontStyle]::Bold; $size = 8 }
+    elseif ($line.StartsWith('__TOTAL__')) { $displayLine = $line.Substring(9); $alignment = [System.Drawing.StringAlignment]::Near; $style = [System.Drawing.FontStyle]::Bold; $size = 13 }
     elseif ($line -match '^(KOT|Order) #') { $style = [System.Drawing.FontStyle]::Bold; $size = 15 }
     elseif ($line -match '^\\d+x ') { $style = [System.Drawing.FontStyle]::Bold; $size = 11 }
     $font = New-Object System.Drawing.Font('Arial', $size, $style)
-    $format = New-Object System.Drawing.StringFormat; $format.Alignment = [System.Drawing.StringAlignment]::Center
+    $format = New-Object System.Drawing.StringFormat; $format.Alignment = $alignment
     if ($line -match '^\\d+x ') { $format.Alignment = [System.Drawing.StringAlignment]::Near }
     $bounds = New-Object System.Drawing.RectangleF($event.MarginBounds.Left, $y, $width, 200)
-    $height = $g.MeasureString($line, $font, $width, $format).Height
-    $g.DrawString($line, $font, [System.Drawing.Brushes]::Black, $bounds, $format)
+    $height = $g.MeasureString($displayLine, $font, $width, $format).Height
+    $g.DrawString($displayLine, $font, [System.Drawing.Brushes]::Black, $bounds, $format)
     $y += [Math]::Ceiling($height) + 3; $font.Dispose(); $format.Dispose()
   }
 })
@@ -132,15 +140,26 @@ function kotText(payload) {
   const items = Array.isArray(payload.items) ? payload.items : [];
   const line = '-'.repeat(34);
   const guestLine = `Guest: ${order.customer || 'Guest'}${order.fulfillment ? ` · ${order.fulfillment}` : ''}${order.phone ? ` · ${order.phone}` : ''}`;
-  return ['RED LANTERN RESTAURANT', 'KITCHEN ORDER TICKET', order.reprint ? '*** REPRINT ***' : '', line, `KOT #${order.kotNumber || '—'}`, `Order #${order.number || order.id || '—'}`, guestLine, line, ...items.map((item) => `${Number(item.quantity || 0)}x ${item.name || 'Item'}${item.portion ? ` (${item.portion})` : ''}${item.style ? ` · ${item.style}` : ''}`), order.note ? `${line}\nNote: ${order.note}` : '', line, new Date().toLocaleString(), '\n\n\n'].filter(Boolean).join('\n');
+  return [`__KOT_PRINTER__${String(payload.printerLabel || payload.printerName || 'Kitchen').trim()}`, order.reprint ? '*** REPRINT ***' : '', line, `KOT #${order.kotNumber || '—'}`, `Order #${order.number || order.id || '—'}`, guestLine, line, ...items.map((item) => `${Number(item.quantity || 0)}x ${item.name || 'Item'}${item.portion ? ` (${item.portion})` : ''}${item.style ? ` · ${item.style}` : ''}`), order.note ? `${line}\nNote: ${order.note}` : '', line, new Date().toLocaleString(), '\n\n\n'].filter(Boolean).join('\n');
 }
 function billText(payload) {
   const order = payload.order || {}, items = Array.isArray(order.items) ? order.items : [], line = '-'.repeat(34);
-  const total = Number(order.total || 0).toFixed(0);
-  const subtotal = items.reduce((sum, item) => sum + (Number(String(item.price || '').replace(/[^0-9.]/g, '')) + (item.style ? 10 : 0)) * Number(item.quantity || 0), 0).toFixed(0);
+  const money = (value) => `₹${Math.round(Number(value) || 0)}`;
+  const itemPrice = (item) => Number(String(item.price || '').replace(/[^0-9.]/g, '')) + (item.style ? 10 : 0);
+  const subtotal = items.reduce((sum, item) => sum + itemPrice(item) * Number(item.quantity || 0), 0);
+  const total = Number(order.total) > 0 ? Number(order.total) : subtotal;
   const walletDiscount = Math.max(0, Math.floor(Number(order.loyalty_points_redeemed || 0)));
-  const type = order.mode === 'counter' || order.fulfillment_type === 'takeaway' ? 'Takeaway' : order.fulfillment_type === 'delivery' ? 'Delivery' : 'Pick Up';
-  return ['RED LANTERN RESTAURANT', 'CUSTOMER RECEIPT', line, `Order #${String(order.daily_order_number || '—').padStart(2, '0')}`, `Type: ${type}`, `Customer: ${order.customer_name || 'Guest'}`, line, ...items.map((item) => `${Number(item.quantity || 0)}x ${item.name || 'Item'}${item.portion ? ` (${item.portion})` : ''}  ₹${Number(String(item.price || '').replace(/[^0-9.]/g, '')) * Number(item.quantity || 0) + (item.style ? 10 * Number(item.quantity || 0) : 0)}`), line, `SUBTOTAL  ₹${subtotal}`, walletDiscount ? `WALLET POINTS DISCOUNT  -₹${walletDiscount}` : '', `TOTAL  ₹${total}`, order.special_request ? `Note: ${order.special_request}` : '', line, new Date().toLocaleString(), '\n\n\n'].filter(Boolean).join('\n');
+  const type = order.mode === 'counter' || order.fulfillment_type === 'takeaway' ? 'TAKEAWAY ORDER' : order.fulfillment_type === 'delivery' ? 'DELIVERY ORDER' : order.mode === 'table' ? 'DINE IN ORDER' : 'QR ORDER';
+  const itemRows = items.flatMap((item) => {
+    const label = `${item.name || 'Item'}${item.portion ? ` (${item.portion})` : ''}${item.style ? ` · ${item.style}` : ''}`;
+    const quantity = Number(item.quantity || 0), unit = itemPrice(item), amount = quantity * unit;
+    return [`__TABLE__${label}`, `__TABLE__${''.padEnd(20)}${String(quantity).padStart(3)} ${money(unit).padStart(5)} ${money(amount).padStart(6)}`];
+  });
+  const token = String(order.daily_order_number || '—').padStart(2, '0');
+  const phone = String(order.customer_phone || '').startsWith('walkin-') ? '—' : (order.customer_phone || '—');
+  const placed = order.created_at ? new Intl.DateTimeFormat('en-IN', { timeZone:'Asia/Kolkata', day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit', hour12:true }).format(new Date(order.created_at)) : new Date().toLocaleString('en-IN');
+  const quantity = items.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+  return ['__TITLE__RED LANTERN RESTAURANT', '__SUBTITLE__Restaurant Mobile Number: 9922853605', '__SUBTITLE__DIRECT ORDER RECEIPT', line, `__CENTER__ORDER #${token}  ·  ${type}`, line, '__LABEL__Wallet Points: ' + Number(order.loyalty_points || 0), '__LABEL__Name: ' + (order.customer_name || 'Not provided'), '__LABEL__Mobile: ' + phone, '__LABEL__Token No: ' + token, '__LABEL__Placed: ' + placed, order.special_request ? '__LABEL__Note: ' + order.special_request : '', line, '__TABLEHEAD__Item                 Qty Price Amount', ...itemRows, line, `__LEFT__Total Qty: ${quantity}                         Items: ${items.length}`, `__LEFT__Subtotal                              ${money(subtotal)}`, walletDiscount ? `__LEFT__Wallet points discount              -${money(walletDiscount)}` : '', `__TOTAL__GRAND TOTAL                         ${money(total)}`, line, '__CENTER__Thank you for ordering with us!', '__SUBTITLE__Red Lantern Restaurant', '\n\n\n'].filter(Boolean).join('\n');
 }
 
 function allowedOrigin(request) {

@@ -2216,12 +2216,14 @@ app.get('/api/orders/operations', async (req, res) => { try {
 } catch (error) { res.status(500).json({ error:'Unable to load Operations configuration.' }); } });
 app.post('/api/orders/:id/kots', async (req, res) => { try {
   await ensureDirectOrdersTable(); await ensureOperationsConfigTable(); await ensureKotsTable();
-  const orderRows=await sql`SELECT id, mode, daily_order_number, customer_name, customer_phone, fulfillment_type, special_request, items FROM direct_orders WHERE id=${req.params.id} LIMIT 1`;
+  const [orderRows, configRows, previous]=await Promise.all([
+    sql`SELECT id, mode, daily_order_number, customer_name, customer_phone, fulfillment_type, special_request, items FROM direct_orders WHERE id=${req.params.id} LIMIT 1`,
+    sql`SELECT config FROM order_operations_config WHERE config_key='default' LIMIT 1`,
+    sql`SELECT tickets FROM order_kots WHERE order_id=${req.params.id}`
+  ]);
   if (!orderRows.length) return res.status(404).json({ error:'Order not found.' });
-  const configRows=await sql`SELECT config FROM order_operations_config WHERE config_key='default' LIMIT 1`;
   const config=configRows[0]?.config || { printers:[], routes:[] };
   const printers=Array.isArray(config.printers)?config.printers:[]; const routes=Array.isArray(config.routes)?config.routes:[];
-  const previous=await sql`SELECT tickets FROM order_kots WHERE order_id=${orderRows[0].id}`;
   const sent=new Map(); previous.forEach((kot)=>{ const quantities=new Map(); (Array.isArray(kot.tickets)?kot.tickets:[]).forEach((ticket)=>(Array.isArray(ticket.items)?ticket.items:[]).forEach((item)=>{ const key=`${item.category||''}::${item.name||''}::${item.portion||''}::${item.style||''}`; quantities.set(key,Math.max(quantities.get(key)||0,Number(item.quantity||0))); })); quantities.forEach((quantity,key)=>sent.set(key,(sent.get(key)||0)+quantity)); });
   const pending=(Array.isArray(orderRows[0].items)?orderRows[0].items:[]).map((item)=>{const key=`${item.category||''}::${item.name||''}::${item.portion||''}::${item.style||''}`;const quantity=Math.max(0,Number(item.quantity||0)-(sent.get(key)||0));return quantity?{...item,quantity}:null;}).filter(Boolean);
   if (!pending.length) { const latest=await sql`SELECT COALESCE(daily_kot_number, kot_number) AS kot_number, tickets FROM order_kots WHERE order_id=${orderRows[0].id} ORDER BY created_at DESC, kot_number DESC LIMIT 1`; return res.status(409).json({ error:'No new items to send.', latestKot:latest[0] || null, order:orderRows[0] }); }
