@@ -32,6 +32,8 @@ let counterMenu = [];
 let counterCart = [];
 let counterCategory = 'all';
 let counterChoiceItem = null;
+let counterLoyaltyPoints = 0;
+let counterLoyaltyTimer = null;
 const offlineCounterOrdersKey = 'red-lantern-counter-orders';
 let counterSyncInProgress = false;
 const ordersDiagnosticRecent = new Map();
@@ -150,6 +152,11 @@ counterPanel.id = 'counter-order-panel';
 counterPanel.hidden = true;
 counterPanel.innerHTML = '<div class="counter-order-head"><div><span class="eyebrow">Counter order</span><h2>Takeaway</h2><p>Build a walk-in or phone order, then send it directly to the kitchen.</p></div><button type="button" id="counter-order-close" class="quiet-button">Close</button></div><div class="counter-order-layout"><div class="counter-menu"><label class="counter-search"><span aria-hidden="true">⌕</span><input id="counter-menu-search" type="search" placeholder="Search menu items"></label><div id="counter-categories" class="counter-categories"></div><div id="counter-menu-items" class="counter-menu-items"></div></div><aside class="counter-cart"><div class="counter-cart-head"><h3>Current order</h3><button type="button" id="counter-clear" class="counter-clear">Clear</button></div><div id="counter-cart-items" class="counter-cart-items"></div><div class="counter-customer"><label>Customer name <input id="counter-customer-name" maxlength="80" placeholder="Walk-in customer"></label><label>Mobile number <input id="counter-customer-phone" inputmode="tel" maxlength="16" placeholder="Optional for walk-ins"></label><label>Kitchen note <textarea id="counter-special-request" maxlength="240" placeholder="e.g. less spicy"></textarea></label></div><div class="counter-total"><span>Total</span><b id="counter-total">₹0</b></div><button type="button" id="counter-place-order" class="counter-place-order">Place takeaway order</button><p id="counter-order-status" class="counter-order-status" aria-live="polite"></p></aside></div><dialog id="counter-choice-dialog" class="counter-choice-dialog"><button type="button" class="dialog-close" data-counter-choice-close aria-label="Close">×</button><div id="counter-choice-content"></div></dialog>';
 availability.before(counterPanel);
+const counterWallet = document.createElement('div');
+counterWallet.id = 'counter-wallet';
+counterWallet.hidden = true;
+counterWallet.innerHTML = '<span class="counter-wallet-label">Customer wallet</span><b id="counter-wallet-balance">Enter a mobile number to check points.</b><label id="counter-wallet-redeem-wrap" hidden>Use wallet points <input id="counter-wallet-redeem" type="number" min="100" step="1" inputmode="numeric" value="0"></label><small id="counter-wallet-note"></small>';
+counterPanel.querySelector('.counter-customer label:nth-of-type(3)')?.before(counterWallet);
 const counterLiveStatus = document.createElement('div');
 counterLiveStatus.id = 'counter-live-status';
 counterLiveStatus.setAttribute('aria-live', 'polite');
@@ -226,7 +233,29 @@ function renderCounterOrder() {
   document.getElementById('counter-menu-items').innerHTML = visible.map((item) => { const [portion, price] = counterPrice(item); return `<button type="button" class="counter-menu-item" data-counter-item="${counterMenu.indexOf(item)}"><span>${esc(item.category || 'Menu')}</span><b>${esc(item.name)}</b><small>${portion ? `${esc(portion)} · ` : ''}${counterMoney(String(price).replace(/[^0-9.]/g, ''))}</small><i aria-hidden="true">+</i></button>`; }).join('') || '<p class="counter-empty">No menu items match that search.</p>';
   const items = counterCart.map((line, index) => { const unit = line.price + (line.style ? 10 : 0); return `<div class="counter-cart-line"><div><b>${esc(line.name)}</b><small>${esc(line.portion || 'Regular')}${line.style ? ` · ${esc(line.style)}` : ''} · ${counterMoney(unit)} each</small></div><div class="counter-quantity"><button type="button" data-counter-qty="${index}" data-counter-change="-1">−</button><b>${line.quantity}</b><button type="button" data-counter-qty="${index}" data-counter-change="1">+</button></div><strong>${counterMoney(unit * line.quantity)}</strong></div>`; }).join('');
   document.getElementById('counter-cart-items').innerHTML = items || '<p class="counter-empty">Choose items from the menu to start an order.</p>';
-  document.getElementById('counter-total').textContent = counterMoney(counterCart.reduce((sum, line) => sum + (line.price + (line.style ? 10 : 0)) * line.quantity, 0));
+  const subtotal = counterCart.reduce((sum, line) => sum + (line.price + (line.style ? 10 : 0)) * line.quantity, 0);
+  const requestedPoints = Math.floor(Number(document.getElementById('counter-wallet-redeem')?.value || 0));
+  const usablePoints = counterLoyaltyPoints >= 100 ? Math.min(counterLoyaltyPoints, subtotal, Math.max(0, requestedPoints)) : 0;
+  document.getElementById('counter-total').textContent = counterMoney(subtotal - usablePoints);
+  const note = document.getElementById('counter-wallet-note');
+  if (note) note.textContent = usablePoints ? `₹${usablePoints} wallet discount applied.` : '';
+}
+async function loadCounterLoyalty() {
+  const phone = String(document.getElementById('counter-customer-phone')?.value || '').replace(/\D/g, '');
+  const walletBalance = document.getElementById('counter-wallet-balance');
+  const redeemWrap = document.getElementById('counter-wallet-redeem-wrap');
+  const redeem = document.getElementById('counter-wallet-redeem');
+  if (phone.length < 7) { counterLoyaltyPoints = 0; counterWallet.hidden = true; if (redeem) redeem.value = '0'; renderCounterOrder(); return; }
+  counterWallet.hidden = false; if (walletBalance) walletBalance.textContent = 'Checking wallet points…';
+  try {
+    const response = await fetch('/api/loyalty', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ phone }) });
+    const data = await response.json(); if (!response.ok) throw new Error();
+    counterLoyaltyPoints = Number(data.points || 0);
+    if (walletBalance) walletBalance.textContent = counterLoyaltyPoints >= 100 ? `${counterLoyaltyPoints} points available` : `${counterLoyaltyPoints} points · 100 needed to redeem`;
+    if (redeemWrap) redeemWrap.hidden = counterLoyaltyPoints < 100;
+    if (redeem) { redeem.max = String(counterLoyaltyPoints); if (counterLoyaltyPoints < 100) redeem.value = '0'; }
+  } catch { counterLoyaltyPoints = 0; if (walletBalance) walletBalance.textContent = 'Wallet points are unavailable right now.'; if (redeemWrap) redeemWrap.hidden = true; }
+  renderCounterOrder();
 }
 async function openCounterOrder() {
   const opening = counterPanel.hidden;
@@ -774,6 +803,8 @@ liveOrdersToggle.addEventListener('click', () => {
 document.getElementById('availability-close')?.addEventListener('click', () => { availability.hidden = true; document.getElementById('availability-toggle').setAttribute('aria-expanded', 'false'); });
 document.getElementById('counter-order-close')?.addEventListener('click', () => { counterPanel.hidden = true; });
 document.getElementById('counter-menu-search')?.addEventListener('input', renderCounterOrder);
+document.getElementById('counter-customer-phone')?.addEventListener('input', () => { clearTimeout(counterLoyaltyTimer); counterLoyaltyTimer = setTimeout(loadCounterLoyalty, 300); });
+document.getElementById('counter-wallet-redeem')?.addEventListener('input', (event) => { const value=Math.max(0,Math.floor(Number(event.target.value)||0)); event.target.value=String(Math.min(value,counterLoyaltyPoints)); renderCounterOrder(); });
 document.getElementById('counter-categories')?.addEventListener('click', (event) => {
   const button = event.target.closest('[data-counter-category]');
   if (!button) return;
@@ -814,13 +845,13 @@ document.getElementById('counter-place-order')?.addEventListener('click', async 
   const status = document.getElementById('counter-order-status');
   if (!counterCart.length) { status.textContent = 'Add at least one menu item first.'; return; }
   const button = document.getElementById('counter-place-order'); button.disabled = true;
-  const payload = { clientRequestId:counterRequestId(), customerName:document.getElementById('counter-customer-name').value.trim(), customerPhone:document.getElementById('counter-customer-phone').value.trim(), specialRequest:document.getElementById('counter-special-request').value.trim(), items:counterCart.map((item) => ({ ...item })) };
+  const payload = { clientRequestId:counterRequestId(), customerName:document.getElementById('counter-customer-name').value.trim(), customerPhone:document.getElementById('counter-customer-phone').value.trim(), specialRequest:document.getElementById('counter-special-request').value.trim(), loyaltyPoints:Math.floor(Number(document.getElementById('counter-wallet-redeem')?.value || 0)), items:counterCart.map((item) => ({ ...item })) };
   status.textContent = navigator.onLine ? 'Saving takeaway order…' : 'Internet is unavailable — saving this order safely on this device…';
   try {
     let result;
     if (!navigator.onLine) throw new TypeError('Offline');
     result = await sendCounterOrder(payload);
-    status.textContent = `Takeaway order #${result.orderNumber} placed successfully.`; counterCart = []; document.getElementById('counter-customer-name').value = ''; document.getElementById('counter-customer-phone').value = ''; document.getElementById('counter-special-request').value = ''; renderCounterOrder(); autoPrintOrder({ id:result.id, status:'new' }); loadOrders(); refreshCounterLiveStatus();
+    status.textContent = `Takeaway order #${result.orderNumber} placed successfully.`; counterCart = []; counterLoyaltyPoints = 0; document.getElementById('counter-customer-name').value = ''; document.getElementById('counter-customer-phone').value = ''; document.getElementById('counter-special-request').value = ''; document.getElementById('counter-wallet-redeem').value = '0'; counterWallet.hidden = true; renderCounterOrder(); autoPrintOrder({ id:result.id, status:'new' }); loadOrders(); refreshCounterLiveStatus();
   } catch (error) {
     if (!navigator.onLine || !error.status || error.status >= 500) {
       const queued = queuedCounterOrders(); queued.push(payload); saveQueuedCounterOrders(queued);

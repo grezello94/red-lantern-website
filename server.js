@@ -2105,7 +2105,7 @@ app.post('/api/direct-orders', async (req, res) => {
 
 app.post('/api/orders/counter', async (req, res) => {
   try {
-    const { customerName, customerPhone, specialRequest, items = [] } = req.body || {};
+    const { customerName, customerPhone, specialRequest, loyaltyPoints, items = [] } = req.body || {};
     const clientRequestId=String(req.get('X-Counter-Order-Id')||req.body?.clientRequestId||'').trim().slice(0,80);
     const menu = await getSection('airMenu');
     const priceNumber = (value) => Number(String(value || '').replace(/[^0-9.]/g, '')) || 0;
@@ -2130,9 +2130,16 @@ app.post('/api/orders/counter', async (req, res) => {
     const unavailable=new Set((await sql`SELECT item_key FROM menu_availability WHERE unavailable_until > NOW()`).map((row)=>row.item_key));
     if (clean.some((item)=>unavailable.has(item.availabilityKey))) return res.status(409).json({ error:'One or more selected items are out of stock.' });
     const { orderDay, number }=await nextDailyOrderNumber(); const id=`RL${Date.now().toString(36).toUpperCase()}${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
-    const saved=clean.map(({availabilityKey,...item})=>item), total=saved.reduce((sum,item)=>sum+item.quantity*(priceNumber(item.price)+(item.style?10:0)),0);
-    const phone=String(customerPhone||'').replace(/\D/g,'').slice(0,16)||`walkin-${id}`;
-    await sql`INSERT INTO direct_orders (id,status,mode,customer_name,customer_phone,special_request,items,total,order_day,daily_order_number,tracking_token,loyalty_points_redeemed,loyalty_points_earned,fulfillment_type,client_request_id) VALUES (${id},'new','counter',${String(customerName||'Walk-in customer').trim().slice(0,80)},${phone},${String(specialRequest||'').trim().slice(0,240)},${JSON.stringify(saved)},${total},${orderDay}::date,${number},${crypto.randomBytes(24).toString('base64url')},0,${Math.floor(total/10)},'takeaway',${clientRequestId||null})`;
+    const saved=clean.map(({availabilityKey,...item})=>item), subtotal=saved.reduce((sum,item)=>sum+item.quantity*(priceNumber(item.price)+(item.style?10:0)),0);
+    const suppliedPhone=String(customerPhone||'').replace(/\D/g,'').slice(0,16);
+    const requestedLoyaltyPoints=Math.max(0,Math.floor(Number(loyaltyPoints)||0));
+    if (requestedLoyaltyPoints && (suppliedPhone.length<7 || requestedLoyaltyPoints<100 || requestedLoyaltyPoints>subtotal)) return res.status(400).json({ error:'Use a valid mobile number and at least 100 points, up to the order total.' });
+    const phone=suppliedPhone||`walkin-${id}`, total=subtotal-requestedLoyaltyPoints, earned=Math.floor(total/10), trackingToken=crypto.randomBytes(24).toString('base64url');
+    if (requestedLoyaltyPoints) {
+      await ensureLoyaltyTable();
+      const inserted=await sql`WITH redeemed AS (UPDATE loyalty_accounts SET points=points-${requestedLoyaltyPoints},total_redeemed=total_redeemed+${requestedLoyaltyPoints},updated_at=NOW() WHERE customer_phone=${phone} AND points>=${requestedLoyaltyPoints} AND points>=100 RETURNING customer_phone) INSERT INTO direct_orders (id,status,mode,customer_name,customer_phone,special_request,items,total,order_day,daily_order_number,tracking_token,loyalty_points_redeemed,loyalty_points_earned,fulfillment_type,client_request_id) SELECT ${id},'new','counter',${String(customerName||'Walk-in customer').trim().slice(0,80)},${phone},${String(specialRequest||'').trim().slice(0,240)},${JSON.stringify(saved)},${total},${orderDay}::date,${number},${trackingToken},${requestedLoyaltyPoints},${earned},'takeaway',${clientRequestId||null} FROM redeemed RETURNING id`;
+      if (!inserted.length) return res.status(409).json({ error:'Wallet points changed. Check the customer balance and try again.' });
+    } else await sql`INSERT INTO direct_orders (id,status,mode,customer_name,customer_phone,special_request,items,total,order_day,daily_order_number,tracking_token,loyalty_points_redeemed,loyalty_points_earned,fulfillment_type,client_request_id) VALUES (${id},'new','counter',${String(customerName||'Walk-in customer').trim().slice(0,80)},${phone},${String(specialRequest||'').trim().slice(0,240)},${JSON.stringify(saved)},${total},${orderDay}::date,${number},${trackingToken},0,${earned},'takeaway',${clientRequestId||null})`;
     void notifyDirectOrder({ id, dailyOrderNumber:number, total, itemCount:saved.reduce((count,item)=>count+Number(item.quantity||0),0) });
     res.status(201).json({ id, orderNumber:String(number).padStart(2,'0'), total });
   } catch (error) { res.status(500).json({ error:'Unable to save the counter order.' }); }
