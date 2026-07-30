@@ -676,7 +676,8 @@ async function dispatchKot(orderId, printerId) {
 
 const autoPrintInFlight = new Set();
 async function autoPrintOrder(order) {
-  if (!order?.id || autoPrintInFlight.has(order.id) || ['completed','rejected','cancelled'].includes(order.status)) return;
+  const canReleaseToKitchen = order?.mode === 'counter' || order?.status === 'accepted';
+  if (!order?.id || !canReleaseToKitchen || autoPrintInFlight.has(order.id) || ['completed','rejected','cancelled'].includes(order.status)) return;
   autoPrintInFlight.add(order.id);
   try {
     const bridge = await fetch('http://127.0.0.1:9124/v1/printers', { cache:'no-store' });
