@@ -735,11 +735,11 @@ async function dispatchKot(orderId, printerId) {
 const autoPrintInFlight = new Set();
 async function autoPrintOrder(order) {
   const canReleaseToKitchen = order?.mode === 'counter' || order?.status === 'accepted';
-  if (!order?.id || !canReleaseToKitchen || autoPrintInFlight.has(order.id) || ['completed','rejected','cancelled'].includes(order.status)) return;
+  if (!order?.id || !canReleaseToKitchen || autoPrintInFlight.has(order.id) || ['completed','rejected','cancelled'].includes(order.status)) return { ok:false, reason:'This order is not ready to print yet.' };
   autoPrintInFlight.add(order.id);
   try {
     const bridge = await fetch('http://127.0.0.1:9124/v1/printers', { cache:'no-store' });
-    if (!bridge.ok) return;
+    if (!bridge.ok) { const reason='Print Bridge is not available on this counter computer.'; reportOrdersDiagnostic({ level:'warning', message:`Automatic printing skipped: ${reason}`, source:'automatic order printing' }); return { ok:false, reason }; }
     const operationsResponse = await fetch('/api/orders/operations', { cache:'no-store' });
     const operations = await operationsResponse.json();
     if (!operationsResponse.ok) throw new Error(operations.error || 'Printer configuration could not load.');
@@ -756,7 +756,7 @@ async function autoPrintOrder(order) {
       reportOrdersDiagnostic({ level:'warning', message:`Automatic KOT printing failed: ${error.message}`, source:'automatic KOT printing' });
     }
     const billPrinter = printers.find((printer) => printer.type === 'bill' && printer.deviceName);
-    if (!billPrinter) return;
+    if (!billPrinter) { const reason='No Bill printer is assigned in Operations.'; reportOrdersDiagnostic({ level:'warning', message:`Automatic bill printing skipped: ${reason}`, source:'automatic bill printing' }); return { ok:false, reason }; }
     const claimResponse = await fetch(`/api/orders/${encodeURIComponent(order.id)}/bill-print/claim`, { method:'POST' });
     const claim = await claimResponse.json().catch(() => ({}));
     if (!claimResponse.ok || !claim.claimed) return;
@@ -767,11 +767,12 @@ async function autoPrintOrder(order) {
       const printed = await fetch('http://127.0.0.1:9124/v1/print-bill', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ printerName:billPrinter.deviceName, order:receipt }) });
       if (!printed.ok) throw new Error((await printed.json().catch(() => ({}))).error || 'Bill printer did not accept the job.');
       await fetch(`/api/orders/${encodeURIComponent(order.id)}/bill-print/complete`, { method:'POST' });
+      return { ok:true };
     } catch (error) {
       await fetch(`/api/orders/${encodeURIComponent(order.id)}/bill-print/failed`, { method:'POST' }).catch(() => {});
       throw error;
     }
-  } catch (error) { reportOrdersDiagnostic({ message:`Automatic printing failed: ${error.message}`, source:'automatic order printing' }); }
+  } catch (error) { const reason=error.message || 'Automatic printing failed.'; reportOrdersDiagnostic({ message:`Automatic printing failed: ${reason}`, source:'automatic order printing' }); return { ok:false, reason }; }
   finally { autoPrintInFlight.delete(order.id); }
 }
 async function loadAvailability() {
@@ -889,7 +890,7 @@ document.getElementById('counter-place-order')?.addEventListener('click', async 
     let result;
     if (!navigator.onLine) throw new TypeError('Offline');
     result = await sendCounterOrder(payload);
-    status.textContent = `Takeaway order #${result.orderNumber} placed successfully.`; counterCart = []; counterLoyaltyPoints = 0; document.getElementById('counter-customer-name').value = ''; document.getElementById('counter-customer-phone').value = ''; document.getElementById('counter-special-request').value = ''; document.getElementById('counter-wallet-redeem').value = '0'; counterWallet.hidden = true; renderCounterOrder(); autoPrintOrder({ id:result.id, mode:'counter', status:'new' }); loadOrders(); refreshCounterLiveStatus();
+    status.textContent = `Takeaway order #${result.orderNumber} saved. Sending KOTs and final bill…`; counterCart = []; counterLoyaltyPoints = 0; document.getElementById('counter-customer-name').value = ''; document.getElementById('counter-customer-phone').value = ''; document.getElementById('counter-special-request').value = ''; document.getElementById('counter-wallet-redeem').value = '0'; counterWallet.hidden = true; renderCounterOrder(); void autoPrintOrder({ id:result.id, mode:'counter', status:'new' }).then((printing) => { if (printing?.ok) status.textContent = `Takeaway order #${result.orderNumber} saved. KOTs and final bill were sent to the configured printers.`; else if (printing?.reason) status.textContent = `Takeaway order #${result.orderNumber} saved. ${printing.reason} Check Operations / Orders Error Logs.`; }); loadOrders(); refreshCounterLiveStatus();
   } catch (error) {
     if (!navigator.onLine || !error.status || error.status >= 500) {
       const queued = queuedCounterOrders(); queued.push(payload); saveQueuedCounterOrders(queued);
