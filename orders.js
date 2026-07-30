@@ -77,7 +77,11 @@ async function flushQueuedCounterOrders() {
   try {
     let queued = queuedCounterOrders();
     while (queued.length && navigator.onLine) {
-      try { await sendCounterOrder(queued[0]); queued.shift(); saveQueuedCounterOrders(queued); }
+      try {
+        const result = await sendCounterOrder(queued[0]);
+        autoPrintOrder({ id:result.id, mode:'counter', status:result.status || 'accepted' });
+        queued.shift(); saveQueuedCounterOrders(queued);
+      }
       catch (error) {
         if (error.status >= 400 && error.status < 500 && error.status !== 409) { queued.shift(); saveQueuedCounterOrders(queued); continue; }
         if (error.status === 409 && !queued[0].errorReported) { queued[0].errorReported = true; saveQueuedCounterOrders(queued); reportOrdersDiagnostic({ level:'warning', message:'Queued counter order needs review: an item is no longer available.', source:'offline order sync' }); }
@@ -335,7 +339,7 @@ const fulfillmentLabel = (order) => order?.mode === 'counter' || order?.fulfillm
 const tomorrowLocal = () => { const date = new Date(Date.now() + 86400000); date.setSeconds(0, 0); return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
 const toPushKey = (value) => { const padding = '='.repeat((4 - value.length % 4) % 4); const raw = atob((value + padding).replace(/-/g, '+').replace(/_/g, '/')); return Uint8Array.from(raw, (character) => character.charCodeAt(0)); };
 
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('/orders-sw.js?v=8');
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/orders-sw.js?v=10');
 document.getElementById('enable-notifications')?.addEventListener('click', async () => {
   closeOpenPanels();
   const button = document.getElementById('enable-notifications');
@@ -797,11 +801,24 @@ async function autoPrintOrder(order) {
   } catch (error) { const reason=error.message || 'Automatic printing failed.'; reportOrdersDiagnostic({ message:`Automatic printing failed: ${reason}`, source:'automatic order printing' }); return { ok:false, reason }; }
   finally { autoPrintInFlight.delete(order.id); }
 }
+const offlineMenuSnapshotKey = 'red-lantern-counter-menu-snapshot';
+function saveOfflineMenuSnapshot(menu, availability) { try { localStorage.setItem(offlineMenuSnapshotKey, JSON.stringify({ menu, availability, savedAt:Date.now() })); } catch {} }
+function readOfflineMenuSnapshot() { try { const snapshot=JSON.parse(localStorage.getItem(offlineMenuSnapshotKey) || 'null'); return Array.isArray(snapshot?.menu) && Array.isArray(snapshot?.availability) ? snapshot : null; } catch { return null; } }
 async function loadAvailability() {
-  const [menuResponse, availabilityResponse] = await Promise.all([fetch('/api/orders/menu', { cache: 'no-store' }), fetch('/api/orders/availability', { cache: 'no-store' })]);
-  if (!menuResponse.ok || !availabilityResponse.ok) throw new Error('Menu availability could not be loaded.');
-  menuItems = await menuResponse.json();
-  unavailable = new Map((await availabilityResponse.json()).map((item) => [item.item_key, item.unavailable_until]));
+  try {
+    const [menuResponse, availabilityResponse] = await Promise.all([fetch('/api/orders/menu', { cache: 'no-store' }), fetch('/api/orders/availability', { cache: 'no-store' })]);
+    if (!menuResponse.ok || !availabilityResponse.ok) throw new Error('Menu availability could not be loaded.');
+    const menu = await menuResponse.json(), availability = await availabilityResponse.json();
+    if (!Array.isArray(menu) || !Array.isArray(availability)) throw new Error('Menu availability could not be read.');
+    menuItems = menu;
+    unavailable = new Map(availability.map((item) => [item.item_key, item.unavailable_until]));
+    saveOfflineMenuSnapshot(menu, availability);
+  } catch (error) {
+    const snapshot = readOfflineMenuSnapshot();
+    if (!snapshot) throw error;
+    menuItems = snapshot.menu;
+    unavailable = new Map(snapshot.availability.map((item) => [item.item_key, item.unavailable_until]));
+  }
   renderAvailability();
 }
 
@@ -912,7 +929,7 @@ document.getElementById('counter-place-order')?.addEventListener('click', async 
     let result;
     if (!navigator.onLine) throw new TypeError('Offline');
     result = await sendCounterOrder(payload);
-    status.textContent = `Takeaway order #${result.orderNumber} saved. Sending KOTs and final bill…`; counterCart = []; counterLoyaltyPoints = 0; document.getElementById('counter-customer-name').value = ''; document.getElementById('counter-customer-phone').value = ''; document.getElementById('counter-special-request').value = ''; document.getElementById('counter-wallet-redeem').value = '0'; counterWallet.hidden = true; renderCounterOrder(); void autoPrintOrder({ id:result.id, mode:'counter', status:'new' }).then((printing) => { if (printing?.ok) status.textContent = `Takeaway order #${result.orderNumber} saved. KOTs and final bill were sent to the configured printers.`; else if (printing?.reason) status.textContent = `Takeaway order #${result.orderNumber} saved. ${printing.reason} Check Operations / Orders Error Logs.`; }); loadOrders(); refreshCounterLiveStatus();
+    status.textContent = `Takeaway order #${result.orderNumber} accepted. Sending KOTs and final bill…`; counterCart = []; counterLoyaltyPoints = 0; document.getElementById('counter-customer-name').value = ''; document.getElementById('counter-customer-phone').value = ''; document.getElementById('counter-special-request').value = ''; document.getElementById('counter-wallet-redeem').value = '0'; counterWallet.hidden = true; renderCounterOrder(); void autoPrintOrder({ id:result.id, mode:'counter', status:result.status || 'accepted' }).then((printing) => { if (printing?.ok) status.textContent = `Takeaway order #${result.orderNumber} accepted. KOTs and final bill were sent to the configured printers.`; else if (printing?.reason) status.textContent = `Takeaway order #${result.orderNumber} accepted. ${printing.reason} Check Operations / Orders Error Logs.`; }); loadOrders(); refreshCounterLiveStatus();
   } catch (error) {
     if (!navigator.onLine || !error.status || error.status >= 500) {
       const queued = queuedCounterOrders(); queued.push(payload); saveQueuedCounterOrders(queued);
