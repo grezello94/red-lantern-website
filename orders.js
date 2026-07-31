@@ -393,7 +393,7 @@ const fulfillmentLabel = (order) => order?.mode === 'counter' || order?.fulfillm
 const tomorrowLocal = () => { const date = new Date(Date.now() + 86400000); date.setSeconds(0, 0); return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
 const toPushKey = (value) => { const padding = '='.repeat((4 - value.length % 4) % 4); const raw = atob((value + padding).replace(/-/g, '+').replace(/_/g, '/')); return Uint8Array.from(raw, (character) => character.charCodeAt(0)); };
 
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('/orders-sw.js?v=10');
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/orders-sw.js?v=11');
 document.getElementById('enable-notifications')?.addEventListener('click', async () => {
   closeOpenPanels();
   const button = document.getElementById('enable-notifications');
@@ -626,6 +626,11 @@ function renderPrinterManagement() {
     if (description) description.textContent = configured.deviceName ? `All final customer bills print on ${configured.deviceName}.` : 'Choose an installed system printer to enable final bill printing.';
   });
   content.querySelectorAll('[data-rename-printer]').forEach((button) => { button.className = 'printer-action-icon'; button.title = 'Edit printer'; button.setAttribute('aria-label', 'Edit printer'); button.textContent = '✎'; });
+  const restartBridge = document.createElement('button');
+  restartBridge.type = 'button';
+  restartBridge.id = 'restart-print-bridge';
+  restartBridge.textContent = 'Restart Print Bridge';
+  content.querySelector('.manage-printers-head')?.append(restartBridge);
   content.querySelectorAll('[data-delete-printer]').forEach((button) => { button.className = 'printer-action-icon is-delete'; button.title = 'Delete printer'; button.setAttribute('aria-label', 'Delete printer'); button.textContent = '⌫'; });
   content.querySelectorAll('[data-assign-printer]').forEach((button) => { button.className = 'printer-assign-button'; button.textContent = 'Assign'; });
 }
@@ -987,7 +992,13 @@ document.getElementById('counter-order-close')?.addEventListener('click', () => 
 document.getElementById('table-view-content')?.addEventListener('click', (event) => { const table=event.target.closest('[data-dine-table-number]'); if (!table) return; openCounterOrder({ area:table.dataset.dineTableArea || 'Dining', number:Number(table.dataset.dineTableNumber) }); });
 document.getElementById('counter-menu-search')?.addEventListener('input', renderCounterOrder);
 document.getElementById('counter-customer-phone')?.addEventListener('input', () => { clearTimeout(counterLoyaltyTimer); counterLoyaltyTimer = setTimeout(loadCounterLoyalty, 300); });
-document.getElementById('counter-wallet-redeem')?.addEventListener('input', (event) => { const value=Math.max(0,Math.floor(Number(event.target.value)||0)); event.target.value=String(value >= 100 ? Math.min(value,counterLoyaltyPoints) : 0); renderCounterOrder(); });
+const walletRedeemInput = document.getElementById('counter-wallet-redeem');
+walletRedeemInput?.addEventListener('input', () => renderCounterOrder());
+walletRedeemInput?.addEventListener('change', (event) => {
+  const value = Math.max(0, Math.floor(Number(event.target.value) || 0));
+  event.target.value = String(value >= 100 ? Math.min(value, counterLoyaltyPoints) : 0);
+  renderCounterOrder();
+});
 document.getElementById('counter-categories')?.addEventListener('click', (event) => {
   const button = event.target.closest('[data-counter-category]');
   if (!button) return;
@@ -1112,6 +1123,19 @@ document.getElementById('operations-content')?.addEventListener('click', async (
   }
   const copyBridgeCommand = event.target.closest('#copy-print-bridge-command');
   if (copyBridgeCommand) { try { await navigator.clipboard.writeText(copyBridgeCommand.dataset.command || ''); copyBridgeCommand.textContent='Copied'; setTimeout(() => { copyBridgeCommand.textContent='Copy setup command'; }, 1600); } catch (_) { alert(`Run this command in Terminal / PowerShell:\n\n${copyBridgeCommand.dataset.command || ''}`); } return; }
+  const restartBridge = event.target.closest('#restart-print-bridge');
+  if (restartBridge) {
+    if (!confirm('Restart Print Bridge on this computer? Printing will be unavailable for a few seconds.')) return;
+    restartBridge.disabled = true; restartBridge.textContent = 'Restarting…';
+    try {
+      const response = await fetch('http://127.0.0.1:9124/v1/restart', { method:'POST' });
+      if (!response.ok) throw new Error('Print Bridge could not restart.');
+      await new Promise((resolve) => setTimeout(resolve, 1800));
+      await discoverSystemPrinters(); renderOperations();
+      alert(printBridgeState === 'available' ? 'Print Bridge restarted successfully.' : 'Restart requested, but Print Bridge has not come back online yet.');
+    } catch (error) { alert(error.message || 'Unable to restart Print Bridge.'); }
+    return;
+  }
   const quickAdd = event.target.closest('#quick-add-printer');
   if (quickAdd) { const select=document.getElementById('quick-system-printer'); const deviceId=String(select?.value||''); const deviceName=String(select?.selectedOptions?.[0]?.textContent||''); const name=String(document.getElementById('quick-printer-name')?.value||'').trim().slice(0,60) || deviceName; if (!deviceId) { alert('Choose an installed system printer first.'); return; } if (operationsConfig.printers.some((printer) => printer.deviceId === deviceId)) { alert('This system printer has already been added.'); return; } operationsConfig.printers.push({ id:operationId(), name, type:'kot', connection:'system', deviceId, deviceName }); renderOperations(); return; }
   const renamePrinter = event.target.closest('[data-rename-printer]');

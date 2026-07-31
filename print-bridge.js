@@ -8,7 +8,7 @@
  * Printing is intentionally not exposed until the KOT dispatch workflow is enabled.
  */
 const http = require('http');
-const { execFile } = require('child_process');
+const { execFile, spawn } = require('child_process');
 const crypto = require('crypto');
 const fs = require('fs/promises');
 const os = require('os');
@@ -202,6 +202,16 @@ const server = http.createServer(async (req, res) => {
   if (req.headers.origin && !origin) return reply(res, 403, { error: 'This website is not allowed to access the Print Bridge.' });
   if (req.method === 'OPTIONS') return reply(res, 204, {}, origin);
   if (req.method === 'GET' && req.url === '/health') return reply(res, 200, { ok: true, service: 'Red Lantern Print Bridge' }, origin);
+  if (req.method === 'POST' && req.url === '/v1/restart') {
+    reply(res, 202, { ok: true, message: 'Print Bridge is restarting.' }, origin);
+    setTimeout(() => {
+      const child = spawn(process.execPath, [__filename], { cwd: __dirname, detached: true, stdio: 'ignore', windowsHide: true });
+      child.unref();
+      server.close(() => process.exit(0));
+      setTimeout(() => process.exit(0), 1000).unref();
+    }, 250).unref();
+    return;
+  }
   if (req.method === 'GET' && req.url === '/v1/printers') {
     try { return reply(res, 200, { printers: await installedPrinters() }, origin); }
     catch (error) { return reply(res, 500, { error: 'Unable to read installed printers.', detail: error.message }, origin); }
