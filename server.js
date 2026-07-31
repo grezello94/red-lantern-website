@@ -558,6 +558,12 @@ let menuAvailabilityTableReady = null;
 let pushSubscriptionsTableReady = null;
 let operationsConfigTableReady = null;
 let orderPrintJobsTableReady = null;
+let kotStationStatusTableReady = null;
+async function ensureKotStationStatusTable() {
+  if (!sql) throw new Error('Orders database is not configured.');
+  if (!kotStationStatusTableReady) kotStationStatusTableReady = sql`CREATE TABLE IF NOT EXISTS order_kot_station_status (order_id TEXT NOT NULL, printer_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'accepted', updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (order_id, printer_id))`;
+  return kotStationStatusTableReady;
+}
 async function ensureOrderPrintJobsTable() {
   if (!sql) throw new Error('Orders database is not configured.');
   if (!orderPrintJobsTableReady) orderPrintJobsTableReady = sql`CREATE TABLE IF NOT EXISTS order_print_jobs (order_id TEXT NOT NULL, job_type TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'queued', lease_expires_at TIMESTAMPTZ, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (order_id, job_type))`;
@@ -2247,6 +2253,8 @@ app.post('/api/orders/:id/kots', async (req, res) => { try {
 } catch (error) { res.status(500).json({ error:error.message || 'Unable to create KOT.' }); } });
 app.get('/api/orders/:id/kots', async (req,res)=>{try{await ensureKotsTable();res.json(await sql`SELECT COALESCE(daily_kot_number, kot_number) AS kot_number, tickets, created_at FROM order_kots WHERE order_id=${req.params.id} ORDER BY created_at DESC, kot_number DESC`)}catch(error){res.status(500).json({error:'Unable to load KOT history.'})}});
 app.get('/api/orders/kot-history', async (req,res)=>{try{await ensureDirectOrdersTable();await ensureKotsTable();const day=/^\d{4}-\d{2}-\d{2}$/.test(String(req.query.date||''))?String(req.query.date):kolkataOrderDay();const rows=await sql`SELECT o.id,o.daily_order_number,o.mode,o.customer_name,o.customer_phone,o.fulfillment_type,o.status,o.completed_at,COALESCE(k.daily_kot_number,k.kot_number) AS kot_number,k.tickets,k.created_at FROM order_kots k JOIN direct_orders o ON o.id=k.order_id WHERE o.order_day=${day}::date ORDER BY k.created_at DESC,k.kot_number DESC LIMIT 400`;res.set('Cache-Control','no-store');res.json(rows)}catch(error){res.status(500).json({error:'Unable to load KOT history.'})}});
+app.get('/api/orders/kitchen-statuses', async (req,res)=>{try{await ensureDirectOrdersTable();await ensureKotStationStatusTable();const day=kolkataOrderDay();const rows=await sql`SELECT s.order_id,s.printer_id,s.status,s.updated_at FROM order_kot_station_status s JOIN direct_orders o ON o.id=s.order_id WHERE o.order_day=${day}::date AND o.status IN ('accepted','preparing','ready')`;res.set('Cache-Control','no-store');res.json(rows)}catch(error){res.status(500).json({error:'Unable to load kitchen display statuses.'})}});
+app.patch('/api/orders/:id/kitchen-status/:printerId', async (req,res)=>{try{await ensureDirectOrdersTable();await ensureKotStationStatusTable();const status=['accepted','preparing','ready'].includes(String(req.body?.status||''))?String(req.body.status):'';const printerId=String(req.params.printerId||'').replace(/[^a-zA-Z0-9_-]/g,'').slice(0,80);if(!status||!printerId)return res.status(400).json({error:'Invalid kitchen status.'});const found=await sql`SELECT id FROM direct_orders WHERE id=${req.params.id} AND status NOT IN ('completed','rejected','cancelled') LIMIT 1`;if(!found.length)return res.status(404).json({error:'That active order was not found.'});await sql`INSERT INTO order_kot_station_status (order_id,printer_id,status) VALUES (${req.params.id},${printerId},${status}) ON CONFLICT (order_id,printer_id) DO UPDATE SET status=EXCLUDED.status,updated_at=NOW()`;res.json({ok:true,status})}catch(error){res.status(500).json({error:'Unable to update kitchen status.'})}});
 app.put('/api/orders/operations/table-areas', async (req, res) => { try {
   await ensureOperationsConfigTable();
   const source = req.body || {};

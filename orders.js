@@ -25,6 +25,10 @@ let operationsConfig = { printers: [], routes: [] };
 let operationsMenu = [];
 let operationKotHistory = new Map();
 let completedKotHistory = [];
+let kitchenStationStatuses = new Map();
+const kdsStationSelectionKey = 'red-lantern-kds-stations';
+function selectedKdsStations() { try { const value=JSON.parse(localStorage.getItem(kdsStationSelectionKey)||'[]'); return Array.isArray(value)?new Set(value.map(String)):new Set(); } catch { return new Set(); } }
+function saveKdsStations(ids) { localStorage.setItem(kdsStationSelectionKey, JSON.stringify([...ids])); }
 let operationsTab = 'home';
 let installedSystemPrinters = [];
 let printBridgeState = 'checking';
@@ -367,6 +371,9 @@ document.head.appendChild(operationsWorkspaceStyles);
 const kotListingPriorityStyles = document.createElement('style');
 kotListingPriorityStyles.textContent = `.kot-table{min-width:1280px}.kot-table td:nth-child(5){min-width:230px}.kot-table td:nth-child(6){min-width:145px}.kot-table td:nth-child(7){white-space:nowrap}.kot-number{color:#7d1e35;font-size:15px}.kot-table td:first-child{background:#fff8fa}.kot-table th:first-child{color:#7d1e35}`;
 document.head.appendChild(kotListingPriorityStyles);
+const kitchenDisplayStyles = document.createElement('style');
+kitchenDisplayStyles.textContent = `.kds{padding-top:10px}.kds-head{display:flex;justify-content:space-between;gap:18px;align-items:flex-start;margin-bottom:20px}.kds-head h3{margin:5px 0;color:#192d4b;font-size:25px}.kds-head p{margin:0;color:#6a7b91;font-size:13px}.kds-station-picker{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}.kds-station-picker button{padding:8px 10px;border:1px solid #cddbe8;border-radius:8px;color:#51667f;background:#fff;font-size:11px;font-weight:900}.kds-station-picker button.is-active{border-color:#263d68;color:#fff;background:#263d68}.kds-station-picker span{color:#718197;font-size:11px}.kds-legend{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}.kds-legend span{padding:6px 9px;border-radius:999px;background:#eef4fa;color:#52677f;font-size:10px;font-weight:900}.kds-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}.kds-ticket{overflow:hidden;border:1px solid #dae5ee;border-radius:16px;background:#fff;box-shadow:0 8px 20px rgba(25,49,80,.08)}.kds-ticket[data-kds-status="accepted"]{border-top:5px solid #55b9df}.kds-ticket[data-kds-status="preparing"]{border-top:5px solid #f0ae27}.kds-ticket[data-kds-status="ready"]{border-top:5px solid #35a76a}.kds-ticket-top{display:flex;justify-content:space-between;gap:10px;padding:15px 16px 12px;background:#f8fbfd}.kds-ticket-top span{display:block;color:#6d8094;font-size:10px;font-weight:900;letter-spacing:.06em;text-transform:uppercase}.kds-ticket-top b{display:block;margin-top:4px;color:#203653;font-size:20px}.kds-table-badge{min-width:70px;margin-top:-15px;padding:11px 8px;border-radius:0 0 10px 10px;color:#fff;background:#2b9d60;text-align:center;box-shadow:0 5px 12px rgba(17,91,54,.16)}.kds-table-badge.is-counter{background:#d89120}.kds-table-badge small,.kds-table-badge b{display:block;color:inherit}.kds-table-badge small{font-size:9px;font-weight:800;text-transform:uppercase}.kds-table-badge b{margin-top:3px;font-size:18px}.kds-meta{display:flex;justify-content:space-between;gap:8px;padding:11px 16px;color:#52677f;font-size:12px}.kds-meta b{color:#b33842}.kds-station{margin:0 16px;padding:8px 10px;border-radius:8px;color:#107247;background:#e9f8ef;font-size:11px;font-weight:900}.kds-items{margin:12px 16px 0;padding:12px 0;border-top:1px solid #e7edf2;border-bottom:1px solid #e7edf2}.kds-items div{display:flex;justify-content:space-between;gap:12px;padding:5px 0;color:#263b57;font-size:14px;font-weight:800}.kds-items b{color:#b22736}.kds-note{margin:12px 16px 0;padding:9px 10px;border-radius:8px;color:#8b2834;background:#fff0f1;font-size:12px;font-weight:800}.kds-action{width:calc(100% - 32px);margin:15px 16px;padding:12px;border-radius:9px;color:#fff;background:#263d68;font-size:13px;font-weight:900}.kds-action.is-ready{background:#168451}.kds-action:disabled{opacity:.72}.kds-empty{grid-column:1/-1;padding:42px;border:1px dashed #cbd8e5;border-radius:15px;color:#718197;background:#fff;text-align:center}.kds-fullscreen{padding:9px 12px;border:1px solid #cbd9e7;border-radius:8px;color:#243b63;background:#fff;font-weight:900;font-size:11px}@media(max-width:620px){.kds-head{display:grid}.kds-grid{grid-template-columns:1fr}.kds-ticket-top b{font-size:18px}}`;
+document.head.appendChild(kitchenDisplayStyles);
 const tableAllocationStyles = document.createElement('style');
 tableAllocationStyles.textContent = `.table-allocation-form{display:grid;grid-template-columns:minmax(230px,1.6fr) minmax(120px,.55fr) minmax(120px,.55fr) auto;gap:14px;align-items:end;margin:26px 0 18px;padding:20px;border:1px solid #dce7f2;border-radius:14px;background:linear-gradient(135deg,#f8fbff,#f3f8fd)}.table-allocation-form label{display:grid;gap:7px;color:#526780;font-size:11px;font-weight:900;letter-spacing:.06em;text-transform:uppercase}.table-allocation-form input{box-sizing:border-box;width:100%;min-height:46px;padding:10px 12px;border:1px solid #cbd9e8;border-radius:9px;color:#203653;background:#fff;font:700 14px Manrope,Arial,sans-serif}.table-allocation-form input:focus{border-color:#246ce0;outline:3px solid #dbeafe}.table-allocation-form button{min-height:46px;padding:10px 18px;border-radius:9px;white-space:nowrap}.table-allocation-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(265px,1fr));gap:12px}.table-allocation-list article{display:flex;align-items:center;justify-content:space-between;gap:14px;min-height:86px;padding:16px 17px;border:1px solid #dce6f0;border-radius:12px;background:#fff;box-shadow:0 4px 13px rgba(25,49,80,.045)}.table-allocation-list article>div{display:grid;gap:5px}.table-allocation-list b{color:#1d3150;font-size:15px}.table-allocation-list span{color:#6a7d95;font-size:12px;font-weight:700}.table-allocation-list button{padding:8px 11px;border-radius:8px;color:#a82b3b;background:#fff0f1;font-size:11px;font-weight:900}.table-allocation-list .operations-empty{grid-column:1/-1;margin:0;padding:32px;border:1px dashed #cbd9e7;border-radius:12px;color:#718299;background:#fbfdff;text-align:center}.printer-assignment:has(.table-allocation-form)>h3{display:flex;align-items:center;gap:9px;font-size:26px}.printer-assignment:has(.table-allocation-form)>p{max-width:780px}@media(max-width:820px){.table-allocation-form{grid-template-columns:1fr 1fr}.table-allocation-form label:first-child{grid-column:1/-1}.table-allocation-form button{grid-column:1/-1;width:100%}}@media(max-width:520px){.table-allocation-form{grid-template-columns:1fr}.table-allocation-form label:first-child,.table-allocation-form button{grid-column:auto}.table-allocation-list{grid-template-columns:1fr}}`;
 document.head.appendChild(tableAllocationStyles);
@@ -490,9 +497,10 @@ function renderOrder(order) {
 }
 
 async function setStatus(id, status) {
-  await fetch(`/api/orders/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) });
+  const response = await fetch(`/api/orders/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) });
+  if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body.error || 'Unable to update the order status.'); }
   await loadOrders();
-  if (!operationsPanel?.hidden && operationsTab === 'kots') await loadOperations();
+  if (!operationsPanel?.hidden && ['kots','kitchen-display'].includes(operationsTab)) await loadOperations();
 }
 
 function openModifyOrder(id) {
@@ -652,15 +660,48 @@ function renderTableAllocation() {
   const areas = Array.isArray(operationsConfig.tableAreas) ? operationsConfig.tableAreas : [];
   content.innerHTML = `<section class="printer-assignment"><button type="button" class="assignment-back" data-operations-tab="home">‹ Back</button><h3>▦ Table allocation</h3><p>Create each restaurant area, then give it an inclusive table-number range. Example: A/C tables 1–28 and Non-A/C tables 1–9. The same table number can exist in different areas.</p><div class="table-allocation-form"><label>Area name<input id="table-area-name" maxlength="60" placeholder="e.g. Garden seating"></label><label>From table<input id="table-area-from" type="number" min="1" max="9999" inputmode="numeric" placeholder="1"></label><label>To table<input id="table-area-to" type="number" min="1" max="9999" inputmode="numeric" placeholder="20"></label><button type="button" class="operations-save" data-add-table-area>Add area</button></div><div class="table-allocation-list">${areas.map((area)=>`<article><div><b>${esc(area.name)}</b><span>Tables ${esc(area.from)} to ${esc(area.to)} · ${Number(area.to)-Number(area.from)+1} tables</span></div><button type="button" data-remove-table-area="${esc(area.id)}">Remove</button></article>`).join('') || '<p class="operations-empty">No table areas configured yet.</p>'}</div><div class="assignment-actions"><button type="button" class="operations-save" data-save-table-allocation>Save table allocation</button></div></section>`;
 }
+function renderKitchenDisplay() {
+  const content = document.getElementById('operations-content');
+  if (!content) return;
+  const active = [...orderRecords.values()].filter((order) => ['accepted','preparing','ready'].includes(order.status));
+  const tickets = [];
+  active.forEach((order) => (Array.isArray(order.items) ? order.items : []).forEach((item) => {
+    const stations = routePrinters(item);
+    stations.forEach((printer) => {
+      const key = `${order.id}::${printer.id}`;
+      let ticket = tickets.find((entry) => entry.key === key);
+      if (!ticket) { ticket = { key, order, printer, items: [] }; tickets.push(ticket); }
+      ticket.items.push(item);
+    });
+  }));
+  tickets.sort((a, b) => new Date(a.order.created_at) - new Date(b.order.created_at));
+  const stations = [...new Map(tickets.map((ticket) => [ticket.printer.id, ticket.printer])).values()];
+  const selectedStations = selectedKdsStations();
+  const visibleTickets = selectedStations.size ? tickets.filter((ticket) => selectedStations.has(ticket.printer.id)) : tickets;
+  const renderTicket = (ticket) => {
+    const history = Array.isArray(operationKotHistory.get(ticket.order.id)) ? operationKotHistory.get(ticket.order.id) : [];
+    const kot = history.find((entry) => Array.isArray(entry.tickets) && entry.tickets.some((saved) => saved.printerLabel === ticket.printer.name)) || history[0];
+    const started = new Date(kot?.created_at || ticket.order.created_at).getTime();
+    const minutes = Math.max(0, Math.floor((Date.now() - started) / 60000));
+    const elapsed = minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+    const isTable = ticket.order.mode === 'table';
+    const tableText = isTable ? `${ticket.order.table_area || ''} ${String(ticket.order.table_number || '').padStart(2, '0')}`.trim() : fulfillmentLabel(ticket.order);
+    const stationStatus = kitchenStationStatuses.get(`${ticket.order.id}::${ticket.printer.id}`) || 'accepted';
+    const action = stationStatus === 'accepted' ? ['preparing','Start preparation'] : stationStatus === 'preparing' ? ['ready','Mark food ready'] : ['', 'Food is ready'];
+    return `<article class="kds-ticket" data-kds-status="${esc(stationStatus)}"><div class="kds-ticket-top"><div><span>KOT no.</span><b>${kot?.kot_number ? `#${esc(kot.kot_number)}` : 'Pending print'}</b></div><div class="kds-table-badge ${isTable ? '' : 'is-counter'}"><small>${isTable ? 'Table no.' : 'Order type'}</small><b>${esc(tableText || '—')}</b></div><div><span>Order</span><b>#${esc(String(ticket.order.daily_order_number || '').padStart(2,'0'))}</b></div></div><div class="kds-meta"><span>${esc(ticket.order.customer_name || 'Walk-in customer')}</span><b>◷ ${elapsed}</b></div><div class="kds-station">${esc(ticket.printer.name)} · ${esc(fulfillmentLabel(ticket.order))}</div><div class="kds-items">${ticket.items.map((item) => `<div><span><b>${Number(item.quantity || 0)}×</b> ${esc(item.name)}${item.portion ? ` · ${esc(item.portion)}` : ''}</span></div>`).join('')}</div>${ticket.order.special_request ? `<p class="kds-note">Note: ${esc(ticket.order.special_request)}</p>` : ''}${action[0] ? `<button type="button" class="kds-action ${action[0] === 'ready' ? 'is-ready' : ''}" data-kds-status-action="${esc(action[0])}" data-kds-order="${esc(ticket.order.id)}" data-kds-printer="${esc(ticket.printer.id)}">${action[1]}</button>` : `<button type="button" class="kds-action is-ready" disabled>${action[1]}</button>`}</article>`;
+  };
+  content.innerHTML = `<section class="kds"><div class="kds-head"><div><button type="button" class="assignment-back" data-operations-tab="home">‹ Back</button><h3>Kitchen display</h3><p>Choose which KOT-routed stations this screen should show. Printed KOTs continue as normal.</p><div class="kds-station-picker"><button type="button" class="${selectedStations.size?'':'is-active'}" data-kds-station="all">All stations</button>${stations.map((station)=>`<button type="button" class="${selectedStations.has(station.id)?'is-active':''}" data-kds-station="${esc(station.id)}">${esc(station.name)}</button>`).join('') || '<span>Configure a KOT route to add a kitchen station.</span>'}</div><div class="kds-legend"><span>Blue · accepted</span><span>Amber · preparing</span><span>Green · ready</span><span>Auto-refreshes every 3 seconds</span></div></div><button type="button" class="kds-fullscreen" data-kds-fullscreen>⛶ Full screen</button></div><div class="kds-grid">${visibleTickets.map(renderTicket).join('') || '<div class="kds-empty"><b>No active kitchen tickets for this screen</b><br>Choose another station above, or accept an order routed to this station.</div>'}</div></section>`;
+}
 function renderOperations() {
   const content = document.getElementById('operations-content');
   if (!content) return;
   if (operationsTab === 'home') {
     const activeOrders = [...orderRecords.values()].filter((order) => !['completed','rejected','cancelled'].includes(order.status));
-    content.innerHTML = `<section class="operations-home"><div class="operations-home-title"><span class="eyebrow">Operations</span><h3>Orders &amp; printing</h3><p>Open a workspace to manage the restaurant’s live order flow.</p></div><div class="operations-home-grid"><button type="button" class="operations-home-card" data-operations-tab="kots"><span class="operations-home-icon" aria-hidden="true">⌑</span><span><b>KOTs</b><small>${activeOrders.length} active order${activeOrders.length===1?'':'s'} · View and print kitchen tickets</small></span><i aria-hidden="true">›</i></button><button type="button" class="operations-home-card" data-operations-tab="printers"><span class="operations-home-icon" aria-hidden="true">▣</span><span><b>Manage printers</b><small>${operationsConfig.printers.length} printer${operationsConfig.printers.length===1?'':'s'} · Add, assign and manage bills or KOTs</small></span><i aria-hidden="true">›</i></button><button type="button" class="operations-home-card" data-operations-tab="tables"><span class="operations-home-icon" aria-hidden="true">▦</span><span><b>Table allocation</b><small>${(operationsConfig.tableAreas||[]).length} area${(operationsConfig.tableAreas||[]).length===1?'':'s'} · Name sections and assign table ranges</small></span><i aria-hidden="true">›</i></button></div></section>`;
+    content.innerHTML = `<section class="operations-home"><div class="operations-home-title"><span class="eyebrow">Operations</span><h3>Orders &amp; printing</h3><p>Open a workspace to manage the restaurant’s live order flow.</p></div><div class="operations-home-grid"><button type="button" class="operations-home-card" data-operations-tab="kots"><span class="operations-home-icon" aria-hidden="true">⌑</span><span><b>Printed KOTs</b><small>${activeOrders.length} active order${activeOrders.length===1?'':'s'} · View, reprint and keep ticket records</small></span><i aria-hidden="true">›</i></button><button type="button" class="operations-home-card" data-operations-tab="kitchen-display"><span class="operations-home-icon" aria-hidden="true">▤</span><span><b>Kitchen display</b><small>Live screen tickets · Start preparation and mark food ready</small></span><i aria-hidden="true">›</i></button><button type="button" class="operations-home-card" data-operations-tab="printers"><span class="operations-home-icon" aria-hidden="true">▣</span><span><b>Manage printers</b><small>${operationsConfig.printers.length} printer${operationsConfig.printers.length===1?'':'s'} · Add, assign and manage bills or KOTs</small></span><i aria-hidden="true">›</i></button><button type="button" class="operations-home-card" data-operations-tab="tables"><span class="operations-home-icon" aria-hidden="true">▦</span><span><b>Table allocation</b><small>${(operationsConfig.tableAreas||[]).length} area${(operationsConfig.tableAreas||[]).length===1?'':'s'} · Name sections and assign table ranges</small></span><i aria-hidden="true">›</i></button></div></section>`;
     return;
   }
   if (operationsTab === 'tables') { renderTableAllocation(); return; }
+  if (operationsTab === 'kitchen-display') { renderKitchenDisplay(); return; }
   if (operationsTab === 'kots') {
     const activeOrders = [...orderRecords.values()].filter((order) => !['completed','rejected','cancelled'].includes(order.status));
     const tickets = new Map();
@@ -747,6 +788,7 @@ async function loadOperations() {
   operationsConfig = data.config || { printers:[], routes:[] };
   operationsMenu = Array.isArray(data.menu) ? data.menu : [];
   const completedHistoryPromise = fetch('/api/orders/kot-history', { cache:'no-store' }).then(async (response) => response.ok ? response.json() : [] ).catch(() => []);
+  const stationStatusPromise = fetch('/api/orders/kitchen-statuses', { cache:'no-store' }).then(async (response) => response.ok ? response.json() : [] ).catch(() => []);
   const activeOrders = [...orderRecords.values()].filter((order) => !['completed','rejected','cancelled'].includes(order.status));
   const histories = await Promise.all(activeOrders.map(async (order) => {
     try {
@@ -756,6 +798,7 @@ async function loadOperations() {
   }));
   operationKotHistory = new Map(histories);
   completedKotHistory = (await completedHistoryPromise).filter((entry) => entry.status === 'completed');
+  kitchenStationStatuses = new Map((await stationStatusPromise).map((entry) => [`${entry.order_id}::${entry.printer_id}`, entry.status]));
   renderOperations();
 }
 async function discoverSystemPrinters() {
@@ -1110,6 +1153,33 @@ document.getElementById('operations-content')?.addEventListener('click', async (
     renderOperations();
     return;
   }
+  const kdsAction = event.target.closest('[data-kds-status-action]');
+  if (kdsAction) {
+    const nextStatus = kdsAction.dataset.kdsStatusAction;
+    const orderId = kdsAction.dataset.kdsOrder;
+    const printerId = kdsAction.dataset.kdsPrinter;
+    if (!orderId || !printerId || !['preparing','ready'].includes(nextStatus)) return;
+    kdsAction.disabled = true;
+    kdsAction.textContent = nextStatus === 'preparing' ? 'Starting…' : 'Marking ready…';
+    try { const response = await fetch(`/api/orders/${encodeURIComponent(orderId)}/kitchen-status/${encodeURIComponent(printerId)}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({status:nextStatus}) }); const body = await response.json().catch(() => ({})); if (!response.ok) throw new Error(body.error || 'Unable to update kitchen ticket.'); await loadOperations(); } catch (error) { kdsAction.disabled = false; alert(error.message); }
+    return;
+  }
+  if (event.target.closest('[data-kds-fullscreen]')) {
+    const display = event.target.closest('.kds');
+    try { if (!document.fullscreenElement) await display?.requestFullscreen?.(); else await document.exitFullscreen?.(); } catch (_) { alert('Full screen is not available in this browser.'); }
+    return;
+  }
+  const stationToggle = event.target.closest('[data-kds-station]');
+  if (stationToggle) {
+    const stationId = stationToggle.dataset.kdsStation || '';
+    const selected = selectedKdsStations();
+    if (stationId === 'all') selected.clear();
+    else if (selected.has(stationId)) selected.delete(stationId);
+    else selected.add(stationId);
+    saveKdsStations(selected);
+    renderKitchenDisplay();
+    return;
+  }
   if (event.target.closest('[data-add-table-area]')) { const name=String(document.getElementById('table-area-name')?.value||'').trim(); const fromInput=document.getElementById('table-area-from'); const toInput=document.getElementById('table-area-to'); const from=fromInput?.valueAsNumber; const to=toInput?.valueAsNumber; if(!name){alert('Enter an area name.');document.getElementById('table-area-name')?.focus();return;} if(!Number.isSafeInteger(from)||!Number.isSafeInteger(to)||from<1||to<from){alert('Enter whole table numbers. “To table” must be the same as or higher than “From table”.');fromInput?.focus();return;} operationsConfig.tableAreas=[...(operationsConfig.tableAreas||[]),{id:operationId(),name,from,to}]; renderTableAllocation(); return; }
   const removeTableArea=event.target.closest('[data-remove-table-area]');
   if (removeTableArea) { operationsConfig.tableAreas=(operationsConfig.tableAreas||[]).filter((area)=>area.id!==removeTableArea.dataset.removeTableArea); renderTableAllocation(); return; }
@@ -1241,4 +1311,5 @@ menuResults?.addEventListener('click', async (event) => {
 loadOrders();
 showTableView();
 setInterval(loadOrders, 3000);
+setInterval(() => { if (!operationsPanel.hidden && operationsTab === 'kitchen-display') loadOperations().catch(() => {}); }, 3000);
 setInterval(() => { if (!counterPanel.hidden) refreshCounterLiveStatus(); }, 1000);
