@@ -507,7 +507,8 @@ app.use(express.static(__dirname, {
   index: false,
   maxAge: '1h',
   setHeaders: (res, filePath) => {
-    if (/\/(?:orders|track-order)(?:\.html|\.js|\.css|-fixes\.css|-logo\.css|-sw\.js|\.webmanifest)$/i.test(filePath)) {
+    const publicPath = String(filePath).replace(/\\/g, '/');
+    if (/\/(?:orders|track-order)(?:\.html|\.js|\.css|-fixes\.css|-logo\.css|-sw\.js|\.webmanifest)$/i.test(publicPath)) {
       res.set('Cache-Control', 'no-store, max-age=0');
       return;
     }
@@ -585,6 +586,8 @@ async function ensureDirectOrdersTable() {
     await sql`CREATE TABLE IF NOT EXISTS direct_orders (id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'new', mode TEXT NOT NULL, customer_name TEXT, customer_phone TEXT NOT NULL, special_request TEXT, items JSONB NOT NULL, total NUMERIC NOT NULL DEFAULT 0, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;
     await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS order_day DATE`;
     await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS daily_order_number INTEGER`;
+    await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS bill_year INTEGER`;
+    await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS bill_number INTEGER`;
     await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS tracking_token TEXT`;
     await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS cancellation_reason TEXT`;
     await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ`;
@@ -598,11 +601,13 @@ async function ensureDirectOrdersTable() {
     await sql`UPDATE direct_orders SET order_day=(created_at AT TIME ZONE 'Asia/Kolkata')::date WHERE order_day IS NULL`;
     await sql`WITH numbered AS (SELECT id, ROW_NUMBER() OVER (PARTITION BY order_day ORDER BY created_at, id)::integer AS daily_number FROM direct_orders) UPDATE direct_orders AS orders SET daily_order_number=numbered.daily_number FROM numbered WHERE orders.id=numbered.id AND orders.daily_order_number IS NULL`;
     await sql`CREATE UNIQUE INDEX IF NOT EXISTS direct_orders_day_number_unique ON direct_orders (order_day, daily_order_number) WHERE daily_order_number IS NOT NULL`;
+    await sql`CREATE UNIQUE INDEX IF NOT EXISTS direct_orders_bill_year_number_unique ON direct_orders (bill_year, bill_number) WHERE bill_year IS NOT NULL AND bill_number IS NOT NULL`;
     await sql`CREATE UNIQUE INDEX IF NOT EXISTS direct_orders_tracking_token_unique ON direct_orders (tracking_token) WHERE tracking_token IS NOT NULL`;
     await sql`CREATE UNIQUE INDEX IF NOT EXISTS direct_orders_client_request_unique ON direct_orders (client_request_id) WHERE client_request_id IS NOT NULL`;
     await sql`CREATE INDEX IF NOT EXISTS direct_orders_day_created_index ON direct_orders (order_day, created_at DESC)`;
     await sql`CREATE INDEX IF NOT EXISTS direct_orders_phone_created_index ON direct_orders (customer_phone, created_at DESC)`;
     await sql`CREATE TABLE IF NOT EXISTS direct_order_counters (order_day DATE PRIMARY KEY, next_number INTEGER NOT NULL)`;
+    await sql`CREATE TABLE IF NOT EXISTS direct_order_bill_counters (bill_year INTEGER PRIMARY KEY, next_number INTEGER NOT NULL)`;
   })();
   return directOrdersTableReady;
 }
@@ -632,6 +637,12 @@ async function nextDailyOrderNumber() {
   const orderDay = kolkataOrderDay();
   const rows = await sql`INSERT INTO direct_order_counters (order_day, next_number) SELECT ${orderDay}::date, COALESCE(MAX(daily_order_number), 0) + 1 FROM direct_orders WHERE order_day=${orderDay}::date ON CONFLICT (order_day) DO UPDATE SET next_number=direct_order_counters.next_number + 1 RETURNING next_number`;
   return { orderDay, number: Number(rows[0].next_number) };
+}
+async function nextAnnualBillNumber() {
+  await ensureDirectOrdersTable();
+  const billYear = Number(kolkataOrderDay().slice(0, 4));
+  const rows = await sql`INSERT INTO direct_order_bill_counters (bill_year, next_number) SELECT ${billYear}, COALESCE(MAX(bill_number), 0) + 1 FROM direct_orders WHERE bill_year=${billYear} ON CONFLICT (bill_year) DO UPDATE SET next_number=direct_order_bill_counters.next_number + 1 RETURNING next_number`;
+  return { billYear, number: Number(rows[0].next_number) };
 }
 async function nextDailyKotNumber() {
   await ensureKotsTable();
@@ -2097,7 +2108,7 @@ app.post('/api/direct-orders', async (req, res) => {
     const trustedCustomerRows = await sql`SELECT EXISTS (SELECT 1 FROM direct_orders WHERE customer_phone=${phone} AND status='completed') AS is_trusted`;
     const isTrustedCustomer = trustedCustomerRows[0]?.is_trusted === true || trustedCustomerRows[0]?.is_trusted === 't';
     const initialStatus = isTrustedCustomer ? 'accepted' : 'new';
-    const { orderDay, number: dailyOrderNumber } = await nextDailyOrderNumber();
+    const [{ orderDay, number: dailyOrderNumber }, { billYear, number: billNumber }] = await Promise.all([nextDailyOrderNumber(), nextAnnualBillNumber()]);
     const id = `RL${Date.now().toString(36).toUpperCase()}${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
     const trackingToken = crypto.randomBytes(24).toString('base64url');
     const subtotal = cleanItems.reduce((sum, item) => sum + item.quantity * (priceNumber(item.price) + (item.style ? 10 : 0)), 0);
@@ -2107,9 +2118,9 @@ app.post('/api/direct-orders', async (req, res) => {
     const savedItems = cleanItems.map(({ availabilityKey, ...item }) => item);
     if (requestedLoyaltyPoints) {
       await ensureLoyaltyTable();
-      const inserted = await sql`WITH redeemed AS (UPDATE loyalty_accounts SET points=points-${requestedLoyaltyPoints}, total_redeemed=total_redeemed+${requestedLoyaltyPoints}, updated_at=NOW() WHERE customer_phone=${phone} AND points >= ${requestedLoyaltyPoints} AND points >= 100 RETURNING customer_phone) INSERT INTO direct_orders (id, status, mode, customer_name, customer_phone, special_request, items, total, order_day, daily_order_number, tracking_token, loyalty_points_redeemed, loyalty_points_earned) SELECT ${id}, ${initialStatus}, ${mode}, ${String(customerName || '').trim().slice(0, 80)}, ${phone}, ${String(specialRequest || '').trim().slice(0, 240)}, ${JSON.stringify(savedItems)}, ${total}, ${orderDay}::date, ${dailyOrderNumber}, ${trackingToken}, ${requestedLoyaltyPoints}, ${loyaltyPointsEarned} FROM redeemed RETURNING id`;
+      const inserted = await sql`WITH redeemed AS (UPDATE loyalty_accounts SET points=points-${requestedLoyaltyPoints}, total_redeemed=total_redeemed+${requestedLoyaltyPoints}, updated_at=NOW() WHERE customer_phone=${phone} AND points >= ${requestedLoyaltyPoints} AND points >= 100 RETURNING customer_phone) INSERT INTO direct_orders (id, status, mode, customer_name, customer_phone, special_request, items, total, order_day, daily_order_number, bill_year, bill_number, tracking_token, loyalty_points_redeemed, loyalty_points_earned) SELECT ${id}, ${initialStatus}, ${mode}, ${String(customerName || '').trim().slice(0, 80)}, ${phone}, ${String(specialRequest || '').trim().slice(0, 240)}, ${JSON.stringify(savedItems)}, ${total}, ${orderDay}::date, ${dailyOrderNumber}, ${billYear}, ${billNumber}, ${trackingToken}, ${requestedLoyaltyPoints}, ${loyaltyPointsEarned} FROM redeemed RETURNING id`;
       if (!inserted.length) return res.status(409).json({ error: 'Your points balance changed. Please check your points and try again.' });
-    } else await sql`INSERT INTO direct_orders (id, status, mode, customer_name, customer_phone, special_request, items, total, order_day, daily_order_number, tracking_token, loyalty_points_redeemed, loyalty_points_earned) VALUES (${id}, ${initialStatus}, ${mode}, ${String(customerName || '').trim().slice(0, 80)}, ${phone}, ${String(specialRequest || '').trim().slice(0, 240)}, ${JSON.stringify(savedItems)}, ${total}, ${orderDay}::date, ${dailyOrderNumber}, ${trackingToken}, 0, ${loyaltyPointsEarned})`;
+    } else await sql`INSERT INTO direct_orders (id, status, mode, customer_name, customer_phone, special_request, items, total, order_day, daily_order_number, bill_year, bill_number, tracking_token, loyalty_points_redeemed, loyalty_points_earned) VALUES (${id}, ${initialStatus}, ${mode}, ${String(customerName || '').trim().slice(0, 80)}, ${phone}, ${String(specialRequest || '').trim().slice(0, 240)}, ${JSON.stringify(savedItems)}, ${total}, ${orderDay}::date, ${dailyOrderNumber}, ${billYear}, ${billNumber}, ${trackingToken}, 0, ${loyaltyPointsEarned})`;
     await sql`UPDATE direct_orders SET fulfillment_type=${fulfilment} WHERE id=${id}`;
     // The order is already safely stored. Push delivery must never delay or block it.
     void notifyDirectOrder({ id, dailyOrderNumber, total, itemCount: savedItems.reduce((count, item) => count + Number(item.quantity || 0), 0) });
@@ -2143,7 +2154,7 @@ app.post('/api/orders/counter', async (req, res) => {
     }
     const unavailable=new Set((await sql`SELECT item_key FROM menu_availability WHERE unavailable_until > NOW()`).map((row)=>row.item_key));
     if (clean.some((item)=>unavailable.has(item.availabilityKey))) return res.status(409).json({ error:'One or more selected items are out of stock.' });
-    const { orderDay, number }=await nextDailyOrderNumber(); const id=`RL${Date.now().toString(36).toUpperCase()}${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
+    const [{ orderDay, number }, { billYear, number: billNumber }]=await Promise.all([nextDailyOrderNumber(),nextAnnualBillNumber()]); const id=`RL${Date.now().toString(36).toUpperCase()}${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
     const saved=clean.map(({availabilityKey,...item})=>item), subtotal=saved.reduce((sum,item)=>sum+item.quantity*(priceNumber(item.price)+(item.style?10:0)),0);
     const suppliedPhone=String(customerPhone||'').replace(/\D/g,'').slice(0,16);
     const requestedLoyaltyPoints=Math.max(0,Math.floor(Number(loyaltyPoints)||0));
@@ -2154,9 +2165,9 @@ app.post('/api/orders/counter', async (req, res) => {
     const phone=suppliedPhone||`walkin-${id}`, total=subtotal-requestedLoyaltyPoints, earned=Math.floor(total/10), trackingToken=crypto.randomBytes(24).toString('base64url');
     if (requestedLoyaltyPoints) {
       await ensureLoyaltyTable();
-      const inserted=await sql`WITH redeemed AS (UPDATE loyalty_accounts SET points=points-${requestedLoyaltyPoints},total_redeemed=total_redeemed+${requestedLoyaltyPoints},updated_at=NOW() WHERE customer_phone=${phone} AND points>=${requestedLoyaltyPoints} AND points>=100 RETURNING customer_phone) INSERT INTO direct_orders (id,status,mode,customer_name,customer_phone,special_request,items,total,order_day,daily_order_number,tracking_token,loyalty_points_redeemed,loyalty_points_earned,fulfillment_type,client_request_id,table_area,table_number) SELECT ${id},'accepted',${orderMode},${String(customerName||'Walk-in customer').trim().slice(0,80)},${phone},${String(specialRequest||'').trim().slice(0,240)},${JSON.stringify(saved)},${total},${orderDay}::date,${number},${trackingToken},${requestedLoyaltyPoints},${earned},${fulfillment},${clientRequestId||null},${isDineIn?dineInArea:null},${isDineIn?dineInNumber:null} FROM redeemed RETURNING id`;
+      const inserted=await sql`WITH redeemed AS (UPDATE loyalty_accounts SET points=points-${requestedLoyaltyPoints},total_redeemed=total_redeemed+${requestedLoyaltyPoints},updated_at=NOW() WHERE customer_phone=${phone} AND points>=${requestedLoyaltyPoints} AND points>=100 RETURNING customer_phone) INSERT INTO direct_orders (id,status,mode,customer_name,customer_phone,special_request,items,total,order_day,daily_order_number,bill_year,bill_number,tracking_token,loyalty_points_redeemed,loyalty_points_earned,fulfillment_type,client_request_id,table_area,table_number) SELECT ${id},'accepted',${orderMode},${String(customerName||'Walk-in customer').trim().slice(0,80)},${phone},${String(specialRequest||'').trim().slice(0,240)},${JSON.stringify(saved)},${total},${orderDay}::date,${number},${billYear},${billNumber},${trackingToken},${requestedLoyaltyPoints},${earned},${fulfillment},${clientRequestId||null},${isDineIn?dineInArea:null},${isDineIn?dineInNumber:null} FROM redeemed RETURNING id`;
       if (!inserted.length) return res.status(409).json({ error:'Wallet points changed. Check the customer balance and try again.' });
-    } else await sql`INSERT INTO direct_orders (id,status,mode,customer_name,customer_phone,special_request,items,total,order_day,daily_order_number,tracking_token,loyalty_points_redeemed,loyalty_points_earned,fulfillment_type,client_request_id,table_area,table_number) VALUES (${id},'accepted',${orderMode},${String(customerName||'Walk-in customer').trim().slice(0,80)},${phone},${String(specialRequest||'').trim().slice(0,240)},${JSON.stringify(saved)},${total},${orderDay}::date,${number},${trackingToken},0,${earned},${fulfillment},${clientRequestId||null},${isDineIn?dineInArea:null},${isDineIn?dineInNumber:null})`;
+    } else await sql`INSERT INTO direct_orders (id,status,mode,customer_name,customer_phone,special_request,items,total,order_day,daily_order_number,bill_year,bill_number,tracking_token,loyalty_points_redeemed,loyalty_points_earned,fulfillment_type,client_request_id,table_area,table_number) VALUES (${id},'accepted',${orderMode},${String(customerName||'Walk-in customer').trim().slice(0,80)},${phone},${String(specialRequest||'').trim().slice(0,240)},${JSON.stringify(saved)},${total},${orderDay}::date,${number},${billYear},${billNumber},${trackingToken},0,${earned},${fulfillment},${clientRequestId||null},${isDineIn?dineInArea:null},${isDineIn?dineInNumber:null})`;
     void notifyDirectOrder({ id, dailyOrderNumber:number, total, itemCount:saved.reduce((count,item)=>count+Number(item.quantity||0),0) });
     res.status(201).json({ id, status:'accepted', autoAccepted:true, orderNumber:String(number).padStart(2,'0'), total });
   } catch (error) { res.status(500).json({ error:'Unable to save the counter order.' }); }
@@ -2274,7 +2285,7 @@ app.put('/api/orders/operations', async (req, res) => { try {
   await ensureOperationsConfigTable();
   const source=req.body?.config || {};
   const printers=(Array.isArray(source.printers)?source.printers:[]).slice(0,250).map((printer)=>{
-    const port=Number.parseInt(printer.port,10);
+    const port=Number.parseInt(printer.port,10), layout=(value,min,max,fallback)=>Math.max(min,Math.min(max,Number(value)||fallback));
     return {
       id:String(printer.id||crypto.randomUUID()).replace(/[^a-zA-Z0-9_-]/g,'').slice(0,60),
       name:String(printer.name||'').trim().slice(0,60),
@@ -2297,7 +2308,10 @@ app.put('/api/orders/operations', async (req, res) => { try {
       fontSize:Math.max(8,Math.min(13,Number(printer.fontSize)||10)),
       headerFontSize:Math.max(12,Math.min(18,Number(printer.headerFontSize)||15)),
       headerBold:printer.headerBold!==false,
-      footerBold:!!printer.footerBold
+      footerBold:!!printer.footerBold,
+      billingMainWidth:layout(printer.billingMainWidth,160,400,250), billingOuterTop:layout(printer.billingOuterTop,0,40,0), billingOuterRight:layout(printer.billingOuterRight,0,40,0), billingOuterBottom:layout(printer.billingOuterBottom,0,40,0), billingOuterLeft:layout(printer.billingOuterLeft,0,40,10),
+      billingItemBoxHeight:layout(printer.billingItemBoxHeight,0,40,0), restaurantNameFontSize:layout(printer.restaurantNameFontSize,8,24,14), headerFooterFontSize:layout(printer.headerFooterFontSize,8,20,13), dateBillFontSize:layout(printer.dateBillFontSize,8,20,13), itemListingFontSize:layout(printer.itemListingFontSize,8,20,13), grandTotalFontSize:layout(printer.grandTotalFontSize,10,26,14),
+      serialColumnWidth:layout(printer.serialColumnWidth,0,40,10), quantityColumnWidth:layout(printer.quantityColumnWidth,8,60,20), priceColumnWidth:layout(printer.priceColumnWidth,15,100,40), amountColumnWidth:layout(printer.amountColumnWidth,15,120,55), itemRowGap:layout(printer.itemRowGap,0,20,5), separatorGap:layout(printer.separatorGap,0,20,5), itemsPerPage:layout(printer.itemsPerPage,0,80,0)
     };
   }).filter((printer)=>printer.id&&printer.name);
   if (new Set(printers.map((printer)=>printer.id)).size !== printers.length) return res.status(400).json({ error:'Each configured printer must have a unique saved ID.' });

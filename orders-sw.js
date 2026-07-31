@@ -1,4 +1,4 @@
-const CACHE = 'red-lantern-orders-v11';
+const CACHE = 'red-lantern-orders-v12';
 const ORDER_SHELL = ['/orders', '/orders.js?v=20', '/orders.css?v=7', '/orders-logo.css?v=7', '/orders-fixes.css?v=10', '/orders.webmanifest?v=7', '/images/red-lantern-logo-600.webp'];
 // These keep every read-only Orders screen usable after a refresh without internet.
 const OFFLINE_DATA = ['/api/orders', '/api/orders/live-summary', '/api/orders/menu', '/api/orders/availability', '/api/orders/operations'];
@@ -14,7 +14,9 @@ self.addEventListener('fetch', (event) => {
   event.respondWith((async () => {
     try {
       const network = await fetch(request);
-      if (network.ok || !isOrdersShell) {
+      // Authentication failures are valid online responses. Do not replace the
+      // browser's Basic Auth prompt with an offline fallback screen.
+      if (network.ok || network.status === 401 || network.status === 403 || !isOrdersShell) {
         await cacheResponse(request, network);
         // Search/history URLs change on every view; retain a current-order fallback too.
         if (url.pathname === '/api/orders' && network.ok) (await caches.open(CACHE)).put('/api/orders', network.clone());

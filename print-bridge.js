@@ -94,6 +94,13 @@ async function printText(printerName, text, settings = {}) {
       const quote = (value) => String(value).replace(/'/g, "''");
       const paperWidth = Number(settings.paperWidth) === 58 ? 58 : 80;
       const fontFamily = ['Arial','Calibri','Verdana','Tahoma','Trebuchet MS','Georgia','Times New Roman','Courier New','Consolas','Lucida Console'].includes(String(settings.fontFamily)) ? String(settings.fontFamily).replace(/'/g, "''") : 'Arial';
+      const bodyFontSize = Math.max(8, Math.min(13, Number(settings.fontSize) || 10));
+      const headerFontSize = Math.max(12, Math.min(18, Number(settings.headerFontSize) || 15));
+      const headerStyle = settings.headerBold === false ? 'Regular' : 'Bold';
+      const footerStyle = settings.footerBold ? 'Bold' : 'Regular';
+      const layout = (value, min, max, fallback) => Math.max(min, Math.min(max, Number(value) || fallback));
+      const mainWidth = layout(settings.billingMainWidth, 160, 400, 250), leftMargin = layout(settings.billingOuterLeft, 0, 40, 10), rightMargin = layout(settings.billingOuterRight, 0, 40, 0), topMargin = layout(settings.billingOuterTop, 0, 40, 0), bottomMargin = layout(settings.billingOuterBottom, 0, 40, 0);
+      const restaurantFontSize = layout(settings.restaurantNameFontSize, 8, 24, 14), headerFooterFontSize = layout(settings.headerFooterFontSize, 8, 20, 13), dateBillFontSize = layout(settings.dateBillFontSize, 8, 20, 13), itemFontSize = layout(settings.itemListingFontSize, 8, 20, 13), totalFontSize = layout(settings.grandTotalFontSize, 10, 26, 14), itemGap = layout(settings.itemRowGap, 0, 20, 5), separatorGap = layout(settings.separatorGap, 0, 20, 5), itemMinHeight = layout(settings.billingItemBoxHeight, 0, 40, 0);
       const script = `Add-Type -AssemblyName System.Drawing
 $lines = Get-Content -LiteralPath '${quote(file)}' -Encoding UTF8
 $doc = New-Object System.Drawing.Printing.PrintDocument
@@ -105,31 +112,63 @@ $minWidth = if (${paperWidth} -eq 58) { 220 } else { 300 }
 $maxWidth = if (${paperWidth} -eq 58) { 240 } else { 320 }
 $thermalPaper = @($doc.PrinterSettings.PaperSizes | Where-Object { $_.Width -ge $minWidth -and $_.Width -le $maxWidth } | Select-Object -First 1)
 if ($thermalPaper.Count) { $doc.DefaultPageSettings.PaperSize = $thermalPaper[0] }
-$doc.DefaultPageSettings.Margins = New-Object System.Drawing.Printing.Margins(4, 4, 2, 2)
+$doc.DefaultPageSettings.Margins = New-Object System.Drawing.Printing.Margins(${leftMargin}, ${rightMargin}, ${topMargin}, ${bottomMargin})
 $doc.PrintController = New-Object System.Drawing.Printing.StandardPrintController
 $doc.add_PrintPage({ param($sender, $event)
-  $g = $event.Graphics; $width = $event.MarginBounds.Width; $y = $event.MarginBounds.Top
+  $g = $event.Graphics; $width = [Math]::Min($event.MarginBounds.Width, ${mainWidth}); $y = $event.MarginBounds.Top
+  $bodySize = ${bodyFontSize}
   foreach ($line in $lines) {
-    $displayLine = $line; $style = [System.Drawing.FontStyle]::Regular; $size = 9; $alignment = [System.Drawing.StringAlignment]::Center
-    if ($line.StartsWith('__KOT_PRINTER__')) { $displayLine = $line.Substring(15); $style = [System.Drawing.FontStyle]::Bold; $size = ${Math.max(12, Math.min(18, Number(settings.headerFontSize) || 15))} }
-    elseif ($line.StartsWith('__TITLE__')) { $displayLine = $line.Substring(9); $style = [System.Drawing.FontStyle]::Bold; $size = ${Math.max(12, Math.min(18, Number(settings.headerFontSize) || 15))} }
-    elseif ($line.StartsWith('__SUBTITLE__')) { $displayLine = $line.Substring(12); $size = 8 }
+    $displayLine = $line; $style = [System.Drawing.FontStyle]::Regular; $size = $bodySize; $alignment = [System.Drawing.StringAlignment]::Center
+    if ($line.StartsWith('__ITEMHEAD__') -or $line.StartsWith('__ITEM__')) {
+      $cells = $line.Substring($(if ($line.StartsWith('__ITEMHEAD__')) { 12 } else { 8 })).Split('|')
+      $isHead = $line.StartsWith('__ITEMHEAD__')
+      $style = if ($isHead) { [System.Drawing.FontStyle]::Bold } else { [System.Drawing.FontStyle]::Regular }
+      $size = $bodySize
+      $font = New-Object System.Drawing.Font('${fontFamily}', $size, $style)
+      $labelWidth = [Math]::Floor($width * 0.53); $qtyWidth = [Math]::Floor($width * 0.12); $priceWidth = [Math]::Floor($width * 0.17); $amountWidth = $width - $labelWidth - $qtyWidth - $priceWidth
+      $left = $event.MarginBounds.Left
+      $near = New-Object System.Drawing.StringFormat; $near.Alignment = [System.Drawing.StringAlignment]::Near
+      $right = New-Object System.Drawing.StringFormat; $right.Alignment = [System.Drawing.StringAlignment]::Far
+      $label = if ($cells.Count -gt 0) { $cells[0] } else { '' }
+      $labelHeight = $g.MeasureString($label, $font, $labelWidth, $near).Height
+      $rowHeight = [Math]::Max($labelHeight, $g.MeasureString('Ag', $font).Height)
+      $g.DrawString($label, $font, [System.Drawing.Brushes]::Black, (New-Object System.Drawing.RectangleF($left, $y, $labelWidth, $rowHeight + 4)), $near)
+      $g.DrawString($(if ($cells.Count -gt 1) { $cells[1] } else { '' }), $font, [System.Drawing.Brushes]::Black, (New-Object System.Drawing.RectangleF($left + $labelWidth, $y, $qtyWidth, $rowHeight + 4)), $right)
+      $g.DrawString($(if ($cells.Count -gt 2) { $cells[2] } else { '' }), $font, [System.Drawing.Brushes]::Black, (New-Object System.Drawing.RectangleF($left + $labelWidth + $qtyWidth, $y, $priceWidth, $rowHeight + 4)), $right)
+      $g.DrawString($(if ($cells.Count -gt 3) { $cells[3] } else { '' }), $font, [System.Drawing.Brushes]::Black, (New-Object System.Drawing.RectangleF($left + $labelWidth + $qtyWidth + $priceWidth, $y, $amountWidth, $rowHeight + 4)), $right)
+      $y += [Math]::Ceiling($rowHeight) + $(if ($isHead) { 5 } else { 4 }); $font.Dispose(); $near.Dispose(); $right.Dispose(); continue
+    }
+    if ($line.StartsWith('__SUMMARY__') -or $line.StartsWith('__TOTAL__')) {
+      $cells = $line.Substring($(if ($line.StartsWith('__SUMMARY__')) { 11 } else { 9 })).Split('|')
+      $isTotal = $line.StartsWith('__TOTAL__'); $style = if ($isTotal) { [System.Drawing.FontStyle]::Bold } else { [System.Drawing.FontStyle]::Regular }; $size = if ($isTotal) { [Math]::Max(13, $bodySize + 3) } else { $bodySize }
+      $font = New-Object System.Drawing.Font('${fontFamily}', $size, $style); $left = $event.MarginBounds.Left
+      $near = New-Object System.Drawing.StringFormat; $near.Alignment = [System.Drawing.StringAlignment]::Near; $right = New-Object System.Drawing.StringFormat; $right.Alignment = [System.Drawing.StringAlignment]::Far
+      $height = $g.MeasureString('Ag', $font).Height
+      $g.DrawString($(if ($cells.Count) { $cells[0] } else { '' }), $font, [System.Drawing.Brushes]::Black, (New-Object System.Drawing.RectangleF($left, $y, $width * .65, $height + 4)), $near)
+      $g.DrawString($(if ($cells.Count -gt 1) { $cells[1] } else { '' }), $font, [System.Drawing.Brushes]::Black, (New-Object System.Drawing.RectangleF($left + ($width * .65), $y, $width * .35, $height + 4)), $right)
+      $y += [Math]::Ceiling($height) + $(if ($isTotal) { 6 } else { 3 }); $font.Dispose(); $near.Dispose(); $right.Dispose(); continue
+    }
+    if ($line.StartsWith('__KOT_PRINTER__')) { $displayLine = $line.Substring(15); $style = [System.Drawing.FontStyle]::${headerStyle}; $size = ${headerFooterFontSize} }
+    elseif ($line.StartsWith('__TITLE__')) { $displayLine = $line.Substring(9); $style = [System.Drawing.FontStyle]::${headerStyle}; $size = ${restaurantFontSize} }
+    elseif ($line.StartsWith('__SUBTITLE__')) { $displayLine = $line.Substring(12); $size = ${headerFooterFontSize} }
+    elseif ($line.StartsWith('__FOOTER__')) { $displayLine = $line.Substring(10); $style = [System.Drawing.FontStyle]::${footerStyle}; $size = ${headerFooterFontSize} }
+    elseif ($line.StartsWith('__DATEBILL__')) { $displayLine = $line.Substring(12); $alignment = [System.Drawing.StringAlignment]::Near; $size = ${dateBillFontSize} }
+    elseif ($line.StartsWith('__SEPARATOR__')) { $displayLine = $line.Substring(13); $alignment = [System.Drawing.StringAlignment]::Near; $size = ${itemFontSize} }
     elseif ($line.StartsWith('__CENTER__')) { $displayLine = $line.Substring(10) }
     elseif ($line.StartsWith('__LEFT__')) { $displayLine = $line.Substring(8); $alignment = [System.Drawing.StringAlignment]::Near }
-    elseif ($line.StartsWith('__LABEL__')) { $displayLine = $line.Substring(9); $alignment = [System.Drawing.StringAlignment]::Near; $style = [System.Drawing.FontStyle]::Bold }
-    elseif ($line.StartsWith('__TABLE__')) { $displayLine = $line.Substring(9); $alignment = [System.Drawing.StringAlignment]::Near; $size = ${Math.max(8, Math.min(13, Number(settings.fontSize) || 10))} }
-    elseif ($line.StartsWith('__TABLEHEAD__')) { $displayLine = $line.Substring(13); $alignment = [System.Drawing.StringAlignment]::Near; $style = [System.Drawing.FontStyle]::Bold; $size = ${Math.max(8, Math.min(13, Number(settings.fontSize) || 10))} }
-    elseif ($line.StartsWith('__TOTAL__')) { $displayLine = $line.Substring(9); $alignment = [System.Drawing.StringAlignment]::Near; $style = [System.Drawing.FontStyle]::Bold; $size = 13 }
+    elseif ($line.StartsWith('__LABEL__')) { $displayLine = $line.Substring(9); $alignment = [System.Drawing.StringAlignment]::Near; $style = [System.Drawing.FontStyle]::Bold; $size = ${dateBillFontSize} }
+    elseif ($line.StartsWith('__TABLE__')) { $displayLine = $line.Substring(9); $alignment = [System.Drawing.StringAlignment]::Near; $size = ${itemFontSize} }
+    elseif ($line.StartsWith('__TABLEHEAD__')) { $displayLine = $line.Substring(13); $alignment = [System.Drawing.StringAlignment]::Near; $style = [System.Drawing.FontStyle]::Bold; $size = ${totalFontSize} }
     elseif ($line -match '^(KOT|Order) #') { $style = [System.Drawing.FontStyle]::Bold; $size = 15 }
     elseif ($line -match '^\\d+x ') { $style = [System.Drawing.FontStyle]::Bold; $size = 11 }
-    if ($line.StartsWith('__SUBTITLE__') -or $line.StartsWith('__CENTER__')) { $size = ${Math.max(8, Math.min(13, Number(settings.fontSize) || 10))} }
+    if ($line.StartsWith('__SUBTITLE__') -or $line.StartsWith('__CENTER__')) { $size = $bodySize }
     $font = New-Object System.Drawing.Font('${fontFamily}', $size, $style)
     $format = New-Object System.Drawing.StringFormat; $format.Alignment = $alignment
     if ($line -match '^\\d+x ') { $format.Alignment = [System.Drawing.StringAlignment]::Near }
     $bounds = New-Object System.Drawing.RectangleF($event.MarginBounds.Left, $y, $width, 200)
     $height = $g.MeasureString($displayLine, $font, $width, $format).Height
     $g.DrawString($displayLine, $font, [System.Drawing.Brushes]::Black, $bounds, $format)
-    $y += [Math]::Ceiling($height) + 3; $font.Dispose(); $format.Dispose()
+    $extra = if ($line.StartsWith('__TABLE__')) { ${itemGap} } elseif ($line.StartsWith('__SEPARATOR__')) { ${separatorGap} } else { 3 }; $y += [Math]::Max([Math]::Ceiling($height), ${itemMinHeight}) + $extra; $font.Dispose(); $format.Dispose()
   }
 })
 $doc.Print()`;
@@ -151,23 +190,34 @@ function kotText(payload) {
   return [settings.receiptHeader || '', `__KOT_PRINTER__${String(payload.printerLabel || payload.printerName || 'Kitchen').trim()}`, order.reprint ? '*** REPRINT ***' : '', line, `KOT #${order.kotNumber || '—'}`, `Order #${order.number || order.id || '—'}`, settings.showCustomer !== false ? guestLine : '', line, ...rows, order.note && settings.showNotes !== false ? `${line}\nNote: ${order.note}` : '', line, settings.receiptFooter || '', '\n\n\n'].filter(Boolean).join('\n');
 }
 function billText(payload) {
-  const order = payload.order || {}, settings = payload.settings || {}, items = Array.isArray(order.items) ? order.items : [], line = '-'.repeat(34);
+  const order = payload.order || {}, settings = payload.settings || {}, items = Array.isArray(order.items) ? order.items : [], line = `__SEPARATOR__${'-'.repeat(34)}`;
   const money = (value) => `₹${Math.round(Number(value) || 0)}`;
+  const amount = (value) => (Number(value) || 0).toFixed(2);
   const itemPrice = (item) => Number(String(item.price || '').replace(/[^0-9.]/g, '')) + (item.style ? 10 : 0);
   const subtotal = items.reduce((sum, item) => sum + itemPrice(item) * Number(item.quantity || 0), 0);
   const total = Number(order.total) > 0 ? Number(order.total) : subtotal;
   const walletDiscount = Math.max(0, Math.floor(Number(order.loyalty_points_redeemed || 0)));
-  const type = order.mode === 'counter' || order.fulfillment_type === 'takeaway' ? 'TAKEAWAY ORDER' : order.fulfillment_type === 'delivery' ? 'DELIVERY ORDER' : order.mode === 'table' ? 'DINE IN ORDER' : 'QR ORDER';
-  const itemRows = items.flatMap((item) => {
+  const serialChars = settings.showItemSerial ? Math.max(2, Math.round((Number(settings.serialColumnWidth) || 10) / 5)) : 0;
+  const quantityChars = Math.max(3, Math.round((Number(settings.quantityColumnWidth) || 20) / 7));
+  const priceChars = Math.max(6, Math.round((Number(settings.priceColumnWidth) || 40) / 7));
+  const amountChars = Math.max(7, Math.round((Number(settings.amountColumnWidth) || 55) / 7));
+  const itemChars = Math.max(8, 34 - serialChars - quantityChars - priceChars - amountChars - 3);
+  const itemRows = items.flatMap((item, index) => {
     const label = `${item.name || 'Item'}${item.portion ? ` (${item.portion})` : ''}${item.style ? ` · ${item.style}` : ''}`;
     const quantity = Number(item.quantity || 0), unit = itemPrice(item), amount = quantity * unit;
-    return [`__TABLE__${settings.showItemSerial ? `${items.indexOf(item)+1}. ` : ''}${label}`, `__TABLE__${''.padEnd(20)}${String(quantity).padStart(3)} ${money(unit).padStart(5)} ${money(amount).padStart(6)}`];
+    const serial = settings.showItemSerial ? String(index + 1).padStart(serialChars - 1) + '.' : '';
+    const name = label;
+    const first = name.slice(0, itemChars).padEnd(itemChars);
+    const remaining = name.slice(itemChars);
+    const row = `__TABLE__${serial}${first} ${String(quantity).padStart(quantityChars)} ${(Number(unit) || 0).toFixed(2).padStart(priceChars)} ${(Number(amount) || 0).toFixed(2).padStart(amountChars)}`;
+    return remaining ? [row, `__TABLE__${remaining}`] : [row];
   });
   const token = String(order.daily_order_number || '—').padStart(2, '0');
   const phone = String(order.customer_phone || '').startsWith('walkin-') ? '—' : (order.customer_phone || '—');
-  const placed = order.created_at ? new Intl.DateTimeFormat('en-IN', { timeZone:'Asia/Kolkata', day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit', hour12:true }).format(new Date(order.created_at)) : new Date().toLocaleString('en-IN');
+  const placed = order.created_at ? new Intl.DateTimeFormat('en-IN', { timeZone:'Asia/Kolkata', day:'2-digit', month:'2-digit', year:'2-digit', hour:'2-digit', minute:'2-digit', hour12:false }).format(new Date(order.created_at)) : new Date().toLocaleString('en-IN');
   const quantity = items.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
-  return [settings.showRestaurantName === false ? '' : `__TITLE__${settings.restaurantName || 'RED LANTERN RESTAURANT'}`, settings.receiptHeader ? `__SUBTITLE__${settings.receiptHeader}` : '__SUBTITLE__DIRECT ORDER RECEIPT', line, `__CENTER__ORDER #${token}  ·  ${type}`, line, '__LABEL__Wallet Points: ' + Number(order.loyalty_points || 0), '__LABEL__Name: ' + (order.customer_name || 'Not provided'), '__LABEL__Mobile: ' + phone, '__LABEL__Token No: ' + token, '__LABEL__Placed: ' + placed, order.special_request ? '__LABEL__Note: ' + order.special_request : '', line, '__TABLEHEAD__Item                 Qty Price Amount', ...itemRows, line, `__LEFT__Total Qty: ${quantity}                         Items: ${items.length}`, `__LEFT__Subtotal                              ${money(subtotal)}`, walletDiscount ? `__LEFT__Wallet points discount              -${money(walletDiscount)}` : '', `__TOTAL__GRAND TOTAL                         ${money(total)}`, line, `__CENTER__${settings.receiptFooter || 'Thank you for ordering with us!'}`, '\n\n\n'].filter(Boolean).join('\n');
+  const billNumber = order.bill_number ? String(order.bill_number).padStart(2, '0') : '—';
+  return [settings.showRestaurantName === false ? '' : `__TITLE__${settings.restaurantName || 'RED LANTERN RESTAURANT'}`, settings.receiptHeader ? `__SUBTITLE__${settings.receiptHeader}` : '', `__DATEBILL__Date: ${placed}`, `__DATEBILL__Token No: ${token}    Bill No: ${billNumber}`, line, '__TABLEHEAD__Item             Qty  Price  Amount', ...itemRows, line, `__TABLE__Total Qty: ${quantity}       Sub Total  ${amount(subtotal)}`, walletDiscount ? `__TABLE__Points discount              -${amount(walletDiscount)}` : '', `__TABLEHEAD__Grand Total                 ${money(total)}`, line, `__FOOTER__${settings.receiptFooter || 'Thank you for ordering with us!'}`, '\n\n\n'].filter(Boolean).join('\n');
 }
 
 function allowedOrigin(request) {
