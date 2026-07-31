@@ -42,6 +42,7 @@ let counterChoiceItem = null;
 let counterLoyaltyPoints = 0;
 let counterLoyaltyTimer = null;
 let counterTable = null;
+let counterBillSplit = null;
 const offlineCounterOrdersKey = 'red-lantern-counter-orders';
 let counterSyncInProgress = false;
 const ordersDiagnosticRecent = new Map();
@@ -164,10 +165,23 @@ counterPanel.id = 'counter-order-panel';
 counterPanel.hidden = true;
 counterPanel.innerHTML = '<div class="counter-order-head"><div><span class="eyebrow">Counter order</span><h2>Takeaway</h2><p>Build a walk-in or phone order, then send it directly to the kitchen.</p></div><button type="button" id="counter-order-close" class="quiet-button">Close</button></div><div class="counter-order-layout"><div class="counter-menu"><label class="counter-search"><span aria-hidden="true">⌕</span><input id="counter-menu-search" type="search" placeholder="Search menu items"></label><div id="counter-categories" class="counter-categories"></div><div id="counter-menu-items" class="counter-menu-items"></div></div><aside class="counter-cart"><div class="counter-cart-head"><h3>Current order</h3><button type="button" id="counter-clear" class="counter-clear">Clear</button></div><div id="counter-cart-items" class="counter-cart-items"></div><div class="counter-customer"><label>Customer name <input id="counter-customer-name" maxlength="80" placeholder="Walk-in customer"></label><label>Mobile number <input id="counter-customer-phone" inputmode="tel" maxlength="16" placeholder="Optional for walk-ins"></label><label>Kitchen note <textarea id="counter-special-request" maxlength="240" placeholder="e.g. less spicy"></textarea></label></div><div class="counter-total"><span>Total</span><b id="counter-total">₹0</b></div><button type="button" id="counter-place-order" class="counter-place-order">Place takeaway order</button><p id="counter-order-status" class="counter-order-status" aria-live="polite"></p></aside></div><dialog id="counter-choice-dialog" class="counter-choice-dialog"><button type="button" class="dialog-close" data-counter-choice-close aria-label="Close">×</button><div id="counter-choice-content"></div></dialog>';
 availability.before(counterPanel);
+const dineInActions = document.createElement('div');
+dineInActions.id = 'dine-in-actions';
+dineInActions.hidden = true;
+dineInActions.innerHTML = '<button type="button" class="dine-in-split" data-dine-action="split">Split</button><button type="button" data-dine-action="save">Save</button><button type="button" data-dine-action="print">Print &amp; eBill</button><button type="button" class="dine-in-kot" data-dine-action="kot-print">Send KOT</button><button type="button" class="dine-in-hold" data-dine-action="hold">Hold</button>';
+counterPanel.querySelector('.counter-cart')?.append(dineInActions);
+const splitBillDialog = document.createElement('dialog');
+splitBillDialog.id = 'split-bill-dialog';
+splitBillDialog.innerHTML = '<button type="button" class="split-close" aria-label="Close">×</button><h2>Split bill</h2><p>Choose how this table bill should be divided when it is printed. The kitchen still receives one KOT.</p><div class="split-tabs"><button type="button" data-split-mode="equal">Portion / percentage</button><button type="button" data-split-mode="group">Group wise</button><button type="button" data-split-mode="item">Item wise</button></div><div id="split-bill-content"></div><div class="split-actions"><button type="button" class="split-cancel">Cancel</button><button type="button" class="split-save">Save split</button></div>';
+document.body.appendChild(splitBillDialog);
 const tableViewPanel = document.createElement('section');
 tableViewPanel.id = 'table-view-panel';
 tableViewPanel.innerHTML = '<div class="table-view-head"><div><span class="eyebrow">Dine-in</span><h2>Table view</h2><p>Select an available table to start a dine-in order.</p></div></div><div id="table-view-content" class="table-view-content"><div class="table-view-empty">Loading allocated tables…</div></div>';
 availability.before(tableViewPanel);
+const moveTableDialog = document.createElement('dialog');
+moveTableDialog.id = 'move-table-dialog';
+moveTableDialog.innerHTML = '<button type="button" class="move-table-close" aria-label="Close">×</button><h2>Move table</h2><p id="move-table-copy"></p><label>Move to<select id="move-table-target"></select></label><p id="move-table-status" aria-live="polite"></p><div><button type="button" class="move-table-cancel">Cancel</button><button type="button" class="move-table-confirm">Move table</button></div>';
+document.body.appendChild(moveTableDialog);
 const counterWallet = document.createElement('div');
 counterWallet.id = 'counter-wallet';
 counterWallet.hidden = true;
@@ -283,6 +297,8 @@ async function openCounterOrder(table = null) {
   if (title) title.textContent = isDineIn ? `${table.area} · Table ${String(table.number).padStart(2, '0')}` : 'Takeaway';
   if (subtitle) subtitle.textContent = isDineIn ? 'Build a dine-in order, then send its KOT directly to the kitchen.' : 'Build a walk-in or phone order, then send it directly to the kitchen.';
   if (placeButton) placeButton.textContent = isDineIn ? `Place order · Table ${String(table.number).padStart(2, '0')}` : 'Place takeaway order';
+  if (dineInActions) dineInActions.hidden = !isDineIn;
+  if (placeButton) placeButton.hidden = isDineIn;
   const opening = counterPanel.hidden;
   if (!opening) { counterPanel.hidden = true; return; }
   closeOpenPanels('counter');
@@ -290,6 +306,29 @@ async function openCounterOrder(table = null) {
   document.getElementById('counter-menu-items').innerHTML = '<p class="counter-empty">Loading menu…</p>';
   try { await Promise.all([loadAvailability(), refreshCounterLiveStatus()]); counterMenu = menuItems.filter((item) => !unavailable.has(item.key)); renderCounterOrder(); counterPanel.scrollIntoView({ behavior:'smooth', block:'start' }); } catch (error) { document.getElementById('counter-menu-items').innerHTML = `<p class="counter-empty">${esc(error.message)}</p>`; if (navigator.onLine) reportOrdersDiagnostic({ message:`Counter menu could not load: ${error.message}`, source:'counter menu' }); }
 }
+const splitBillStyles = document.createElement('style');
+splitBillStyles.textContent = `#split-bill-dialog{width:min(880px,calc(100vw - 28px));max-height:calc(100vh - 28px);padding:26px;border:0;border-radius:16px;color:#263b57;box-shadow:0 24px 70px rgba(20,32,52,.28)}#split-bill-dialog::backdrop{background:rgba(19,32,52,.45)}#split-bill-dialog h2{margin:0;font-size:23px}#split-bill-dialog>p{margin:7px 34px 20px 0;color:#697b91;font-size:13px;line-height:1.45}.split-close{position:absolute;top:14px;right:16px;width:34px;height:34px;border-radius:50%;color:#7c2533;background:#fff0f1;font-size:22px}.split-tabs{display:grid;grid-template-columns:repeat(3,1fr);border-bottom:1px solid #dbe5ef}.split-tabs button{padding:13px 8px;color:#51657d;background:#fff;font-weight:900}.split-tabs button.is-active{color:#9d2434;border-bottom:3px solid #c92a36;background:#fff2f3}.split-panel{padding:19px 0;min-height:255px}.split-counts{display:flex;flex-wrap:wrap;gap:8px;margin:15px 0}.split-counts button,.split-part-add{min-width:42px;padding:9px;border:1px solid #d8e1ec;border-radius:8px;color:#334b68;background:#fff;font-weight:900}.split-counts button.is-active,.split-part-add{color:#fff;background:#c92a36;border-color:#c92a36}.split-summary{padding:15px;border-radius:10px;color:#6d5120;background:#fff7df;font-size:14px}.split-group-list,.split-item-list{display:grid;gap:9px;margin-top:14px}.split-group-row,.split-item-row{display:flex;align-items:center;justify-content:space-between;gap:15px;padding:12px;border:1px solid #dfe7ef;border-radius:9px}.split-group-row small,.split-item-row small{display:block;margin-top:3px;color:#72839a}.split-item-row select{min-width:92px;padding:8px;border:1px solid #cbd8e5;border-radius:7px;background:#fff}.split-actions{display:flex;justify-content:flex-end;gap:10px;padding-top:17px;border-top:1px solid #e2e8ef}.split-actions button{padding:11px 16px;border-radius:8px;font-weight:900}.split-save{color:#fff;background:#c92a36}.split-cancel{color:#42566f;background:#f2f6fa}@media(max-width:600px){#split-bill-dialog{padding:20px}.split-tabs{grid-template-columns:1fr}.split-tabs button{border-bottom:1px solid #dbe5ef}.split-group-row,.split-item-row{align-items:flex-start;flex-direction:column}.split-item-row select{width:100%}}`;
+document.head.appendChild(splitBillStyles);
+const moveTableStyles = document.createElement('style');
+moveTableStyles.textContent = `#move-table-dialog{width:min(440px,calc(100vw - 28px));padding:25px;border:0;border-radius:16px;color:#263b57;box-shadow:0 24px 70px rgba(20,32,52,.28)}#move-table-dialog::backdrop{background:rgba(19,32,52,.45)}#move-table-dialog h2{margin:0 0 7px}#move-table-dialog p{color:#68798f;font-size:13px;line-height:1.45}#move-table-dialog label{display:grid;gap:7px;margin:19px 0;color:#53677f;font-size:11px;font-weight:900;text-transform:uppercase}#move-table-target{padding:11px;border:1px solid #cfdbe8;border-radius:8px;color:#253b59;background:#fff;font:700 13px Manrope,sans-serif}#move-table-dialog>div:last-child{display:flex;justify-content:flex-end;gap:9px;margin-top:20px}#move-table-dialog button{padding:10px 14px;border-radius:8px;font-weight:900}.move-table-close{position:absolute;top:13px;right:15px;width:34px;height:34px;padding:0!important;border-radius:50%!important;color:#7c2533;background:#fff0f1;font-size:22px}.move-table-confirm{color:#fff;background:#c92a36}.move-table-cancel{color:#42566f;background:#f2f6fa}`;
+document.head.appendChild(moveTableStyles);
+let splitMode = 'equal', splitPartCount = 2, splitItemAssignments = [], splitPercentages = [50,50];
+function counterItemTotal(item) { return (Number(item.price) + (item.style ? 10 : 0)) * Number(item.quantity || 0); }
+function splitParts(count) { return Array.from({ length:count }, (_, index) => ({ label:`Part ${index + 1}`, items:[] })); }
+function renderSplitBill() {
+  const content = document.getElementById('split-bill-content'); if (!content) return;
+  const total = counterCart.reduce((sum, item) => sum + counterItemTotal(item), 0);
+  const counts = [2,3,4,5,6,7,8];
+  if (splitMode === 'equal') content.innerHTML = `<div class="split-panel"><b>How many portions do you want to divide this bill into?</b><div class="split-counts">${counts.map((count)=>`<button type="button" data-split-count="${count}" class="${count===splitPartCount?'is-active':''}">${count}</button>`).join('')}<input id="split-custom-count" type="number" min="2" max="20" value="${splitPartCount}" aria-label="Custom number of portions"></div><div class="split-group-list">${splitPercentages.map((percentage,index)=>`<label class="split-group-row"><span><b>Part ${index+1}</b><small>${counterMoney(total * percentage / 100)}</small></span><span><input type="number" min="0.01" max="100" step="0.01" value="${percentage}" data-split-percentage="${index}"> %</span></label>`).join('')}</div><div class="split-summary">The percentages must total <b>100%</b>. Use equal shares or adjust each part.</div></div>`;
+  else if (splitMode === 'group') { const groups=[...new Map(counterCart.map((item)=>[item.category || 'Other', []])).entries()]; counterCart.forEach((item)=>groups.find(([category])=>category===(item.category||'Other'))[1].push(item)); content.innerHTML=`<div class="split-panel"><b>Group items by menu category</b><p>Each category below will print as its own bill.</p><div class="split-group-list">${groups.map(([category,items])=>`<div class="split-group-row"><span><b>${esc(category)}</b><small>${items.map((item)=>`${item.quantity}× ${esc(item.name)}`).join(', ')}</small></span><b>${counterMoney(items.reduce((sum,item)=>sum+counterItemTotal(item),0))}</b></div>`).join('')}</div></div>`; }
+  else { const options=splitParts(splitPartCount).map((part,index)=>`<option value="${index}">${part.label}</option>`).join(''); content.innerHTML=`<div class="split-panel"><div><b>Assign each item to a bill</b><div class="split-counts">${counts.slice(0,5).map((count)=>`<button type="button" data-split-count="${count}" class="${count===splitPartCount?'is-active':''}">${count} bills</button>`).join('')}</div></div><div class="split-item-list">${counterCart.map((item,index)=>`<label class="split-item-row"><span><b>${Number(item.quantity)}× ${esc(item.name)}</b><small>${esc(item.category || 'Other')}${item.portion?` · ${esc(item.portion)}`:''} · ${counterMoney(counterItemTotal(item))}</small></span><select data-split-item="${index}">${options.replace(`value="${splitItemAssignments[index] || 0}"`, `value="${splitItemAssignments[index] || 0}" selected`)}</select></label>`).join('')}</div></div>`; }
+  splitBillDialog.querySelectorAll('[data-split-mode]').forEach((button) => button.classList.toggle('is-active', button.dataset.splitMode === splitMode));
+}
+function openSplitBill() { if (!counterCart.length) { document.getElementById('counter-order-status').textContent='Add menu items before splitting a bill.'; return; } splitMode=counterBillSplit?.mode || 'equal'; splitPartCount=Math.max(2, counterBillSplit?.parts?.length || 2); splitPercentages=counterBillSplit?.mode==='equal'?counterBillSplit.parts.map((part)=>Number(part.percentage)||100/splitPartCount):Array.from({length:splitPartCount},()=>100/splitPartCount); splitItemAssignments=counterCart.map((_, index)=>index % splitPartCount); renderSplitBill(); splitBillDialog.showModal(); }
+function saveSplitBill() { let parts; if (splitMode === 'equal') { const percentageTotal=splitPercentages.reduce((sum,value)=>sum+Number(value||0),0); if (Math.abs(percentageTotal-100)>.01) { alert(`Percentages must total 100% (currently ${percentageTotal.toFixed(2)}%).`); return; } parts=splitParts(splitPartCount).map((part,index)=>({...part,percentage:Number(splitPercentages[index])})); } else if (splitMode === 'group') parts=[...new Map(counterCart.map((item)=>[item.category || 'Other', []])).entries()].map(([label])=>({label,items:counterCart.filter((item)=>(item.category||'Other')===label).map((item)=>({...item}))})); else { parts=splitParts(splitPartCount); counterCart.forEach((item,index)=>parts[Math.min(splitPartCount-1,Number(splitItemAssignments[index])||0)].items.push({...item})); if (parts.some((part)=>!part.items.length)) { alert('Assign at least one item to every bill, or reduce the number of bills.'); return; } } counterBillSplit={mode:splitMode,parts}; splitBillDialog.close(); document.getElementById('counter-order-status').textContent=`Split saved: ${parts.length} bill${parts.length===1?'':'s'} will print separately.`; }
+splitBillDialog.addEventListener('click', (event) => { const mode=event.target.closest('[data-split-mode]')?.dataset.splitMode; if(mode){splitMode=mode;renderSplitBill();return;} const count=event.target.closest('[data-split-count]')?.dataset.splitCount; if(count){splitPartCount=Number(count);splitPercentages=Array.from({length:splitPartCount},()=>100/splitPartCount);splitItemAssignments=counterCart.map((_,index)=>index%splitPartCount);renderSplitBill();return;} if(event.target.matches('[data-split-item]')){splitItemAssignments[Number(event.target.dataset.splitItem)]=Number(event.target.value);return;} if(event.target.closest('.split-save')){saveSplitBill();return;} if(event.target.closest('.split-cancel,.split-close'))splitBillDialog.close(); });
+splitBillDialog.addEventListener('input', (event) => { if(event.target.id==='split-custom-count'){ splitPartCount=Math.max(2,Math.min(20,Number(event.target.value)||2)); splitPercentages=Array.from({length:splitPartCount},()=>100/splitPartCount); renderSplitBill(); } if(event.target.matches('[data-split-percentage]')) splitPercentages[Number(event.target.dataset.splitPercentage)]=Number(event.target.value)||0; });
+splitBillDialog.addEventListener('change', (event) => { if(event.target.matches('[data-split-item]')) splitItemAssignments[Number(event.target.dataset.splitItem)]=Number(event.target.value); });
 function renderTableView() {
   const content = document.getElementById('table-view-content');
   if (!content) return;
@@ -299,14 +338,47 @@ function renderTableView() {
     return;
   }
   const legend = [['blank', 'Blank table'], ['running', 'Running table'], ['printed', 'KOT printed'], ['paid', 'Paid table'], ['kot', 'Running KOT']];
-  content.innerHTML = `<div class="table-view-legend" aria-label="Table status legend">${legend.map(([state, label]) => `<span><i class="is-${state}"></i>${label}</span>`).join('')}</div>${areas.map((area) => { const tables = Array.from({ length: Number(area.to) - Number(area.from) + 1 }, (_, index) => Number(area.from) + index); return `<section class="table-area"><div class="table-area-head"><h3>${esc(area.name)}</h3><span>${tables.length} table${tables.length === 1 ? '' : 's'}</span></div><div class="table-grid">${tables.map((number) => `<button type="button" class="table-tile is-blank" data-dine-table-area="${esc(area.name)}" data-dine-table-number="${number}"><span>Table</span><b>${String(number).padStart(2, '0')}</b><small>Available</small></button>`).join('')}</div></section>`; }).join('')}`;
+  const tableOrders = [...orderRecords.values()].filter((order) => order.mode === 'table' && order.table_area && order.table_number);
+  const tableState = (area, number) => {
+    const order = tableOrders.filter((item) => String(item.table_area) === String(area) && Number(item.table_number) === Number(number)).sort((a,b) => new Date(b.created_at) - new Date(a.created_at))[0];
+    if (!order) return { state:'blank', label:'Available', order:null };
+    if (order.status === 'completed') return { state:'paid', label:'Paid · available', order };
+    if (['saved','held'].includes(order.status)) return { state:'running', label:order.status === 'held' ? 'On hold' : 'Bill saved', order };
+    if (['accepted','preparing','ready'].includes(order.status)) {
+      const kots = operationKotHistory.get(order.id);
+      return Array.isArray(kots) && kots.length ? { state:'printed', label:'KOT printed', order } : { state:'kot', label:'Sending KOT', order };
+    }
+    return { state:'running', label:String(order.status || 'Running'), order };
+  };
+  content.innerHTML = `<div class="table-view-legend" aria-label="Table status legend">${legend.map(([state, label]) => `<span><i class="is-${state}"></i>${label}</span>`).join('')}</div>${areas.map((area) => { const tables = Array.from({ length: Number(area.to) - Number(area.from) + 1 }, (_, index) => Number(area.from) + index); return `<section class="table-area"><div class="table-area-head"><h3>${esc(area.name)}</h3><span>${tables.length} table${tables.length === 1 ? '' : 's'}</span></div><div class="table-grid">${tables.map((number) => { const table=tableState(area.name,number), active=table.state !== 'blank' && table.state !== 'paid'; return `<button type="button" class="table-tile is-${table.state}" data-dine-table-area="${esc(area.name)}" data-dine-table-number="${number}"${active?` data-move-table-order="${esc(table.order.id)}"`:''} title="${esc(active?'Move this table':table.label)}"><span>Table</span><b>${String(number).padStart(2, '0')}</b><small>${esc(active?'Move table':table.label)}</small></button>`; }).join('')}</div></section>`; }).join('')}`;
+  const storedBills = [...orderRecords.values()].filter((order) => order.mode === 'table' && ['saved','held'].includes(order.status));
+  if (storedBills.length) content.insertAdjacentHTML('beforeend', `<section class="saved-bills"><div><span class="eyebrow">Dine-in workspace</span><h3>Saved bills</h3><p>Saved bills have not printed. Held bills remain open for later service.</p></div><div class="saved-bills-list">${storedBills.map((order) => `<button type="button" class="saved-bill-open" data-open-saved-table="${esc(order.table_area || 'Dining')}" data-open-saved-number="${esc(order.table_number)}"><span class="saved-bill-status is-${esc(order.status)}">${esc(order.status)}</span><span><b>${esc(order.table_area || 'Dining')} · Table ${esc(String(order.table_number || '').padStart(2, '0'))}</b><small>Bill #${esc(String(order.bill_number || order.daily_order_number || '').padStart(2, '0'))} · ${counterMoney(order.total)}</small></span><span class="saved-bill-note">Open bill</span></button>`).join('')}</div></section>`);
 }
 async function showTableView() {
   tableViewPanel.hidden = false;
   document.getElementById('table-view-content').innerHTML = '<div class="table-view-empty">Loading allocated tables…</div>';
-  try { await loadOperations(); renderTableView(); }
+  try { await loadOrders(); await loadOperations(); renderTableView(); }
   catch (error) { document.getElementById('table-view-content').innerHTML = `<div class="table-view-empty">${esc(error.message)}</div>`; }
 }
+function openMoveTable(orderId) {
+  const order=orderRecords.get(orderId); if (!order) return;
+  const occupied=new Set([...orderRecords.values()].filter((item)=>item.id!==orderId&&item.mode==='table'&&['saved','held','accepted','preparing','ready'].includes(item.status)).map((item)=>`${item.table_area}::${item.table_number}`));
+  const targets=(operationsConfig.tableAreas||[]).flatMap((area)=>Array.from({length:Number(area.to)-Number(area.from)+1},(_,index)=>({area:area.name,number:Number(area.from)+index}))).filter((table)=>!occupied.has(`${table.area}::${table.number}`)&&!(table.area===order.table_area&&table.number===Number(order.table_number)));
+  if (!targets.length) { alert('No available tables are configured.'); return; }
+  moveTableDialog.dataset.orderId=orderId;
+  document.getElementById('move-table-copy').textContent=`Move ${order.table_area} · Table ${String(order.table_number).padStart(2,'0')}. The order and its KOT history will move without reprinting.`;
+  document.getElementById('move-table-target').innerHTML=targets.map((table)=>`<option value="${esc(table.area)}::${table.number}">${esc(table.area)} · Table ${String(table.number).padStart(2,'0')}</option>`).join('');
+  document.getElementById('move-table-status').textContent=''; moveTableDialog.showModal();
+}
+moveTableDialog.addEventListener('click', async (event) => {
+  if (event.target.closest('.move-table-close,.move-table-cancel')) { moveTableDialog.close(); return; }
+  if (!event.target.closest('.move-table-confirm')) return;
+  const button=event.target.closest('.move-table-confirm'), [tableArea,tableNumber]=String(document.getElementById('move-table-target').value||'').split('::');
+  button.disabled=true; document.getElementById('move-table-status').textContent='Moving table…';
+  try { const response=await fetch(`/api/orders/${encodeURIComponent(moveTableDialog.dataset.orderId)}/table`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({tableArea,tableNumber:Number(tableNumber)})}); const data=await response.json().catch(()=>({})); if(!response.ok) throw new Error(data.error||'Unable to move the table.'); moveTableDialog.close(); await showTableView(); }
+  catch(error){document.getElementById('move-table-status').textContent=error.message||'Unable to move the table.';}
+  finally{button.disabled=false;}
+});
 if (installButton) installButton.innerHTML = `${actionIcon('install')}<span>Install shortcut</span>`;
 if (availabilityButton) availabilityButton.innerHTML = `${actionIcon('cutlery')}<span>Menu availability</span>`;
 if (alertsButton) alertsButton.innerHTML = `${actionIcon('bell')}<span>Enable alerts</span>`;
@@ -382,6 +454,7 @@ printerActionStyles.textContent = `.printer-card-actions{display:flex;align-item
 document.head.appendChild(printerActionStyles);
 const printerEditStyles = document.createElement('style');
 printerEditStyles.textContent = `.printer-edit{max-width:1100px}.printer-edit>p{max-width:720px}.printer-edit-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:24px 0}.printer-typography-fields{display:contents}.printer-layout-heading{grid-column:1/-1;margin:14px 0 -3px;padding:12px 14px;border-left:4px solid #b52936;border-radius:7px;background:#fff6f6;color:#7d1e35;font-size:12px;font-weight:900;letter-spacing:.04em;text-transform:uppercase}.printer-edit-grid label{display:grid;gap:7px;color:#4d5f78;font-size:11px;font-weight:900;letter-spacing:.06em;text-transform:uppercase}.printer-edit-grid label small{color:#77879c;font-size:10px;font-weight:700;letter-spacing:0;line-height:1.35;text-transform:none}.printer-edit-grid input:not([type=checkbox]),.printer-edit-grid select,.printer-edit-grid textarea{box-sizing:border-box;width:100%;min-height:44px;padding:10px 12px;border:1px solid #d2ddeb;border-radius:9px;color:#243650;background:#fff;font:700 13px Manrope,sans-serif}.printer-edit-grid textarea{min-height:88px;resize:vertical;line-height:1.45}.printer-edit-grid input:focus,.printer-edit-grid select:focus,.printer-edit-grid textarea:focus{outline:0;border-color:#2d66ad;box-shadow:0 0 0 3px rgba(45,102,173,.12)}.printer-edit-grid .printer-edit-check{display:flex;align-items:center;gap:9px;min-height:44px;padding:12px;border:1px solid #e0e7ef;border-radius:9px;color:#33445f;background:#fafcff;font-size:12px;letter-spacing:0;text-transform:none}.printer-edit-check input{width:18px;height:18px;margin:0;accent-color:#168451}.printer-edit .assignment-actions{margin-top:22px;padding-top:18px;border-top:1px solid #e3eaf2}@media(max-width:760px){.printer-edit-grid{grid-template-columns:1fr;gap:12px}.printer-edit .assignment-actions{flex-direction:column-reverse}.printer-edit .assignment-actions button{width:100%}}`;
+printerEditStyles.textContent += `.printer-typography-fields{display:grid;grid-column:1/-1;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.printer-typography-fields>.printer-format-intro,.printer-typography-fields>.printer-format-group:last-child{grid-column:1/-1}.printer-format-fields{align-items:start}.printer-format-fields>label{display:flex;flex-direction:column;gap:7px;min-height:128px}.printer-format-fields>label>small{min-height:28px;order:3}.printer-format-fields>label>input,.printer-format-fields>label>select{order:2}@media(max-width:760px){.printer-typography-fields{grid-template-columns:1fr}.printer-typography-fields>.printer-format-group:last-child{grid-column:auto}.printer-format-fields>label{min-height:0}}`;
 document.head.appendChild(printerEditStyles);
 document.addEventListener('click', (event) => {
   if (!event.target.closest('[data-save-printer-edit]')) return;
@@ -463,7 +536,8 @@ async function loadOrders() {
       hasRenderedOrders = true;
     }
     root.classList.remove('is-stale');
-    if (orderView === 'current') rows.filter((order) => new Date(order.created_at).getTime() >= ordersConsoleStartedAt - 15 * 60 * 1000).forEach(autoPrintOrder);
+    if (orderView === 'current') rows.filter((order) => order.mode !== 'table' && new Date(order.created_at).getTime() >= ordersConsoleStartedAt - 15 * 60 * 1000).forEach(autoPrintOrder);
+    if (!tableViewPanel.hidden) renderTableView();
     const clearButton = document.getElementById('clear-order-search');
     const searchStatus = document.getElementById('order-search-status');
     if (clearButton) clearButton.hidden = !query;
@@ -516,7 +590,23 @@ function openModifyOrder(id) {
   dialog.querySelector('.modify-save').addEventListener('click', async () => { const button = dialog.querySelector('.modify-save'); button.disabled = true; try { const quantities = [...dialog.querySelectorAll('[data-modify-quantity]')].map((input) => Number(input.value || 0)); const response = await fetch(`/api/orders/${encodeURIComponent(id)}/items`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ quantities }) }); const body = await response.json(); if (!response.ok) throw new Error(body.error || 'Unable to modify this order.'); dialog.close(); loadOrders(); } catch (error) { button.disabled = false; window.alert(error.message); } });
 }
 
-async function printOrder(id) {
+function splitReceiptParts(receipt, split) {
+  if (!split?.parts?.length) return [receipt];
+  const priceOf = (item) => Number(String(item.price || 0).replace(/[^0-9.]/g, '')) + (item.style ? 10 : 0);
+  const total = Math.max(0, Number(receipt.total) || (receipt.items || []).reduce((sum, item) => sum + priceOf(item) * Number(item.quantity || 0), 0));
+  const percentageShares = split.mode === 'equal';
+  let remaining = Math.round(total * 100);
+  return split.parts.map((part, index) => {
+    const items = percentageShares ? [] : (part.items || []).map((item) => ({ ...item }));
+    const itemTotal = items.reduce((sum, item) => sum + priceOf(item) * Number(item.quantity || 0), 0);
+    const cents = percentageShares ? (index === split.parts.length - 1 ? remaining : Math.round(total * 100 * Number(part.percentage || 0) / 100)) : Math.round(itemTotal * 100);
+    remaining -= cents;
+    const partTotal = cents / 100;
+    return { ...receipt, items: percentageShares ? [{ name:`Bill share — ${part.label}`, quantity:1, price:partTotal }] : items, total:partTotal, loyalty_points_redeemed:0, special_request:[receipt.special_request, `Split bill: ${part.label}`].filter(Boolean).join(' · ') };
+  }).filter((part) => Number(part.total) > 0);
+}
+
+async function printOrder(id, split = null) {
   try {
     const bridgeResponse = await fetch('http://127.0.0.1:9124/v1/printers', { cache:'no-store' });
     if (!bridgeResponse.ok) throw new Error('Print Bridge is not available on this computer.');
@@ -528,11 +618,16 @@ async function printOrder(id) {
     const receiptResponse = await fetch(`/api/orders/${encodeURIComponent(id)}/print`, { cache:'no-store' });
     const receipt = await receiptResponse.json();
     if (!receiptResponse.ok) throw new Error(receipt.error || 'Unable to prepare the receipt.');
-    const printed = await fetch('http://127.0.0.1:9124/v1/print-bill', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ printerName:billPrinter.deviceName, order:receipt, settings:billPrinter }) });
-    if (!printed.ok) throw new Error((await printed.json().catch(() => ({}))).error || 'Bill printer did not accept the job.');
+    const receipts = splitReceiptParts(receipt, split);
+    if (!receipts.length) throw new Error('Assign at least one item to every split bill.');
+    for (const part of receipts) {
+      const printed = await fetch('http://127.0.0.1:9124/v1/print-bill', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ printerName:billPrinter.deviceName, order:part, settings:billPrinter }) });
+      if (!printed.ok) throw new Error((await printed.json().catch(() => ({}))).error || 'Bill printer did not accept the job.');
+    }
     return;
   } catch (error) {
     reportOrdersDiagnostic({ level:'warning', message:`Direct bill reprint failed: ${error.message}`, source:'manual bill printing' });
+    if (split) throw error;
   }
   const popup = window.open('', 'red-lantern-receipt', 'popup=yes,width=420,height=720');
   if (!popup) { alert('Please allow pop-ups to print the receipt.'); return; }
@@ -619,7 +714,16 @@ function renderPrinterManagement() {
         typography.className = 'printer-typography-fields';
         const fonts = ['Arial','Calibri','Verdana','Tahoma','Trebuchet MS','Georgia','Times New Roman','Courier New','Consolas','Lucida Console'];
         const field=(key,label,value,help='')=>`<label>${label}<input id="printer-edit-${key}" type="number" min="0" max="400" value="${Number(printer[key] ?? value)}">${help?`<small>${help}</small>`:''}</label>`;
-        typography.innerHTML = `<div class="printer-layout-heading">Bill paper & typography</div>${field('billingMainWidth','Billing main width',250,'Printer units · 250 is a good 80 mm starting point.')}${field('billingOuterLeft','Left outer space',10)}${field('billingOuterTop','Top outer space',0)}${field('billingOuterRight','Right outer space',0)}${field('billingOuterBottom','Bottom outer space',0)}${field('billingItemBoxHeight','Minimum item row height',0)}<label>Font family<select id="printer-edit-font-family">${fonts.map((font) => `<option value="${esc(font)}" ${String(printer.fontFamily || 'Arial') === font ? 'selected' : ''}>${esc(font)}</option>`).join('')}</select></label>${field('restaurantNameFontSize','Restaurant name font size',14)}${field('headerFooterFontSize','Header / footer font size',13)}${field('dateBillFontSize','Date / bill box font size',13)}${field('itemListingFontSize','Item listing font size',13)}${field('grandTotalFontSize','Grand total font size',14)}<div class="printer-layout-heading">Item columns & spacing</div>${field('serialColumnWidth','Sr. no. column width',10)}${field('quantityColumnWidth','Quantity column width',20)}${field('priceColumnWidth','Price column width',40)}${field('amountColumnWidth','Amount column width',55)}${field('itemRowGap','Item row gap',5)}${field('separatorGap','Separator gap',5)}${field('itemsPerPage','Items per page (0 = continuous)',0)}<label class="printer-edit-check"><input id="printer-edit-header-bold" type="checkbox" ${printer.headerBold !== false ? 'checked' : ''}> Bold restaurant name</label><label class="printer-edit-check"><input id="printer-edit-footer-bold" type="checkbox" ${printer.footerBold ? 'checked' : ''}> Bold footer</label>`;
+        typography.innerHTML = `<div class="printer-format-intro"><span>Bill format</span><b>Use the default values unless a printed sample needs adjustment.</b></div><details class="printer-format-group" open><summary><span><b>Paper & margins</b><small>Controls receipt width and safe printing area</small></span><i>⌄</i></summary><div class="printer-format-fields">${field('billingMainWidth','Bill print width',280,'Start with 280 for 80 mm paper. Reduce only if the right edge is cut off.')}${field('billingOuterLeft','Left outer space',0)}${field('billingOuterTop','Top outer space',0)}${field('billingOuterRight','Right outer space',0,'Increase only when content reaches beyond the right edge.')}${field('billingOuterBottom','Bottom outer space',0)}${field('billingItemBoxHeight','Minimum item row height',0)}</div></details><details class="printer-format-group"><summary><span><b>Text style</b><small>Font and hierarchy for the printed bill</small></span><i>⌄</i></summary><div class="printer-format-fields"><label>Font family<select id="printer-edit-font-family">${fonts.map((font) => `<option value="${esc(font)}" ${String(printer.fontFamily || 'Arial') === font ? 'selected' : ''}>${esc(font)}</option>`).join('')}</select></label>${field('restaurantNameFontSize','Restaurant name font size',14)}${field('headerFooterFontSize','Header / footer font size',13)}${field('dateBillFontSize','Date / bill box font size',13)}${field('itemListingFontSize','Item listing font size',10)}${field('grandTotalFontSize','Grand total font size',14)}<label class="printer-edit-check"><input id="printer-edit-header-bold" type="checkbox" ${printer.headerBold !== false ? 'checked' : ''}> Bold restaurant name</label><label class="printer-edit-check"><input id="printer-edit-footer-bold" type="checkbox" ${printer.footerBold ? 'checked' : ''}> Bold footer</label></div></details><details class="printer-format-group"><summary><span><b>Item columns & spacing</b><small>Fine-tune the line-item layout</small></span><i>⌄</i></summary><div class="printer-format-fields">${field('serialColumnWidth','Sr. no. column width',10)}${field('quantityColumnWidth','Quantity column width',20)}${field('priceColumnWidth','Price column width',40)}${field('amountColumnWidth','Amount column width',55)}${field('itemRowGap','Item row gap',2)}${field('separatorGap','Separator gap',3)}${field('itemsPerPage','Items per page (0 = continuous)',0)}</div></details>`;
+        typography.querySelectorAll('.printer-format-group').forEach((group) => {
+          const heading = group.querySelector('summary span');
+          const fields = group.querySelector('.printer-format-fields');
+          const section = document.createElement('section');
+          section.className = 'printer-format-group';
+          section.innerHTML = `<div class="printer-format-group-head">${heading.innerHTML}</div>`;
+          section.append(fields);
+          group.replaceWith(section);
+        });
         grid.insertBefore(typography, anchor);
       }
     }
@@ -932,9 +1036,10 @@ async function autoPrintOrder(order) {
         if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || 'KOT printer did not accept the job.');
       })); }
       if (!created.ok && created.status !== 409) throw new Error(kot.error || 'Unable to create the automatic KOT.');
-      } catch (error) { reportOrdersDiagnostic({ level:'warning', message:`Automatic KOT printing failed: ${error.message}`, source:'automatic KOT printing' }); }
+      return { ok:true };
+      } catch (error) { const reason=error.message || 'Automatic KOT printing failed.'; reportOrdersDiagnostic({ level:'warning', message:`Automatic KOT printing failed: ${reason}`, source:'automatic KOT printing' }); return { ok:false, reason }; }
     })();
-    if (order.mode === 'table') { await kotPromise; return { ok:true, kotOnly:true }; }
+    if (order.mode === 'table') { const kotResult=await kotPromise; return kotResult.ok ? { ok:true, kotOnly:true } : kotResult; }
     // The bill starts at the same time as the KOT. Neither printer can delay the other.
     const billPromise = operationsPromise.then(async (printers) => {
       const billPrinter = printers.find((printer) => printer.type === 'bill' && printer.deviceName);
@@ -1034,7 +1139,25 @@ liveOrdersToggle.addEventListener('click', () => {
 });
 document.getElementById('availability-close')?.addEventListener('click', () => { availability.hidden = true; document.getElementById('availability-toggle').setAttribute('aria-expanded', 'false'); });
 document.getElementById('counter-order-close')?.addEventListener('click', () => { counterPanel.hidden = true; showTableView(); });
-document.getElementById('table-view-content')?.addEventListener('click', (event) => { const table=event.target.closest('[data-dine-table-number]'); if (!table) return; openCounterOrder({ area:table.dataset.dineTableArea || 'Dining', number:Number(table.dataset.dineTableNumber) }); });
+document.getElementById('table-view-content')?.addEventListener('click', async (event) => {
+  const moving = event.target.closest('[data-move-table-order]');
+  if (moving) { openMoveTable(moving.dataset.moveTableOrder); return; }
+  const saved = event.target.closest('[data-open-saved-table]');
+  if (saved) {
+    const order = [...orderRecords.values()].find((item) => item.mode === 'table' && String(item.table_area || '') === saved.dataset.openSavedTable && String(item.table_number || '') === saved.dataset.openSavedNumber && ['saved','held'].includes(item.status));
+    if (!order) return;
+    counterBillSplit = null; counterCart = (Array.isArray(order.items) ? order.items : []).map((item) => ({ ...item, price:Number(String(item.price || 0).replace(/[^0-9.]/g, '')) }));
+    await openCounterOrder({ area:order.table_area || 'Dining', number:Number(order.table_number) });
+    document.getElementById('counter-customer-name').value = order.customer_name || '';
+    document.getElementById('counter-customer-phone').value = String(order.customer_phone || '').startsWith('walkin-') ? '' : order.customer_phone || '';
+    document.getElementById('counter-special-request').value = order.special_request || '';
+    renderCounterOrder();
+    return;
+  }
+  const table=event.target.closest('[data-dine-table-number]'); if (!table) return;
+  counterBillSplit = null;
+  openCounterOrder({ area:table.dataset.dineTableArea || 'Dining', number:Number(table.dataset.dineTableNumber) });
+});
 document.getElementById('counter-menu-search')?.addEventListener('input', renderCounterOrder);
 document.getElementById('counter-customer-phone')?.addEventListener('input', () => { clearTimeout(counterLoyaltyTimer); counterLoyaltyTimer = setTimeout(loadCounterLoyalty, 300); });
 const walletRedeemInput = document.getElementById('counter-wallet-redeem');
@@ -1061,6 +1184,7 @@ document.getElementById('counter-menu-items')?.addEventListener('click', (event)
   const existing = counterCart.find((line) => line.name === item.name && line.category === item.category && line.portion === portion && !line.style);
   if (existing) existing.quantity += 1;
   else counterCart.push({ name:item.name, category:item.category, portion, style:'', price, quantity:1 });
+  counterBillSplit = null;
   renderCounterOrder();
 });
 document.getElementById('counter-choice-dialog')?.addEventListener('click', (event) => {
@@ -1072,14 +1196,36 @@ document.getElementById('counter-choice-dialog')?.addEventListener('click', (eve
   const existing = counterCart.find((line) => line.name === counterChoiceItem.name && line.category === counterChoiceItem.category && line.portion === portion && line.style === style);
   if (existing) existing.quantity += 1;
   else counterCart.push({ name:counterChoiceItem.name, category:counterChoiceItem.category, portion, style, price, quantity:1 });
+  counterBillSplit = null;
   document.getElementById('counter-choice-dialog').close(); renderCounterOrder();
 });
 document.getElementById('counter-cart-items')?.addEventListener('click', (event) => {
   const button = event.target.closest('[data-counter-qty]'); if (!button) return;
   const index = Number(button.dataset.counterQty), line = counterCart[index]; if (!line) return;
-  line.quantity += Number(button.dataset.counterChange); if (line.quantity <= 0) counterCart.splice(index, 1); renderCounterOrder();
+  line.quantity += Number(button.dataset.counterChange); if (line.quantity <= 0) counterCart.splice(index, 1); counterBillSplit = null; renderCounterOrder();
 });
-document.getElementById('counter-clear')?.addEventListener('click', () => { counterCart = []; document.getElementById('counter-order-status').textContent = ''; renderCounterOrder(); });
+document.getElementById('counter-clear')?.addEventListener('click', () => { counterBillSplit = null; counterCart = []; document.getElementById('counter-order-status').textContent = ''; renderCounterOrder(); });
+async function submitDineInAction(action) {
+  const status = document.getElementById('counter-order-status');
+  if (!counterTable || !counterCart.length) { status.textContent = 'Add at least one menu item first.'; return; }
+  const button = document.querySelector(`[data-dine-action="${action}"]`); if (button) button.disabled = true;
+  const payload = { clientRequestId:counterRequestId(), action, customerName:document.getElementById('counter-customer-name').value.trim(), customerPhone:document.getElementById('counter-customer-phone').value.trim(), specialRequest:document.getElementById('counter-special-request').value.trim(), loyaltyPoints:Math.floor(Number(document.getElementById('counter-wallet-redeem')?.value || 0)), tableArea:counterTable.area, tableNumber:counterTable.number, items:counterCart.map((item) => ({ ...item })) };
+  const tableLabel = `${counterTable.area} · Table ${String(counterTable.number).padStart(2, '0')}`;
+  try {
+    status.textContent = action === 'hold' ? 'Holding table bill…' : action === 'save' ? 'Saving table bill…' : 'Saving dine-in bill…';
+    const result = await sendCounterOrder(payload);
+    if (action === 'kot-print') { const printing=await autoPrintOrder({ id:result.id, mode:'table', status:'accepted' }); if (!printing.ok) throw new Error(printing.reason || 'KOTs could not be sent to the kitchen.'); status.textContent = `${tableLabel}: KOTs sent to the kitchen.`; }
+    else if (action === 'print') { await printOrder(result.id, counterBillSplit); status.textContent = `${tableLabel}: ${counterBillSplit ? `${counterBillSplit.parts.length} split bills` : 'bill'} printed.`; }
+    else status.textContent = action === 'hold' ? `${tableLabel} is on hold.` : `${tableLabel} saved in Saved bills.`;
+    counterBillSplit = null; counterCart = []; renderCounterOrder(); await loadOrders(); await showTableView();
+  } catch (error) { status.textContent = error.message || 'Unable to save this dine-in bill.'; }
+  finally { if (button) button.disabled = false; }
+}
+document.getElementById('dine-in-actions')?.addEventListener('click', async (event) => {
+  const action = event.target.closest('[data-dine-action]')?.dataset.dineAction; if (!action) return;
+  if (action === 'split') { openSplitBill(); return; }
+  await submitDineInAction(action);
+});
 document.getElementById('counter-place-order')?.addEventListener('click', async () => {
   const status = document.getElementById('counter-order-status');
   if (!counterCart.length) { status.textContent = 'Add at least one menu item first.'; return; }
@@ -1115,7 +1261,12 @@ operationsToggle.addEventListener('click', async () => {
   document.getElementById('operations-content').innerHTML = '<div class="operations-empty">Loading Operations…</div>';
   try { await loadOrders(); await loadOperations(); await discoverSystemPrinters(); renderOperations(); operationsPanel.scrollIntoView({ behavior:'smooth', block:'start' }); } catch (error) { document.getElementById('operations-content').innerHTML = `<div class="operations-empty">${esc(error.message)}</div>`; }
 });
-document.getElementById('operations-close')?.addEventListener('click', () => { operationsPanel.hidden = true; operationsToggle.classList.remove('is-open'); operationsToggle.setAttribute('aria-expanded','false'); });
+document.getElementById('operations-close')?.addEventListener('click', async () => {
+  operationsPanel.hidden = true;
+  operationsToggle.classList.remove('is-open');
+  operationsToggle.setAttribute('aria-expanded','false');
+  await showTableView();
+});
 document.getElementById('operations-tabs')?.addEventListener('click', (event) => {
   const button = event.target.closest('[data-operations-tab]');
   if (!button) return;

@@ -1951,3 +1951,24 @@ body:not(.home-page) .site-nav a:not(.call-button):hover {
     font-size: 12.5px;
   }
 }
+
+/* Design-system refinement: shared public pages */
+:root { --surface: #ffffff; --surface-soft: #fff8f5; --ink-soft: #675b57; --border: #eee3dc; --focus-ring: 0 0 0 4px rgba(222, 42, 42, .15); }
+html { scroll-behavior: smooth; }
+body { background: #fffdfb; }
+body:not(.home-page) .site-header { position: sticky; top: 0; inset: auto; width: 100%; height: 76px; padding: 0 clamp(20px, 5vw, 72px); color: var(--ink); background: rgba(255, 253, 251, .92); border-bottom: 1px solid rgba(93, 61, 48, .1); box-shadow: 0 5px 24px rgba(47, 25, 18, .06); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
+body:not(.home-page) .brand-logo-image { filter: none; }
+body:not(.home-page) .site-nav .is-active { color: var(--brand-red-dark); }
+body:not(.home-page) .site-nav .is-active::after { bottom: 1px; }
+.btn, .call-button { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; }
+.btn { border-radius: 10px; padding: 10px 18px; }
+.btn-primary { box-shadow: 0 10px 20px rgba(177, 29, 29, .18); }
+.btn:focus-visible, .call-button:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.about-page-main, .contact-page-main, .blog-page, .menu-page, .blog-post-main { background: #fffdfb; }
+.about-hero, .contact-hero, .menu-hero, .blog-page-hero, .blog-post-hero { position: relative; isolation: isolate; }
+.about-hero::after, .contact-hero::after, .menu-hero::after, .blog-page-hero::after, .blog-post-hero::after { content: ""; position: absolute; inset: 0; z-index: -1; background: radial-gradient(circle at 80% 10%, rgba(244, 166, 42, .14), transparent 34%); pointer-events: none; }
+.welcome, .why-us, .testimonials, .latest-blogs, .contact-section, .menu-showcase { border-color: var(--border); }
+.menu-item-card, .blog-card, .review-card, .why-us .card { border: 1px solid var(--border); box-shadow: 0 10px 30px rgba(48, 25, 17, .07); }
+.menu-item-card:hover, .blog-card:hover, .review-card:hover, .why-us .card:hover { transform: translateY(-4px); box-shadow: 0 20px 40px rgba(48, 25, 17, .13); }
+.site-footer { border-top: 1px solid rgba(255,255,255,.12); }
+@media (max-width: 640px) { body:not(.home-page) .site-header { position: sticky; height: auto; min-height: 68px; padding: 8px 12px; } body:not(.home-page) .site-nav { width: 100%; } .site-nav .is-active::after { display: none; } .about-page-main, .contact-page-main { padding-top: 0; } }

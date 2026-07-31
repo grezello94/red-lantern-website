@@ -284,3 +284,60 @@ dialog { max-height: calc(100dvh - 24px); overflow: auto; }
 #orders-connectivity{margin:8px 28px 0;padding:9px 12px;border:1px solid #f0c16c;border-radius:9px;color:#714c00;background:#fff8e8;font-size:12px;font-weight:800}#orders-connectivity[hidden]{display:none}#orders-connectivity.is-offline{border-color:#dc7373;color:#86242b;background:#fff0f0}@media(max-width:760px){#orders-connectivity{margin:8px 16px 0;font-size:11px}}
 #counter-live-status{display:grid;grid-template-columns:1fr auto;gap:2px 10px;align-items:center;margin:0 0 12px;padding:9px 10px;border:1px solid #d9e6f2;border-radius:9px;background:#f7fbff}#counter-live-status span{color:#60748d;font-size:9px;font-weight:900;letter-spacing:.07em;text-transform:uppercase}#counter-live-status b{color:#1e4778;font-size:14px;white-space:nowrap}#counter-live-status small{grid-column:1/-1;color:#168451;font-size:10px;font-weight:800}#counter-live-status.is-offline{border-color:#f0c16c;background:#fff9ed}#counter-live-status.is-offline b{color:#8a5b13}#counter-live-status.is-offline small{color:#8a5b13}
 #counter-wallet{display:grid;grid-template-columns:1fr auto;gap:5px 10px;padding:10px;border:1px solid #d9e8df;border-radius:8px;background:#f4fcf7}#counter-wallet[hidden]{display:none}#counter-wallet-label{color:#168451;font-size:9px;font-weight:900;letter-spacing:.07em;text-transform:uppercase}#counter-wallet b{color:#24503a;font-size:11px;text-align:right}#counter-wallet label{display:flex;grid-column:1/-1;align-items:center;justify-content:space-between;gap:10px;color:#536b5d;font-size:10px;font-weight:900;text-transform:uppercase}#counter-wallet input{width:100px!important;padding:7px!important;text-align:right}#counter-wallet small{grid-column:1/-1;color:#168451;font-size:10px;font-weight:800}
+
+/* Staff console refinement: clearer scan pattern and calmer action hierarchy. */
+header { background: linear-gradient(112deg,#35171b,#72262a) !important; }
+main { gap: 16px; padding-top: 22px; }
+.order { border-radius: 14px; border-color: #eadfd9; box-shadow: 0 7px 20px rgba(54,29,28,.08); }
+.order:before { background: #cf292d; }
+.order:hover { box-shadow: 0 14px 30px rgba(54,29,28,.13); }
+.order-heading { padding-bottom: 8px; border-bottom: 1px solid #f0e8e4; }
+.totals { background: #fff6e9; }
+.order-search-panel, .fulfillment-actions, #availability { border-color: #e9ddd7; box-shadow: 0 6px 18px rgba(54,29,28,.06); }
+.order-view-tabs { background: #f5ebe6; }
+.order-view-tab.is-active { background: #572127; }
+.fulfillment-action { border-color: #7d1e35; background: #7d1e35; }
+.fulfillment-action:hover, .fulfillment-action:focus-visible, .fulfillment-action.is-active { border-color: #571023; background: #571023; }
+
+/* Bill printer settings: progressive disclosure for the rarely changed print calibration. */
+.printer-typography-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-column: 1 / -1; gap: 16px; margin: 4px 0 8px; }
+.printer-typography-fields > .printer-format-intro, .printer-typography-fields > .printer-format-group:last-child { grid-column: 1 / -1; }
+.printer-format-intro { display: flex; align-items: center; gap: 10px; padding: 13px 15px; border: 1px solid #eaded7; border-radius: 12px; color: #604c45; background: #fff9f6; font-size: 12px; line-height: 1.45; }
+.printer-format-intro span { flex: none; padding: 4px 7px; border-radius: 999px; color: #8d2430; background: #fbe9e7; font-size: 10px; font-weight: 900; letter-spacing: .07em; text-transform: uppercase; }
+.printer-format-intro b { font-weight: 700; }
+.printer-format-group { overflow: hidden; border: 1px solid #e8ddd7; border-radius: 12px; background: #fff; }
+.printer-format-group > summary { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 15px 16px; cursor: pointer; list-style: none; }
+.printer-format-group > summary::-webkit-details-marker { display: none; }
+.printer-format-group > summary span { display: grid; gap: 3px; }
+.printer-format-group > summary b { color: #2e2523; font-size: 14px; }
+.printer-format-group > summary small { color: #7c6b64; font-size: 11px; font-weight: 600; }
+.printer-format-group > summary i { color: #8d2430; font-size: 18px; font-style: normal; transition: transform .18s ease; }
+.printer-format-group[open] > summary { border-bottom: 1px solid #eee4df; background: #fffaf8; }
+.printer-format-group[open] > summary i { transform: rotate(180deg); }
+.printer-format-group-head { display: grid; gap: 3px; padding: 15px 16px; border-bottom: 1px solid #eee4df; background: #fffaf8; }
+.printer-format-group-head b { color: #2e2523; font-size: 14px; }
+.printer-format-group-head small { color: #7c6b64; font-size: 11px; font-weight: 600; }
+.printer-format-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 16px; padding: 16px; }
+.printer-format-fields label { min-width: 0; }
+.printer-format-fields label small { display: block; margin-top: 5px; color: #7f7069; font-size: 10px; font-weight: 600; line-height: 1.35; }
+.printer-format-fields .printer-edit-check { align-self: end; min-height: 45px; margin: 0; }
+@media (max-width: 760px) { .printer-typography-fields { grid-template-columns: 1fr; } .printer-typography-fields > .printer-format-group:last-child { grid-column: auto; } }
+@media (max-width: 620px) { .printer-format-intro { align-items: flex-start; flex-direction: column; } .printer-format-fields { grid-template-columns: 1fr; } }
+
+/* Dine-in settlement controls: each action has a distinct operational outcome. */
+#dine-in-actions { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:8px; margin-top:14px; padding-top:14px; border-top:1px solid #eadfd9; }
+#dine-in-actions button { min-height:44px; padding:9px 8px; border:1px solid transparent; border-radius:9px; color:#fff; background:#cf292d; font:800 11px Manrope,Arial,sans-serif; cursor:pointer; }
+#dine-in-actions .dine-in-split { color:#35445e; border-color:#ced9e7; background:#f3f7fb; }
+#dine-in-actions .dine-in-kot { background:#3b4d62; }
+#dine-in-actions .dine-in-hold { color:#654a14; border-color:#efd293; background:#fff7e4; }
+#dine-in-actions button:hover { filter:brightness(.96); transform:translateY(-1px); }
+#dine-in-actions button:disabled { cursor:wait; opacity:.65; transform:none; }
+@media (max-width:760px) { #dine-in-actions { grid-template-columns:repeat(2,minmax(0,1fr)); } #dine-in-actions .dine-in-split { grid-column:1/-1; } }
+.saved-bills { margin-top:18px; padding:18px; border:1px solid #eadfd9; border-radius:14px; background:#fffdfb; }
+.saved-bills h3 { margin:3px 0; color:#342324; font-size:18px; }
+.saved-bills p { margin:0; color:#786a65; font-size:12px; }
+.saved-bills-list { display:grid; gap:8px; margin-top:14px; }
+.saved-bills-list article,.saved-bills-list .saved-bill-open { display:grid; grid-template-columns:auto 1fr auto; gap:11px; align-items:center; width:100%; padding:11px 12px; border:1px solid #eee4df; border-radius:10px; background:#fff; text-align:left; }
+.saved-bills-list b,.saved-bills-list small { display:block; }.saved-bills-list b { color:#342324; font-size:13px; }.saved-bills-list small { margin-top:3px; color:#786a65; font-size:11px; font-weight:700; }
+.saved-bill-status { padding:4px 7px; border-radius:999px; color:#4b5f79; background:#edf3fa; font-size:10px; font-weight:900; text-transform:uppercase; }.saved-bill-status.is-held { color:#805505; background:#fff3d6; }
+.saved-bills-list button { padding:8px 10px; border:1px solid #bfcddb; border-radius:8px; color:#29476f; background:#f5f8fc; font:800 11px Manrope,Arial,sans-serif; cursor:pointer; }

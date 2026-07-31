@@ -99,7 +99,7 @@ async function printText(printerName, text, settings = {}) {
       const headerStyle = settings.headerBold === false ? 'Regular' : 'Bold';
       const footerStyle = settings.footerBold ? 'Bold' : 'Regular';
       const layout = (value, min, max, fallback) => Math.max(min, Math.min(max, Number(value) || fallback));
-      const mainWidth = layout(settings.billingMainWidth, 160, 400, 250), leftMargin = layout(settings.billingOuterLeft, 0, 40, 10), rightMargin = layout(settings.billingOuterRight, 0, 40, 0), topMargin = layout(settings.billingOuterTop, 0, 40, 0), bottomMargin = layout(settings.billingOuterBottom, 0, 40, 0);
+      const mainWidth = layout(settings.billingMainWidth, 160, 400, 280), leftMargin = layout(settings.billingOuterLeft, 0, 40, 0), rightMargin = layout(settings.billingOuterRight, 0, 40, 0), topMargin = layout(settings.billingOuterTop, 0, 40, 0), bottomMargin = layout(settings.billingOuterBottom, 0, 40, 0);
       const restaurantFontSize = layout(settings.restaurantNameFontSize, 8, 24, 14), headerFooterFontSize = layout(settings.headerFooterFontSize, 8, 20, 13), dateBillFontSize = layout(settings.dateBillFontSize, 8, 20, 13), itemFontSize = layout(settings.itemListingFontSize, 8, 20, 13), totalFontSize = layout(settings.grandTotalFontSize, 10, 26, 14), itemGap = layout(settings.itemRowGap, 0, 20, 5), separatorGap = layout(settings.separatorGap, 0, 20, 5), itemMinHeight = layout(settings.billingItemBoxHeight, 0, 40, 0);
       const script = `Add-Type -AssemblyName System.Drawing
 $lines = Get-Content -LiteralPath '${quote(file)}' -Encoding UTF8
@@ -123,9 +123,9 @@ $doc.add_PrintPage({ param($sender, $event)
       $cells = $line.Substring($(if ($line.StartsWith('__ITEMHEAD__')) { 12 } else { 8 })).Split('|')
       $isHead = $line.StartsWith('__ITEMHEAD__')
       $style = if ($isHead) { [System.Drawing.FontStyle]::Bold } else { [System.Drawing.FontStyle]::Regular }
-      $size = $bodySize
+      $size = ${itemFontSize}
       $font = New-Object System.Drawing.Font('${fontFamily}', $size, $style)
-      $labelWidth = [Math]::Floor($width * 0.53); $qtyWidth = [Math]::Floor($width * 0.12); $priceWidth = [Math]::Floor($width * 0.17); $amountWidth = $width - $labelWidth - $qtyWidth - $priceWidth
+      $qtyWidth = [Math]::Floor(${layout(settings.quantityColumnWidth, 8, 60, 20)}); $priceWidth = [Math]::Floor(${layout(settings.priceColumnWidth, 15, 100, 40)}); $amountWidth = [Math]::Floor(${layout(settings.amountColumnWidth, 15, 120, 55)}); $labelWidth = [Math]::Max(70, $width - $qtyWidth - $priceWidth - $amountWidth)
       $left = $event.MarginBounds.Left
       $near = New-Object System.Drawing.StringFormat; $near.Alignment = [System.Drawing.StringAlignment]::Near
       $right = New-Object System.Drawing.StringFormat; $right.Alignment = [System.Drawing.StringAlignment]::Far
@@ -192,32 +192,21 @@ function kotText(payload) {
 function billText(payload) {
   const order = payload.order || {}, settings = payload.settings || {}, items = Array.isArray(order.items) ? order.items : [], line = `__SEPARATOR__${'-'.repeat(34)}`;
   const money = (value) => `₹${Math.round(Number(value) || 0)}`;
-  const amount = (value) => (Number(value) || 0).toFixed(2);
+  const decimal = (value) => (Number(value) || 0).toFixed(2);
   const itemPrice = (item) => Number(String(item.price || '').replace(/[^0-9.]/g, '')) + (item.style ? 10 : 0);
   const subtotal = items.reduce((sum, item) => sum + itemPrice(item) * Number(item.quantity || 0), 0);
   const total = Number(order.total) > 0 ? Number(order.total) : subtotal;
   const walletDiscount = Math.max(0, Math.floor(Number(order.loyalty_points_redeemed || 0)));
-  const serialChars = settings.showItemSerial ? Math.max(2, Math.round((Number(settings.serialColumnWidth) || 10) / 5)) : 0;
-  const quantityChars = Math.max(3, Math.round((Number(settings.quantityColumnWidth) || 20) / 7));
-  const priceChars = Math.max(6, Math.round((Number(settings.priceColumnWidth) || 40) / 7));
-  const amountChars = Math.max(7, Math.round((Number(settings.amountColumnWidth) || 55) / 7));
-  const itemChars = Math.max(8, 34 - serialChars - quantityChars - priceChars - amountChars - 3);
-  const itemRows = items.flatMap((item, index) => {
-    const label = `${item.name || 'Item'}${item.portion ? ` (${item.portion})` : ''}${item.style ? ` · ${item.style}` : ''}`;
-    const quantity = Number(item.quantity || 0), unit = itemPrice(item), amount = quantity * unit;
-    const serial = settings.showItemSerial ? String(index + 1).padStart(serialChars - 1) + '.' : '';
-    const name = label;
-    const first = name.slice(0, itemChars).padEnd(itemChars);
-    const remaining = name.slice(itemChars);
-    const row = `__TABLE__${serial}${first} ${String(quantity).padStart(quantityChars)} ${(Number(unit) || 0).toFixed(2).padStart(priceChars)} ${(Number(amount) || 0).toFixed(2).padStart(amountChars)}`;
-    return remaining ? [row, `__TABLE__${remaining}`] : [row];
+  const itemRows = items.map((item, index) => {
+    const label = `${settings.showItemSerial ? `${index + 1}. ` : ''}${item.name || 'Item'}${item.portion ? ` (${item.portion})` : ''}${item.style ? ` · ${item.style}` : ''}`;
+    const quantity = Number(item.quantity || 0), unit = itemPrice(item), itemAmount = quantity * unit;
+    return `__ITEM__${label}|${quantity}|${decimal(unit)}|${decimal(itemAmount)}`;
   });
   const token = String(order.daily_order_number || '—').padStart(2, '0');
-  const phone = String(order.customer_phone || '').startsWith('walkin-') ? '—' : (order.customer_phone || '—');
   const placed = order.created_at ? new Intl.DateTimeFormat('en-IN', { timeZone:'Asia/Kolkata', day:'2-digit', month:'2-digit', year:'2-digit', hour:'2-digit', minute:'2-digit', hour12:false }).format(new Date(order.created_at)) : new Date().toLocaleString('en-IN');
   const quantity = items.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
   const billNumber = order.bill_number ? String(order.bill_number).padStart(2, '0') : '—';
-  return [settings.showRestaurantName === false ? '' : `__TITLE__${settings.restaurantName || 'RED LANTERN RESTAURANT'}`, settings.receiptHeader ? `__SUBTITLE__${settings.receiptHeader}` : '', `__DATEBILL__Date: ${placed}`, `__DATEBILL__Token No: ${token}    Bill No: ${billNumber}`, line, '__TABLEHEAD__Item             Qty  Price  Amount', ...itemRows, line, `__TABLE__Total Qty: ${quantity}       Sub Total  ${amount(subtotal)}`, walletDiscount ? `__TABLE__Points discount              -${amount(walletDiscount)}` : '', `__TABLEHEAD__Grand Total                 ${money(total)}`, line, `__FOOTER__${settings.receiptFooter || 'Thank you for ordering with us!'}`, '\n\n\n'].filter(Boolean).join('\n');
+  return [settings.showRestaurantName === false ? '' : `__TITLE__${settings.restaurantName || 'RED LANTERN RESTAURANT'}`, settings.receiptHeader ? `__SUBTITLE__${settings.receiptHeader}` : '', `__DATEBILL__Date: ${placed}`, `__DATEBILL__Token No: ${token}    Bill No: ${billNumber}`, line, '__ITEMHEAD__Item|Qty|Price|Amount', ...itemRows, line, `__SUMMARY__Total Qty: ${quantity}|${money(subtotal)}`, walletDiscount ? `__SUMMARY__Points discount|-${money(walletDiscount)}` : '', `__TOTAL__GRAND TOTAL|${money(total)}`, line, `__FOOTER__${settings.receiptFooter || 'Thank you for ordering with us!'}`, '\n\n\n'].filter(Boolean).join('\n');
 }
 
 function allowedOrigin(request) {
