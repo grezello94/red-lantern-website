@@ -128,13 +128,12 @@
       .growth-ai-status { margin-top: 12px; color: #6b7280; font-size: 14px; font-weight: 700; }
       /* Air Menu workspace */
       .air-sheet-collapse { padding: 0; overflow: hidden; }
-      .air-sheet-collapse summary { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:22px 26px; cursor:pointer; list-style:none; }
+      .air-sheet-collapse summary { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:18px 26px; cursor:pointer; list-style:none; }
       .air-sheet-collapse summary::-webkit-details-marker { display:none; }
       .air-sheet-collapse summary h2 { margin:0; }
-      .air-sheet-collapse summary span { color:#8d2138; font-size:12px; font-weight:800; }
+      .air-sheet-collapse summary::after { content:'⌄'; color:#7b3151; font-size:26px; font-weight:800; line-height:1; transition:transform .18s ease; }
       .air-sheet-collapse[open] summary { border-bottom:1px solid #eee2dd; }
-      .air-sheet-collapse[open] summary span { font-size:0; }
-      .air-sheet-collapse[open] summary span::after { content:'Collapse editor'; font-size:12px; }
+      .air-sheet-collapse[open] summary::after { transform:rotate(180deg); }
       .air-sheet-collapse > :not(summary) { margin-left:26px; margin-right:26px; }
       #tab-air-menu .header { align-items: center; margin-bottom: 24px; padding: 26px 30px; border: 0; border-radius: 16px; background: linear-gradient(115deg, #fff 0%, #fff8f4 100%); box-shadow: 0 8px 22px rgba(17, 24, 39, .06); }
       #tab-air-menu .header h1 { font-size: 36px; color: #111827; }
@@ -665,7 +664,7 @@
           </div>
 
           <details class="card air-sheet-collapse">
-            <summary><h2>Bar Menu Spreadsheet</h2><span>Open editor</span></summary>
+            <summary><h2>Bar Menu Spreadsheet</h2></summary>
             <span class="help-text" style="margin-bottom:18px;">Use Price for bottles or single-price drinks. Add 30 ML and 60 ML prices where applicable; 90 ML and 180 ML are optional. Duplicate item/category combinations are removed automatically.</span>
             <div class="air-sheet-wrap">
               <table class="air-sheet bar-sheet">
@@ -678,7 +677,7 @@
           </details>
 
           <details class="card air-sheet-collapse">
-            <summary><h2>Air Menu Spreadsheet</h2><span>Open editor</span></summary>
+            <summary><h2>Air Menu Spreadsheet</h2></summary>
             <span class="help-text" style="margin-bottom:18px;">Use Price for single-price items. Add Full, Half, With Bone, or Boneless prices where applicable, and leave Price blank. Duplicate item/category combinations are removed automatically.</span>
             <div class="air-sheet-wrap">
               <table class="air-sheet food-sheet">
