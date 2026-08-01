@@ -597,7 +597,6 @@ function fillAirMenu(menu = {}) {
   setField('airLoyaltyEarn', menu.loyalty?.earn || 1);
   setField('airLoyaltyMinRedeem', menu.loyalty?.minRedeem || 100);
   setField('airLoyaltyPointValue', menu.loyalty?.pointValue || 1);
-  setCheckbox('airLoyaltyEnabled', menu.loyalty?.enabled !== false);
   setField('airService1Open', menu.serviceWindows?.[0]?.open || '12:30');
   setField('airService1Close', menu.serviceWindows?.[0]?.close || '15:00');
   setField('airService2Open', menu.serviceWindows?.[1]?.open || '18:30');
@@ -612,7 +611,8 @@ function fillAirMenu(menu = {}) {
     airCardCallEnabled: menu.cardCallEnabled === true,
     airTableDirectOrders: menu.tableDirectOrders === true,
     airCardDirectOrders: menu.cardDirectOrders !== false,
-    airRestaurantClosed: menu.restaurantClosed === true
+    airRestaurantClosed: menu.restaurantClosed === true,
+    airLoyaltyEnabled: menu.loyalty?.enabled !== false
   };
   Object.entries(toggles).forEach(([name, checked]) => {
     const field = document.querySelector(`[name="${name}"]`);
