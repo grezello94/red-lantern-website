@@ -184,10 +184,12 @@ function kotText(payload) {
   const settings = payload.settings || {};
   const items = Array.isArray(payload.items) ? payload.items : [];
   const line = '-'.repeat(34);
-  const guestLine = `Guest: ${order.customer || 'Guest'}${order.fulfillment ? ` · ${order.fulfillment}` : ''}${order.phone ? ` · ${order.phone}` : ''}`;
+  const placed = order.createdAt ? new Intl.DateTimeFormat('en-IN', { timeZone:'Asia/Kolkata', hour:'2-digit', minute:'2-digit', hour12:false }).format(new Date(order.createdAt)) : '';
+  const guestLine = `Guest: ${order.customer || 'Guest'}${order.fulfillment ? ` · ${order.fulfillment}` : ''}${placed ? ` · ${placed}` : ''}${order.phone ? ` · ${order.phone}` : ''}`;
   const quantityFirst = settings.quantityFirst !== false;
   const rows = items.map((item, index) => `${settings.showItemSerial ? `${index + 1}. ` : ''}${quantityFirst ? `${Number(item.quantity || 0)}x ` : ''}${item.name || 'Item'}${item.portion ? ` (${item.portion})` : ''}${item.style ? ` · ${item.style}` : ''}${quantityFirst ? '' : ` · ${Number(item.quantity || 0)}x`}`);
-  return [settings.receiptHeader || '', `__KOT_PRINTER__${String(payload.printerLabel || payload.printerName || 'Kitchen').trim()}`, order.reprint ? '*** REPRINT ***' : '', line, `KOT #${order.kotNumber || '—'}`, `Order #${order.number || order.id || '—'}`, settings.showCustomer !== false ? guestLine : '', line, ...rows, order.note && settings.showNotes !== false ? `${line}\nNote: ${order.note}` : '', line, settings.receiptFooter || '', '\n\n\n'].filter(Boolean).join('\n');
+  const sourceLine = order.fulfillment ? `From: ${order.fulfillment}` : `Order #${order.number || order.id || '—'}`;
+  return [settings.receiptHeader || '', `__KOT_PRINTER__${String(payload.printerLabel || payload.printerName || 'Kitchen').trim()}`, order.reprint ? '*** REPRINT ***' : '', line, `KOT #${order.kotNumber || '—'}`, sourceLine, settings.showCustomer !== false ? guestLine : '', line, ...rows, order.note && settings.showNotes !== false ? `${line}\nNote: ${order.note}` : '', line, settings.receiptFooter || '', '\n\n\n'].filter(Boolean).join('\n');
 }
 function billText(payload) {
   const order = payload.order || {}, settings = payload.settings || {}, items = Array.isArray(order.items) ? order.items : [], line = `__SEPARATOR__${'-'.repeat(34)}`;

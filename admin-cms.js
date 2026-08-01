@@ -593,6 +593,11 @@ function fillAirMenu(menu = {}) {
   setField('airSourceFileName', menu.sourceFileName);
   setField('airBarSourceFileName', menu.barSourceFileName);
   setField('airCardOrderPhone', menu.cardOrderPhone);
+  setField('airLoyaltySpend', menu.loyalty?.spend || 10);
+  setField('airLoyaltyEarn', menu.loyalty?.earn || 1);
+  setField('airLoyaltyMinRedeem', menu.loyalty?.minRedeem || 100);
+  setField('airLoyaltyPointValue', menu.loyalty?.pointValue || 1);
+  setCheckbox('airLoyaltyEnabled', menu.loyalty?.enabled !== false);
   setField('airService1Open', menu.serviceWindows?.[0]?.open || '12:30');
   setField('airService1Close', menu.serviceWindows?.[0]?.close || '15:00');
   setField('airService2Open', menu.serviceWindows?.[1]?.open || '18:30');

@@ -127,6 +127,15 @@
       .growth-ai-button:disabled { opacity: 0.65; cursor: wait; }
       .growth-ai-status { margin-top: 12px; color: #6b7280; font-size: 14px; font-weight: 700; }
       /* Air Menu workspace */
+      .air-sheet-collapse { padding: 0; overflow: hidden; }
+      .air-sheet-collapse summary { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:22px 26px; cursor:pointer; list-style:none; }
+      .air-sheet-collapse summary::-webkit-details-marker { display:none; }
+      .air-sheet-collapse summary h2 { margin:0; }
+      .air-sheet-collapse summary span { color:#8d2138; font-size:12px; font-weight:800; }
+      .air-sheet-collapse[open] summary { border-bottom:1px solid #eee2dd; }
+      .air-sheet-collapse[open] summary span { font-size:0; }
+      .air-sheet-collapse[open] summary span::after { content:'Collapse editor'; font-size:12px; }
+      .air-sheet-collapse > :not(summary) { margin-left:26px; margin-right:26px; }
       #tab-air-menu .header { align-items: center; margin-bottom: 24px; padding: 26px 30px; border: 0; border-radius: 16px; background: linear-gradient(115deg, #fff 0%, #fff8f4 100%); box-shadow: 0 8px 22px rgba(17, 24, 39, .06); }
       #tab-air-menu .header h1 { font-size: 36px; color: #111827; }
       #tab-air-menu .header p { max-width: 640px; margin-top: 7px; line-height: 1.55; }
@@ -635,6 +644,7 @@
               <div class="switch-row"><div><strong>Show table prices</strong><span class="help-text" style="margin:4px 0 0;">Show prices only on the in-store Air Menu.</span></div><input type="checkbox" name="airShowTablePrices" checked></div>
               <div class="switch-row"><div><strong>Show business card prices</strong><span class="help-text" style="margin:4px 0 0;">Show prices on the visiting-card menu.</span></div><input type="checkbox" name="airShowCardPrices"></div>
             </div>
+            <section class="card" style="margin:22px 0 0;background:#fffaf1;border:1px solid #f1dcc0;"><div class="air-settings-heading"><div><span class="hours-kicker">Protected wallet rules</span><h2>Loyalty Points</h2><p>These values apply to future orders only. Existing customer balances are never changed.</p></div></div><div class="form-grid"><div class="form-group"><label>Spend to earn (₹)</label><input type="number" name="airLoyaltySpend" min="1" max="100000" value="10"></div><div class="form-group"><label>Points earned</label><input type="number" name="airLoyaltyEarn" min="1" max="10000" value="1"></div><div class="form-group"><label>Minimum points to redeem</label><input type="number" name="airLoyaltyMinRedeem" min="1" max="100000" value="100"></div><div class="form-group"><label>₹ value per point</label><input type="number" name="airLoyaltyPointValue" min="0.01" max="1000" step="0.01" value="1"></div></div><div class="switch-row"><div><strong>Loyalty programme live</strong><span class="help-text" style="margin:4px 0 0;">Turn off earning and redemption without deleting any balances.</span></div><input type="checkbox" name="airLoyaltyEnabled" checked></div></section>
             <div class="form-grid">
               <div class="switch-row"><div><strong>Table QR direct orders</strong><span class="help-text" style="margin:4px 0 0;">Let in-restaurant guests send an order straight to the staff console.</span></div><input type="checkbox" name="airTableDirectOrders"></div>
               <div class="switch-row"><div><strong>Business Card QR direct orders</strong><span class="help-text" style="margin:4px 0 0;">Let business-card QR guests place a direct order. Recommended for your current setup.</span></div><input type="checkbox" name="airCardDirectOrders" checked></div>
@@ -654,8 +664,8 @@
             <div class="closure-panel"><div class="closure-panel-head"><div><span class="hours-kicker">Temporary closure</span><h3>Close for a holiday or private event</h3><p>Turn this on to immediately pause QR ordering. Guests will see your reopening details.</p></div><label class="closure-switch"><input type="checkbox" name="airRestaurantClosed"><span></span><b>Closed</b></label></div><div class="closure-fields"><div class="form-group"><label>Reopens on</label><input type="datetime-local" name="airReopensAt"><span class="help-text">Optional, but recommended for guests.</span></div><div class="form-group"><label>Message shown to guests</label><textarea name="airClosureMessage" rows="2" placeholder="We are closed today for a private event. We look forward to welcoming you soon."></textarea></div></div></div>
           </div>
 
-          <div class="card">
-            <h2>Bar Menu Spreadsheet</h2>
+          <details class="card air-sheet-collapse">
+            <summary><h2>Bar Menu Spreadsheet</h2><span>Open editor</span></summary>
             <span class="help-text" style="margin-bottom:18px;">Use Price for bottles or single-price drinks. Add 30 ML and 60 ML prices where applicable; 90 ML and 180 ML are optional. Duplicate item/category combinations are removed automatically.</span>
             <div class="air-sheet-wrap">
               <table class="air-sheet bar-sheet">
@@ -665,10 +675,10 @@
             </div>
             <p id="air-bar-sheet-status" class="growth-ai-status" style="margin:0 0 12px;"></p>
             <button type="button" id="add-air-bar-item" class="add-menu-item-btn">+ Add Bar Item</button>
-          </div>
+          </details>
 
-          <div class="card">
-            <h2>Air Menu Spreadsheet</h2>
+          <details class="card air-sheet-collapse">
+            <summary><h2>Air Menu Spreadsheet</h2><span>Open editor</span></summary>
             <span class="help-text" style="margin-bottom:18px;">Use Price for single-price items. Add Full, Half, With Bone, or Boneless prices where applicable, and leave Price blank. Duplicate item/category combinations are removed automatically.</span>
             <div class="air-sheet-wrap">
               <table class="air-sheet food-sheet">
@@ -678,7 +688,7 @@
             </div>
             <p id="air-sheet-status" class="growth-ai-status" style="margin:0 0 12px;"></p>
             <button type="button" id="add-air-item" class="add-menu-item-btn">+ Add Menu Item</button>
-          </div>
+          </details>
 
           <div class="card">
             <h2>Category Visibility</h2>

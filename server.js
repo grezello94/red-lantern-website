@@ -598,6 +598,10 @@ async function ensureDirectOrdersTable() {
     await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS client_request_id TEXT`;
     await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS table_area TEXT`;
     await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS table_number INTEGER`;
+    await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS bill_printed_at TIMESTAMPTZ`;
+    await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS settled_at TIMESTAMPTZ`;
+    await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS settlement_type TEXT`;
+    await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS settlement_amount NUMERIC`;
     await sql`UPDATE direct_orders SET order_day=(created_at AT TIME ZONE 'Asia/Kolkata')::date WHERE order_day IS NULL`;
     await sql`WITH numbered AS (SELECT id, ROW_NUMBER() OVER (PARTITION BY order_day ORDER BY created_at, id)::integer AS daily_number FROM direct_orders) UPDATE direct_orders AS orders SET daily_order_number=numbered.daily_number FROM numbered WHERE orders.id=numbered.id AND orders.daily_order_number IS NULL`;
     await sql`CREATE UNIQUE INDEX IF NOT EXISTS direct_orders_day_number_unique ON direct_orders (order_day, daily_order_number) WHERE daily_order_number IS NOT NULL`;
@@ -842,6 +846,7 @@ function normalizeAirMenu(body) {
     showCardPrices: body.airShowCardPrices === 'on',
     cardCallEnabled: body.airCardCallEnabled === 'on',
     cardOrderPhone: String(body.airCardOrderPhone || '').trim(),
+    loyalty: { enabled: body.airLoyaltyEnabled === 'on', spend: Math.max(1,Math.min(100000,Math.floor(Number(body.airLoyaltySpend)||10))), earn: Math.max(1,Math.min(10000,Math.floor(Number(body.airLoyaltyEarn)||1))), minRedeem: Math.max(1,Math.min(100000,Math.floor(Number(body.airLoyaltyMinRedeem)||100))), pointValue: Math.max(.01,Math.min(1000,Number(body.airLoyaltyPointValue)||1)) },
     serviceWindows,
     restaurantClosed: body.airRestaurantClosed === 'on',
     reopensAt: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(String(body.airReopensAt || '')) ? String(body.airReopensAt) : '',
@@ -2101,7 +2106,8 @@ app.post('/api/direct-orders', async (req, res) => {
     const unavailableRows = await sql`SELECT item_key FROM menu_availability WHERE unavailable_until > NOW()`;
     const unavailableKeys = new Set(unavailableRows.map((row) => row.item_key));
     if (cleanItems.some((item) => unavailableKeys.has(item.availabilityKey))) return res.status(409).json({ error: 'One or more selected items have just gone out of stock. Please refresh the menu.' });
-    const requestedLoyaltyPoints = Math.max(0, Math.floor(Number(req.body?.loyaltyPoints) || 0));
+    const loyalty={enabled:menu.loyalty?.enabled!==false,spend:Math.max(1,Number(menu.loyalty?.spend)||10),earn:Math.max(1,Number(menu.loyalty?.earn)||1),minRedeem:Math.max(1,Number(menu.loyalty?.minRedeem)||100),pointValue:Math.max(.01,Number(menu.loyalty?.pointValue)||1)};
+    const requestedLoyaltyPoints = loyalty.enabled ? Math.max(0, Math.floor(Number(req.body?.loyaltyPoints) || 0)) : 0;
     // Only a customer who has successfully completed an earlier order is trusted
     // for auto-acceptance. A number with only cancelled/rejected attempts remains
     // a new order for the counter to confirm first.
@@ -2112,9 +2118,10 @@ app.post('/api/direct-orders', async (req, res) => {
     const id = `RL${Date.now().toString(36).toUpperCase()}${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
     const trackingToken = crypto.randomBytes(24).toString('base64url');
     const subtotal = cleanItems.reduce((sum, item) => sum + item.quantity * (priceNumber(item.price) + (item.style ? 10 : 0)), 0);
-    if (requestedLoyaltyPoints && (requestedLoyaltyPoints < 100 || requestedLoyaltyPoints > subtotal)) return res.status(400).json({ error: 'Use at least 100 points, up to the order total.' });
-    const total = subtotal - requestedLoyaltyPoints;
-    const loyaltyPointsEarned = Math.floor(total / 10);
+    const redemptionValue=requestedLoyaltyPoints*loyalty.pointValue;
+    if (requestedLoyaltyPoints && (requestedLoyaltyPoints < loyalty.minRedeem || redemptionValue > subtotal)) return res.status(400).json({ error: `Use at least ${loyalty.minRedeem} points, up to the order total.` });
+    const total = subtotal - redemptionValue;
+    const loyaltyPointsEarned = loyalty.enabled ? Math.floor(total / loyalty.spend) * loyalty.earn : 0;
     const savedItems = cleanItems.map(({ availabilityKey, ...item }) => item);
     if (requestedLoyaltyPoints) {
       await ensureLoyaltyTable();
@@ -2157,14 +2164,15 @@ app.post('/api/orders/counter', async (req, res) => {
     const [{ orderDay, number }, { billYear, number: billNumber }]=await Promise.all([nextDailyOrderNumber(),nextAnnualBillNumber()]); const id=`RL${Date.now().toString(36).toUpperCase()}${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
     const saved=clean.map(({availabilityKey,...item})=>item), subtotal=saved.reduce((sum,item)=>sum+item.quantity*(priceNumber(item.price)+(item.style?10:0)),0);
     const suppliedPhone=String(customerPhone||'').replace(/\D/g,'').slice(0,16);
-    const requestedLoyaltyPoints=Math.max(0,Math.floor(Number(loyaltyPoints)||0));
-    if (requestedLoyaltyPoints && (suppliedPhone.length<7 || requestedLoyaltyPoints<100 || requestedLoyaltyPoints>subtotal)) return res.status(400).json({ error:'Use a valid mobile number and at least 100 points, up to the order total.' });
+    const loyalty={enabled:menu.loyalty?.enabled!==false,spend:Math.max(1,Number(menu.loyalty?.spend)||10),earn:Math.max(1,Number(menu.loyalty?.earn)||1),minRedeem:Math.max(1,Number(menu.loyalty?.minRedeem)||100),pointValue:Math.max(.01,Number(menu.loyalty?.pointValue)||1)};
+    const requestedLoyaltyPoints=loyalty.enabled?Math.max(0,Math.floor(Number(loyaltyPoints)||0)):0;
+    if (requestedLoyaltyPoints && (suppliedPhone.length<7 || requestedLoyaltyPoints<loyalty.minRedeem || requestedLoyaltyPoints*loyalty.pointValue>subtotal)) return res.status(400).json({ error:`Use a valid mobile number and at least ${loyalty.minRedeem} points, up to the order total.` });
     const dineInArea=String(tableArea||'').trim().slice(0,60), dineInNumber=Number.parseInt(tableNumber,10);
     const isDineIn=!!dineInArea&&Number.isInteger(dineInNumber)&&dineInNumber>0&&dineInNumber<=9999;
     const orderMode=isDineIn?'table':'counter', fulfillment=isDineIn?'dine_in':'takeaway';
     const dineInAction=isDineIn && ['save','hold'].includes(String(action)) ? String(action) : 'submit';
     const initialStatus=dineInAction==='hold' ? 'held' : dineInAction==='save' ? 'saved' : 'accepted';
-    const phone=suppliedPhone||`walkin-${id}`, total=subtotal-requestedLoyaltyPoints, earned=Math.floor(total/10), trackingToken=crypto.randomBytes(24).toString('base64url');
+    const phone=suppliedPhone||`walkin-${id}`, total=subtotal-requestedLoyaltyPoints*loyalty.pointValue, earned=loyalty.enabled?Math.floor((subtotal-requestedLoyaltyPoints*loyalty.pointValue)/loyalty.spend)*loyalty.earn:0, trackingToken=crypto.randomBytes(24).toString('base64url');
     if (requestedLoyaltyPoints) {
       await ensureLoyaltyTable();
       const inserted=await sql`WITH redeemed AS (UPDATE loyalty_accounts SET points=points-${requestedLoyaltyPoints},total_redeemed=total_redeemed+${requestedLoyaltyPoints},updated_at=NOW() WHERE customer_phone=${phone} AND points>=${requestedLoyaltyPoints} AND points>=100 RETURNING customer_phone) INSERT INTO direct_orders (id,status,mode,customer_name,customer_phone,special_request,items,total,order_day,daily_order_number,bill_year,bill_number,tracking_token,loyalty_points_redeemed,loyalty_points_earned,fulfillment_type,client_request_id,table_area,table_number) SELECT ${id},${initialStatus},${orderMode},${String(customerName||'Walk-in customer').trim().slice(0,80)},${phone},${String(specialRequest||'').trim().slice(0,240)},${JSON.stringify(saved)},${total},${orderDay}::date,${number},${billYear},${billNumber},${trackingToken},${requestedLoyaltyPoints},${earned},${fulfillment},${clientRequestId||null},${isDineIn?dineInArea:null},${isDineIn?dineInNumber:null} FROM redeemed RETURNING id`;
@@ -2227,6 +2235,24 @@ app.patch('/api/orders/:id', async (req, res) => {
     res.json({ ok:true });
   } catch (error) { res.status(500).json({ error:error.message }); }
 });
+
+app.post('/api/orders/:id/bill-printed', async (req, res) => { try {
+  await ensureDirectOrdersTable();
+  const rows=await sql`UPDATE direct_orders SET bill_printed_at=COALESCE(bill_printed_at,NOW()),updated_at=NOW() WHERE id=${req.params.id} AND mode='table' AND status IN ('accepted','preparing','ready') RETURNING id,bill_printed_at`;
+  if (!rows.length) return res.status(409).json({ error:'Only an active dine-in order can be marked as bill printed.' });
+  res.json({ ok:true, order:rows[0] });
+} catch (error) { res.status(500).json({ error:'Unable to mark the bill as printed.' }); } });
+
+app.post('/api/orders/:id/settle', async (req, res) => { try {
+  await ensureDirectOrdersTable(); await ensureLoyaltyTable();
+  const paymentType=['cash','upi','card','due','other','not_paid','part'].includes(String(req.body?.paymentType||'')) ? String(req.body.paymentType) : '';
+  const amount=Math.max(0,Number(req.body?.amount)||0);
+  if (!paymentType) return res.status(400).json({ error:'Choose a payment type.' });
+  const rows=await sql`UPDATE direct_orders SET status='completed',settled_at=NOW(),settlement_type=${paymentType},settlement_amount=${amount},updated_at=NOW() WHERE id=${req.params.id} AND mode='table' AND bill_printed_at IS NOT NULL AND status IN ('accepted','preparing','ready') RETURNING customer_phone,loyalty_points_earned`;
+  if (!rows.length) return res.status(409).json({ error:'This table is not waiting for settlement.' });
+  await sql`WITH awarded AS (UPDATE direct_orders SET loyalty_awarded_at=NOW() WHERE id=${req.params.id} AND loyalty_awarded_at IS NULL RETURNING customer_phone,loyalty_points_earned) INSERT INTO loyalty_accounts (customer_phone,points,total_earned) SELECT customer_phone,loyalty_points_earned,loyalty_points_earned FROM awarded ON CONFLICT (customer_phone) DO UPDATE SET points=loyalty_accounts.points+EXCLUDED.points,total_earned=loyalty_accounts.total_earned+EXCLUDED.total_earned,updated_at=NOW()`;
+  res.json({ ok:true });
+} catch (error) { res.status(500).json({ error:'Unable to settle this table.' }); } });
 app.get('/api/orders/availability', async (req,res)=>{try{await ensureMenuAvailabilityTable();res.json(await sql`SELECT * FROM menu_availability WHERE unavailable_until > NOW()`)}catch(e){res.status(500).json({error:e.message})}});
 app.get('/api/orders/menu', async (req,res)=>{try{const menu=await getSection('airMenu');const order=Array.isArray(menu.categoryOrder)?menu.categoryOrder:[];const format=(items,menuType)=>items.map(item=>({name:item.name,category:item.category,menuType,key:`${String(item.category||'').toLowerCase()}::${String(item.name||'').toLowerCase()}`,categoryOrderIndex:order.indexOf(item.category),price:item.price,halfPrice:item.halfPrice,fullPrice:item.fullPrice,withBonePrice:item.withBonePrice,bonelessPrice:item.bonelessPrice,price30ml:item.price30ml,price60ml:item.price60ml,price90ml:item.price90ml,price180ml:item.price180ml,gravyStyleAvailable:!!(item.gravyStyleAvailable||item.gravyAvailable||item.semiGravyAvailable)})).filter(item=>item.name);res.json([...format(menu.items||[],'food'),...format(menu.barItems||[],'bar')])}catch(e){res.status(500).json({error:e.message})}});
 app.get('/api/orders/operations', async (req, res) => { try {
@@ -2241,7 +2267,7 @@ app.get('/api/orders/operations', async (req, res) => { try {
 app.post('/api/orders/:id/kots', async (req, res) => { try {
   await ensureDirectOrdersTable(); await ensureOperationsConfigTable(); await ensureKotsTable();
   const [orderRows, configRows, previous]=await Promise.all([
-    sql`SELECT id, mode, daily_order_number, customer_name, customer_phone, fulfillment_type, special_request, items FROM direct_orders WHERE id=${req.params.id} LIMIT 1`,
+    sql`SELECT id, mode, daily_order_number, customer_name, customer_phone, fulfillment_type, table_area, table_number, special_request, items, created_at FROM direct_orders WHERE id=${req.params.id} LIMIT 1`,
     sql`SELECT config FROM order_operations_config WHERE config_key='default' LIMIT 1`,
     sql`SELECT tickets FROM order_kots WHERE order_id=${req.params.id}`
   ]);
