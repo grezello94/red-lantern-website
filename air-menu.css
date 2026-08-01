@@ -101,6 +101,8 @@ main { width:min(100%,1420px); margin:0 auto; padding:0 16px 42px; }
 .order-summary-actions { display:grid; grid-template-columns:1fr 1fr; gap:9px; padding:16px 22px 5px; }
 .order-summary-actions button,.order-summary-actions a { display:grid; min-height:44px; place-items:center; padding:10px 12px; border:0; border-radius:10px; color:#fff; background:var(--red); cursor:pointer; font:800 12px Manrope,sans-serif; text-align:center; text-decoration:none; }
 .order-summary-actions a { background:#159447; }
+.order-summary-actions #share-whatsapp { display:flex; align-items:center; justify-content:center; gap:7px; }
+.order-summary-actions #share-whatsapp svg { width:17px; height:17px; flex:0 0 17px; }
 .order-summary-actions #copy-order { grid-column:1/-1; }
 .card-menu-mode .order-summary-actions #copy-order { grid-column:auto; }
 .order-summary-actions .call-order { grid-column:1/-1; background:#17264a; }
