@@ -130,9 +130,12 @@
       .air-sheet-collapse { min-height:0; padding:0 !important; margin-bottom:12px !important; overflow:hidden; }
       .air-sheet-collapse summary { display:flex; min-height:0; align-items:center; justify-content:space-between; gap:16px; padding:13px 22px !important; cursor:pointer; list-style:none; }
       .air-sheet-collapse summary::-webkit-details-marker { display:none; }
-      .air-sheet-collapse summary h2 { margin:0; font-size:18px; }
+      .air-sheet-collapse summary h2 { display:flex; align-items:center; gap:10px; margin:0; font-size:18px; }
+      .sheet-icon { display:grid; width:30px; height:30px; place-items:center; border-radius:9px; color:#7d1e35; background:#fff0f1; }.sheet-icon svg { width:18px; height:18px; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }.bar-sheet .sheet-icon { color:#81511d; background:#fff5df; }.air-menu-sheet .sheet-icon { color:#2463a7; background:#edf6ff; }
       .loyalty-settings-card { box-sizing:border-box; width:100% !important; max-width:none; margin:22px 0 0 !important; padding:26px 28px !important; }
       .loyalty-settings-card .air-settings-heading { max-width:660px; }
+      .loyalty-settings-card .air-settings-heading h2 { display:flex; align-items:center; gap:10px; }
+      .loyalty-title-icon { display:grid; width:32px; height:32px; place-items:center; border:1px solid #efd1a0; border-radius:10px; color:#a76a12; background:#fff4d9; }.loyalty-title-icon svg { width:18px; height:18px; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
       .loyalty-settings-card .form-grid { grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; }
       .loyalty-settings-card .form-grid > .form-group { margin:0; padding:13px; border:1px solid #eadfd4; border-radius:11px; background:rgba(255,255,255,.72); }
       .loyalty-settings-card .form-grid > .form-group label { min-height:30px; color:#765f58; font-size:10px; line-height:1.35; }
@@ -144,6 +147,14 @@
       .order-channels-card .form-grid + .form-grid { margin-top:12px; }
       .order-channels-card .form-group { box-sizing:border-box; min-height:92px; padding:15px 16px; border:1px solid #e4eaf2; border-radius:12px; background:linear-gradient(135deg,#fbfcfe,#fff); }
       .order-channels-card .form-group input { box-sizing:border-box; width:100%; margin-top:9px; }
+      .order-channels-card .channel-control { position:relative; overflow:hidden; }
+      .order-channels-card .channel-control > div { display:grid; grid-template-columns:34px minmax(0,1fr); column-gap:10px; align-items:center; }
+      .order-channels-card .channel-control strong { display:block; }
+      .order-channels-card .channel-control .help-text { grid-column:2; }
+      .channel-icon { display:grid; grid-row:span 2; width:34px; height:34px; place-items:center; border:1px solid currentColor; border-radius:10px; font-size:19px; font-weight:900; line-height:1; }
+      .channel-table .channel-icon { color:#2563a6; background:#edf6ff; }.channel-card .channel-icon { color:#7b3f98; background:#f8efff; }.channel-delivery .channel-icon { color:#b44a25; background:#fff1ea; }.channel-phone .channel-icon { color:#18764b; background:#eaf9f1; }.channel-call .channel-icon { color:#243f76; background:#eef3ff; }
+      .channel-field-label { display:flex; align-items:center; gap:9px; }.channel-field-label .channel-icon { width:26px; height:26px; border-radius:8px; font-size:15px; }
+      .air-settings-card .menu-control > div { display:grid; grid-template-columns:34px minmax(0,1fr); column-gap:10px; align-items:center; }.air-settings-card .menu-control strong { display:block; }.air-settings-card .menu-control .help-text { grid-column:2; }.menu-table-live .channel-icon { color:#2563a6; background:#edf6ff; }.menu-card-live .channel-icon { color:#7b3f98; background:#f8efff; }.menu-table-price .channel-icon { color:#a96b10; background:#fff7df; }.menu-card-price .channel-icon { color:#ad3d6c; background:#fff0f6; }
       #air-addon-management .air-settings-heading { max-width:700px; }
       @media (max-width:760px) { .loyalty-settings-card .form-grid { grid-template-columns:1fr; } }
       .air-sheet-collapse summary::after { content:'⌄'; color:#7b3151; font-size:26px; font-weight:800; line-height:1; transition:transform .18s ease; }
@@ -653,20 +664,20 @@
             <input type="hidden" name="airCategoryOrder" value="[]">
             <datalist id="air-category-options"></datalist>
             <div class="form-grid">
-              <div class="switch-row"><div><strong>Table menu live</strong><span class="help-text" style="margin:4px 0 0;">Allow the in-store table QR to open.</span></div><input type="checkbox" name="airTableLive" checked></div>
-              <div class="switch-row"><div><strong>Business card menu live</strong><span class="help-text" style="margin:4px 0 0;">Allow the visiting-card QR to open.</span></div><input type="checkbox" name="airCardLive" checked></div>
-              <div class="switch-row"><div><strong>Show table prices</strong><span class="help-text" style="margin:4px 0 0;">Show prices only on the in-store Air Menu.</span></div><input type="checkbox" name="airShowTablePrices" checked></div>
-              <div class="switch-row"><div><strong>Show business card prices</strong><span class="help-text" style="margin:4px 0 0;">Show prices on the visiting-card menu.</span></div><input type="checkbox" name="airShowCardPrices"></div>
+              <div class="switch-row menu-control menu-table-live"><div><i class="channel-icon" aria-hidden="true">⌗</i><strong>Table menu live</strong><span class="help-text" style="margin:4px 0 0;">Allow the in-store table QR to open.</span></div><input type="checkbox" name="airTableLive" checked></div>
+              <div class="switch-row menu-control menu-card-live"><div><i class="channel-icon" aria-hidden="true">▣</i><strong>Business card menu live</strong><span class="help-text" style="margin:4px 0 0;">Allow the visiting-card QR to open.</span></div><input type="checkbox" name="airCardLive" checked></div>
+              <div class="switch-row menu-control menu-table-price"><div><i class="channel-icon" aria-hidden="true">₹</i><strong>Show table prices</strong><span class="help-text" style="margin:4px 0 0;">Show prices only on the in-store Air Menu.</span></div><input type="checkbox" name="airShowTablePrices" checked></div>
+              <div class="switch-row menu-control menu-card-price"><div><i class="channel-icon" aria-hidden="true">₹</i><strong>Show business card prices</strong><span class="help-text" style="margin:4px 0 0;">Show prices on the visiting-card menu.</span></div><input type="checkbox" name="airShowCardPrices"></div>
             </div>
-            <section class="card loyalty-settings-card" style="margin:22px 0 0;background:#fffaf1;border:1px solid #f1dcc0;"><div class="air-settings-heading"><div><span class="hours-kicker">Protected wallet rules</span><h2>Loyalty Points</h2><p>These values apply to future orders only. Existing customer balances are never changed.</p></div></div><div class="form-grid"><div class="form-group"><label>Spend to earn (₹)</label><input type="number" name="airLoyaltySpend" min="1" max="100000" value="10"></div><div class="form-group"><label>Points earned</label><input type="number" name="airLoyaltyEarn" min="1" max="10000" value="1"></div><div class="form-group"><label>Minimum points to redeem</label><input type="number" name="airLoyaltyMinRedeem" min="1" max="100000" value="100"></div><div class="form-group"><label>₹ value per point</label><input type="number" name="airLoyaltyPointValue" min="0.01" max="1000" step="0.01" value="1"></div></div><div class="switch-row"><div><strong>Loyalty programme live</strong><span class="help-text" style="margin:4px 0 0;">Turn off earning and redemption without deleting any balances.</span></div><input type="checkbox" name="airLoyaltyEnabled" checked></div></section>
+            <section class="card loyalty-settings-card" style="margin:22px 0 0;background:#fffaf1;border:1px solid #f1dcc0;"><div class="air-settings-heading"><div><span class="hours-kicker">Protected wallet rules</span><h2><i class="loyalty-title-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 7h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z"></path><path d="M16 13h5"></path><path d="M6 7V5a2 2 0 0 1 2-2h9"></path><circle cx="16" cy="13" r="1"></circle></svg></i>Loyalty Points</h2><p>These values apply to future orders only. Existing customer balances are never changed.</p></div></div><div class="form-grid"><div class="form-group"><label>Spend to earn (₹)</label><input type="number" name="airLoyaltySpend" min="1" max="100000" value="10"></div><div class="form-group"><label>Points earned</label><input type="number" name="airLoyaltyEarn" min="1" max="10000" value="1"></div><div class="form-group"><label>Minimum points to redeem</label><input type="number" name="airLoyaltyMinRedeem" min="1" max="100000" value="100"></div><div class="form-group"><label>₹ value per point</label><input type="number" name="airLoyaltyPointValue" min="0.01" max="1000" step="0.01" value="1"></div></div><div class="switch-row"><div><strong>Loyalty programme live</strong><span class="help-text" style="margin:4px 0 0;">Turn off earning and redemption without deleting any balances.</span></div><input type="checkbox" name="airLoyaltyEnabled" checked></div></section>
             <section class="order-channels-card"><div class="order-channels-heading"><span class="hours-kicker">Guest ordering</span><h2>Order channels</h2><p class="help-text">Choose where guests can send an order and how Business Card QR guests can contact you.</p></div><div class="form-grid">
-              <div class="switch-row"><div><strong>Table QR direct orders</strong><span class="help-text" style="margin:4px 0 0;">Let in-restaurant guests send an order straight to the staff console.</span></div><input type="checkbox" name="airTableDirectOrders"></div>
-              <div class="switch-row"><div><strong>Business Card QR direct orders</strong><span class="help-text" style="margin:4px 0 0;">Let business-card QR guests place a direct order. Recommended for your current setup.</span></div><input type="checkbox" name="airCardDirectOrders" checked></div>
-              <div class="switch-row"><div><strong>Delivery orders</strong><span class="help-text" style="margin:4px 0 0;">Turn this off whenever delivery is unavailable. Guests can still choose pickup.</span></div><input type="checkbox" name="airDeliveryEnabled" checked></div>
+              <div class="switch-row channel-control channel-table"><div><i class="channel-icon" aria-hidden="true">⌗</i><strong>Table QR direct orders</strong><span class="help-text" style="margin:4px 0 0;">Let in-restaurant guests send an order straight to the staff console.</span></div><input type="checkbox" name="airTableDirectOrders"></div>
+              <div class="switch-row channel-control channel-card"><div><i class="channel-icon" aria-hidden="true">▣</i><strong>Business Card QR direct orders</strong><span class="help-text" style="margin:4px 0 0;">Let business-card QR guests place a direct order. Recommended for your current setup.</span></div><input type="checkbox" name="airCardDirectOrders" checked></div>
+              <div class="switch-row channel-control channel-delivery"><div><i class="channel-icon" aria-hidden="true">↗</i><strong>Delivery orders</strong><span class="help-text" style="margin:4px 0 0;">Turn this off whenever delivery is unavailable. Guests can still choose pickup.</span></div><input type="checkbox" name="airDeliveryEnabled" checked></div>
             </div>
             <div class="form-grid">
-              <div class="form-group"><label>Business Card Order Phone & WhatsApp</label><span class="help-text">Orders are sent directly to this WhatsApp number. Include country code, for example +91 98765 43210.</span><input type="tel" name="airCardOrderPhone" placeholder="+91 98765 43210"></div>
-              <div class="switch-row"><div><strong>Call to Place Order</strong><span class="help-text" style="margin:4px 0 0;">Show a direct Phone app button only on the Business Card QR menu.</span></div><input type="checkbox" name="airCardCallEnabled"></div>
+              <div class="form-group channel-phone"><label class="channel-field-label"><i class="channel-icon" aria-hidden="true">◉</i>Business Card Order Phone & WhatsApp</label><span class="help-text">Orders are sent directly to this WhatsApp number. Include country code, for example +91 98765 43210.</span><input type="tel" name="airCardOrderPhone" placeholder="+91 98765 43210"></div>
+              <div class="switch-row channel-control channel-call"><div><i class="channel-icon" aria-hidden="true">☎</i><strong>Call to Place Order</strong><span class="help-text" style="margin:4px 0 0;">Show a direct Phone app button only on the Business Card QR menu.</span></div><input type="checkbox" name="airCardCallEnabled"></div>
             </div></section>
           </div>
 
@@ -679,8 +690,8 @@
             <div class="closure-panel"><div class="closure-panel-head"><div><span class="hours-kicker">Temporary closure</span><h3>Close for a holiday or private event</h3><p>Turn this on to immediately pause QR ordering. Guests will see your reopening details.</p></div><label class="closure-switch"><input type="checkbox" name="airRestaurantClosed"><span></span><b>Closed</b></label></div><div class="closure-fields"><div class="form-group"><label>Reopens on</label><input type="datetime-local" name="airReopensAt"><span class="help-text">Optional, but recommended for guests.</span></div><div class="form-group"><label>Message shown to guests</label><textarea name="airClosureMessage" rows="2" placeholder="We are closed today for a private event. We look forward to welcoming you soon."></textarea></div></div></div>
           </div>
 
-          <details class="card air-sheet-collapse">
-            <summary><h2>Bar Menu Spreadsheet</h2></summary>
+          <details class="card air-sheet-collapse bar-sheet">
+            <summary><h2><i class="sheet-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 3h14l-7 8v7"></path><path d="M9 21h6"></path></svg></i>Bar Menu Spreadsheet</h2></summary>
             <span class="help-text" style="margin-bottom:18px;">Use Price for bottles or single-price drinks. Add 30 ML and 60 ML prices where applicable; 90 ML and 180 ML are optional. Duplicate item/category combinations are removed automatically.</span>
             <div class="air-sheet-wrap">
               <table class="air-sheet bar-sheet">
@@ -692,8 +703,8 @@
             <button type="button" id="add-air-bar-item" class="add-menu-item-btn">+ Add Bar Item</button>
           </details>
 
-          <details class="card air-sheet-collapse">
-            <summary><h2>Air Menu Spreadsheet</h2></summary>
+          <details class="card air-sheet-collapse air-menu-sheet">
+            <summary><h2><i class="sheet-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"></rect><path d="M8 8h8M8 12h8M8 16h5"></path></svg></i>Air Menu Spreadsheet</h2></summary>
             <span class="help-text" style="margin-bottom:18px;">Use Price for single-price items. Add Full, Half, With Bone, or Boneless prices where applicable, and leave Price blank. Duplicate item/category combinations are removed automatically.</span>
             <div class="air-sheet-wrap">
               <table class="air-sheet food-sheet">
