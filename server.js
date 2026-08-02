@@ -829,6 +829,11 @@ function normalizeAirMenu(body) {
   } catch {
     categoryOrder = [];
   }
+  let addonGroups = [];
+  try {
+    const parsed = JSON.parse(body.airAddonGroups || '[]');
+    if (Array.isArray(parsed)) addonGroups = parsed.slice(0,100).map((group) => ({ id:String(group.id || crypto.randomUUID()).replace(/[^a-zA-Z0-9_-]/g,'').slice(0,60), name:String(group.name || '').trim().slice(0,80), displayName:String(group.displayName || '').trim().slice(0,100), min:Math.max(0,Math.min(20,Math.floor(Number(group.min)||0))), max:Math.max(1,Math.min(20,Math.floor(Number(group.max)||1))), selection:group.selection==='multiple'?'multiple':'single', active:group.active!==false, options:(Array.isArray(group.options)?group.options:[]).slice(0,50).map((option)=>({name:String(option.name||'').trim().slice(0,80),price:Math.max(0,Math.min(100000,Number(option.price)||0)),dietary:option.dietary==='nonveg'?'nonveg':'veg'})).filter((option)=>option.name) })).filter((group)=>group.id&&group.name&&group.options.length);
+  } catch { addonGroups = []; }
   const isValidTime = (value) => /^([01]\d|2[0-3]):[0-5]\d$/.test(String(value || ''));
   const scheduleWasSubmitted = ['airService1Open', 'airService1Close', 'airService2Open', 'airService2Close'].some((key) => Object.prototype.hasOwnProperty.call(body, key));
   const serviceWindows = scheduleWasSubmitted
@@ -842,6 +847,7 @@ function normalizeAirMenu(body) {
     cardLive: body.airCardLive === 'on',
     tableDirectOrders: body.airTableDirectOrders === 'on',
     cardDirectOrders: body.airCardDirectOrders === 'on',
+    deliveryEnabled: body.airDeliveryEnabled === 'on',
     showTablePrices: body.airShowTablePrices === 'on',
     showCardPrices: body.airShowCardPrices === 'on',
     cardCallEnabled: body.airCardCallEnabled === 'on',
@@ -853,6 +859,7 @@ function normalizeAirMenu(body) {
     closureMessage: String(body.airClosureMessage || '').trim().slice(0, 240),
     categoryVisibility,
     categoryOrder,
+    addonGroups,
     sourceFileName: body.airSourceFileName || '',
     barSourceFileName: body.airBarSourceFileName || '',
     items: dedupeMenuItems(names.map((name, index) => ({
@@ -2081,6 +2088,7 @@ app.post('/api/direct-orders', async (req, res) => {
     const phone = String(customerPhone || '').replace(/\D/g, '');
     if (phone.length < 7) return res.status(400).json({ error: 'Enter a valid mobile number.' });
     const fulfilment = String(fulfillmentType || '').toLowerCase() === 'pickup' ? 'pickup' : String(fulfillmentType || '').toLowerCase() === 'delivery' ? 'delivery' : mode === 'table' ? 'pickup' : 'delivery';
+    if (fulfilment === 'delivery' && menu.deliveryEnabled === false) return res.status(403).json({ error: 'Delivery is temporarily unavailable. Please choose pickup.' });
     const priceNumber = (value) => Number(String(value || '').replace(/[^0-9.]/g, '')) || 0;
     const displayItemName = (value) => String(value || '').replace(/[.…·]{2,}/g, ' ').replace(/\s+\d{2,5}(?:\.\d{1,2})?\s*\/?\s*$/, '').replace(/\s+/g, ' ').trim();
     const menuItems = [...(Array.isArray(menu.items) ? menu.items : []), ...(Array.isArray(menu.barItems) ? menu.barItems : [])];

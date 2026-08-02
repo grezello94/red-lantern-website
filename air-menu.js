@@ -311,7 +311,11 @@ function configureOrderActions(menu) {
   const isCard = menu.mode === 'card';
   orderIsBusinessCard = isCard;
   const fulfillmentType = document.getElementById('order-fulfillment-type');
-  if (fulfillmentType) fulfillmentType.value = isCard ? 'delivery' : 'pickup';
+  const deliveryEnabled = menu.deliveryEnabled !== false;
+  if (fulfillmentType) {
+    fulfillmentType.innerHTML = `${deliveryEnabled ? '<option value="delivery">Delivery</option>' : ''}<option value="pickup">Pick Up</option>`;
+    fulfillmentType.value = isCard && deliveryEnabled ? 'delivery' : 'pickup';
+  }
   document.body.classList.toggle('card-menu-mode', isCard);
   const whatsapp = document.getElementById('share-whatsapp');
   directOrdersEnabled = menu.directOrdersEnabled === true;

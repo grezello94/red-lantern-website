@@ -8,12 +8,12 @@
   },
   "scripts": {
     "minify:css": "cleancss -o style.min.css style.css",
-    "check": "node --check server.js && node --check admin-cms.js && node --check air-menu.js",
+    "check": "node --check server.js && node --check admin-cms.js && node --check air-menu.js && node --check orders.js",
     "build": "npm run check && npm run minify:css",
     "start": "node server.js",
     "dev": "node server.js",
     "print-bridge": "node print-bridge.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "npm run build"
   },
   "repository": {
     "type": "git",

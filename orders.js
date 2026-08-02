@@ -25,6 +25,16 @@ let operationsConfig = { printers: [], routes: [] };
 const tableAllocationCacheKey = 'red-lantern-table-allocation';
 function readCachedTableAreas() { try { const value=JSON.parse(localStorage.getItem(tableAllocationCacheKey)||'[]'); return Array.isArray(value)?value:[]; } catch (_) { return []; } }
 function cacheTableAreas(areas) { try { localStorage.setItem(tableAllocationCacheKey,JSON.stringify(Array.isArray(areas)?areas:[])); } catch (_) {} }
+const tableOrderSnapshotKey = 'red-lantern-table-order-snapshot';
+function readCachedTableOrders() { try { const value=JSON.parse(localStorage.getItem(tableOrderSnapshotKey)||'[]'); return Array.isArray(value) ? value.filter((order) => order && order.id && order.mode === 'table' && order.table_area && order.table_number) : []; } catch (_) { return []; } }
+function cacheTableOrders(orders) { try { const tables=(Array.isArray(orders) ? orders : []).filter((order) => order?.mode === 'table' && order.table_area && order.table_number).map((order) => ({ id:order.id, mode:'table', table_area:order.table_area, table_number:order.table_number, status:order.status, created_at:order.created_at, bill_printed_at:order.bill_printed_at || null })); localStorage.setItem(tableOrderSnapshotKey, JSON.stringify(tables)); } catch (_) {} }
+function reserveOfflineTable(payload) {
+  if (!payload.tableArea || !payload.tableNumber) return;
+  const id=`offline:${payload.clientRequestId}`;
+  orderRecords.set(id, { id, mode:'table', table_area:payload.tableArea, table_number:Number(payload.tableNumber), status:'offline', created_at:new Date().toISOString(), items:payload.items || [], customer_name:payload.customerName || '', customer_phone:payload.customerPhone || '', special_request:payload.specialRequest || '' });
+  cacheTableOrders([...orderRecords.values()]);
+  if (!tableViewPanel.hidden) renderTableView();
+}
 let operationsMenu = [];
 let operationKotHistory = new Map();
 let completedKotHistory = [];
@@ -89,7 +99,7 @@ async function flushQueuedCounterOrders() {
     while (queued.length && navigator.onLine) {
       try {
         const result = await sendCounterOrder(queued[0]);
-        autoPrintOrder({ id:result.id, mode:'counter', status:result.status || 'accepted' });
+        autoPrintOrder({ id:result.id, mode:queued[0].tableArea ? 'table' : 'counter', status:result.status || 'accepted' });
         queued.shift(); saveQueuedCounterOrders(queued);
       }
       catch (error) {
@@ -357,6 +367,7 @@ function renderTableView() {
   const tableState = (area, number) => {
     const order = tableOrders.filter((item) => String(item.table_area) === String(area) && Number(item.table_number) === Number(number)).sort((a,b) => new Date(b.created_at) - new Date(a.created_at))[0];
     if (!order) return { state:'blank', label:'Available', order:null };
+    if (String(order.id || '').startsWith('offline:') || order.status === 'offline') return { state:'running', label:'Waiting to sync', order };
     const elapsedMinutes = Math.max(0, Math.floor((Date.now() - new Date(order.created_at).getTime()) / 60000));
     const elapsedLabel = elapsedMinutes < 60 ? `${elapsedMinutes} min ago` : `${Math.floor(elapsedMinutes / 60)}h ${elapsedMinutes % 60}m ago`;
     if (order.status === 'completed') return { state:'paid', label:'Paid · available', order };
@@ -374,8 +385,13 @@ function renderTableView() {
 }
 async function showTableView() {
   tableViewPanel.hidden = false;
-  document.getElementById('table-view-content').innerHTML = '<div class="table-view-empty">Loading allocated tables…</div>';
-  try { await loadOrders(); await loadOperations(); renderTableView(); }
+  if (Array.isArray(operationsConfig.tableAreas) && operationsConfig.tableAreas.length) renderTableView();
+  else document.getElementById('table-view-content').innerHTML = '<div class="table-view-empty">Loading allocated tables…</div>';
+  try {
+    await loadOrders();
+    renderTableView();
+    void loadOperations().then(() => { if (!tableViewPanel.hidden) renderTableView(); }).catch(() => {});
+  }
   catch (error) { document.getElementById('table-view-content').innerHTML = `<div class="table-view-empty">${esc(error.message)}</div>`; }
 }
 function openMoveTable(orderId) {
@@ -516,7 +532,7 @@ const fulfillmentLabel = (order) => order?.mode === 'table'
 const tomorrowLocal = () => { const date = new Date(Date.now() + 86400000); date.setSeconds(0, 0); return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
 const toPushKey = (value) => { const padding = '='.repeat((4 - value.length % 4) % 4); const raw = atob((value + padding).replace(/-/g, '+').replace(/_/g, '/')); return Uint8Array.from(raw, (character) => character.charCodeAt(0)); };
 
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('/orders-sw.js?v=12');
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/orders-sw.js?v=13');
 document.getElementById('enable-notifications')?.addEventListener('click', async () => {
   closeOpenPanels();
   const button = document.getElementById('enable-notifications');
@@ -556,6 +572,7 @@ async function loadOrders() {
     const rows = await response.json();
     if (!Array.isArray(rows)) throw new Error('Unable to read orders. Please refresh.');
     orderRecords = new Map(rows.map((order) => [order.id, order]));
+    cacheTableOrders(rows);
     const orderDay = response.headers.get('X-Orders-Day') || '';
     const sessionOpen = response.headers.get('X-Orders-Session') !== 'closed';
     if (activeOrderDay && orderDay && activeOrderDay !== orderDay && orderSearch) { orderSearch.value = ''; query = ''; }
@@ -1209,6 +1226,7 @@ document.getElementById('table-view-content')?.addEventListener('click', async (
   const table=event.target.closest('[data-dine-table-number]'); if (!table) return;
   counterBillSplit = null;
   const existing=[...orderRecords.values()].find((order)=>order.mode==='table'&&String(order.table_area)===String(table.dataset.dineTableArea||'Dining')&&Number(order.table_number)===Number(table.dataset.dineTableNumber)&&!['completed','rejected','cancelled'].includes(order.status));
+  if (String(existing?.id || '').startsWith('offline:')) { alert('This table order is safely stored on this device and waiting to sync. Reconnect to continue editing it.'); return; }
   openCounterOrder({ area:table.dataset.dineTableArea || 'Dining', number:Number(table.dataset.dineTableNumber), orderId:existing?.id || '' });
 });
 const newOrderAction=document.createElement('button');
@@ -1217,7 +1235,7 @@ document.querySelector('[data-fulfillment-filter="pickup"]')?.before(newOrderAct
 const newOrderActionStyles=document.createElement('style');
 newOrderActionStyles.textContent='';
 document.head.appendChild(newOrderActionStyles);
-newOrderAction.addEventListener('click', async () => { counterPanel.hidden=true; await showTableView(); });
+newOrderAction.addEventListener('click', async () => { counterPanel.hidden=true; await showTableView(); tableViewPanel.scrollIntoView({ behavior:'smooth', block:'start' }); });
 settleTableDialog.addEventListener('click', async (event) => {
   if (event.target.closest('.settle-close,.settle-cancel')) { settleTableDialog.close(); return; }
   const button=event.target.closest('.settle-confirm'); if (!button) return;
@@ -1313,8 +1331,9 @@ document.getElementById('counter-place-order')?.addEventListener('click', async 
   } catch (error) {
     if (!navigator.onLine || !error.status || error.status >= 500) {
       const queued = queuedCounterOrders(); queued.push(payload); saveQueuedCounterOrders(queued);
+      reserveOfflineTable(payload);
       counterCart = []; document.getElementById('counter-customer-name').value = ''; document.getElementById('counter-customer-phone').value = ''; document.getElementById('counter-special-request').value = ''; renderCounterOrder();
-      status.textContent = 'Takeaway order saved offline. It will be sent automatically when internet returns.'; updateConnectivity();
+      status.textContent = counterTable ? 'Table order saved offline and the table is reserved. It will sync automatically when internet returns.' : 'Takeaway order saved offline. It will be sent automatically when internet returns.'; updateConnectivity();
     } else status.textContent = error.message;
   } finally { button.disabled = false; }
 });
@@ -1528,6 +1547,11 @@ menuResults?.addEventListener('click', async (event) => {
   } catch (error) { reportOrdersDiagnostic({ message:`Menu availability update failed: ${error.message}`, source:'menu availability' }); alert(error.message); button.disabled = false; }
 });
 
+const cachedTableAreas = readCachedTableAreas();
+const cachedTableOrders = readCachedTableOrders();
+if (cachedTableAreas.length) operationsConfig.tableAreas = cachedTableAreas;
+if (cachedTableOrders.length) orderRecords = new Map(cachedTableOrders.map((order) => [order.id, order]));
+if (cachedTableAreas.length) { tableViewPanel.hidden = false; renderTableView(); }
 loadOrders();
 showTableView();
 setInterval(loadOrders, 3000);
