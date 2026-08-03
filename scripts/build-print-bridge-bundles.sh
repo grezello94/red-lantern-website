@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Creates lightweight, platform-specific setup bundles served by the website.
-# The bridge itself uses only Node.js built-ins; Node.js 22 must be installed by
+# The bridge uses Node's built-in SQLite API, available in Node.js 22 and newer.
 # the workstation or included later in a signed native installer.
 root_dir="$(cd "$(dirname "$0")/.." && pwd)"
 output_dir="$root_dir/downloads"
@@ -38,7 +38,7 @@ chmod +x "$stage_dir/macos/Red-Lantern-Print-Bridge/START-SETUP.command" "$stage
 cat > "$stage_dir/windows/Red-Lantern-Print-Bridge/README.txt" <<'EOF'
 Red Lantern Print Bridge
 
-1. Install Node.js 22 LTS from https://nodejs.org if it is not already installed.
+1. Install Node.js 22 or newer from https://nodejs.org if it is not already installed.
 2. Double-click START-SETUP.cmd.
 3. Return to Orders > Operations > Print & offline setup and choose Check again.
 

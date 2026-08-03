@@ -10,7 +10,7 @@ if (!(Test-Path -LiteralPath $bridge)) { throw "print-bridge.js was not found in
 $bundledNode = Join-Path $project 'node.exe'
 $node = if (Test-Path -LiteralPath $bundledNode) { $bundledNode } else { (Get-Command node.exe -ErrorAction Stop).Source }
 $nodeMajor = (& $node -p "process.versions.node.split('.')[0]")
-if ($nodeMajor -ne '22') { throw "Node.js 22 is required. This computer has $(& $node -v). Install Node.js 22 LTS, then run this setup again." }
+if ([int]$nodeMajor -lt 22) { throw "Node.js 22 or newer is required. This computer has $(& $node -v). Install a supported Node.js LTS release, then run this setup again." }
 try {
   if ((Invoke-WebRequest -UseBasicParsing -TimeoutSec 1 'http://127.0.0.1:9124/health').StatusCode -eq 200) {
     Write-Host 'Print Bridge is already running. No setup changes were made.'

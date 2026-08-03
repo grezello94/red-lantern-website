@@ -3,13 +3,13 @@ set -euo pipefail
 
 project_dir="$(cd "$(dirname "$0")" && pwd)"
 if ! command -v node >/dev/null 2>&1; then
-  echo "Node.js 22 is required before Print Bridge can be installed. Install Node.js 22 LTS, then run this setup again."
+  echo "Node.js 22 or newer is required before Print Bridge can be installed. Install a supported Node.js LTS release, then run this setup again."
   exit 1
 fi
 node_path="$(command -v node)"
 node_major="$($node_path -p 'process.versions.node.split(".")[0]')"
-if [ "$node_major" != "22" ]; then
-  echo "Node.js 22 is required. This computer has Node.js $($node_path -v). Install Node.js 22 LTS, then run this setup again."
+if [ "$node_major" -lt 22 ]; then
+  echo "Node.js 22 or newer is required. This computer has Node.js $($node_path -v). Install a supported Node.js LTS release, then run this setup again."
   exit 1
 fi
 label="in.redlantern.print-bridge"
