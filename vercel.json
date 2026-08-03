@@ -10,6 +10,7 @@
           "*.css",
           "*.js",
           "images/**",
+          "downloads/**",
           "robots.txt"
         ]
       }

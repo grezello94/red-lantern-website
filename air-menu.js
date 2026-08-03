@@ -2,6 +2,7 @@ const params = new URLSearchParams(window.location.search);
 const fallbackUrl = 'https://www.redlanternrestaurant.in/menu';
 const expires = Number(params.get('expires'));
 const orderStorageKey = `red-lantern-order:${params.get('signature') || expires}`;
+const directOrderRequestKey = `${orderStorageKey}:request-id`;
 const orderCatalog = new Map();
 let orderSelections = {};
 let orderShowsPrices = false;
@@ -11,6 +12,9 @@ let orderCustomerPhone = localStorage.getItem('red-lantern-order-phone') || '';
 let directOrdersEnabled = false;
 let loyaltyPoints = 0;
 let loyaltyLookupTimer = null;
+let directOrderRequestId = sessionStorage.getItem(directOrderRequestKey) || '';
+function nextDirectOrderRequestId() { return `qr-${Date.now()}-${crypto.getRandomValues(new Uint32Array(1))[0].toString(36)}`; }
+function clearDirectOrderRequestId() { directOrderRequestId=''; sessionStorage.removeItem(directOrderRequestKey); }
 
 function syncOrderVisibleHeight() {
   const height = window.visualViewport?.height || window.innerHeight;
@@ -293,17 +297,19 @@ function setupOrderShortlist() {
     const phone = document.getElementById('order-customer-phone').value.trim();
     const items = Object.entries(orderSelections).filter(([, quantity]) => quantity > 0).map(([key, quantity]) => ({ ...orderCatalog.get(key), quantity }));
     if (!phone || phone.replace(/\D/g, '').length < 7) { status.textContent = 'Please enter a valid mobile number to place a direct order.'; return; }
+    if (!navigator.onLine) { status.textContent = 'Internet is unavailable. This QR order has not been sent, so it cannot be duplicated. Please reconnect and try again.'; return; }
     const button = document.getElementById('place-direct-order'); button.disabled = true; status.textContent = 'Placing your order…';
     try {
       const loyaltyInput=document.getElementById('loyalty-redeem');
       const loyaltyPointsToUse=Math.floor(Number(loyaltyInput?.value)||0);
-      const response = await fetch('/api/direct-orders', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ mode:params.get('mode'), expires, signature:params.get('signature'), customerPhone:phone, customerName:document.getElementById('order-customer-name').value.trim(), specialRequest:document.getElementById('order-special-request').value.trim(), fulfillmentType: document.getElementById('order-fulfillment-type')?.value, loyaltyPoints: loyaltyPointsToUse, items }) });
+      directOrderRequestId ||= nextDirectOrderRequestId(); sessionStorage.setItem(directOrderRequestKey,directOrderRequestId);
+      const response = await fetch('/api/direct-orders', { method:'POST', headers:{'Content-Type':'application/json','X-Direct-Order-Id':directOrderRequestId}, body:JSON.stringify({ clientRequestId:directOrderRequestId, mode:params.get('mode'), expires, signature:params.get('signature'), customerPhone:phone, customerName:document.getElementById('order-customer-name').value.trim(), specialRequest:document.getElementById('order-special-request').value.trim(), fulfillmentType: document.getElementById('order-fulfillment-type')?.value, loyaltyPoints: loyaltyPointsToUse, items }) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error);
-      orderSelections={}; loyaltyPoints=Math.max(0,loyaltyPoints-loyaltyPointsToUse); updateOrderUI(); document.getElementById('confirmation-order-number').textContent = `#${result.orderNumber || '—'}`; document.getElementById('view-order-status').href = result.trackingUrl || '#'; document.getElementById('confirmation-copy').textContent = result.autoAccepted ? 'Your order has been accepted. Follow the live status here as it is prepared and marked ready.' : 'Our counter team will confirm your order shortly. Follow the live status here for acceptance, preparation, and ready updates.'; dialog.querySelector('.order-dialog-head').hidden = true; summaryItems.hidden = true; customerDetails.hidden = true; actions.hidden = true; status.hidden = true; confirmation.hidden = false;
+      orderSelections={}; clearDirectOrderRequestId(); loyaltyPoints=Math.max(0,loyaltyPoints-loyaltyPointsToUse); updateOrderUI(); document.getElementById('confirmation-order-number').textContent = `#${result.orderNumber || '—'}`; document.getElementById('view-order-status').href = result.trackingUrl || '#'; document.getElementById('confirmation-copy').textContent = result.autoAccepted ? 'Your order has been accepted. Follow the live status here as it is prepared and marked ready.' : 'Our counter team will confirm your order shortly. Follow the live status here for acceptance, preparation, and ready updates.'; dialog.querySelector('.order-dialog-head').hidden = true; summaryItems.hidden = true; customerDetails.hidden = true; actions.hidden = true; status.hidden = true; confirmation.hidden = false;
     } catch(error) { status.textContent=error.message || 'Unable to place the order. Please call us.'; } finally { button.disabled=false; }
   });
-  document.getElementById('place-another-order').addEventListener('click', () => { resetOrderDialog(); renderOrderSummary(); });
+  document.getElementById('place-another-order').addEventListener('click', () => { clearDirectOrderRequestId(); resetOrderDialog(); renderOrderSummary(); });
   updateOrderUI();
 }
 

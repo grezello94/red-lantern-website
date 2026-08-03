@@ -2,13 +2,31 @@
 set -euo pipefail
 
 project_dir="$(cd "$(dirname "$0")" && pwd)"
+if ! command -v node >/dev/null 2>&1; then
+  echo "Node.js 22 is required before Print Bridge can be installed. Install Node.js 22 LTS, then run this setup again."
+  exit 1
+fi
 node_path="$(command -v node)"
+node_major="$($node_path -p 'process.versions.node.split(".")[0]')"
+if [ "$node_major" != "22" ]; then
+  echo "Node.js 22 is required. This computer has Node.js $($node_path -v). Install Node.js 22 LTS, then run this setup again."
+  exit 1
+fi
 label="in.redlantern.print-bridge"
 agent_dir="$HOME/Library/LaunchAgents"
 plist="$agent_dir/$label.plist"
 
 mkdir -p "$agent_dir"
-launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
+if curl -fsS --max-time 1 http://127.0.0.1:9124/health >/dev/null 2>&1; then
+  echo "Print Bridge is already running. No setup changes were made."
+  exit 0
+fi
+if [ -f "$plist" ]; then
+  launchctl bootstrap "gui/$(id -u)" "$plist" 2>/dev/null || true
+  launchctl kickstart -k "gui/$(id -u)/$label" 2>/dev/null || true
+  echo "Existing Print Bridge setup was started."
+  exit 0
+fi
 cat > "$plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

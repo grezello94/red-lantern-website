@@ -1,4 +1,4 @@
-const CACHE = 'red-lantern-orders-v13';
+const CACHE = 'red-lantern-orders-v15';
 const ORDER_SHELL = ['/orders', '/orders.js?v=19', '/orders.css?v=7', '/orders-logo.css?v=7', '/orders-fixes.css?v=10', '/orders.webmanifest?v=7', '/images/red-lantern-logo-600.webp'];
 // These keep every read-only Orders screen usable after a refresh without internet.
 const OFFLINE_DATA = ['/api/orders', '/api/orders/live-summary', '/api/orders/menu', '/api/orders/availability', '/api/orders/operations'];

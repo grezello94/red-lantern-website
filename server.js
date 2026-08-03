@@ -560,6 +560,22 @@ let pushSubscriptionsTableReady = null;
 let operationsConfigTableReady = null;
 let orderPrintJobsTableReady = null;
 let kotStationStatusTableReady = null;
+let orderEventsTableReady = null;
+async function ensureOrderEventsTable() {
+  if (!sql) throw new Error('Orders database is not configured.');
+  if (!orderEventsTableReady) orderEventsTableReady = (async () => {
+    await sql`CREATE TABLE IF NOT EXISTS order_events (event_id BIGSERIAL PRIMARY KEY, order_id TEXT NOT NULL, event_type TEXT NOT NULL, details JSONB NOT NULL DEFAULT '{}'::jsonb, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;
+    await sql`CREATE INDEX IF NOT EXISTS order_events_order_created_index ON order_events (order_id, created_at DESC)`;
+  })();
+  return orderEventsTableReady;
+}
+async function recordOrderEvent(orderId, eventType, details = {}) {
+  try {
+    if (!orderId) return;
+    await ensureOrderEventsTable();
+    await sql`INSERT INTO order_events (order_id,event_type,details) VALUES (${String(orderId).slice(0,120)},${String(eventType).slice(0,80)},${JSON.stringify(details || {})})`;
+  } catch (error) { console.error(`Order event log failed (${eventType}):`, error.message); }
+}
 async function ensureKotStationStatusTable() {
   if (!sql) throw new Error('Orders database is not configured.');
   if (!kotStationStatusTableReady) kotStationStatusTableReady = sql`CREATE TABLE IF NOT EXISTS order_kot_station_status (order_id TEXT NOT NULL, printer_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'accepted', updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (order_id, printer_id))`;
@@ -602,12 +618,14 @@ async function ensureDirectOrdersTable() {
     await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS settled_at TIMESTAMPTZ`;
     await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS settlement_type TEXT`;
     await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS settlement_amount NUMERIC`;
+    await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS settlement_request_id TEXT`;
     await sql`UPDATE direct_orders SET order_day=(created_at AT TIME ZONE 'Asia/Kolkata')::date WHERE order_day IS NULL`;
     await sql`WITH numbered AS (SELECT id, ROW_NUMBER() OVER (PARTITION BY order_day ORDER BY created_at, id)::integer AS daily_number FROM direct_orders) UPDATE direct_orders AS orders SET daily_order_number=numbered.daily_number FROM numbered WHERE orders.id=numbered.id AND orders.daily_order_number IS NULL`;
     await sql`CREATE UNIQUE INDEX IF NOT EXISTS direct_orders_day_number_unique ON direct_orders (order_day, daily_order_number) WHERE daily_order_number IS NOT NULL`;
     await sql`CREATE UNIQUE INDEX IF NOT EXISTS direct_orders_bill_year_number_unique ON direct_orders (bill_year, bill_number) WHERE bill_year IS NOT NULL AND bill_number IS NOT NULL`;
     await sql`CREATE UNIQUE INDEX IF NOT EXISTS direct_orders_tracking_token_unique ON direct_orders (tracking_token) WHERE tracking_token IS NOT NULL`;
     await sql`CREATE UNIQUE INDEX IF NOT EXISTS direct_orders_client_request_unique ON direct_orders (client_request_id) WHERE client_request_id IS NOT NULL`;
+    await sql`CREATE UNIQUE INDEX IF NOT EXISTS direct_orders_settlement_request_unique ON direct_orders (settlement_request_id) WHERE settlement_request_id IS NOT NULL`;
     await sql`CREATE INDEX IF NOT EXISTS direct_orders_day_created_index ON direct_orders (order_day, created_at DESC)`;
     await sql`CREATE INDEX IF NOT EXISTS direct_orders_phone_created_index ON direct_orders (customer_phone, created_at DESC)`;
     await sql`CREATE TABLE IF NOT EXISTS direct_order_counters (order_day DATE PRIMARY KEY, next_number INTEGER NOT NULL)`;
@@ -2077,8 +2095,11 @@ app.get('/api/air-menu', async (req, res) => {
 });
 
 app.post('/api/direct-orders', async (req, res) => {
+  let directClientRequestId='';
   try {
     const { mode, expires, signature, customerPhone, customerName, specialRequest, fulfillmentType, items = [] } = req.body || {};
+    const clientRequestId=String(req.get('X-Direct-Order-Id')||req.body?.clientRequestId||'').trim().slice(0,80);
+    directClientRequestId=clientRequestId;
     if (!validAirMenuAccess(mode, expires, signature)) return res.status(410).json({ error: 'This QR session has expired. Please scan again.' });
     const menu = await getSection('airMenu');
     const enabled = mode === 'card' ? menu.cardDirectOrders !== false : menu.tableDirectOrders === true;
@@ -2110,6 +2131,10 @@ app.post('/api/direct-orders', async (req, res) => {
     }).filter(Boolean);
     if (!cleanItems.length || cleanItems.length !== submittedItems.length || cleanItems.some((item) => !item.name)) return res.status(400).json({ error: 'One or more selected items are no longer available. Refresh the menu and try again.' });
     await ensureDirectOrdersTable();
+    if (clientRequestId) {
+      const existing=await sql`SELECT id,status,daily_order_number,tracking_token,loyalty_points_earned,loyalty_points_redeemed FROM direct_orders WHERE client_request_id=${clientRequestId} LIMIT 1`;
+      if (existing.length) return res.json({ id:existing[0].id, status:existing[0].status, orderNumber:String(existing[0].daily_order_number).padStart(2,'0'), trackingUrl:`/track-order?token=${encodeURIComponent(existing[0].tracking_token)}`, loyaltyPointsEarned:Number(existing[0].loyalty_points_earned||0), loyaltyPointsRedeemed:Number(existing[0].loyalty_points_redeemed||0), duplicate:true });
+    }
     await ensureMenuAvailabilityTable();
     const unavailableRows = await sql`SELECT item_key FROM menu_availability WHERE unavailable_until > NOW()`;
     const unavailableKeys = new Set(unavailableRows.map((row) => row.item_key));
@@ -2133,20 +2158,34 @@ app.post('/api/direct-orders', async (req, res) => {
     const savedItems = cleanItems.map(({ availabilityKey, ...item }) => item);
     if (requestedLoyaltyPoints) {
       await ensureLoyaltyTable();
-      const inserted = await sql`WITH redeemed AS (UPDATE loyalty_accounts SET points=points-${requestedLoyaltyPoints}, total_redeemed=total_redeemed+${requestedLoyaltyPoints}, updated_at=NOW() WHERE customer_phone=${phone} AND points >= ${requestedLoyaltyPoints} AND points >= 100 RETURNING customer_phone) INSERT INTO direct_orders (id, status, mode, customer_name, customer_phone, special_request, items, total, order_day, daily_order_number, bill_year, bill_number, tracking_token, loyalty_points_redeemed, loyalty_points_earned) SELECT ${id}, ${initialStatus}, ${mode}, ${String(customerName || '').trim().slice(0, 80)}, ${phone}, ${String(specialRequest || '').trim().slice(0, 240)}, ${JSON.stringify(savedItems)}, ${total}, ${orderDay}::date, ${dailyOrderNumber}, ${billYear}, ${billNumber}, ${trackingToken}, ${requestedLoyaltyPoints}, ${loyaltyPointsEarned} FROM redeemed RETURNING id`;
+      const inserted = await sql`WITH redeemed AS (UPDATE loyalty_accounts SET points=points-${requestedLoyaltyPoints}, total_redeemed=total_redeemed+${requestedLoyaltyPoints}, updated_at=NOW() WHERE customer_phone=${phone} AND points >= ${requestedLoyaltyPoints} AND points >= 100 RETURNING customer_phone) INSERT INTO direct_orders (id, status, mode, customer_name, customer_phone, special_request, items, total, order_day, daily_order_number, bill_year, bill_number, tracking_token, loyalty_points_redeemed, loyalty_points_earned, client_request_id) SELECT ${id}, ${initialStatus}, ${mode}, ${String(customerName || '').trim().slice(0, 80)}, ${phone}, ${String(specialRequest || '').trim().slice(0, 240)}, ${JSON.stringify(savedItems)}, ${total}, ${orderDay}::date, ${dailyOrderNumber}, ${billYear}, ${billNumber}, ${trackingToken}, ${requestedLoyaltyPoints}, ${loyaltyPointsEarned}, ${clientRequestId||null} FROM redeemed RETURNING id`;
       if (!inserted.length) return res.status(409).json({ error: 'Your points balance changed. Please check your points and try again.' });
-    } else await sql`INSERT INTO direct_orders (id, status, mode, customer_name, customer_phone, special_request, items, total, order_day, daily_order_number, bill_year, bill_number, tracking_token, loyalty_points_redeemed, loyalty_points_earned) VALUES (${id}, ${initialStatus}, ${mode}, ${String(customerName || '').trim().slice(0, 80)}, ${phone}, ${String(specialRequest || '').trim().slice(0, 240)}, ${JSON.stringify(savedItems)}, ${total}, ${orderDay}::date, ${dailyOrderNumber}, ${billYear}, ${billNumber}, ${trackingToken}, 0, ${loyaltyPointsEarned})`;
+    } else await sql`INSERT INTO direct_orders (id, status, mode, customer_name, customer_phone, special_request, items, total, order_day, daily_order_number, bill_year, bill_number, tracking_token, loyalty_points_redeemed, loyalty_points_earned, client_request_id) VALUES (${id}, ${initialStatus}, ${mode}, ${String(customerName || '').trim().slice(0, 80)}, ${phone}, ${String(specialRequest || '').trim().slice(0, 240)}, ${JSON.stringify(savedItems)}, ${total}, ${orderDay}::date, ${dailyOrderNumber}, ${billYear}, ${billNumber}, ${trackingToken}, 0, ${loyaltyPointsEarned}, ${clientRequestId||null})`;
     await sql`UPDATE direct_orders SET fulfillment_type=${fulfilment} WHERE id=${id}`;
+    await recordOrderEvent(id, 'created', { source:'qr', status:initialStatus, fulfillment:fulfilment, loyaltyRedeemed:requestedLoyaltyPoints, loyaltyEarned:loyaltyPointsEarned, itemCount:savedItems.reduce((count,item)=>count+Number(item.quantity||0),0) });
     // The order is already safely stored. Push delivery must never delay or block it.
     void notifyDirectOrder({ id, dailyOrderNumber, total, itemCount: savedItems.reduce((count, item) => count + Number(item.quantity || 0), 0) });
     res.json({ id, status: initialStatus, autoAccepted: isTrustedCustomer, orderNumber: String(dailyOrderNumber).padStart(2, '0'), trackingUrl: `/track-order?token=${encodeURIComponent(trackingToken)}`, loyaltyPointsEarned, loyaltyPointsRedeemed: requestedLoyaltyPoints });
-  } catch (error) { res.status(500).json({ error: 'Unable to place the order. Please call us instead.' }); }
+  } catch (error) {
+    // A simultaneous retry can lose the initial lookup but still lose safely to
+    // the unique client_request_id constraint. Return the already-created order.
+    if (directClientRequestId) {
+      try {
+        await ensureDirectOrdersTable();
+        const existing=await sql`SELECT id,status,daily_order_number,tracking_token,loyalty_points_earned,loyalty_points_redeemed FROM direct_orders WHERE client_request_id=${directClientRequestId} LIMIT 1`;
+        if (existing.length) return res.json({ id:existing[0].id, status:existing[0].status, orderNumber:String(existing[0].daily_order_number).padStart(2,'0'), trackingUrl:`/track-order?token=${encodeURIComponent(existing[0].tracking_token)}`, loyaltyPointsEarned:Number(existing[0].loyalty_points_earned||0), loyaltyPointsRedeemed:Number(existing[0].loyalty_points_redeemed||0), duplicate:true });
+      } catch (_) {}
+    }
+    res.status(500).json({ error: 'Unable to place the order. Please call us instead.' });
+  }
 });
 
 app.post('/api/orders/counter', async (req, res) => {
+  let counterClientRequestId='';
   try {
     const { customerName, customerPhone, specialRequest, loyaltyPoints, tableArea, tableNumber, items = [], action = 'submit' } = req.body || {};
     const clientRequestId=String(req.get('X-Counter-Order-Id')||req.body?.clientRequestId||'').trim().slice(0,80);
+    counterClientRequestId=clientRequestId;
     const menu = await getSection('airMenu');
     const priceNumber = (value) => Number(String(value || '').replace(/[^0-9.]/g, '')) || 0;
     const displayItemName = (value) => String(value || '').replace(/[.…·]{2,}/g, ' ').replace(/\s+\d{2,5}(?:\.\d{1,2})?\s*\/?\s*$/, '').replace(/\s+/g, ' ').trim();
@@ -2186,9 +2225,19 @@ app.post('/api/orders/counter', async (req, res) => {
       const inserted=await sql`WITH redeemed AS (UPDATE loyalty_accounts SET points=points-${requestedLoyaltyPoints},total_redeemed=total_redeemed+${requestedLoyaltyPoints},updated_at=NOW() WHERE customer_phone=${phone} AND points>=${requestedLoyaltyPoints} AND points>=100 RETURNING customer_phone) INSERT INTO direct_orders (id,status,mode,customer_name,customer_phone,special_request,items,total,order_day,daily_order_number,bill_year,bill_number,tracking_token,loyalty_points_redeemed,loyalty_points_earned,fulfillment_type,client_request_id,table_area,table_number) SELECT ${id},${initialStatus},${orderMode},${String(customerName||'Walk-in customer').trim().slice(0,80)},${phone},${String(specialRequest||'').trim().slice(0,240)},${JSON.stringify(saved)},${total},${orderDay}::date,${number},${billYear},${billNumber},${trackingToken},${requestedLoyaltyPoints},${earned},${fulfillment},${clientRequestId||null},${isDineIn?dineInArea:null},${isDineIn?dineInNumber:null} FROM redeemed RETURNING id`;
       if (!inserted.length) return res.status(409).json({ error:'Wallet points changed. Check the customer balance and try again.' });
     } else await sql`INSERT INTO direct_orders (id,status,mode,customer_name,customer_phone,special_request,items,total,order_day,daily_order_number,bill_year,bill_number,tracking_token,loyalty_points_redeemed,loyalty_points_earned,fulfillment_type,client_request_id,table_area,table_number) VALUES (${id},${initialStatus},${orderMode},${String(customerName||'Walk-in customer').trim().slice(0,80)},${phone},${String(specialRequest||'').trim().slice(0,240)},${JSON.stringify(saved)},${total},${orderDay}::date,${number},${billYear},${billNumber},${trackingToken},0,${earned},${fulfillment},${clientRequestId||null},${isDineIn?dineInArea:null},${isDineIn?dineInNumber:null})`;
+    await recordOrderEvent(id, 'created', { source:isDineIn?'dine-in':'counter', status:initialStatus, fulfillment, tableArea:isDineIn?dineInArea:'', tableNumber:isDineIn?dineInNumber:null, loyaltyRedeemed:requestedLoyaltyPoints, loyaltyEarned:earned, itemCount:saved.reduce((count,item)=>count+Number(item.quantity||0),0) });
     if (initialStatus==='accepted') void notifyDirectOrder({ id, dailyOrderNumber:number, total, itemCount:saved.reduce((count,item)=>count+Number(item.quantity||0),0) });
     res.status(201).json({ id, status:initialStatus, autoAccepted:initialStatus==='accepted', orderNumber:String(number).padStart(2,'0'), total });
-  } catch (error) { res.status(500).json({ error:'Unable to save the counter order.' }); }
+  } catch (error) {
+    if (counterClientRequestId) {
+      try {
+        await ensureDirectOrdersTable();
+        const existing=await sql`SELECT id,status,daily_order_number,total FROM direct_orders WHERE client_request_id=${counterClientRequestId} LIMIT 1`;
+        if (existing.length) return res.json({ id:existing[0].id, status:existing[0].status, orderNumber:String(existing[0].daily_order_number).padStart(2,'0'), total:Number(existing[0].total), duplicate:true });
+      } catch (_) {}
+    }
+    res.status(500).json({ error:'Unable to save the counter order.' });
+  }
 });
 app.get('/api/orders', async (req, res) => { try { await ensureDirectOrdersTable(); const search=String(req.query.search||'').replace(/\D/g,'').slice(0,16); const like=`%${search}%`; const today=kolkataOrderDay(); const history=req.query.history==='1'; const requestedDay=/^\d{4}-\d{2}-\d{2}$/.test(String(req.query.date||''))?String(req.query.date):''; const operatingStatus=await getOrdersOperatingStatus(); const select='SELECT o.*, (SELECT COUNT(*) FROM direct_orders h WHERE h.customer_phone=o.customer_phone) AS customer_order_count, (SELECT MAX(h.created_at) FROM direct_orders h WHERE h.customer_phone=o.customer_phone AND h.id<>o.id) AS customer_last_order_at FROM direct_orders o'; res.set({ 'Cache-Control':'no-store', 'X-Orders-Day': today, 'X-Orders-View': history?'history':'current', 'X-Orders-Session': operatingStatus.open?'open':'closed' }); let orders; if (history && !requestedDay) orders=await sql(`${select} WHERE ($1='' OR o.customer_phone LIKE $2 OR CAST(o.daily_order_number AS TEXT) LIKE $2) ORDER BY o.created_at DESC LIMIT 100`,[search,like]); else if (history) orders=await sql(`${select} WHERE o.order_day=$1::date AND ($2='' OR o.customer_phone LIKE $3 OR CAST(o.daily_order_number AS TEXT) LIKE $3) ORDER BY o.created_at DESC LIMIT 100`,[requestedDay||today,search,like]); else if (operatingStatus.open) orders=await sql(`${select} WHERE (o.order_day=$1::date OR (o.mode='table' AND o.table_area IS NOT NULL AND o.table_number IS NOT NULL AND o.status IN ('new','accepted','preparing','ready','saved','held'))) AND ($2='' OR o.customer_phone LIKE $3 OR CAST(o.daily_order_number AS TEXT) LIKE $3) ORDER BY o.created_at DESC LIMIT 100`,[today,search,like]); else orders=await sql(`${select} WHERE o.mode='table' AND o.table_area IS NOT NULL AND o.table_number IS NOT NULL AND o.status IN ('new','accepted','preparing','ready','saved','held') AND ($1='' OR o.customer_phone LIKE $2 OR CAST(o.daily_order_number AS TEXT) LIKE $2) ORDER BY o.created_at DESC LIMIT 100`,[search,like]); res.json(orders); } catch (error) { res.status(500).json({ error: error.message }); } });
 app.get('/api/orders/live-summary', async (req, res) => { try {
@@ -2218,21 +2267,28 @@ app.post('/api/orders/:id/bill-print/:result', async (req, res) => { try {
   if (!['complete','failed'].includes(req.params.result)) return res.status(400).json({ error:'Invalid print result.' });
   await ensureOrderPrintJobsTable();
   await sql`UPDATE order_print_jobs SET status=${req.params.result==='complete'?'printed':'failed'},lease_expires_at=NULL,updated_at=NOW() WHERE order_id=${req.params.id} AND job_type='bill'`;
+  await recordOrderEvent(req.params.id, req.params.result==='complete' ? 'bill-print-completed' : 'bill-print-failed', {});
   res.json({ ok:true });
 } catch (error) { res.status(500).json({ error:'Unable to update bill print job.' }); } });
 app.get('/api/order-tracking/:token', async (req, res) => { try { await ensureDirectOrdersTable(); const token=String(req.params.token||''); if (!/^[A-Za-z0-9_-]{24,128}$/.test(token)) return res.status(404).json({ error: 'Order not found.' }); const rows=await sql`SELECT daily_order_number, order_day, status, fulfillment_type, items, total, special_request, cancellation_reason, created_at, updated_at FROM direct_orders WHERE tracking_token=${token} LIMIT 1`; if (!rows.length) return res.status(404).json({ error: 'Order not found.' }); res.set('Cache-Control', 'no-store'); res.json(rows[0]); } catch (error) { res.status(500).json({ error: 'Unable to load this order.' }); } });
 app.post('/api/loyalty', async (req, res) => { try { await ensureLoyaltyTable(); const phone=String(req.body?.phone||'').replace(/\D/g,''); if(phone.length<7) return res.status(400).json({error:'Enter a valid mobile number.'}); const rows=await sql`SELECT points FROM loyalty_accounts WHERE customer_phone=${phone} LIMIT 1`; const points=Number(rows[0]?.points||0); res.set('Cache-Control','no-store'); res.json({points, eligible:points>=100}); } catch(error) { res.status(500).json({error:'Unable to load loyalty points.'}); } });
-app.post('/api/order-tracking/:token/cancel', async (req, res) => { try { await ensureDirectOrdersTable(); await ensureLoyaltyTable(); const token=String(req.params.token||''); const reason=String(req.body?.reason||'').trim().slice(0,240); if (!/^[A-Za-z0-9_-]{24,128}$/.test(token)) return res.status(404).json({ error: 'Order not found.' }); if (reason.length < 3) return res.status(400).json({ error: 'Please tell us why you need to cancel.' }); const rows=await sql`WITH cancelled AS (UPDATE direct_orders SET status='cancelled', cancellation_reason=${reason}, cancelled_at=NOW(), updated_at=NOW() WHERE tracking_token=${token} AND status='new' RETURNING customer_phone, loyalty_points_redeemed) UPDATE loyalty_accounts a SET points=a.points+cancelled.loyalty_points_redeemed, total_redeemed=GREATEST(0,a.total_redeemed-cancelled.loyalty_points_redeemed), updated_at=NOW() FROM cancelled WHERE a.customer_phone=cancelled.customer_phone RETURNING cancelled.customer_phone`; if (!rows.length) { const cancelled=await sql`SELECT id FROM direct_orders WHERE tracking_token=${token} AND status='cancelled'`; if(!cancelled.length) return res.status(409).json({ error: 'This order is already being handled. Please call the restaurant for help.' }); } res.json({ ok:true }); } catch (error) { res.status(500).json({ error: 'Unable to cancel this order. Please call the restaurant.' }); } });
-app.patch('/api/orders/:id/items', async (req, res) => { try { await ensureDirectOrdersTable(); const originalRows=await sql`SELECT items, loyalty_points_redeemed FROM direct_orders WHERE id=${req.params.id} LIMIT 1`; if (!originalRows.length) return res.status(404).json({ error:'Order not found.' }); const original=Array.isArray(originalRows[0].items)?originalRows[0].items:[]; const quantities=Array.isArray(req.body?.quantities)?req.body.quantities:[]; const items=original.map((item,index)=>({ ...item, quantity:Math.max(0,Math.min(20,Number(quantities[index])||0)) })).filter((item)=>item.quantity>0); if(!items.length)return res.status(400).json({error:'Keep at least one item in the order.'}); const price=(value)=>Number(String(value||'').replace(/[^0-9.]/g,''))||0; const subtotal=items.reduce((sum,item)=>sum+item.quantity*(price(item.price)+(item.style?10:0)),0); const total=Math.max(0,subtotal-Number(originalRows[0].loyalty_points_redeemed||0)); const earned=Math.floor(total/10); const rows=await sql`UPDATE direct_orders SET items=${JSON.stringify(items)}, total=${total}, loyalty_points_earned=${earned}, updated_at=NOW() WHERE id=${req.params.id} AND created_at >= NOW() - INTERVAL '10 minutes' AND status IN ('new','accepted','preparing') RETURNING id`; if(!rows.length)return res.status(409).json({error:'Orders can only be modified during the first 10 minutes while they are being handled.'}); res.json({ok:true}); }catch(error){res.status(500).json({error:'Unable to modify this order.'});} });
+app.post('/api/order-tracking/:token/cancel', async (req, res) => { try { await ensureDirectOrdersTable(); await ensureLoyaltyTable(); const token=String(req.params.token||''); const reason=String(req.body?.reason||'').trim().slice(0,240); if (!/^[A-Za-z0-9_-]{24,128}$/.test(token)) return res.status(404).json({ error: 'Order not found.' }); if (reason.length < 3) return res.status(400).json({ error: 'Please tell us why you need to cancel.' }); const cancelled=await sql`UPDATE direct_orders SET status='cancelled', cancellation_reason=${reason}, cancelled_at=NOW(), updated_at=NOW() WHERE tracking_token=${token} AND status='new' RETURNING id,customer_phone,loyalty_points_redeemed`; if (cancelled.length) { const order=cancelled[0]; const redeemed=Math.max(0,Number(order.loyalty_points_redeemed||0)); if(redeemed) await sql`UPDATE loyalty_accounts SET points=points+${redeemed}, total_redeemed=GREATEST(0,total_redeemed-${redeemed}), updated_at=NOW() WHERE customer_phone=${order.customer_phone}`; await recordOrderEvent(order.id,'cancelled',{source:'guest',reason,loyaltyRefunded:redeemed}); return res.json({ ok:true }); } const alreadyCancelled=await sql`SELECT id FROM direct_orders WHERE tracking_token=${token} AND status='cancelled'`; if(!alreadyCancelled.length) return res.status(409).json({ error: 'This order is already being handled. Please call the restaurant for help.' }); res.json({ ok:true, unchanged:true }); } catch (error) { res.status(500).json({ error: 'Unable to cancel this order. Please call the restaurant.' }); } });
+app.patch('/api/orders/:id/items', async (req, res) => { try { await ensureDirectOrdersTable(); const originalRows=await sql`SELECT items, loyalty_points_redeemed FROM direct_orders WHERE id=${req.params.id} LIMIT 1`; if (!originalRows.length) return res.status(404).json({ error:'Order not found.' }); const original=Array.isArray(originalRows[0].items)?originalRows[0].items:[]; const quantities=Array.isArray(req.body?.quantities)?req.body.quantities:[]; const items=original.map((item,index)=>({ ...item, quantity:Math.max(0,Math.min(20,Number(quantities[index])||0)) })).filter((item)=>item.quantity>0); if(!items.length)return res.status(400).json({error:'Keep at least one item in the order.'}); const price=(value)=>Number(String(value||'').replace(/[^0-9.]/g,''))||0; const subtotal=items.reduce((sum,item)=>sum+item.quantity*(price(item.price)+(item.style?10:0)),0); const menu=await getSection('airMenu'); const loyalty={enabled:menu.loyalty?.enabled!==false,spend:Math.max(1,Number(menu.loyalty?.spend)||10),earn:Math.max(1,Number(menu.loyalty?.earn)||1),pointValue:Math.max(.01,Number(menu.loyalty?.pointValue)||1)}; const redeemed=loyalty.enabled?Math.max(0,Number(originalRows[0].loyalty_points_redeemed||0)):0; if(redeemed*loyalty.pointValue>subtotal)return res.status(409).json({error:'This change would make the redeemed loyalty points larger than the order total.'}); const total=subtotal-redeemed*loyalty.pointValue; const earned=loyalty.enabled?Math.floor(total/loyalty.spend)*loyalty.earn:0; const rows=await sql`UPDATE direct_orders SET items=${JSON.stringify(items)}, total=${total}, loyalty_points_earned=${earned}, updated_at=NOW() WHERE id=${req.params.id} AND created_at >= NOW() - INTERVAL '10 minutes' AND status IN ('new','accepted','preparing') RETURNING id`; if(!rows.length)return res.status(409).json({error:'Orders can only be modified during the first 10 minutes while they are being handled.'}); await recordOrderEvent(req.params.id, 'items-updated', { itemCount:items.reduce((count,item)=>count+Number(item.quantity||0),0), total, loyaltyEarned:earned }); res.json({ok:true}); }catch(error){res.status(500).json({error:'Unable to modify this order.'});} });
 app.get('/api/orders/push-key', (req, res) => { if (!pushEnabled) return res.status(503).json({ error: 'Push notifications have not been configured yet.' }); res.set('Cache-Control', 'no-store'); res.json({ publicKey: process.env.VAPID_PUBLIC_KEY }); });
 app.post('/api/orders/push-subscriptions', async (req, res) => { try { if (!pushEnabled) return res.status(503).json({ error: 'Push notifications have not been configured yet.' }); const subscription = req.body?.subscription; if (!subscription?.endpoint || !subscription?.keys?.p256dh || !subscription?.keys?.auth) return res.status(400).json({ error: 'Invalid push subscription.' }); await ensurePushSubscriptionsTable(); await sql`INSERT INTO order_push_subscriptions (endpoint, subscription) VALUES (${String(subscription.endpoint)}, ${JSON.stringify(subscription)}) ON CONFLICT (endpoint) DO UPDATE SET subscription=EXCLUDED.subscription, updated_at=NOW()`; res.json({ ok: true }); } catch (error) { res.status(500).json({ error: 'Unable to save push subscription.' }); } });
 app.patch('/api/orders/:id', async (req, res) => {
   try {
     await ensureDirectOrdersTable();
     await ensureLoyaltyTable();
-    const status = ['new','accepted','preparing','ready','completed','rejected'].includes(req.body.status) ? req.body.status : 'new';
-    const changed = await sql`UPDATE direct_orders SET status=${status}, updated_at=NOW() WHERE id=${req.params.id} AND status <> 'cancelled' RETURNING id`;
-    if (!changed.length) return res.status(404).json({ error: 'Order not found or has been cancelled.' });
+    const status = String(req.body?.status || '');
+    const transitions={ new:['accepted','rejected'], accepted:['preparing','ready','completed','rejected'], preparing:['ready','completed','rejected'], ready:['completed','rejected'] };
+    const currentRows=await sql`SELECT status FROM direct_orders WHERE id=${req.params.id} LIMIT 1`;
+    if (!currentRows.length) return res.status(404).json({ error:'Order not found.' });
+    const previous=String(currentRows[0].status || '');
+    if (previous===status) return res.json({ ok:true, unchanged:true, status });
+    if (!transitions[previous]?.includes(status)) return res.status(409).json({ error:`An order cannot move from ${previous || 'its current state'} to ${status || 'that state'}.` });
+    const changed = await sql`UPDATE direct_orders SET status=${status}, updated_at=NOW() WHERE id=${req.params.id} AND status=${previous} RETURNING id`;
+    if (!changed.length) return res.status(409).json({ error:'This order changed on another device. Refresh and try again.' });
     if (status === 'completed') {
       await sql`WITH awarded AS (UPDATE direct_orders SET loyalty_awarded_at=NOW() WHERE id=${req.params.id} AND status='completed' AND loyalty_awarded_at IS NULL RETURNING customer_phone, loyalty_points_earned) INSERT INTO loyalty_accounts (customer_phone, points, total_earned) SELECT customer_phone, loyalty_points_earned, loyalty_points_earned FROM awarded ON CONFLICT (customer_phone) DO UPDATE SET points=loyalty_accounts.points+EXCLUDED.points, total_earned=loyalty_accounts.total_earned+EXCLUDED.total_earned, updated_at=NOW()`;
     }
@@ -2240,6 +2296,7 @@ app.patch('/api/orders/:id', async (req, res) => {
       await sql`WITH reversed AS (UPDATE direct_orders SET loyalty_awarded_at=NULL WHERE id=${req.params.id} AND loyalty_awarded_at IS NOT NULL RETURNING customer_phone, loyalty_points_earned) UPDATE loyalty_accounts a SET points=GREATEST(0, a.points-reversed.loyalty_points_earned), total_earned=GREATEST(0, a.total_earned-reversed.loyalty_points_earned), updated_at=NOW() FROM reversed WHERE a.customer_phone=reversed.customer_phone`;
       await sql`WITH redeem AS (SELECT customer_phone, loyalty_points_redeemed FROM direct_orders WHERE id=${req.params.id} AND status='rejected' AND loyalty_points_redeemed > 0), cleared AS (UPDATE direct_orders o SET loyalty_points_redeemed=0 FROM redeem WHERE o.id=${req.params.id} RETURNING redeem.customer_phone, redeem.loyalty_points_redeemed) UPDATE loyalty_accounts a SET points=a.points+cleared.loyalty_points_redeemed, total_redeemed=GREATEST(0,a.total_redeemed-cleared.loyalty_points_redeemed), updated_at=NOW() FROM cleared WHERE a.customer_phone=cleared.customer_phone`;
     }
+    await recordOrderEvent(req.params.id, 'status-changed', { from:previous, to:status });
     res.json({ ok:true });
   } catch (error) { res.status(500).json({ error:error.message }); }
 });
@@ -2248,6 +2305,7 @@ app.post('/api/orders/:id/bill-printed', async (req, res) => { try {
   await ensureDirectOrdersTable();
   const rows=await sql`UPDATE direct_orders SET bill_printed_at=COALESCE(bill_printed_at,NOW()),updated_at=NOW() WHERE id=${req.params.id} AND mode='table' AND status IN ('accepted','preparing','ready') RETURNING id,bill_printed_at`;
   if (!rows.length) return res.status(409).json({ error:'Only an active dine-in order can be marked as bill printed.' });
+  await recordOrderEvent(req.params.id, 'bill-printed', {});
   res.json({ ok:true, order:rows[0] });
 } catch (error) { res.status(500).json({ error:'Unable to mark the bill as printed.' }); } });
 
@@ -2255,10 +2313,16 @@ app.post('/api/orders/:id/settle', async (req, res) => { try {
   await ensureDirectOrdersTable(); await ensureLoyaltyTable();
   const paymentType=['cash','upi','card','due','other','not_paid','part'].includes(String(req.body?.paymentType||'')) ? String(req.body.paymentType) : '';
   const amount=Math.max(0,Number(req.body?.amount)||0);
+  const requestId=String(req.get('X-Settlement-Id')||req.body?.requestId||'').trim().slice(0,100);
   if (!paymentType) return res.status(400).json({ error:'Choose a payment type.' });
-  const rows=await sql`UPDATE direct_orders SET status='completed',settled_at=NOW(),settlement_type=${paymentType},settlement_amount=${amount},updated_at=NOW() WHERE id=${req.params.id} AND mode='table' AND bill_printed_at IS NOT NULL AND status IN ('accepted','preparing','ready') RETURNING customer_phone,loyalty_points_earned`;
+  if (requestId) {
+    const existing=await sql`SELECT id FROM direct_orders WHERE id=${req.params.id} AND settlement_request_id=${requestId} LIMIT 1`;
+    if (existing.length) return res.json({ ok:true, duplicate:true });
+  }
+  const rows=await sql`UPDATE direct_orders SET status='completed',settled_at=NOW(),settlement_type=${paymentType},settlement_amount=${amount},settlement_request_id=${requestId||null},updated_at=NOW() WHERE id=${req.params.id} AND mode='table' AND bill_printed_at IS NOT NULL AND status IN ('accepted','preparing','ready') RETURNING customer_phone,loyalty_points_earned`;
   if (!rows.length) return res.status(409).json({ error:'This table is not waiting for settlement.' });
   await sql`WITH awarded AS (UPDATE direct_orders SET loyalty_awarded_at=NOW() WHERE id=${req.params.id} AND loyalty_awarded_at IS NULL RETURNING customer_phone,loyalty_points_earned) INSERT INTO loyalty_accounts (customer_phone,points,total_earned) SELECT customer_phone,loyalty_points_earned,loyalty_points_earned FROM awarded ON CONFLICT (customer_phone) DO UPDATE SET points=loyalty_accounts.points+EXCLUDED.points,total_earned=loyalty_accounts.total_earned+EXCLUDED.total_earned,updated_at=NOW()`;
+  await recordOrderEvent(req.params.id, 'settled', { paymentType, amount, requestId });
   res.json({ ok:true });
 } catch (error) { res.status(500).json({ error:'Unable to settle this table.' }); } });
 app.get('/api/orders/availability', async (req,res)=>{try{await ensureMenuAvailabilityTable();res.json(await sql`SELECT * FROM menu_availability WHERE unavailable_until > NOW()`)}catch(e){res.status(500).json({error:e.message})}});
@@ -2296,6 +2360,7 @@ app.post('/api/orders/:id/kots', async (req, res) => { try {
   const { kotDay, number: dailyKotNumber } = await nextDailyKotNumber();
   const created=await sql`INSERT INTO order_kots (order_id, order_number, tickets, item_fingerprint, kot_day, daily_kot_number) VALUES (${orderRows[0].id}, ${orderRows[0].daily_order_number}, ${JSON.stringify(tickets)}, ${fingerprint}, ${kotDay}::date, ${dailyKotNumber}) ON CONFLICT (order_id, item_fingerprint) WHERE item_fingerprint IS NOT NULL DO NOTHING RETURNING daily_kot_number AS kot_number`;
   if (!created.length) { const existing=await sql`SELECT COALESCE(daily_kot_number, kot_number) AS kot_number, tickets FROM order_kots WHERE order_id=${orderRows[0].id} AND item_fingerprint=${fingerprint} LIMIT 1`; return res.status(200).json({ kotNumber:existing[0].kot_number, order:orderRows[0], tickets:existing[0].tickets, reused:true }); }
+  await recordOrderEvent(orderRows[0].id, 'kot-created', { kotNumber:created[0].kot_number, printerCount:tickets.length, itemCount:pending.reduce((count,item)=>count+Number(item.quantity||0),0) });
   res.status(201).json({ kotNumber:created[0].kot_number, order:orderRows[0], tickets });
 } catch (error) { res.status(500).json({ error:error.message || 'Unable to create KOT.' }); } });
 app.get('/api/orders/:id/kots', async (req,res)=>{try{await ensureKotsTable();res.json(await sql`SELECT COALESCE(daily_kot_number, kot_number) AS kot_number, tickets, created_at FROM order_kots WHERE order_id=${req.params.id} ORDER BY created_at DESC, kot_number DESC`)}catch(error){res.status(500).json({error:'Unable to load KOT history.'})}});
@@ -2314,9 +2379,10 @@ app.patch('/api/orders/:id/table', async (req,res)=>{try{
   const occupied=await sql`SELECT id FROM direct_orders WHERE mode='table' AND table_area=${tableArea} AND table_number=${tableNumber} AND status IN ('saved','held','accepted','preparing','ready') AND id<>${req.params.id} LIMIT 1`;
   if (occupied.length) return res.status(409).json({ error:'That destination table already has an active order.' });
   await sql`UPDATE direct_orders SET table_area=${tableArea},table_number=${tableNumber} WHERE id=${req.params.id}`;
+  await recordOrderEvent(req.params.id, 'table-moved', { fromArea:order.table_area, fromNumber:Number(order.table_number), toArea:tableArea, toNumber:tableNumber });
   res.json({ ok:true, tableArea, tableNumber });
 }catch(error){res.status(500).json({error:'Unable to move the table order.'})}});
-app.patch('/api/orders/:id/kitchen-status/:printerId', async (req,res)=>{try{await ensureDirectOrdersTable();await ensureKotStationStatusTable();const status=['accepted','preparing','ready'].includes(String(req.body?.status||''))?String(req.body.status):'';const printerId=String(req.params.printerId||'').replace(/[^a-zA-Z0-9_-]/g,'').slice(0,80);if(!status||!printerId)return res.status(400).json({error:'Invalid kitchen status.'});const found=await sql`SELECT id FROM direct_orders WHERE id=${req.params.id} AND status NOT IN ('completed','rejected','cancelled') LIMIT 1`;if(!found.length)return res.status(404).json({error:'That active order was not found.'});await sql`INSERT INTO order_kot_station_status (order_id,printer_id,status) VALUES (${req.params.id},${printerId},${status}) ON CONFLICT (order_id,printer_id) DO UPDATE SET status=EXCLUDED.status,updated_at=NOW()`;res.json({ok:true,status})}catch(error){res.status(500).json({error:'Unable to update kitchen status.'})}});
+app.patch('/api/orders/:id/kitchen-status/:printerId', async (req,res)=>{try{await ensureDirectOrdersTable();await ensureKotStationStatusTable();const status=['accepted','preparing','ready'].includes(String(req.body?.status||''))?String(req.body.status):'';const printerId=String(req.params.printerId||'').replace(/[^a-zA-Z0-9_-]/g,'').slice(0,80);if(!status||!printerId)return res.status(400).json({error:'Invalid kitchen status.'});const found=await sql`SELECT id FROM direct_orders WHERE id=${req.params.id} AND status NOT IN ('completed','rejected','cancelled') LIMIT 1`;if(!found.length)return res.status(404).json({error:'That active order was not found.'});await sql`INSERT INTO order_kot_station_status (order_id,printer_id,status) VALUES (${req.params.id},${printerId},${status}) ON CONFLICT (order_id,printer_id) DO UPDATE SET status=EXCLUDED.status,updated_at=NOW()`;await recordOrderEvent(req.params.id,'kitchen-status',{printerId,status});res.json({ok:true,status})}catch(error){res.status(500).json({error:'Unable to update kitchen status.'})}});
 app.put('/api/orders/operations/table-areas', async (req, res) => { try {
   await ensureOperationsConfigTable();
   const source = req.body || {};

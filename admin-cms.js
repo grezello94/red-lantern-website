@@ -1889,6 +1889,16 @@ function setupCustomerInsights() {
   const leaderboard = document.getElementById('customer-insight-leaderboard');
   const status = document.getElementById('customer-insight-status');
   if (!date || !rows) return;
+  const decorateInsightPills = () => rows.querySelectorAll('tr').forEach((row) => {
+    const cells = row.children;
+    const points = cells[5]?.querySelector('.insight-pill');
+    const credit = cells[6]?.querySelector('.insight-pill');
+    const orderStatus = cells[7]?.querySelector('.insight-pill');
+    if (points) { const value=Number.parseInt(points.textContent,10)||0; points.classList.add('points'); points.classList.toggle('is-empty', value <= 0); }
+    if (credit) { const value=Number(String(credit.textContent).replace(/[^0-9.-]/g,''))||0; credit.classList.remove('credit'); credit.classList.add(value > 0 ? 'credit-due' : 'credit-clear'); }
+    if (orderStatus) { const value=String(orderStatus.textContent||'').trim().toLowerCase().replace(/[^a-z]+/g,'-'); orderStatus.classList.add('status', `status-${value}`); }
+  });
+  new MutationObserver(decorateInsightPills).observe(rows, { childList:true });
   const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;' })[char]);
   const money = (value) => `₹${Number(value || 0).toFixed(0)}`;
   let ordersById = new Map();
@@ -1904,6 +1914,8 @@ function setupCustomerInsights() {
     let dialog = document.getElementById('customer-order-bill-dialog');
     if (!dialog) { dialog = document.createElement('dialog'); dialog.id = 'customer-order-bill-dialog'; dialog.className = 'customer-order-bill-dialog'; document.body.appendChild(dialog); }
     dialog.innerHTML = `<button class="bill-close" aria-label="Close bill">×</button><div class="bill-heading"><div><span>Red Lantern Restaurant · staff view</span><h2>Order #${esc(orderNumber)}</h2><p>${esc(placed)} · ${esc(order.status)}</p></div><strong>${money(total)}</strong></div><div class="bill-customer"><div><span>Customer</span><b>${esc(order.customer_name || 'Guest')}</b></div><div><span>Mobile</span><b>${esc(order.customer_phone || '—')}</b></div><div><span>Wallet points</span><b>${Number(order.loyalty_points || 0)}</b></div></div>${order.special_request ? `<div class="bill-request"><b>Special request</b>${esc(order.special_request)}</div>` : ''}<div class="bill-items"><div class="bill-items-head"><span>Item</span><span>Qty</span><span>Price</span><span>Amount</span></div>${items.map((item) => { const qty=Number(item.quantity||0); const price=unitPrice(item); const label=`${item.name || 'Item'}${item.portion ? ` (${item.portion})` : ''}${item.style ? ` · ${item.style}` : ''}`; return `<div class="bill-item"><span>${esc(label)}</span><span>${qty}</span><span>${money(price)}</span><span>${money(qty * price)}</span></div>`; }).join('') || '<p class="help-text">No item details were saved for this order.</p>'}</div><div class="bill-total"><span>Total quantity: ${totalQuantity}</span><strong>Grand total ${money(total)}</strong></div>`;
+    const printButton=document.createElement('button'); printButton.type='button'; printButton.className='bill-print'; printButton.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9V3h12v6"></path><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><path d="M6 14h12v7H6z"></path></svg>Print bill'; const billActions=document.createElement('div'); billActions.className='bill-actions'; billActions.append(printButton); dialog.querySelector('.bill-total')?.after(billActions);
+    printButton.addEventListener('click', () => window.print());
     dialog.showModal();
     dialog.querySelector('.bill-close').addEventListener('click', () => dialog.close());
   };

@@ -25,6 +25,9 @@ let operationsConfig = { printers: [], routes: [] };
 const tableAllocationCacheKey = 'red-lantern-table-allocation';
 function readCachedTableAreas() { try { const value=JSON.parse(localStorage.getItem(tableAllocationCacheKey)||'[]'); return Array.isArray(value)?value:[]; } catch (_) { return []; } }
 function cacheTableAreas(areas) { try { localStorage.setItem(tableAllocationCacheKey,JSON.stringify(Array.isArray(areas)?areas:[])); } catch (_) {} }
+const operationsSnapshotKey = 'red-lantern-operations-snapshot';
+function readCachedOperationsConfig() { try { const value=JSON.parse(localStorage.getItem(operationsSnapshotKey)||'null'); return value && typeof value === 'object' && Array.isArray(value.printers) && Array.isArray(value.routes) ? value : null; } catch (_) { return null; } }
+function cacheOperationsConfig(config) { try { localStorage.setItem(operationsSnapshotKey, JSON.stringify({ printers:Array.isArray(config?.printers)?config.printers:[], routes:Array.isArray(config?.routes)?config.routes:[], tableAreas:Array.isArray(config?.tableAreas)?config.tableAreas:[] })); } catch (_) {} }
 const tableOrderSnapshotKey = 'red-lantern-table-order-snapshot';
 function readCachedTableOrders() { try { const value=JSON.parse(localStorage.getItem(tableOrderSnapshotKey)||'[]'); return Array.isArray(value) ? value.filter((order) => order && order.id && order.mode === 'table' && order.table_area && order.table_number) : []; } catch (_) { return []; } }
 function cacheTableOrders(orders) { try { const tables=(Array.isArray(orders) ? orders : []).filter((order) => order?.mode === 'table' && order.table_area && order.table_number).map((order) => ({ id:order.id, mode:'table', table_area:order.table_area, table_number:order.table_number, status:order.status, created_at:order.created_at, bill_printed_at:order.bill_printed_at || null })); localStorage.setItem(tableOrderSnapshotKey, JSON.stringify(tables)); } catch (_) {} }
@@ -46,6 +49,7 @@ let operationsTab = 'home';
 let installedSystemPrinters = [];
 let printBridgeState = 'checking';
 let printBridgeConfigState = 'not-synced';
+let printBridgeSetupStatus = null;
 let assignmentPrinterId = '';
 let assignmentMode = '';
 let counterMenu = [];
@@ -58,6 +62,8 @@ let counterTable = null;
 let counterBillSplit = null;
 const offlineCounterOrdersKey = 'red-lantern-counter-orders';
 let counterSyncInProgress = false;
+let bridgeLedgerPending = 0;
+const printBridgeOrigin = 'http://127.0.0.1:9124';
 const ordersDiagnosticRecent = new Map();
 const orderSearchPanel = document.querySelector('.order-search-panel');
 const ordersConsoleStartedAt = Date.now();
@@ -65,8 +71,76 @@ const connectivity = document.createElement('p');
 connectivity.id = 'orders-connectivity';
 document.querySelector('header')?.after(connectivity);
 function counterRequestId() { return `counter-${Date.now()}-${crypto.getRandomValues(new Uint32Array(1))[0].toString(36)}`; }
+function settlementRequestId() { return `settlement-${Date.now()}-${crypto.getRandomValues(new Uint32Array(1))[0].toString(36)}`; }
+function offlineActionId(type) { return `${type}-${Date.now()}-${crypto.getRandomValues(new Uint32Array(1))[0].toString(36)}`; }
 function queuedCounterOrders() { try { return JSON.parse(localStorage.getItem(offlineCounterOrdersKey) || '[]'); } catch { return []; } }
 function saveQueuedCounterOrders(orders) { localStorage.setItem(offlineCounterOrdersKey, JSON.stringify(orders)); }
+async function saveToBridgeLedger(payload) {
+  const response = await fetch(`${printBridgeOrigin}/v1/ledger/actions`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ id:payload.clientRequestId, type:'counter-order', payload }) });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.error || 'The local order ledger is unavailable.');
+  bridgeLedgerPending += body.action?.status === 'queued' ? 1 : 0;
+  updateConnectivity();
+  return body.action;
+}
+async function saveBridgeAction(type, payload) {
+  const id = offlineActionId(type);
+  const response = await fetch(`${printBridgeOrigin}/v1/ledger/actions`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ id, type, payload }) });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.error || 'The local order ledger is unavailable.');
+  bridgeLedgerPending += body.action?.status === 'queued' ? 1 : 0;
+  updateConnectivity();
+  return id;
+}
+async function dispatchBridgeAction(action) {
+  const payload = action.payload || {};
+  let response;
+  if (action.type === 'counter-order') return sendCounterOrder(payload);
+  if (action.type === 'order-status') response = await fetch(`/api/orders/${encodeURIComponent(payload.orderId)}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ status:payload.status }) });
+  else if (action.type === 'order-items') response = await fetch(`/api/orders/${encodeURIComponent(payload.orderId)}/items`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ quantities:payload.quantities }) });
+  else if (action.type === 'order-table') response = await fetch(`/api/orders/${encodeURIComponent(payload.orderId)}/table`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ tableArea:payload.tableArea, tableNumber:payload.tableNumber }) });
+  else if (action.type === 'kitchen-status') response = await fetch(`/api/orders/${encodeURIComponent(payload.orderId)}/kitchen-status/${encodeURIComponent(payload.printerId)}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ status:payload.status }) });
+  else if (action.type === 'availability-update') response = await fetch(`/api/orders/availability/${encodeURIComponent(payload.key)}`, payload.unavailableUntil ? { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ unavailableUntil:payload.unavailableUntil }) } : { method:'DELETE' });
+  else if (action.type === 'operations-config') response = await fetch('/api/orders/operations', { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ config:payload.config }) });
+  else if (action.type === 'table-areas') response = await fetch('/api/orders/operations/table-areas', { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ tableAreas:payload.tableAreas }) });
+  else if (action.type === 'settlement') response = await fetch(`/api/orders/${encodeURIComponent(payload.orderId)}/settle`, { method:'POST', headers:{'Content-Type':'application/json','X-Settlement-Id':payload.requestId}, body:JSON.stringify({ paymentType:payload.paymentType, amount:payload.amount, requestId:payload.requestId }) });
+  else throw new Error('Unsupported offline action type.');
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) { const error=new Error(body.error || 'Unable to sync this offline change.'); error.status=response.status; throw error; }
+  return body;
+}
+async function queueWhenOffline(type, payload, applyLocal) {
+  if (navigator.onLine) return false;
+  await saveBridgeAction(type, payload);
+  applyLocal?.();
+  updateConnectivity('Offline change saved safely on this computer. It will sync when internet returns.');
+  return true;
+}
+async function updateBridgeLedger(id, status, error = '') {
+  const response = await fetch(`${printBridgeOrigin}/v1/ledger/actions/${encodeURIComponent(id)}/${status}`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ error }) });
+  if (!response.ok) throw new Error('Unable to update the local order ledger.');
+}
+async function flushBridgeLedger() {
+  if (!navigator.onLine) return;
+  const response = await fetch(`${printBridgeOrigin}/v1/ledger/actions?status=queued`, { cache:'no-store' });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok || !Array.isArray(body.actions)) throw new Error(body.error || 'Unable to read the local order ledger.');
+  bridgeLedgerPending = body.actions.length;
+  for (const action of body.actions) {
+    try {
+      const result = await dispatchBridgeAction(action);
+      await updateBridgeLedger(action.id, 'synced');
+      bridgeLedgerPending = Math.max(0, bridgeLedgerPending - 1);
+      if (action.type === 'counter-order') void autoPrintOrder({ id:result.id, mode:action.payload.tableArea ? 'table' : 'counter', status:result.status || 'accepted' });
+      if (action.type === 'operations-config' && result?.config) { operationsConfig = result.config; cacheOperationsConfig(operationsConfig); void syncOperationsToPrintBridge(operationsConfig); }
+      if (action.type === 'table-areas' && Array.isArray(result?.tableAreas)) { operationsConfig.tableAreas = result.tableAreas; cacheTableAreas(result.tableAreas); cacheOperationsConfig(operationsConfig); }
+    } catch (error) {
+      if (error.status >= 400 && error.status < 500 && error.status !== 409) await updateBridgeLedger(action.id, 'blocked', error.message || 'This order needs staff review.');
+      break;
+    }
+  }
+  updateConnectivity();
+}
 function reportOrdersDiagnostic(payload = {}) {
   const source = payload.source || 'orders.js';
   const message = String(payload.message || 'Orders console issue.').slice(0, 400);
@@ -80,7 +154,7 @@ function reportOrdersDiagnostic(payload = {}) {
 window.addEventListener('error', (event) => reportOrdersDiagnostic({ message:event.message || 'Orders browser script error.', source:event.filename || 'orders browser', stack:event.error?.stack || '' }));
 window.addEventListener('unhandledrejection', (event) => reportOrdersDiagnostic({ message:event.reason?.message || 'Orders browser request failed.', source:'orders browser promise', stack:event.reason?.stack || String(event.reason || '') }));
 function updateConnectivity(message) {
-  const pending = queuedCounterOrders().length, online = navigator.onLine;
+  const pending = queuedCounterOrders().length + bridgeLedgerPending, online = navigator.onLine;
   connectivity.hidden = online && !pending && !message;
   connectivity.className = online ? 'is-online' : 'is-offline';
   connectivity.textContent = message || (!online ? `Offline mode — orders are saved on this device and will sync when internet returns.${pending ? ` ${pending} waiting.` : ''}` : pending ? `${pending} order${pending === 1 ? '' : 's'} waiting to sync.` : '');
@@ -95,6 +169,7 @@ async function flushQueuedCounterOrders() {
   if (counterSyncInProgress || !navigator.onLine) return;
   counterSyncInProgress = true;
   try {
+    try { await flushBridgeLedger(); } catch (_) {}
     let queued = queuedCounterOrders();
     while (queued.length && navigator.onLine) {
       try {
@@ -170,8 +245,7 @@ document.querySelector('.header-actions')?.prepend(liveOrdersToggle);
 const operationsPanel = document.createElement('section');
 operationsPanel.id = 'operations-panel';
 operationsPanel.hidden = true;
-operationsPanel.innerHTML = '<div class="operations-head"><div><span class="eyebrow">Staff workspace</span><h2>Operations</h2><p>Review routed KOTs and configure kitchen, tandoori, bar, and bill printers.</p></div><button type="button" id="operations-close" class="quiet-button">Close</button></div><div id="operations-tabs" class="operation-launches"><button type="button" data-operations-tab="kots" class="operation-launch is-active"><span class="operation-icon kot-icon" aria-hidden="true">⌑</span><span><b>KOT queue</b><small>View and print live kitchen tickets</small></span><i aria-hidden="true">›</i></button><button type="button" data-operations-tab="printers" class="operation-launch"><span class="operation-icon printer-icon" aria-hidden="true">▣</span><span><b>Manage printers</b><small>Add printers, assign bills and route kitchen tickets</small></span><i aria-hidden="true">›</i></button></div><div id="operations-content"></div>';
-document.getElementById('operations-tabs')?.remove();
+operationsPanel.innerHTML = '<div class="operations-head"><div><span class="eyebrow">Staff workspace</span><h2>Operations</h2><p>Review routed KOTs and configure kitchen, tandoori, bar, and bill printers.</p></div><button type="button" id="operations-close" class="quiet-button">Close</button></div><div id="operations-content"></div>';
 availability.before(operationsPanel);
 const counterPanel = document.createElement('section');
 counterPanel.id = 'counter-order-panel';
@@ -422,7 +496,7 @@ moveTableDialog.addEventListener('click', async (event) => {
   if ((moveTableDialog.dataset.mode || 'table') !== 'table') { document.getElementById('move-table-status').textContent='Select the KOTs or items, then use the transfer action that is being added to this workflow.'; return; }
   const button=event.target.closest('.move-table-confirm'), [tableArea,tableNumber]=String(document.getElementById('move-table-target').value||'').split('::');
   button.disabled=true; document.getElementById('move-table-status').textContent='Moving table…';
-  try { const response=await fetch(`/api/orders/${encodeURIComponent(moveTableDialog.dataset.orderId)}/table`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({tableArea,tableNumber:Number(tableNumber)})}); const data=await response.json().catch(()=>({})); if(!response.ok) throw new Error(data.error||'Unable to move the table.'); moveTableDialog.close(); await showTableView(); }
+  try { const payload={orderId:moveTableDialog.dataset.orderId,tableArea,tableNumber:Number(tableNumber)}; if(await queueWhenOffline('order-table',payload,()=>{const order=orderRecords.get(payload.orderId);if(order){order.table_area=tableArea;order.table_number=Number(tableNumber);} cacheTableOrders([...orderRecords.values()]);renderTableView();})){moveTableDialog.close();return;} const response=await fetch(`/api/orders/${encodeURIComponent(payload.orderId)}/table`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({tableArea,tableNumber:Number(tableNumber)})}); const data=await response.json().catch(()=>({})); if(!response.ok) throw new Error(data.error||'Unable to move the table.'); moveTableDialog.close(); await showTableView(); }
   catch(error){document.getElementById('move-table-status').textContent=error.message||'Unable to move the table.';}
   finally{button.disabled=false;}
 });
@@ -481,6 +555,12 @@ document.head.appendChild(categoryBoardStyles);
 const printBridgeSetupStyles = document.createElement('style');
 printBridgeSetupStyles.textContent = `.printer-setup-flow{max-width:1380px}.bridge-setup{margin-left:auto;display:grid;gap:5px;max-width:510px;padding:10px 12px;border:1px solid #cfe2d8;border-radius:10px;background:#fff}.bridge-setup b{color:#087348}.bridge-setup span{font-size:11px}.bridge-setup code{padding:6px 8px;border-radius:6px;color:#243958;background:#edf3f8;font:700 10px ui-monospace,monospace;word-break:break-word}.bridge-setup button{justify-self:start;padding:6px 9px;color:#fff;background:#284778;font-size:10px}@media(max-width:900px){.printer-setup-flow{align-items:flex-start;flex-wrap:wrap}.bridge-setup{width:100%;max-width:none;margin-left:0}}`;
 document.head.appendChild(printBridgeSetupStyles);
+const bridgeReadinessStyles = document.createElement('style');
+bridgeReadinessStyles.textContent = `.operations-setup-card{border-color:#bcd7ca;background:linear-gradient(135deg,#fbfffc,#f1fbf5)}.operations-setup-card .operations-home-icon{color:#087348;background:#e3f7eb}.bridge-readiness{padding:24px;border:1px solid #d9e8df;border-radius:16px;background:linear-gradient(145deg,#fff,#f8fcf9)}.bridge-check-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin:22px 0}.bridge-check{display:flex;gap:9px;align-items:flex-start;padding:13px;border:1px solid #e0e8ec;border-radius:11px;background:#fff}.bridge-check>span{display:grid;width:23px;height:23px;place-items:center;flex:0 0 23px;border-radius:50%;color:#596b82;background:#edf2f7;font-weight:900}.bridge-check.is-ok>span{color:#087348;background:#e4f8ec}.bridge-check.is-warn>span{color:#a85c14;background:#fff1dc}.bridge-check b,.bridge-check small{display:block}.bridge-check b{color:#283b56;font-size:12px}.bridge-check small{margin-top:3px;color:#728198;font-size:10px;line-height:1.35}.bridge-install-box{padding:17px;border:1px solid #ecd8b5;border-radius:13px;background:#fffaf0}.bridge-install-box>b{color:#574225;font-size:14px}.bridge-install-box p{margin:6px 0 10px;color:#6f604a;font-size:12px;line-height:1.45}.bridge-install-box code{display:block;padding:11px 12px;border-radius:9px;color:#263b59;background:#f0f4f8;font:800 12px ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-word}.bridge-install-box>div,.bridge-ready-actions{display:flex;gap:9px;align-items:center;margin-top:12px}.bridge-ready-actions{justify-content:flex-end}.bridge-ready-actions .quiet-button,.bridge-install-box .quiet-button{padding:10px 13px;border:1px solid #cdd9e6;border-radius:8px;color:#375170;background:#fff;font-size:12px;font-weight:800}@media(max-width:1000px){.bridge-check-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}@media(max-width:620px){.bridge-readiness{padding:17px}.bridge-check-grid{grid-template-columns:1fr}.bridge-install-box>div,.bridge-ready-actions{align-items:stretch;flex-direction:column}.bridge-ready-actions{justify-content:stretch}.bridge-ready-actions button,.bridge-install-box button{width:100%}}`;
+document.head.appendChild(bridgeReadinessStyles);
+const bridgeDownloadStyles = document.createElement('style');
+bridgeDownloadStyles.textContent = `.bridge-download{display:inline-flex;align-items:center;justify-content:center;padding:10px 13px;border:1px solid #168451;border-radius:8px;color:#fff!important;background:#168451!important;font-size:12px;font-weight:800;text-decoration:none}.bridge-download:hover{color:#fff;filter:brightness(.95)}.bridge-node-note{display:block;margin-top:10px;color:#78694f!important;font-size:11px!important}@media(max-width:620px){.bridge-install-box>div{align-items:stretch;flex-direction:column}.bridge-download{width:100%;text-align:center}}`;
+document.head.appendChild(bridgeDownloadStyles);
 const managePrintersStyles = document.createElement('style');
 managePrintersStyles.textContent = `.manage-printers,.printer-assignment{padding:24px;border:1px solid #dfe7f1;border-radius:16px;background:#fff}.manage-printers-head{display:flex;justify-content:space-between;gap:18px;align-items:start}.manage-printers h3,.printer-assignment h3{margin:4px 0;color:#1e3150;font-size:23px}.manage-printers p,.printer-assignment p{margin:0;color:#687a91}.bridge-status{max-width:370px;padding:9px 12px;border-radius:9px;color:#8a5b13;background:#fff5dc;font-size:12px;font-weight:700}.bridge-status.online{color:#087348;background:#e8f7ef}.add-system-printer{display:flex;gap:10px;margin:22px 0}.add-system-printer select{flex:1;min-height:44px;padding:10px;border:1px solid #cfdceb;border-radius:9px}.add-system-printer button,.printer-table-row button{padding:10px 14px;background:#246ce0;color:#fff}.printer-table{border:1px solid #dfe6ee;border-radius:12px;overflow:hidden}.printer-table-head,.printer-table-row{display:grid;grid-template-columns:1.5fr .8fr 1fr auto;gap:16px;align-items:center;padding:16px 18px}.printer-table-head{color:#526680;background:#eef2f6;font-size:11px;font-weight:900;text-transform:uppercase}.printer-table-row+.printer-table-row{border-top:1px solid #e1e7ee}.printer-table-row b,.printer-table-row small{display:block}.printer-table-row b{color:#1d2f4a}.printer-table-row small{margin-top:4px;color:#76869a;font-size:11px}.assignment-tag{display:inline-block;margin:2px;padding:5px 9px;border-radius:999px;color:#087348;background:#e8f7ef;font-size:11px;font-style:normal;font-weight:800}.printer-table-row .remove-printer{margin-left:6px;color:#a52a39;background:#fff0f0}.assignment-back{display:inline-flex!important;align-items:center;min-height:38px;margin-bottom:17px;padding:8px 12px!important;border:1px solid #9bb7d9!important;border-radius:8px!important;color:#123a70!important;background:#dcecff!important;box-shadow:0 1px 2px rgba(18,58,112,.12);font-size:13px!important;font-weight:900!important}.assignment-back:hover,.assignment-back:focus-visible{border-color:#246ce0!important;color:#fff!important;background:#246ce0!important;outline:0;box-shadow:0 0 0 3px rgba(36,108,224,.2)}.assignment-choices{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;max-width:720px;margin-top:24px}.assignment-choices button{display:grid;gap:6px;padding:22px;text-align:left;color:#1e3150;background:#fff;border:1px solid #d6e0ea}.assignment-choices button:hover{border-color:#246ce0;background:#f4f8ff}.assignment-choices b{font-size:16px}.assignment-choices span{color:#718198}.assignment-category-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:22px}.assignment-category-grid label{display:flex;align-items:center;gap:9px;padding:12px;border:1px solid #dce5ee;border-radius:9px;color:#263b59;font-size:12px;font-weight:700}.assignment-category-grid input{width:17px;height:17px;accent-color:#168451}.assignment-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:22px}.assignment-actions button{padding:11px 15px;background:#eef3f8;color:#304562}.assignment-actions .operations-save{color:#fff;background:#168451}@media(max-width:760px){.manage-printers-head{display:grid}.printer-table-head{display:none}.printer-table-row{grid-template-columns:1fr;gap:8px}.add-system-printer{display:grid}.assignment-choices,.assignment-category-grid{grid-template-columns:1fr}}`;
 document.head.appendChild(managePrintersStyles);
@@ -532,7 +612,7 @@ const fulfillmentLabel = (order) => order?.mode === 'table'
 const tomorrowLocal = () => { const date = new Date(Date.now() + 86400000); date.setSeconds(0, 0); return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
 const toPushKey = (value) => { const padding = '='.repeat((4 - value.length % 4) % 4); const raw = atob((value + padding).replace(/-/g, '+').replace(/_/g, '/')); return Uint8Array.from(raw, (character) => character.charCodeAt(0)); };
 
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('/orders-sw.js?v=13');
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/orders-sw.js?v=15');
 document.getElementById('enable-notifications')?.addEventListener('click', async () => {
   closeOpenPanels();
   const button = document.getElementById('enable-notifications');
@@ -626,16 +706,20 @@ function renderOrder(order) {
   const dailyNumber = Number(order.daily_order_number);
   const orderNumber = Number.isFinite(dailyNumber) && dailyNumber > 0 ? String(dailyNumber).padStart(2, '0') : '—';
   const hasGuestContact = !!order.customer_phone && !String(order.customer_phone).startsWith('walkin-');
-  const controls = ['cancelled', 'completed', 'rejected'].includes(order.status) ? '' : ['accepted', 'preparing', 'ready', 'completed', 'rejected'].map((status) => `<button onclick="setStatus('${esc(order.id)}','${status}')">${status}</button>`).join('');
+  const nextStatuses={new:['accepted','rejected'],accepted:['preparing','ready','completed','rejected'],preparing:['ready','completed','rejected'],ready:['completed','rejected']};
+  const controls = (nextStatuses[order.status] || []).map((status) => `<button onclick="setStatus('${esc(order.id)}','${status}')">${status}</button>`).join('');
   const canModify = age < 10 && ['new', 'accepted', 'preparing'].includes(order.status);
   return `<article class="order" data-order-id="${esc(order.id)}"><div class="order-heading"><span class="daily-order-number">Order #${orderNumber}</span><span class="order-status">${esc(order.status)}</span></div><div class="order-reference">Ref ${esc(order.id)}</div><div class="order-time">${age} min ago</div><div class="placed-at"><span>Placed</span>${esc(placedAt)} <small>Goa time</small></div><div class="meta">${esc(order.customer_name || 'Walk-in customer')}${hasGuestContact ? ` · <b class="phone">${esc(order.customer_phone)}</b>` : ''}</div>${hasGuestContact ? `<div class="customer-trust"><b>${orderCount === 1 ? 'New customer' : `${orderCount} orders from this number`}</b><span>${history}</span></div>` : ''}${order.special_request ? `<div class="request">Special request: ${esc(order.special_request)}</div>` : ''}${order.cancellation_reason ? `<div class="request">Cancelled: ${esc(order.cancellation_reason)}</div>` : ''}<div class="items">${items.map((item) => `<div><b>${Number(item.quantity || 0)}×</b> ${esc(item.name)} ${item.portion ? `(${esc(item.portion)})` : ''}${item.style ? ` — ${esc(item.style)} (+₹10)` : ''}</div>`).join('')}</div><div class="totals"><b>${itemCount} item${itemCount === 1 ? '' : 's'}</b><strong>Total ${money(total)}</strong></div><div class="actions">${controls}${canModify ? `<button class="modify-order" data-modify-order="${esc(order.id)}">Modify order</button>` : ''}<button class="print" onclick="printOrder('${esc(order.id)}')">Print</button></div></article>`;
 }
 
 async function setStatus(id, status) {
-  const response = await fetch(`/api/orders/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) });
-  if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body.error || 'Unable to update the order status.'); }
-  await loadOrders();
-  if (!operationsPanel?.hidden && ['kots','kitchen-display'].includes(operationsTab)) await loadOperations();
+  try {
+    if (await queueWhenOffline('order-status', { orderId:id, status }, () => { const order=orderRecords.get(id); if(order) order.status=status; renderOrders([...orderRecords.values()]); })) return;
+    const response = await fetch(`/api/orders/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) });
+    if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body.error || 'Unable to update the order status.'); }
+    await loadOrders();
+    if (!operationsPanel?.hidden && ['kots','kitchen-display'].includes(operationsTab)) await loadOperations();
+  } catch (error) { alert(error.message || 'Unable to update the order status.'); }
 }
 
 function openModifyOrder(id) {
@@ -647,7 +731,7 @@ function openModifyOrder(id) {
   dialog.innerHTML = `<button class="modify-close" aria-label="Close">×</button><span class="eyebrow">Staff only · first 10 minutes</span><h2>Modify order #${esc(String(order.daily_order_number || '').padStart(2, '0'))}</h2><p>Update quantities or set an item to 0 to remove it. Prices stay controlled by Admin.</p><div class="modify-items">${rows}</div><button class="modify-save">Save changes</button>`;
   dialog.showModal();
   dialog.querySelector('.modify-close').addEventListener('click', () => dialog.close());
-  dialog.querySelector('.modify-save').addEventListener('click', async () => { const button = dialog.querySelector('.modify-save'); button.disabled = true; try { const quantities = [...dialog.querySelectorAll('[data-modify-quantity]')].map((input) => Number(input.value || 0)); const response = await fetch(`/api/orders/${encodeURIComponent(id)}/items`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ quantities }) }); const body = await response.json(); if (!response.ok) throw new Error(body.error || 'Unable to modify this order.'); dialog.close(); loadOrders(); } catch (error) { button.disabled = false; window.alert(error.message); } });
+  dialog.querySelector('.modify-save').addEventListener('click', async () => { const button = dialog.querySelector('.modify-save'); button.disabled = true; try { const quantities = [...dialog.querySelectorAll('[data-modify-quantity]')].map((input) => Number(input.value || 0)); if(await queueWhenOffline('order-items',{orderId:id,quantities},()=>{const order=orderRecords.get(id);if(order)order.items=(order.items||[]).map((item,index)=>({...item,quantity:quantities[index]})).filter((item)=>item.quantity>0);renderOrders([...orderRecords.values()]);})){dialog.close();return;} const response = await fetch(`/api/orders/${encodeURIComponent(id)}/items`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ quantities }) }); const body = await response.json(); if (!response.ok) throw new Error(body.error || 'Unable to modify this order.'); dialog.close(); loadOrders(); } catch (error) { button.disabled = false; window.alert(error.message); } });
 }
 
 function splitReceiptParts(receipt, split) {
@@ -681,7 +765,7 @@ async function printOrder(id, split = null) {
     const receipts = splitReceiptParts(receipt, split);
     if (!receipts.length) throw new Error('Assign at least one item to every split bill.');
     for (const part of receipts) {
-      const printed = await fetch('http://127.0.0.1:9124/v1/print-bill', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ printerName:billPrinter.deviceName, order:part, settings:billPrinter }) });
+      const printed = await fetch('http://127.0.0.1:9124/v1/print-bill', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ printJobId:`manual-bill:${id}:${Date.now()}:${part.label||'full'}`, printerName:billPrinter.deviceName, order:part, settings:billPrinter }) });
       if (!printed.ok) throw new Error((await printed.json().catch(() => ({}))).error || 'Bill printer did not accept the job.');
     }
     return;
@@ -863,9 +947,11 @@ function renderOperations() {
   if (!content) return;
   if (operationsTab === 'home') {
     const activeOrders = [...orderRecords.values()].filter((order) => !['completed','rejected','cancelled'].includes(order.status));
-    content.innerHTML = `<section class="operations-home"><div class="operations-home-title"><span class="eyebrow">Operations</span><h3>Orders &amp; printing</h3><p>Open a workspace to manage the restaurant’s live order flow.</p></div><div class="operations-home-grid"><button type="button" class="operations-home-card" data-operations-tab="kots"><span class="operations-home-icon" aria-hidden="true">⌑</span><span><b>Printed KOTs</b><small>${activeOrders.length} active order${activeOrders.length===1?'':'s'} · View, reprint and keep ticket records</small></span><i aria-hidden="true">›</i></button><button type="button" class="operations-home-card" data-operations-tab="kitchen-display"><span class="operations-home-icon" aria-hidden="true">▤</span><span><b>Kitchen display</b><small>Live screen tickets · Start preparation and mark food ready</small></span><i aria-hidden="true">›</i></button><button type="button" class="operations-home-card" data-operations-tab="printers"><span class="operations-home-icon" aria-hidden="true">▣</span><span><b>Manage printers</b><small>${operationsConfig.printers.length} printer${operationsConfig.printers.length===1?'':'s'} · Add, assign and manage bills or KOTs</small></span><i aria-hidden="true">›</i></button><button type="button" class="operations-home-card" data-operations-tab="tables"><span class="operations-home-icon" aria-hidden="true">▦</span><span><b>Table allocation</b><small>${(operationsConfig.tableAreas||[]).length} area${(operationsConfig.tableAreas||[]).length===1?'':'s'} · Name sections and assign table ranges</small></span><i aria-hidden="true">›</i></button></div></section>`;
+    const bridgeSummary = printBridgeSetupStatus?.ok ? `${printBridgeSetupStatus.platformLabel} · local ledger ready` : 'Check cloud, printer and offline readiness';
+    content.innerHTML = `<section class="operations-home"><div class="operations-home-title"><span class="eyebrow">Operations</span><h3>Orders &amp; printing</h3><p>Open a workspace to manage the restaurant’s live order flow.</p></div><div class="operations-home-grid"><button type="button" class="operations-home-card operations-setup-card" data-operations-tab="setup"><span class="operations-home-icon" aria-hidden="true">◈</span><span><b>Print &amp; offline setup</b><small>${esc(bridgeSummary)}</small></span><i aria-hidden="true">›</i></button><button type="button" class="operations-home-card" data-operations-tab="kots"><span class="operations-home-icon" aria-hidden="true">⌑</span><span><b>Printed KOTs</b><small>${activeOrders.length} active order${activeOrders.length===1?'':'s'} · View, reprint and keep ticket records</small></span><i aria-hidden="true">›</i></button><button type="button" class="operations-home-card" data-operations-tab="kitchen-display"><span class="operations-home-icon" aria-hidden="true">▤</span><span><b>Kitchen display</b><small>Live screen tickets · Start preparation and mark food ready</small></span><i aria-hidden="true">›</i></button><button type="button" class="operations-home-card" data-operations-tab="printers"><span class="operations-home-icon" aria-hidden="true">▣</span><span><b>Manage printers</b><small>${operationsConfig.printers.length} printer${operationsConfig.printers.length===1?'':'s'} · Add, assign and manage bills or KOTs</small></span><i aria-hidden="true">›</i></button><button type="button" class="operations-home-card" data-operations-tab="tables"><span class="operations-home-icon" aria-hidden="true">▦</span><span><b>Table allocation</b><small>${(operationsConfig.tableAreas||[]).length} area${(operationsConfig.tableAreas||[]).length===1?'':'s'} · Name sections and assign table ranges</small></span><i aria-hidden="true">›</i></button></div></section>`;
     return;
   }
+  if (operationsTab === 'setup') { renderPrintBridgeSetup(); return; }
   if (operationsTab === 'tables') { renderTableAllocation(); return; }
   if (operationsTab === 'kitchen-display') { renderKitchenDisplay(); return; }
   if (operationsTab === 'kots') {
@@ -947,6 +1033,52 @@ function renderOperations() {
     }
   }
 }
+function detectedDesktopPlatform() {
+  const hint = String(navigator.userAgentData?.platform || navigator.platform || navigator.userAgent || '').toLowerCase();
+  return /mac|iphone|ipad/.test(hint) ? 'macOS' : /win/.test(hint) ? 'Windows' : 'this computer';
+}
+function printBridgeSetupCommand(platform = detectedDesktopPlatform()) {
+  return platform === 'macOS' ? 'bash ./install-print-bridge-macos.sh' : 'powershell -ExecutionPolicy Bypass -File .\\install-print-bridge-windows.ps1';
+}
+function renderPrintBridgeSetup() {
+  const content = document.getElementById('operations-content');
+  if (!content) return;
+  const status = printBridgeSetupStatus;
+  const platform = status?.platformLabel || detectedDesktopPlatform();
+  const checks = status?.checking ? [
+    ['Cloud connection', 'Checking…', 'checking'], ['Local Print Bridge', 'Checking…', 'checking'], ['SQLite offline ledger', 'Checking…', 'checking'], ['Installed printers', 'Checking…', 'checking'], ['Printer routing', 'Checking…', 'checking']
+  ] : status?.ok ? [
+    ['Cloud connection', status.cloud ? 'Connected' : 'Unavailable', status.cloud ? 'ok' : 'warn'], ['Local Print Bridge', `${status.platformLabel} · running`, 'ok'], ['SQLite offline ledger', 'Ready on this computer', 'ok'], ['Installed printers', `${status.printerCount} detected`, status.printerCount ? 'ok' : 'warn'], ['Printer routing', `${status.configuredPrinterCount} printer${status.configuredPrinterCount===1?'':'s'} · ${status.routeCount} route${status.routeCount===1?'':'s'}`, status.configuredPrinterCount ? 'ok' : 'warn']
+  ] : [
+    ['Cloud connection', navigator.onLine ? 'Browser is online' : 'Browser is offline', navigator.onLine ? 'ok' : 'warn'], ['Local Print Bridge', 'Not detected on this computer', 'warn'], ['SQLite offline ledger', 'Available after Bridge setup', 'warn'], ['Installed printers', 'Checked after Bridge setup', 'checking'], ['Printer routing', `${operationsConfig.printers.length} saved in cloud`, operationsConfig.printers.length ? 'ok' : 'warn']
+  ];
+  const command = printBridgeSetupCommand(platform);
+  const download = platform === 'macOS' ? '/downloads/Red-Lantern-Print-Bridge-macOS.zip' : '/downloads/Red-Lantern-Print-Bridge-Windows.zip';
+  const title = status?.checking ? 'Checking this workstation…' : status?.ok ? 'This workstation is ready' : 'Set up this workstation once';
+  const message = status?.checking ? 'Checking cloud connectivity, the local Print Bridge, SQLite ledger, installed printers, and saved routing.' : status?.ok ? 'No install is needed. The Bridge, local SQLite ledger, and printer discovery are working. Use Check again only after changing a printer or computer.' : `This ${platform} computer has not exposed a running Print Bridge. The setup command is safe to run once; if it is already configured, it simply verifies and starts the existing service.`;
+  content.innerHTML = `<section class="bridge-readiness"><div class="operations-section-head"><div><button type="button" class="assignment-back" data-operations-tab="home">‹ Back</button><span class="eyebrow">Counter workstation</span><h3>${esc(title)}</h3><p>${esc(message)}</p></div><span class="operations-count">${esc(platform)}</span></div><div class="bridge-check-grid">${checks.map(([label, value, state])=>`<article class="bridge-check is-${state}"><span aria-hidden="true">${state==='ok'?'✓':state==='warn'?'!':'…'}</span><div><b>${esc(label)}</b><small>${esc(value)}</small></div></article>`).join('')}</div>${status?.ok ? `<div class="bridge-ready-actions"><button type="button" class="operations-save" data-run-bridge-check>Check again</button><button type="button" class="quiet-button" id="restart-print-bridge">Restart Bridge</button></div>` : `<div class="bridge-install-box"><b>Set up ${esc(platform)} printing &amp; offline mode</b><p>Download the one-time setup bundle, unzip it, and open <b>${platform==='macOS'?'START-SETUP.command':'START-SETUP.cmd'}</b>. It installs or starts the local Bridge and SQLite ledger, then returns you here to verify everything.</p><div><a class="operations-save bridge-download" href="${download}" download>Download setup for ${esc(platform)}</a><button type="button" class="quiet-button" data-run-bridge-check>I've completed setup · Check again</button></div><small class="bridge-node-note">Requires Node.js 22 LTS. If this computer is already configured, setup only starts/verifies the existing service.</small></div>`}</section>`;
+}
+async function checkPrintBridgeSetup() {
+  printBridgeSetupStatus = { checking:true };
+  renderPrintBridgeSetup();
+  let cloud = false;
+  try { const response = await fetch('/api/orders/operations', { cache:'no-store' }); cloud = response.ok; } catch (_) {}
+  try {
+    const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 2800);
+    const response = await fetch(`${printBridgeOrigin}/v1/setup-status`, { cache:'no-store', signal:controller.signal });
+    clearTimeout(timeout);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.ok) throw new Error(data.detail || data.error || 'The local service did not complete its check.');
+    printBridgeSetupStatus = { ...data, cloud };
+    installedSystemPrinters = Array.from({length:Number(data.printerCount)||0}, (_, index) => installedSystemPrinters[index]).filter(Boolean);
+    printBridgeState = 'available';
+    await syncOperationsToPrintBridge(operationsConfig);
+  } catch (error) {
+    printBridgeSetupStatus = { ok:false, cloud, detail:error.message || 'Print Bridge was not found.' };
+    printBridgeState = 'offline';
+  }
+  renderPrintBridgeSetup();
+}
 async function loadOperations() {
   const response = await fetch('/api/orders/operations', { cache:'no-store' });
   const data = await response.json();
@@ -954,7 +1086,9 @@ async function loadOperations() {
   operationsConfig = data.config || { printers:[], routes:[] };
   if (!Array.isArray(operationsConfig.tableAreas) || !operationsConfig.tableAreas.length) operationsConfig.tableAreas = readCachedTableAreas();
   else cacheTableAreas(operationsConfig.tableAreas);
+  cacheOperationsConfig(operationsConfig);
   operationsMenu = Array.isArray(data.menu) ? data.menu : [];
+  if (!navigator.onLine) { operationKotHistory = new Map(); completedKotHistory = []; kitchenStationStatuses = new Map(); renderOperations(); return; }
   const completedHistoryPromise = fetch('/api/orders/kot-history', { cache:'no-store' }).then(async (response) => response.ok ? response.json() : [] ).catch(() => []);
   const stationStatusPromise = fetch('/api/orders/kitchen-statuses', { cache:'no-store' }).then(async (response) => response.ok ? response.json() : [] ).catch(() => []);
   const activeOrders = [...orderRecords.values()].filter((order) => !['completed','rejected','cancelled'].includes(order.status));
@@ -998,6 +1132,7 @@ async function syncOperationsToPrintBridge(config) {
   }
 }
 async function saveOperations() {
+  if (await queueWhenOffline('operations-config', { config:operationsConfig }, () => { cacheOperationsConfig(operationsConfig); renderOperations(); })) return;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15000);
   let response;
@@ -1019,6 +1154,10 @@ async function saveTableAllocation(button) {
   const originalLabel = button?.textContent || 'Save table allocation';
   if (button) { button.disabled = true; button.textContent = 'Saving…'; }
   try {
+    if (await queueWhenOffline('table-areas', { tableAreas:operationsConfig.tableAreas || [] }, () => { cacheTableAreas(operationsConfig.tableAreas); cacheOperationsConfig(operationsConfig); })) {
+      if (button) { button.textContent = 'Saved offline ✓'; setTimeout(() => { if (button.isConnected) { button.disabled = false; button.textContent = originalLabel; } }, 1600); }
+      return;
+    }
     const response = await fetch('/api/orders/operations/table-areas', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -1078,7 +1217,7 @@ function printKot(orderId, printerId) {
 
 async function dispatchKot(orderId, printerId) {
   const created=await fetch(`/api/orders/${encodeURIComponent(orderId)}/kots`, { method:'POST' }); const data=await created.json(); if (!created.ok) { if (data.latestKot && confirm(`No new items. Reprint KOT #${data.latestKot.kot_number}?`)) { data.kotNumber=data.latestKot.kot_number; data.tickets=data.latestKot.tickets; data.order=data.order; data.reprint=true; } else throw new Error(data.error || 'Unable to create KOT.'); } if (data.reused) throw new Error(`KOT #${data.kotNumber} was already sent. Use Reprint if another copy is needed.`);
-  await Promise.all(data.tickets.map(async (ticket) => { const response=await fetch('http://127.0.0.1:9124/v1/print-kot',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({printerName:ticket.printerName,printerLabel:ticket.printerLabel,settings:operationsConfig.printers.find((printer)=>printer.deviceName===ticket.printerName)||{},items:ticket.items,order:{number:data.order.daily_order_number, kotNumber:data.kotNumber, reprint:!!data.reprint, customer:data.order.customer_name, phone:data.order.customer_phone, fulfillment:fulfillmentLabel(data.order), createdAt:data.order.created_at, note:data.order.special_request}})}); const body=await response.json().catch(()=>({})); if(!response.ok) throw new Error(body.error||'The Print Bridge could not send this KOT.'); }));
+  await Promise.all(data.tickets.map(async (ticket) => { const response=await fetch('http://127.0.0.1:9124/v1/print-kot',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({printJobId:`manual-kot:${orderId}:${data.kotNumber}:${ticket.printerName}:${Date.now()}`,printerName:ticket.printerName,printerLabel:ticket.printerLabel,settings:operationsConfig.printers.find((printer)=>printer.deviceName===ticket.printerName)||{},items:ticket.items,order:{number:data.order.daily_order_number, kotNumber:data.kotNumber, reprint:!!data.reprint, customer:data.order.customer_name, phone:data.order.customer_phone, fulfillment:fulfillmentLabel(data.order), createdAt:data.order.created_at, note:data.order.special_request}})}); const body=await response.json().catch(()=>({})); if(!response.ok) throw new Error(body.error||'The Print Bridge could not send this KOT.'); }));
 }
 
 const autoPrintInFlight = new Set();
@@ -1096,7 +1235,7 @@ async function autoPrintOrder(order) {
       const kot = await created.json().catch(() => ({}));
       if (created.ok && !kot.reused) { const printers=await operationsPromise; await Promise.all((kot.tickets || []).map(async (ticket) => {
         const settings=printers.find((printer)=>printer.deviceName===ticket.printerName)||{};
-        const response = await fetch('http://127.0.0.1:9124/v1/print-kot', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ printerName:ticket.printerName, printerLabel:ticket.printerLabel, settings, items:ticket.items, order:{ number:kot.order?.daily_order_number, kotNumber:kot.kotNumber, customer:kot.order?.customer_name, phone:kot.order?.customer_phone, fulfillment:fulfillmentLabel(kot.order), createdAt:kot.order?.created_at, note:kot.order?.special_request } }) });
+        const response = await fetch('http://127.0.0.1:9124/v1/print-kot', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ printJobId:`auto-kot:${order.id}:${kot.kotNumber}:${ticket.printerName}`, printerName:ticket.printerName, printerLabel:ticket.printerLabel, settings, items:ticket.items, order:{ number:kot.order?.daily_order_number, kotNumber:kot.kotNumber, customer:kot.order?.customer_name, phone:kot.order?.customer_phone, fulfillment:fulfillmentLabel(kot.order), createdAt:kot.order?.created_at, note:kot.order?.special_request } }) });
         if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || 'KOT printer did not accept the job.');
       })); }
       if (!created.ok && created.status !== 409) throw new Error(kot.error || 'Unable to create the automatic KOT.');
@@ -1115,7 +1254,7 @@ async function autoPrintOrder(order) {
         const receiptResponse = await fetch(`/api/orders/${encodeURIComponent(order.id)}/print`, { cache:'no-store' });
         const receipt = await receiptResponse.json();
         if (!receiptResponse.ok) throw new Error(receipt.error || 'Unable to prepare the receipt.');
-        const printed = await fetch('http://127.0.0.1:9124/v1/print-bill', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ printerName:billPrinter.deviceName, order:receipt, settings:billPrinter }) });
+        const printed = await fetch('http://127.0.0.1:9124/v1/print-bill', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ printJobId:`auto-bill:${order.id}`, printerName:billPrinter.deviceName, order:receipt, settings:billPrinter }) });
         if (!printed.ok) throw new Error((await printed.json().catch(() => ({}))).error || 'Bill printer did not accept the job.');
         await fetch(`/api/orders/${encodeURIComponent(order.id)}/bill-print/complete`, { method:'POST' });
         return { ok:true };
@@ -1173,6 +1312,7 @@ function renderAvailability() {
 
 async function updateAvailability(key, unavailableUntil) {
   const url = `/api/orders/availability/${encodeURIComponent(key)}`;
+  if (await queueWhenOffline('availability-update',{key,unavailableUntil},()=>{if(unavailableUntil)unavailable.set(key,unavailableUntil);else unavailable.delete(key);renderAvailability();})) return;
   const response = await fetch(url, unavailableUntil ? { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ unavailableUntil }) } : { method: 'DELETE' });
   if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body.error || 'Unable to update availability.'); }
   await loadAvailability();
@@ -1204,7 +1344,7 @@ liveOrdersToggle.addEventListener('click', () => {
 document.getElementById('availability-close')?.addEventListener('click', () => { availability.hidden = true; document.getElementById('availability-toggle').setAttribute('aria-expanded', 'false'); });
 document.getElementById('counter-order-close')?.addEventListener('click', () => { counterPanel.hidden=true; showTableView(); });
 document.getElementById('view-table-kot')?.addEventListener('click', () => { const orderId=document.getElementById('view-table-kot').dataset.orderId, order=orderRecords.get(orderId), entries=operationKotHistory.get(orderId)||[]; if(!order)return; document.getElementById('view-kot-content').innerHTML=entries.length?entries.map((kot)=>`<section class="view-kot-ticket"><h3>KOT #${esc(kot.kot_number)} <small>${kot.created_at?new Date(kot.created_at).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}):''}</small></h3>${(kot.tickets||[]).flatMap((ticket)=>ticket.items||[]).map((item)=>{const index=(order.items||[]).findIndex((candidate)=>candidate.name===item.name&&String(candidate.portion||'')===String(item.portion||'')&&Number(candidate.quantity||0)>0);return `<div><b>${Number(item.quantity||0)}×</b> ${esc(item.name)}${item.portion?` · ${esc(item.portion)}`:''}<span>₹${Number(String(item.price||0).replace(/[^0-9.]/g,'')||0).toFixed(0)}</span>${index>=0?`<button type="button" class="view-kot-edit" data-view-kot-edit="${index}">Edit qty</button><button type="button" class="view-kot-delete" data-view-kot-delete="${index}">Delete</button>`:''}</div>`;}).join('')}</section>`).join(''):'<p>No KOT has been sent for this table yet.</p>'; viewKotDialog.showModal(); });
-viewKotDialog.addEventListener('click',async (event)=>{if(event.target.closest('.view-kot-close')){viewKotDialog.close();return;}const edit=event.target.closest('[data-view-kot-edit]'),button=edit||event.target.closest('[data-view-kot-delete]');if(!button)return;const orderId=document.getElementById('view-table-kot')?.dataset.orderId,order=orderRecords.get(orderId),index=Number(edit?edit.dataset.viewKotEdit:button.dataset.viewKotDelete);if(!order||!Number.isInteger(index))return;let quantity=0;if(edit){const current=Number(order.items?.[index]?.quantity||0),entered=prompt(`Quantity for ${order.items?.[index]?.name||'this item'} (1–20):`,String(current));if(entered===null)return;quantity=Number(entered);if(!Number.isInteger(quantity)||quantity<1||quantity>20){alert('Enter a whole quantity from 1 to 20.');return;}}else if(!confirm('Delete this item from the active table bill?'))return;const quantities=(order.items||[]).map((item,itemIndex)=>itemIndex===index?quantity:Number(item.quantity||0));button.disabled=true;try{const response=await fetch(`/api/orders/${encodeURIComponent(orderId)}/items`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({quantities})});const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.error||`Unable to ${edit?'modify':'delete'} this item.`);await loadOrders();viewKotDialog.close();}catch(error){alert(error.message||`Unable to ${edit?'modify':'delete'} this item.`);button.disabled=false;}});
+viewKotDialog.addEventListener('click',async (event)=>{if(event.target.closest('.view-kot-close')){viewKotDialog.close();return;}const edit=event.target.closest('[data-view-kot-edit]'),button=edit||event.target.closest('[data-view-kot-delete]');if(!button)return;const orderId=document.getElementById('view-table-kot')?.dataset.orderId,order=orderRecords.get(orderId),index=Number(edit?edit.dataset.viewKotEdit:button.dataset.viewKotDelete);if(!order||!Number.isInteger(index))return;let quantity=0;if(edit){const current=Number(order.items?.[index]?.quantity||0),entered=prompt(`Quantity for ${order.items?.[index]?.name||'this item'} (1–20):`,String(current));if(entered===null)return;quantity=Number(entered);if(!Number.isInteger(quantity)||quantity<1||quantity>20){alert('Enter a whole quantity from 1 to 20.');return;}}else if(!confirm('Delete this item from the active table bill?'))return;const quantities=(order.items||[]).map((item,itemIndex)=>itemIndex===index?quantity:Number(item.quantity||0));button.disabled=true;try{if(await queueWhenOffline('order-items',{orderId,quantities},()=>{order.items=order.items.map((item,itemIndex)=>({...item,quantity:quantities[itemIndex]})).filter((item)=>item.quantity>0);cacheTableOrders([...orderRecords.values()]);renderTableView();})){viewKotDialog.close();return;}const response=await fetch(`/api/orders/${encodeURIComponent(orderId)}/items`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({quantities})});const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.error||`Unable to ${edit?'modify':'delete'} this item.`);await loadOrders();viewKotDialog.close();}catch(error){alert(error.message||`Unable to ${edit?'modify':'delete'} this item.`);button.disabled=false;}});
 document.getElementById('table-view-content')?.addEventListener('click', async (event) => {
   if (event.target.closest('[data-toggle-move-kot]')) { moveKotItemsMode=!moveKotItemsMode; renderTableView(); return; }
   const moving = event.target.closest('[data-move-table-order]');
@@ -1239,9 +1379,9 @@ newOrderAction.addEventListener('click', async () => { counterPanel.hidden=true;
 settleTableDialog.addEventListener('click', async (event) => {
   if (event.target.closest('.settle-close,.settle-cancel')) { settleTableDialog.close(); return; }
   const button=event.target.closest('.settle-confirm'); if (!button) return;
-  button.disabled=true; const status=document.getElementById('settle-table-status'); status.textContent='Settling table…';
-  try { const paymentType=document.querySelector('input[name="settlement-type"]:checked')?.value||''; const response=await fetch(`/api/orders/${encodeURIComponent(settleTableDialog.dataset.orderId)}/settle`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({paymentType,amount:Number(document.getElementById('settlement-amount').value||0)})}); const data=await response.json().catch(()=>({})); if(!response.ok) throw new Error(data.error||'Unable to settle this table.'); settleTableDialog.close(); await loadOrders(); await showTableView(); }
-  catch(error){status.textContent=error.message||'Unable to settle this table.';} finally { button.disabled=false; }
+  button.disabled=true; const status=document.getElementById('settle-table-status'); status.textContent='Settling table…'; let settlementPayload=null;
+  try { const paymentType=document.querySelector('input[name="settlement-type"]:checked')?.value||'', orderId=settleTableDialog.dataset.orderId, amount=Number(document.getElementById('settlement-amount').value||0), requestId=settlementRequestId(), payload={orderId,paymentType,amount,requestId}; settlementPayload=payload; const applyLocal=()=>{const order=orderRecords.get(orderId);if(order)order.status='completed';cacheTableOrders([...orderRecords.values()]);renderTableView();}; if(await queueWhenOffline('settlement',payload,applyLocal)){settleTableDialog.close();return;} const response=await fetch(`/api/orders/${encodeURIComponent(orderId)}/settle`,{method:'POST',headers:{'Content-Type':'application/json','X-Settlement-Id':requestId},body:JSON.stringify({paymentType,amount,requestId})}); const data=await response.json().catch(()=>({})); if(!response.ok) throw new Error(data.error||'Unable to settle this table.'); settleTableDialog.close(); await loadOrders(); await showTableView(); }
+  catch(error){if(settlementPayload && error instanceof TypeError){try{await saveBridgeAction('settlement',settlementPayload);const order=orderRecords.get(settlementPayload.orderId);if(order)order.status='completed';cacheTableOrders([...orderRecords.values()]);renderTableView();settleTableDialog.close();updateConnectivity('Settlement saved safely on this computer. It will sync when internet returns.');return;}catch(ledgerError){status.textContent=ledgerError.message||'Unable to safely save this settlement.';return;}}status.textContent=error.message||'Unable to settle this table.';} finally { button.disabled=false; }
 });
 document.getElementById('counter-menu-search')?.addEventListener('input', renderCounterOrder);
 document.getElementById('counter-customer-phone')?.addEventListener('input', () => { clearTimeout(counterLoyaltyTimer); counterLoyaltyTimer = setTimeout(loadCounterLoyalty, 300); });
@@ -1296,14 +1436,27 @@ async function submitDineInAction(action) {
   const button = document.querySelector(`[data-dine-action="${action}"]`); if (button) button.disabled = true;
   const payload = { clientRequestId:counterRequestId(), action, customerName:document.getElementById('counter-customer-name').value.trim(), customerPhone:document.getElementById('counter-customer-phone').value.trim(), specialRequest:document.getElementById('counter-special-request').value.trim(), loyaltyPoints:Math.floor(Number(document.getElementById('counter-wallet-redeem')?.value || 0)), tableArea:counterTable.area, tableNumber:counterTable.number, items:counterCart.map((item) => ({ ...item })) };
   const tableLabel = `${counterTable.area} · Table ${String(counterTable.number).padStart(2, '0')}`;
+  let savedInBridgeLedger = false;
   try {
     status.textContent = action === 'hold' ? 'Holding table bill…' : action === 'save' ? 'Saving table bill…' : 'Saving dine-in bill…';
+    if (['save','hold'].includes(action)) { try { await saveToBridgeLedger(payload); savedInBridgeLedger=true; } catch (ledgerError) { reportOrdersDiagnostic({ level:'warning', message:`Local ledger unavailable: ${ledgerError.message}`, source:'offline dine-in ledger' }); } }
+    if (!navigator.onLine) {
+      if (!['save','hold'].includes(action)) throw new Error('KOT and final bill printing need an online order confirmation. Save or hold the table first; it will sync safely when the connection returns.');
+      throw new TypeError('Offline');
+    }
     const result = await sendCounterOrder(payload);
+    if (savedInBridgeLedger) { await updateBridgeLedger(payload.clientRequestId,'synced'); bridgeLedgerPending=Math.max(0,bridgeLedgerPending-1); updateConnectivity(); }
     if (action === 'kot-print') { const printing=await autoPrintOrder({ id:result.id, mode:'table', status:'accepted' }); if (!printing.ok) throw new Error(printing.reason || 'KOTs could not be sent to the kitchen.'); status.textContent = `${tableLabel}: KOTs sent to the kitchen.`; }
     else if (action === 'print') { await printOrder(result.id, counterBillSplit); const marked=await fetch(`/api/orders/${encodeURIComponent(result.id)}/bill-printed`,{method:'POST'}); const markedData=await marked.json().catch(()=>({})); if(!marked.ok) throw new Error(markedData.error||'Bill printed, but the table could not be marked for settlement.'); status.textContent = `${tableLabel}: bill printed and waiting for settlement.`; }
     else status.textContent = action === 'hold' ? `${tableLabel} is on hold.` : `${tableLabel} saved in Saved bills.`;
     counterBillSplit = null; counterCart = []; renderCounterOrder(); await loadOrders(); await showTableView();
-  } catch (error) { status.textContent = error.message || 'Unable to save this dine-in bill.'; }
+  } catch (error) {
+    if ((!navigator.onLine || !error.status || error.status >= 500) && ['save','hold'].includes(action)) {
+      if (!savedInBridgeLedger) { const queued=queuedCounterOrders(); queued.push(payload); saveQueuedCounterOrders(queued); }
+      reserveOfflineTable(payload); counterBillSplit=null; counterCart=[]; renderCounterOrder();
+      status.textContent=`${tableLabel} is saved offline and reserved. It will sync automatically when internet returns.`; updateConnectivity();
+    } else status.textContent = error.message || 'Unable to save this dine-in bill.';
+  }
   finally { if (button) button.disabled = false; }
 }
 document.getElementById('dine-in-actions')?.addEventListener('click', async (event) => {
@@ -1323,18 +1476,22 @@ document.getElementById('counter-place-order')?.addEventListener('click', async 
   }
   const orderLabel = counterTable ? `${counterTable.area} Table ${String(counterTable.number).padStart(2, '0')}` : 'takeaway';
   status.textContent = navigator.onLine ? `Saving ${orderLabel} order…` : 'Internet is unavailable — saving this order safely on this device…';
+  let savedInBridgeLedger = false;
   try {
     let result;
+    try { await saveToBridgeLedger(payload); savedInBridgeLedger = true; }
+    catch (ledgerError) { reportOrdersDiagnostic({ level:'warning', message:`Local ledger unavailable: ${ledgerError.message}`, source:'offline order ledger' }); }
     if (!navigator.onLine) throw new TypeError('Offline');
     result = await sendCounterOrder(payload);
+    if (savedInBridgeLedger) { await updateBridgeLedger(payload.clientRequestId, 'synced'); bridgeLedgerPending = Math.max(0, bridgeLedgerPending - 1); updateConnectivity(); }
     status.textContent = `${counterTable ? `${counterTable.area} Table ${String(counterTable.number).padStart(2, '0')}` : `Takeaway order #${result.orderNumber}`} accepted. Sending KOTs…`; counterCart = []; counterLoyaltyPoints = 0; document.getElementById('counter-customer-name').value = ''; document.getElementById('counter-customer-phone').value = ''; document.getElementById('counter-special-request').value = ''; document.getElementById('counter-wallet-redeem').value = '0'; counterWallet.hidden = true; renderCounterOrder(); void autoPrintOrder({ id:result.id, mode:counterTable ? 'table' : 'counter', status:result.status || 'accepted' }).then((printing) => { if (printing?.ok) status.textContent = `${counterTable ? `${counterTable.area} Table ${String(counterTable.number).padStart(2, '0')}` : `Takeaway order #${result.orderNumber}`} accepted. KOTs were sent to the configured kitchens.`; else if (printing?.reason) status.textContent = `${orderLabel} order accepted. ${printing.reason} Check Operations / Orders Error Logs.`; }); loadOrders(); refreshCounterLiveStatus();
   } catch (error) {
     if (!navigator.onLine || !error.status || error.status >= 500) {
-      const queued = queuedCounterOrders(); queued.push(payload); saveQueuedCounterOrders(queued);
+      if (!savedInBridgeLedger) { const queued = queuedCounterOrders(); queued.push(payload); saveQueuedCounterOrders(queued); }
       reserveOfflineTable(payload);
       counterCart = []; document.getElementById('counter-customer-name').value = ''; document.getElementById('counter-customer-phone').value = ''; document.getElementById('counter-special-request').value = ''; renderCounterOrder();
       status.textContent = counterTable ? 'Table order saved offline and the table is reserved. It will sync automatically when internet returns.' : 'Takeaway order saved offline. It will be sent automatically when internet returns.'; updateConnectivity();
-    } else status.textContent = error.message;
+    } else { if (savedInBridgeLedger) { try { await updateBridgeLedger(payload.clientRequestId, 'blocked', error.message); } catch (_) {} } status.textContent = error.message; }
   } finally { button.disabled = false; }
 });
 operationsToggle.addEventListener('click', async () => {
@@ -1344,21 +1501,19 @@ operationsToggle.addEventListener('click', async () => {
   operationsToggle.classList.toggle('is-open', opening);
   operationsToggle.setAttribute('aria-expanded', String(opening));
   if (!opening) return;
-  document.getElementById('operations-content').innerHTML = '<div class="operations-empty">Loading Operations…</div>';
-  try { await loadOrders(); await loadOperations(); await discoverSystemPrinters(); renderOperations(); operationsPanel.scrollIntoView({ behavior:'smooth', block:'start' }); } catch (error) { document.getElementById('operations-content').innerHTML = `<div class="operations-empty">${esc(error.message)}</div>`; }
+  const hasSnapshot = (operationsConfig.printers || []).length || (operationsConfig.routes || []).length || (operationsConfig.tableAreas || []).length;
+  if (hasSnapshot) renderOperations(); else document.getElementById('operations-content').innerHTML = '<div class="operations-empty">Loading Operations…</div>';
+  operationsPanel.scrollIntoView({ behavior:'smooth', block:'start' });
+  try { await loadOrders(); renderOperations(); }
+  catch (error) { if (!hasSnapshot) document.getElementById('operations-content').innerHTML = `<div class="operations-empty">${esc(error.message)}</div>`; }
+  void loadOperations().then(() => { if (!operationsPanel.hidden) renderOperations(); }).catch(() => {});
+  void discoverSystemPrinters();
 });
 document.getElementById('operations-close')?.addEventListener('click', async () => {
   operationsPanel.hidden = true;
   operationsToggle.classList.remove('is-open');
   operationsToggle.setAttribute('aria-expanded','false');
   await showTableView();
-});
-document.getElementById('operations-tabs')?.addEventListener('click', (event) => {
-  const button = event.target.closest('[data-operations-tab]');
-  if (!button) return;
-  operationsTab = button.dataset.operationsTab;
-  document.querySelectorAll('[data-operations-tab]').forEach((tab) => tab.classList.toggle('is-active', tab === button));
-  renderOperations();
 });
 document.getElementById('operations-content')?.addEventListener('change', (event) => {
   if (event.target.id === 'operation-route-all-categories') {
@@ -1390,8 +1545,13 @@ document.getElementById('operations-content')?.addEventListener('click', async (
     assignmentPrinterId = '';
     assignmentMode = '';
     renderOperations();
+    if (operationsTab === 'setup') void checkPrintBridgeSetup();
     return;
   }
+  const runBridgeCheck = event.target.closest('[data-run-bridge-check]');
+  if (runBridgeCheck) { void checkPrintBridgeSetup(); return; }
+  const copyBridgeSetup = event.target.closest('[data-copy-bridge-setup]');
+  if (copyBridgeSetup) { try { await navigator.clipboard.writeText(copyBridgeSetup.dataset.command || ''); copyBridgeSetup.textContent='Copied'; setTimeout(() => { if (copyBridgeSetup.isConnected) copyBridgeSetup.textContent=`Copy ${detectedDesktopPlatform()==='macOS'?'Terminal':'PowerShell'} command`; }, 1600); } catch (_) { alert(`Run this command in Terminal / PowerShell:\n\n${copyBridgeSetup.dataset.command || ''}`); } return; }
   const kdsAction = event.target.closest('[data-kds-status-action]');
   if (kdsAction) {
     const nextStatus = kdsAction.dataset.kdsStatusAction;
@@ -1400,7 +1560,7 @@ document.getElementById('operations-content')?.addEventListener('click', async (
     if (!orderId || !printerId || !['preparing','ready'].includes(nextStatus)) return;
     kdsAction.disabled = true;
     kdsAction.textContent = nextStatus === 'preparing' ? 'Starting…' : 'Marking ready…';
-    try { const response = await fetch(`/api/orders/${encodeURIComponent(orderId)}/kitchen-status/${encodeURIComponent(printerId)}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({status:nextStatus}) }); const body = await response.json().catch(() => ({})); if (!response.ok) throw new Error(body.error || 'Unable to update kitchen ticket.'); await loadOperations(); } catch (error) { kdsAction.disabled = false; alert(error.message); }
+    try { if(await queueWhenOffline('kitchen-status',{orderId,printerId,status:nextStatus},()=>{kitchenStationStatuses.set(`${orderId}::${printerId}`,nextStatus);renderKitchenDisplay();})){return;} const response = await fetch(`/api/orders/${encodeURIComponent(orderId)}/kitchen-status/${encodeURIComponent(printerId)}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({status:nextStatus}) }); const body = await response.json().catch(() => ({})); if (!response.ok) throw new Error(body.error || 'Unable to update kitchen ticket.'); await loadOperations(); } catch (error) { kdsAction.disabled = false; alert(error.message); }
     return;
   }
   if (event.target.closest('[data-kds-fullscreen]')) {
@@ -1549,6 +1709,8 @@ menuResults?.addEventListener('click', async (event) => {
 
 const cachedTableAreas = readCachedTableAreas();
 const cachedTableOrders = readCachedTableOrders();
+const cachedOperationsConfig = readCachedOperationsConfig();
+if (cachedOperationsConfig) operationsConfig = cachedOperationsConfig;
 if (cachedTableAreas.length) operationsConfig.tableAreas = cachedTableAreas;
 if (cachedTableOrders.length) orderRecords = new Map(cachedTableOrders.map((order) => [order.id, order]));
 if (cachedTableAreas.length) { tableViewPanel.hidden = false; renderTableView(); }

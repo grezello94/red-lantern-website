@@ -93,6 +93,49 @@ Each saved printer can be:
 
 Physical printing requires the local `print-bridge.js` process on the counter computer. The website sends print jobs to `http://127.0.0.1:9124`; Vercel cannot directly reach LAN/USB printers.
 
+In **Orders → Operations → Print & offline setup**, staff can run one readiness check for cloud access, the local Bridge, SQLite ledger, system printers, and saved printer routes. It identifies Windows or macOS automatically. If the Bridge is already configured, the platform installer only verifies/starts the existing service; it does not create a second service or require repeated setup.
+
+For a new workstation, that screen provides one platform-specific setup download. Unzip it and open `START-SETUP.cmd` on Windows or `START-SETUP.command` on macOS. The lightweight ZIP setup requires Node.js 22 LTS; the signed native installer release includes its own Node.js 22 runtime. The setup bundle and its platform launchers are rebuilt with `npm run bundle:print-bridge` during every website build.
+
+#### Windows billing computer — first setup
+
+1. Turn on the receipt/KOT printers and add them in **Windows Settings → Bluetooth & devices → Printers & scanners**.
+2. On that same billing computer, open **Orders → Operations → Print & offline setup**.
+3. Confirm the screen says **Windows**, click **Download setup for Windows**, unzip it, and double-click `START-SETUP.cmd`.
+4. Return to Operations and select **I’ve completed setup · Check again**.
+5. Confirm that the local Print Bridge, SQLite offline ledger, and installed printers are ready; then assign the detected printers and routes in **Manage printers** if needed.
+
+#### macOS billing computer — first setup
+
+1. Turn on the receipt/KOT printers and add them in **System Settings → Printers & Scanners**.
+2. On that same billing Mac, open **Orders → Operations → Print & offline setup**.
+3. Confirm the screen says **macOS**, click **Download setup for macOS**, unzip it, and open `START-SETUP.command`.
+4. Return to Operations and select **I’ve completed setup · Check again**.
+5. Confirm that the local Print Bridge, SQLite offline ledger, and installed printers are ready; then assign printers and routes in **Manage printers** if needed.
+
+#### Daily startup
+
+Nothing needs to be reinstalled or manually started. When the staff user signs in to Windows, the Print Bridge starts automatically. Open `/orders` as normal. Use **Check again** or **Restart Bridge** only after changing a printer, replacing the computer, or when Operations reports a problem.
+
+On macOS, the installed Bridge also starts automatically after the billing user signs in. The Orders browser must be open on the same billing computer as the Bridge for local USB/LAN printing.
+
+#### Offline and recovery rules
+
+- Keep the billing computer powered on while the restaurant is operating. The SQLite ledger is stored only on that computer and protects queued local work.
+- If the internet fails, keep using `/orders` on the billing computer. Safe counter orders and operational changes are stored locally and reconcile when the connection returns.
+- Do not clear browser data, uninstall the Print Bridge, delete `~/.red-lantern-print-bridge`, or copy its SQLite file while pending work is shown. Ask the administrator to resolve a sync warning first.
+- Guest QR checkout requires internet and clearly reports when an order has not been sent; guests must retry only after connectivity returns.
+- Final automatic KOT/Bill printing is online-confirmed. If printing fails, use Operations → Printed KOTs / Manage printers to inspect the route and reprint deliberately.
+- If Operations says the Bridge is unavailable: check that the computer is online, printer is powered on, then click **Check again**. Use **Restart Bridge** only if it still remains unavailable.
+
+#### When printers or computers change
+
+1. Add the new printer in Windows/macOS system printer settings first.
+2. Open **Operations → Print & offline setup** and run **Check again**.
+3. Open **Manage printers**, add the detected system printer, set it as Bill or KOT, assign its routes, and save.
+4. Send one controlled test KOT/Bill before service starts.
+5. For a replacement billing computer, perform the relevant first-setup steps above. Do not move an old local SQLite ledger to the new computer without administrator review.
+
 The Print Bridge:
 
 - Detects Windows installed printers.
@@ -100,6 +143,7 @@ The Print Bridge:
 - Uses the printer's configured 58 mm or 80 mm preference to select the matching Windows thermal paper form.
 - Uses small margins to reduce blank paper at the top.
 - Receives per-printer receipt/KOT settings with each job.
+- Keeps a durable SQLite ledger at `~/.red-lantern-print-bridge/orders-ledger.sqlite` on the billing computer.
 
 The Windows printer driver must also be configured to the same roll width. For EPSON TM-T82X and the shown thermal printers, use **80 mm** unless a 58 mm roll is actually loaded.
 
@@ -123,11 +167,14 @@ Recommended defaults:
 The Orders page is designed not to become blank when the internet disconnects.
 
 - Last loaded Orders data stays visible.
-- Counter orders created while offline are stored safely in the current browser/device queue.
-- When internet returns, the console syncs queued counter orders without reloading the page.
+- Counter orders created while offline are stored in the local Print Bridge SQLite ledger when it is running, with the browser queue retained as a fallback.
+- Safe operational edits made while offline—order status, item quantities, table moves, kitchen state, availability, and Operations/table configuration—are also queued in that ledger.
+- When internet returns and the Orders console is open, queued work syncs in order without reloading the page.
 - The page shows an offline/sync message while work is waiting.
 
-Important: cloud saving requires internet. Local physical KOT/Bill printing while the internet is down requires a local workflow/bridge plus the relevant order data already available locally. LAN cable connection alone does not make a cloud-hosted order API available.
+Settlement records use a unique settlement request ID. When the local Print Bridge is available, a staff settlement made during a network failure is saved locally and reconciles exactly once after reconnecting. Final bill printing remains online-confirmed: creating fully autonomous offline KOT/bill numbering requires a separately authenticated bridge-to-server protocol, so the browser-led ledger sync is intentionally conservative there.
+
+Guest QR checkout also requires an internet connection: it has no trusted local Print Bridge and therefore never pretends to queue a guest’s payment/loyalty request offline. The QR screen clearly states that the order was not sent, avoiding uncertain duplicate submissions.
 
 ## Operations configuration data
 
@@ -213,18 +260,26 @@ The website calls the bridge only on the same counter device:
 | Bridge route | Use |
 | --- | --- |
 | `GET http://127.0.0.1:9124/health` | Detect whether local printing is available. |
+| `GET http://127.0.0.1:9124/v1/setup-status` | Reports the local platform, SQLite ledger, installed printers, and saved printer routes for Operations setup checks. |
 | `GET http://127.0.0.1:9124/v1/printers` | Lists Windows/CUPS installed printers. |
 | `PUT http://127.0.0.1:9124/v1/config` | Syncs Operations printer/routing configuration. |
 | `POST http://127.0.0.1:9124/v1/print-kot` | Sends one routed KOT ticket to an installed local printer. |
 | `POST http://127.0.0.1:9124/v1/print-bill` | Sends one final Bill to the configured local Bill printer. |
+| `POST http://127.0.0.1:9124/v1/ledger/actions` | Writes a durable offline action to the local SQLite ledger. |
+| `GET http://127.0.0.1:9124/v1/ledger/actions?status=queued` | Reads queued actions for controlled reconciliation. |
 
 The bridge must remain local. Never expose port `9124` to the public internet.
 
 ### Data integrity safeguards
 
 - The server recalculates and validates menu prices before saving a counter order.
-- `client_request_id` prevents duplicated counter orders during retries/offline sync.
+- Every counter order and QR direct order sends a `client_request_id`; retrying the same submission returns the original order instead of charging, redeeming points, or creating a second order.
+- Mobile numbers, guest names, special requests, delivery/pickup selection, and loyalty redemption are validated and saved with the order record—not trusted from a later client refresh.
+- Loyalty redemption is conditional on the current balance, is refunded once for a rejected/cancelled order, and points are awarded once on completion. Item changes recalculate points using the active loyalty configuration and cannot invalidate a redemption.
+- Status changes follow a one-way workflow (`new → accepted → preparing → ready → completed`, with rejection before completion). Terminal orders cannot be reopened by an accidental click.
+- Customer QR cancellation is idempotent: a repeat cancellation does not refund points twice.
 - Daily order and KOT counters are database-backed to avoid collisions between staff devices.
 - KOT fingerprints prevent sending the same unchanged order items repeatedly.
-- Bill print jobs are claimed before printing to reduce duplicate receipt printing.
+- Bill print jobs are claimed before printing to reduce duplicate receipt printing. The local Print Bridge also records stable automatic KOT/Bill print-job IDs, so a repeated automatic request is acknowledged without sending a second physical ticket; intentional manual reprints use a fresh ID and remain visibly marked as reprints.
+- The server keeps an append-only `order_events` trail for order creation, status changes, item edits, KOT creation, table moves, bill printing, and settlement. This supports operational review without mutating the original order record.
 - Printer routes are validated so one exact menu target cannot be sent to competing printer routes.

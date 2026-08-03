@@ -11,13 +11,93 @@ const http = require('http');
 const { execFile, spawn } = require('child_process');
 const crypto = require('crypto');
 const fs = require('fs/promises');
+const fsSync = require('fs');
 const os = require('os');
 const path = require('path');
+const { DatabaseSync } = require('node:sqlite');
 
 const PORT = Number(process.env.PRINT_BRIDGE_PORT || 9124);
 const storageDir = process.env.PRINT_BRIDGE_DATA_DIR || path.join(os.homedir(), '.red-lantern-print-bridge');
 const configFile = path.join(storageDir, 'printer-config.json');
 const queueFile = path.join(storageDir, 'kot-queue.json');
+const ledgerFile = path.join(storageDir, 'orders-ledger.sqlite');
+let ledger = null;
+
+function localLedger() {
+  if (ledger) return ledger;
+  fsSync.mkdirSync(storageDir, { recursive:true });
+  ledger = new DatabaseSync(ledgerFile);
+  ledger.exec(`CREATE TABLE IF NOT EXISTS ledger_actions (
+    id TEXT PRIMARY KEY,
+    type TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'queued',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    synced_at TEXT
+  )`);
+  ledger.exec('CREATE INDEX IF NOT EXISTS ledger_actions_status_created ON ledger_actions(status, created_at)');
+  ledger.exec(`CREATE TABLE IF NOT EXISTS print_jobs (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    printer_name TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    completed_at TEXT
+  )`);
+  return ledger;
+}
+
+function claimPrintJob(id, kind, printerName) {
+  const safeId=String(id || '').trim().slice(0,160);
+  if (!safeId) return { claim:true, tracked:false };
+  const db=localLedger(), now=new Date().toISOString();
+  const existing=db.prepare('SELECT status FROM print_jobs WHERE id=?').get(safeId);
+  if (existing?.status === 'printed') return { claim:false, duplicate:true };
+  if (existing?.status === 'printing') return { claim:false, pending:true };
+  db.prepare('INSERT INTO print_jobs (id,kind,printer_name,status,created_at,completed_at) VALUES (?,?,?,?,?,NULL) ON CONFLICT(id) DO UPDATE SET status=excluded.status, printer_name=excluded.printer_name, created_at=excluded.created_at, completed_at=NULL').run(safeId, kind, String(printerName||'').slice(0,160), 'printing', now);
+  return { claim:true, tracked:true };
+}
+function finishPrintJob(id, success) {
+  const safeId=String(id || '').trim().slice(0,160);
+  if (!safeId) return;
+  localLedger().prepare('UPDATE print_jobs SET status=?, completed_at=? WHERE id=?').run(success?'printed':'failed', success?new Date().toISOString():null, safeId);
+}
+
+function ledgerAction(row) {
+  let payload = {};
+  try { payload = JSON.parse(row.payload || '{}'); } catch (_) {}
+  return { id:row.id, type:row.type, payload, status:row.status, attempts:Number(row.attempts || 0), lastError:row.last_error || '', createdAt:row.created_at, updatedAt:row.updated_at, syncedAt:row.synced_at || '' };
+}
+
+function queueLedgerAction(input) {
+  const type = String(input.type || '');
+  const id = String(input.id || input.payload?.clientRequestId || '').trim().slice(0, 120);
+  const supportedTypes = new Set(['counter-order','order-status','order-items','order-table','kitchen-status','availability-update','operations-config','table-areas','settlement']);
+  if (!supportedTypes.has(type) || !id) throw new Error('This offline action needs a unique action ID.');
+  const payload = input.payload && typeof input.payload === 'object' && !Array.isArray(input.payload) ? input.payload : null;
+  if (!payload) throw new Error('Offline action details are required.');
+  if (type === 'counter-order' && (!Array.isArray(payload.items) || !payload.items.length)) throw new Error('An offline order needs at least one item.');
+  const encoded = JSON.stringify(payload);
+  if (encoded.length > 250000) throw new Error('Offline order is too large to store locally.');
+  const now = new Date().toISOString();
+  const db = localLedger();
+  db.prepare('INSERT INTO ledger_actions (id,type,payload,status,created_at,updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING').run(id, type, encoded, 'queued', now, now);
+  return ledgerAction(db.prepare('SELECT * FROM ledger_actions WHERE id=?').get(id));
+}
+
+function updateLedgerAction(id, status, error = '') {
+  const safeId = String(id || '').slice(0, 120);
+  if (!safeId || !['queued','syncing','synced','blocked'].includes(status)) throw new Error('Invalid ledger action update.');
+  const now = new Date().toISOString();
+  const db = localLedger();
+  const existing = db.prepare('SELECT id FROM ledger_actions WHERE id=?').get(safeId);
+  if (!existing) throw new Error('Offline action was not found.');
+  db.prepare('UPDATE ledger_actions SET status=?, attempts=attempts+1, last_error=?, updated_at=?, synced_at=? WHERE id=?').run(status, String(error || '').slice(0, 500), now, status === 'synced' ? now : null, safeId);
+  return ledgerAction(db.prepare('SELECT * FROM ledger_actions WHERE id=?').get(safeId));
+}
 
 function run(command, args) {
   return new Promise((resolve, reject) => {
@@ -242,7 +322,27 @@ const server = http.createServer(async (req, res) => {
   const origin = allowedOrigin(req);
   if (req.headers.origin && !origin) return reply(res, 403, { error: 'This website is not allowed to access the Print Bridge.' });
   if (req.method === 'OPTIONS') return reply(res, 204, {}, origin);
-  if (req.method === 'GET' && req.url === '/health') return reply(res, 200, { ok: true, service: 'Red Lantern Print Bridge' }, origin);
+  if (req.method === 'GET' && req.url === '/health') {
+    try { localLedger().prepare('SELECT 1 AS ok').get(); }
+    catch (error) { return reply(res, 503, { ok:false, service:'Red Lantern Print Bridge', error:'The local SQLite ledger is unavailable.', detail:error.message }, origin); }
+    return reply(res, 200, { ok: true, service: 'Red Lantern Print Bridge', platform:process.platform, node:process.version, ledger:'ready' }, origin);
+  }
+  if (req.method === 'GET' && req.url === '/v1/setup-status') {
+    try {
+      localLedger().prepare('SELECT 1 AS ok').get();
+      const [printers, config] = await Promise.all([installedPrinters(), readJson(configFile, { printers: [], routes: [] })]);
+      return reply(res, 200, {
+        ok:true,
+        platform:process.platform,
+        platformLabel:process.platform === 'win32' ? 'Windows' : process.platform === 'darwin' ? 'macOS' : process.platform,
+        node:process.version,
+        ledger:'ready',
+        printerCount:printers.length,
+        configuredPrinterCount:Array.isArray(config.printers) ? config.printers.length : 0,
+        routeCount:Array.isArray(config.routes) ? config.routes.length : 0
+      }, origin);
+    } catch (error) { return reply(res, 503, { ok:false, error:'Print Bridge needs attention.', detail:error.message }, origin); }
+  }
   if (req.method === 'POST' && req.url === '/v1/restart') {
     reply(res, 202, { ok: true, message: 'Print Bridge is restarting.' }, origin);
     setTimeout(() => {
@@ -276,6 +376,25 @@ const server = http.createServer(async (req, res) => {
       return reply(res, 200, { ok: true, savedAt: safeConfig.savedAt }, origin);
     } catch (error) { return reply(res, 400, { error: error.message || 'Unable to save local printer configuration.' }, origin); }
   }
+  if (req.method === 'GET' && req.url.startsWith('/v1/ledger/actions')) {
+    try {
+      const requested = new URL(req.url, `http://127.0.0.1:${PORT}`).searchParams.get('status') || 'queued';
+      const statuses = requested === 'all' ? ['queued','syncing','blocked','synced'] : requested.split(',').filter((status) => ['queued','syncing','blocked'].includes(status));
+      const rows = statuses.length ? localLedger().prepare(`SELECT * FROM ledger_actions WHERE status IN (${statuses.map(() => '?').join(',')}) ORDER BY created_at ASC LIMIT 500`).all(...statuses) : [];
+      return reply(res, 200, { actions:rows.map(ledgerAction) }, origin);
+    } catch (error) { return reply(res, 500, { error:'Unable to read the local order ledger.', detail:error.message }, origin); }
+  }
+  if (req.method === 'POST' && req.url === '/v1/ledger/actions') {
+    try { return reply(res, 201, { ok:true, action:queueLedgerAction(await readBody(req)) }, origin); }
+    catch (error) { return reply(res, 400, { error:error.message || 'Unable to save the offline order.' }, origin); }
+  }
+  const ledgerUpdateMatch = req.url.match(/^\/v1\/ledger\/actions\/([^/]+)\/(synced|blocked)$/);
+  if (req.method === 'POST' && ledgerUpdateMatch) {
+    try {
+      const body = await readBody(req);
+      return reply(res, 200, { ok:true, action:updateLedgerAction(decodeURIComponent(ledgerUpdateMatch[1]), ledgerUpdateMatch[2], body.error) }, origin);
+    } catch (error) { return reply(res, 400, { error:error.message || 'Unable to update the offline order.' }, origin); }
+  }
   if (req.method === 'GET' && req.url === '/v1/kot-queue') {
     try { return reply(res, 200, { jobs: await readJson(queueFile, []) }, origin); }
     catch (error) { return reply(res, 500, { error: 'Unable to read local KOT queue.', detail: error.message }, origin); }
@@ -294,22 +413,31 @@ const server = http.createServer(async (req, res) => {
     } catch (error) { return reply(res, 400, { error: error.message || 'Unable to queue KOT.' }, origin); }
   }
   if (req.method === 'POST' && req.url === '/v1/print-kot') {
+    let printJobId='';
     try {
       const payload = await readBody(req);
+      printJobId=String(payload.printJobId || '');
       const printerName = String(payload.printerName || '').trim().slice(0, 160);
       const items = Array.isArray(payload.items) ? payload.items.slice(0, 100) : [];
       if (!printerName || !items.length) throw new Error('A printer and at least one KOT item are required.');
+      const claim=claimPrintJob(payload.printJobId, 'kot', printerName);
+      if (!claim.claim) return reply(res, claim.duplicate ? 200 : 202, { ok:true, duplicate:!!claim.duplicate, pending:!!claim.pending, printerName }, origin);
       await printText(printerName, kotText({ ...payload, items }), payload.settings || {});
+      finishPrintJob(payload.printJobId, true);
       return reply(res, 201, { ok: true, printerName }, origin);
-    } catch (error) { return reply(res, 400, { error: error.message || 'Unable to print KOT.' }, origin); }
+    } catch (error) { try { finishPrintJob(printJobId, false); } catch (_) {} return reply(res, 400, { error: error.message || 'Unable to print KOT.' }, origin); }
   }
   if (req.method === 'POST' && req.url === '/v1/print-bill') {
+    let printJobId='';
     try {
-      const payload = await readBody(req); const printerName = String(payload.printerName || '').trim().slice(0, 160);
+      const payload = await readBody(req); printJobId=String(payload.printJobId || ''); const printerName = String(payload.printerName || '').trim().slice(0, 160);
       if (!printerName || !payload.order?.id) throw new Error('A bill printer and order are required.');
+      const claim=claimPrintJob(payload.printJobId, 'bill', printerName);
+      if (!claim.claim) return reply(res, claim.duplicate ? 200 : 202, { ok:true, duplicate:!!claim.duplicate, pending:!!claim.pending, printerName }, origin);
       await printText(printerName, billText(payload), payload.settings || {});
+      finishPrintJob(payload.printJobId, true);
       return reply(res, 201, { ok: true, printerName }, origin);
-    } catch (error) { return reply(res, 400, { error: error.message || 'Unable to print bill.' }, origin); }
+    } catch (error) { try { finishPrintJob(printJobId, false); } catch (_) {} return reply(res, 400, { error: error.message || 'Unable to print bill.' }, origin); }
   }
   return reply(res, 404, { error: 'Not found.' }, origin);
 });
