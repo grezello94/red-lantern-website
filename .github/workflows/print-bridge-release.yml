@@ -24,6 +24,9 @@ permissions:
 jobs:
   windows:
     runs-on: windows-latest
+    env:
+      WINDOWS_CERTIFICATE_P12_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_P12_BASE64 }}
+      WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -34,7 +37,7 @@ jobs:
       - run: npm ci
       - run: npm run package:bridge:windows
       - name: Sign Windows installer
-        if: ${{ secrets.WINDOWS_CERTIFICATE_P12_BASE64 != '' }}
+        if: env.WINDOWS_CERTIFICATE_P12_BASE64 != ''
         shell: pwsh
         env:
           WINDOWS_CERTIFICATE_P12_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_P12_BASE64 }}
@@ -46,7 +49,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Windows installer signing failed.' }
           Remove-Item -LiteralPath $certificate -Force
       - name: Verify Windows signature
-        if: ${{ secrets.WINDOWS_CERTIFICATE_P12_BASE64 != '' }}
+        if: env.WINDOWS_CERTIFICATE_P12_BASE64 != ''
         shell: pwsh
         run: |
           & signtool.exe verify /pa /v 'releases\Red-Lantern-Print-Bridge-Windows-Setup.exe'
@@ -59,6 +62,11 @@ jobs:
 
   macos:
     runs-on: macos-latest
+    env:
+      MAC_INSTALLER_CERTIFICATE_P12_BASE64: ${{ secrets.MAC_INSTALLER_CERTIFICATE_P12_BASE64 }}
+      MAC_INSTALLER_CERTIFICATE_PASSWORD: ${{ secrets.MAC_INSTALLER_CERTIFICATE_PASSWORD }}
+      MAC_KEYCHAIN_PASSWORD: ${{ secrets.MAC_KEYCHAIN_PASSWORD }}
+      APPLE_NOTARY_API_KEY_BASE64: ${{ secrets.APPLE_NOTARY_API_KEY_BASE64 }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -67,7 +75,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Import macOS installer certificate
-        if: ${{ secrets.MAC_INSTALLER_CERTIFICATE_P12_BASE64 != '' }}
+        if: env.MAC_INSTALLER_CERTIFICATE_P12_BASE64 != ''
         env:
           MAC_INSTALLER_CERTIFICATE_P12_BASE64: ${{ secrets.MAC_INSTALLER_CERTIFICATE_P12_BASE64 }}
           MAC_INSTALLER_CERTIFICATE_PASSWORD: ${{ secrets.MAC_INSTALLER_CERTIFICATE_PASSWORD }}
@@ -83,7 +91,7 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$MAC_KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security list-keychain -d user -s "$KEYCHAIN_PATH"
       - name: Configure Apple notarization
-        if: ${{ secrets.APPLE_NOTARY_API_KEY_BASE64 != '' }}
+        if: env.APPLE_NOTARY_API_KEY_BASE64 != ''
         env:
           APPLE_NOTARY_API_KEY_BASE64: ${{ secrets.APPLE_NOTARY_API_KEY_BASE64 }}
           APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
@@ -97,7 +105,7 @@ jobs:
           MAC_INSTALLER_IDENTITY: ${{ secrets.MAC_INSTALLER_IDENTITY }}
           APPLE_NOTARY_PROFILE: ${{ secrets.APPLE_NOTARY_API_KEY_BASE64 != '' && 'RedLanternNotary' || '' }}
       - name: Verify macOS installer signature
-        if: ${{ secrets.MAC_INSTALLER_CERTIFICATE_P12_BASE64 != '' }}
+        if: env.MAC_INSTALLER_CERTIFICATE_P12_BASE64 != ''
         run: pkgutil --check-signature releases/Red-Lantern-Print-Bridge-macOS.pkg
       - uses: actions/upload-artifact@v4
         with:
