@@ -109,6 +109,29 @@ function hashIp(req) {
   return crypto.createHash('sha256').update(clientIp(req)).digest('hex').slice(0, 16);
 }
 
+// QR checkout endpoints must remain public, so use a small in-memory guard to
+// reduce brute-force lookup and retry storms. Database idempotency remains the
+// source of truth; this only protects an individual running server instance.
+const publicRequestWindows = new Map();
+function allowPublicRequest(req, res, scope, limit, windowMs) {
+  const now = Date.now();
+  const key = `${scope}:${hashIp(req)}`;
+  const previous = (publicRequestWindows.get(key) || []).filter((timestamp) => now - timestamp < windowMs);
+  if (previous.length >= limit) {
+    const retryAfter = Math.max(1, Math.ceil((windowMs - (now - previous[0])) / 1000));
+    res.set('Retry-After', String(retryAfter));
+    res.status(429).json({ error:'Too many requests. Please wait a moment and try again.' });
+    logDiagnostic({ level:'warning', category:'security', message:'Public QR endpoint rate limit reached.', method:req.method, path:req.path, statusCode:429, ipHash:hashIp(req), userAgent:req.headers['user-agent'] || '', details:{ scope } });
+    return false;
+  }
+  previous.push(now);
+  publicRequestWindows.set(key, previous);
+  if (publicRequestWindows.size > 5000) {
+    for (const [entryKey, timestamps] of publicRequestWindows) if (!timestamps.some((timestamp) => now - timestamp < windowMs)) publicRequestWindows.delete(entryKey);
+  }
+  return true;
+}
+
 function dailyQrVisitorId(req) {
   const dateBucket = new Date().toISOString().slice(0, 10);
   const secret = process.env.AIR_MENU_SECRET || process.env.ADMIN_PASSWORD || 'red-lantern-qr-visitors';
@@ -2095,6 +2118,7 @@ app.get('/api/air-menu', async (req, res) => {
 });
 
 app.post('/api/direct-orders', async (req, res) => {
+  if (!allowPublicRequest(req, res, 'direct-order', 30, 60 * 1000)) return;
   let directClientRequestId='';
   try {
     const { mode, expires, signature, customerPhone, customerName, specialRequest, fulfillmentType, items = [] } = req.body || {};
@@ -2158,10 +2182,9 @@ app.post('/api/direct-orders', async (req, res) => {
     const savedItems = cleanItems.map(({ availabilityKey, ...item }) => item);
     if (requestedLoyaltyPoints) {
       await ensureLoyaltyTable();
-      const inserted = await sql`WITH redeemed AS (UPDATE loyalty_accounts SET points=points-${requestedLoyaltyPoints}, total_redeemed=total_redeemed+${requestedLoyaltyPoints}, updated_at=NOW() WHERE customer_phone=${phone} AND points >= ${requestedLoyaltyPoints} AND points >= 100 RETURNING customer_phone) INSERT INTO direct_orders (id, status, mode, customer_name, customer_phone, special_request, items, total, order_day, daily_order_number, bill_year, bill_number, tracking_token, loyalty_points_redeemed, loyalty_points_earned, client_request_id) SELECT ${id}, ${initialStatus}, ${mode}, ${String(customerName || '').trim().slice(0, 80)}, ${phone}, ${String(specialRequest || '').trim().slice(0, 240)}, ${JSON.stringify(savedItems)}, ${total}, ${orderDay}::date, ${dailyOrderNumber}, ${billYear}, ${billNumber}, ${trackingToken}, ${requestedLoyaltyPoints}, ${loyaltyPointsEarned}, ${clientRequestId||null} FROM redeemed RETURNING id`;
+      const inserted = await sql`WITH redeemed AS (UPDATE loyalty_accounts SET points=points-${requestedLoyaltyPoints}, total_redeemed=total_redeemed+${requestedLoyaltyPoints}, updated_at=NOW() WHERE customer_phone=${phone} AND points >= ${requestedLoyaltyPoints} AND points >= 100 RETURNING customer_phone) INSERT INTO direct_orders (id, status, mode, customer_name, customer_phone, special_request, items, total, order_day, daily_order_number, bill_year, bill_number, tracking_token, loyalty_points_redeemed, loyalty_points_earned, client_request_id, fulfillment_type) SELECT ${id}, ${initialStatus}, ${mode}, ${String(customerName || '').trim().slice(0, 80)}, ${phone}, ${String(specialRequest || '').trim().slice(0, 240)}, ${JSON.stringify(savedItems)}, ${total}, ${orderDay}::date, ${dailyOrderNumber}, ${billYear}, ${billNumber}, ${trackingToken}, ${requestedLoyaltyPoints}, ${loyaltyPointsEarned}, ${clientRequestId||null}, ${fulfilment} FROM redeemed RETURNING id`;
       if (!inserted.length) return res.status(409).json({ error: 'Your points balance changed. Please check your points and try again.' });
-    } else await sql`INSERT INTO direct_orders (id, status, mode, customer_name, customer_phone, special_request, items, total, order_day, daily_order_number, bill_year, bill_number, tracking_token, loyalty_points_redeemed, loyalty_points_earned, client_request_id) VALUES (${id}, ${initialStatus}, ${mode}, ${String(customerName || '').trim().slice(0, 80)}, ${phone}, ${String(specialRequest || '').trim().slice(0, 240)}, ${JSON.stringify(savedItems)}, ${total}, ${orderDay}::date, ${dailyOrderNumber}, ${billYear}, ${billNumber}, ${trackingToken}, 0, ${loyaltyPointsEarned}, ${clientRequestId||null})`;
-    await sql`UPDATE direct_orders SET fulfillment_type=${fulfilment} WHERE id=${id}`;
+    } else await sql`INSERT INTO direct_orders (id, status, mode, customer_name, customer_phone, special_request, items, total, order_day, daily_order_number, bill_year, bill_number, tracking_token, loyalty_points_redeemed, loyalty_points_earned, client_request_id, fulfillment_type) VALUES (${id}, ${initialStatus}, ${mode}, ${String(customerName || '').trim().slice(0, 80)}, ${phone}, ${String(specialRequest || '').trim().slice(0, 240)}, ${JSON.stringify(savedItems)}, ${total}, ${orderDay}::date, ${dailyOrderNumber}, ${billYear}, ${billNumber}, ${trackingToken}, 0, ${loyaltyPointsEarned}, ${clientRequestId||null}, ${fulfilment})`;
     await recordOrderEvent(id, 'created', { source:'qr', status:initialStatus, fulfillment:fulfilment, loyaltyRedeemed:requestedLoyaltyPoints, loyaltyEarned:loyaltyPointsEarned, itemCount:savedItems.reduce((count,item)=>count+Number(item.quantity||0),0) });
     // The order is already safely stored. Push delivery must never delay or block it.
     void notifyDirectOrder({ id, dailyOrderNumber, total, itemCount: savedItems.reduce((count, item) => count + Number(item.quantity || 0), 0) });
@@ -2271,8 +2294,8 @@ app.post('/api/orders/:id/bill-print/:result', async (req, res) => { try {
   res.json({ ok:true });
 } catch (error) { res.status(500).json({ error:'Unable to update bill print job.' }); } });
 app.get('/api/order-tracking/:token', async (req, res) => { try { await ensureDirectOrdersTable(); const token=String(req.params.token||''); if (!/^[A-Za-z0-9_-]{24,128}$/.test(token)) return res.status(404).json({ error: 'Order not found.' }); const rows=await sql`SELECT daily_order_number, order_day, status, fulfillment_type, items, total, special_request, cancellation_reason, created_at, updated_at FROM direct_orders WHERE tracking_token=${token} LIMIT 1`; if (!rows.length) return res.status(404).json({ error: 'Order not found.' }); res.set('Cache-Control', 'no-store'); res.json(rows[0]); } catch (error) { res.status(500).json({ error: 'Unable to load this order.' }); } });
-app.post('/api/loyalty', async (req, res) => { try { await ensureLoyaltyTable(); const phone=String(req.body?.phone||'').replace(/\D/g,''); if(phone.length<7) return res.status(400).json({error:'Enter a valid mobile number.'}); const rows=await sql`SELECT points FROM loyalty_accounts WHERE customer_phone=${phone} LIMIT 1`; const points=Number(rows[0]?.points||0); res.set('Cache-Control','no-store'); res.json({points, eligible:points>=100}); } catch(error) { res.status(500).json({error:'Unable to load loyalty points.'}); } });
-app.post('/api/order-tracking/:token/cancel', async (req, res) => { try { await ensureDirectOrdersTable(); await ensureLoyaltyTable(); const token=String(req.params.token||''); const reason=String(req.body?.reason||'').trim().slice(0,240); if (!/^[A-Za-z0-9_-]{24,128}$/.test(token)) return res.status(404).json({ error: 'Order not found.' }); if (reason.length < 3) return res.status(400).json({ error: 'Please tell us why you need to cancel.' }); const cancelled=await sql`UPDATE direct_orders SET status='cancelled', cancellation_reason=${reason}, cancelled_at=NOW(), updated_at=NOW() WHERE tracking_token=${token} AND status='new' RETURNING id,customer_phone,loyalty_points_redeemed`; if (cancelled.length) { const order=cancelled[0]; const redeemed=Math.max(0,Number(order.loyalty_points_redeemed||0)); if(redeemed) await sql`UPDATE loyalty_accounts SET points=points+${redeemed}, total_redeemed=GREATEST(0,total_redeemed-${redeemed}), updated_at=NOW() WHERE customer_phone=${order.customer_phone}`; await recordOrderEvent(order.id,'cancelled',{source:'guest',reason,loyaltyRefunded:redeemed}); return res.json({ ok:true }); } const alreadyCancelled=await sql`SELECT id FROM direct_orders WHERE tracking_token=${token} AND status='cancelled'`; if(!alreadyCancelled.length) return res.status(409).json({ error: 'This order is already being handled. Please call the restaurant for help.' }); res.json({ ok:true, unchanged:true }); } catch (error) { res.status(500).json({ error: 'Unable to cancel this order. Please call the restaurant.' }); } });
+app.post('/api/loyalty', async (req, res) => { if (!allowPublicRequest(req, res, 'loyalty-lookup', 60, 60 * 1000)) return; try { await ensureLoyaltyTable(); const phone=String(req.body?.phone||'').replace(/\D/g,''); if(phone.length<7) return res.status(400).json({error:'Enter a valid mobile number.'}); const rows=await sql`SELECT points FROM loyalty_accounts WHERE customer_phone=${phone} LIMIT 1`; const points=Number(rows[0]?.points||0); res.set('Cache-Control','no-store'); res.json({points, eligible:points>=100}); } catch(error) { res.status(500).json({error:'Unable to load loyalty points.'}); } });
+app.post('/api/order-tracking/:token/cancel', async (req, res) => { if (!allowPublicRequest(req, res, 'guest-cancel', 10, 60 * 1000)) return; try { await ensureDirectOrdersTable(); await ensureLoyaltyTable(); const token=String(req.params.token||''); const reason=String(req.body?.reason||'').trim().slice(0,240); if (!/^[A-Za-z0-9_-]{24,128}$/.test(token)) return res.status(404).json({ error: 'Order not found.' }); if (reason.length < 3) return res.status(400).json({ error: 'Please tell us why you need to cancel.' }); const cancelled=await sql`WITH cancelled AS (UPDATE direct_orders SET status='cancelled', cancellation_reason=${reason}, cancelled_at=NOW(), updated_at=NOW() WHERE tracking_token=${token} AND status='new' RETURNING id,customer_phone,loyalty_points_redeemed), refunded AS (UPDATE loyalty_accounts account SET points=account.points+cancelled.loyalty_points_redeemed, total_redeemed=GREATEST(0,account.total_redeemed-cancelled.loyalty_points_redeemed), updated_at=NOW() FROM cancelled WHERE account.customer_phone=cancelled.customer_phone AND cancelled.loyalty_points_redeemed>0) SELECT id,customer_phone,loyalty_points_redeemed FROM cancelled`; if (cancelled.length) { const order=cancelled[0]; const redeemed=Math.max(0,Number(order.loyalty_points_redeemed||0)); await recordOrderEvent(order.id,'cancelled',{source:'guest',reason,loyaltyRefunded:redeemed}); return res.json({ ok:true }); } const alreadyCancelled=await sql`SELECT id FROM direct_orders WHERE tracking_token=${token} AND status='cancelled'`; if(!alreadyCancelled.length) return res.status(409).json({ error: 'This order is already being handled. Please call the restaurant for help.' }); res.json({ ok:true, unchanged:true }); } catch (error) { res.status(500).json({ error: 'Unable to cancel this order. Please call the restaurant.' }); } });
 app.patch('/api/orders/:id/items', async (req, res) => { try { await ensureDirectOrdersTable(); const originalRows=await sql`SELECT items, loyalty_points_redeemed FROM direct_orders WHERE id=${req.params.id} LIMIT 1`; if (!originalRows.length) return res.status(404).json({ error:'Order not found.' }); const original=Array.isArray(originalRows[0].items)?originalRows[0].items:[]; const quantities=Array.isArray(req.body?.quantities)?req.body.quantities:[]; const items=original.map((item,index)=>({ ...item, quantity:Math.max(0,Math.min(20,Number(quantities[index])||0)) })).filter((item)=>item.quantity>0); if(!items.length)return res.status(400).json({error:'Keep at least one item in the order.'}); const price=(value)=>Number(String(value||'').replace(/[^0-9.]/g,''))||0; const subtotal=items.reduce((sum,item)=>sum+item.quantity*(price(item.price)+(item.style?10:0)),0); const menu=await getSection('airMenu'); const loyalty={enabled:menu.loyalty?.enabled!==false,spend:Math.max(1,Number(menu.loyalty?.spend)||10),earn:Math.max(1,Number(menu.loyalty?.earn)||1),pointValue:Math.max(.01,Number(menu.loyalty?.pointValue)||1)}; const redeemed=loyalty.enabled?Math.max(0,Number(originalRows[0].loyalty_points_redeemed||0)):0; if(redeemed*loyalty.pointValue>subtotal)return res.status(409).json({error:'This change would make the redeemed loyalty points larger than the order total.'}); const total=subtotal-redeemed*loyalty.pointValue; const earned=loyalty.enabled?Math.floor(total/loyalty.spend)*loyalty.earn:0; const rows=await sql`UPDATE direct_orders SET items=${JSON.stringify(items)}, total=${total}, loyalty_points_earned=${earned}, updated_at=NOW() WHERE id=${req.params.id} AND created_at >= NOW() - INTERVAL '10 minutes' AND status IN ('new','accepted','preparing') RETURNING id`; if(!rows.length)return res.status(409).json({error:'Orders can only be modified during the first 10 minutes while they are being handled.'}); await recordOrderEvent(req.params.id, 'items-updated', { itemCount:items.reduce((count,item)=>count+Number(item.quantity||0),0), total, loyaltyEarned:earned }); res.json({ok:true}); }catch(error){res.status(500).json({error:'Unable to modify this order.'});} });
 app.get('/api/orders/push-key', (req, res) => { if (!pushEnabled) return res.status(503).json({ error: 'Push notifications have not been configured yet.' }); res.set('Cache-Control', 'no-store'); res.json({ publicKey: process.env.VAPID_PUBLIC_KEY }); });
 app.post('/api/orders/push-subscriptions', async (req, res) => { try { if (!pushEnabled) return res.status(503).json({ error: 'Push notifications have not been configured yet.' }); const subscription = req.body?.subscription; if (!subscription?.endpoint || !subscription?.keys?.p256dh || !subscription?.keys?.auth) return res.status(400).json({ error: 'Invalid push subscription.' }); await ensurePushSubscriptionsTable(); await sql`INSERT INTO order_push_subscriptions (endpoint, subscription) VALUES (${String(subscription.endpoint)}, ${JSON.stringify(subscription)}) ON CONFLICT (endpoint) DO UPDATE SET subscription=EXCLUDED.subscription, updated_at=NOW()`; res.json({ ok: true }); } catch (error) { res.status(500).json({ error: 'Unable to save push subscription.' }); } });
@@ -2287,15 +2310,12 @@ app.patch('/api/orders/:id', async (req, res) => {
     const previous=String(currentRows[0].status || '');
     if (previous===status) return res.json({ ok:true, unchanged:true, status });
     if (!transitions[previous]?.includes(status)) return res.status(409).json({ error:`An order cannot move from ${previous || 'its current state'} to ${status || 'that state'}.` });
-    const changed = await sql`UPDATE direct_orders SET status=${status}, updated_at=NOW() WHERE id=${req.params.id} AND status=${previous} RETURNING id`;
+    const [changed] = await sql.transaction((tx) => [
+      tx`UPDATE direct_orders SET status=${status}, updated_at=NOW() WHERE id=${req.params.id} AND status=${previous} RETURNING id`,
+      ...(status === 'completed' ? [tx`WITH awarded AS (UPDATE direct_orders SET loyalty_awarded_at=NOW() WHERE id=${req.params.id} AND status='completed' AND loyalty_awarded_at IS NULL RETURNING customer_phone, loyalty_points_earned) INSERT INTO loyalty_accounts (customer_phone, points, total_earned) SELECT customer_phone, loyalty_points_earned, loyalty_points_earned FROM awarded ON CONFLICT (customer_phone) DO UPDATE SET points=loyalty_accounts.points+EXCLUDED.points, total_earned=loyalty_accounts.total_earned+EXCLUDED.total_earned, updated_at=NOW()`] : []),
+      ...(status === 'rejected' ? [tx`WITH reversed AS (UPDATE direct_orders SET loyalty_awarded_at=NULL WHERE id=${req.params.id} AND loyalty_awarded_at IS NOT NULL RETURNING customer_phone, loyalty_points_earned) UPDATE loyalty_accounts a SET points=GREATEST(0, a.points-reversed.loyalty_points_earned), total_earned=GREATEST(0, a.total_earned-reversed.loyalty_points_earned), updated_at=NOW() FROM reversed WHERE a.customer_phone=reversed.customer_phone`, tx`WITH redeem AS (SELECT customer_phone, loyalty_points_redeemed FROM direct_orders WHERE id=${req.params.id} AND status='rejected' AND loyalty_points_redeemed > 0), cleared AS (UPDATE direct_orders o SET loyalty_points_redeemed=0 FROM redeem WHERE o.id=${req.params.id} RETURNING redeem.customer_phone, redeem.loyalty_points_redeemed) UPDATE loyalty_accounts a SET points=a.points+cleared.loyalty_points_redeemed, total_redeemed=GREATEST(0,a.total_redeemed-cleared.loyalty_points_redeemed), updated_at=NOW() FROM cleared WHERE a.customer_phone=cleared.customer_phone`] : [])
+    ]);
     if (!changed.length) return res.status(409).json({ error:'This order changed on another device. Refresh and try again.' });
-    if (status === 'completed') {
-      await sql`WITH awarded AS (UPDATE direct_orders SET loyalty_awarded_at=NOW() WHERE id=${req.params.id} AND status='completed' AND loyalty_awarded_at IS NULL RETURNING customer_phone, loyalty_points_earned) INSERT INTO loyalty_accounts (customer_phone, points, total_earned) SELECT customer_phone, loyalty_points_earned, loyalty_points_earned FROM awarded ON CONFLICT (customer_phone) DO UPDATE SET points=loyalty_accounts.points+EXCLUDED.points, total_earned=loyalty_accounts.total_earned+EXCLUDED.total_earned, updated_at=NOW()`;
-    }
-    if (status === 'rejected') {
-      await sql`WITH reversed AS (UPDATE direct_orders SET loyalty_awarded_at=NULL WHERE id=${req.params.id} AND loyalty_awarded_at IS NOT NULL RETURNING customer_phone, loyalty_points_earned) UPDATE loyalty_accounts a SET points=GREATEST(0, a.points-reversed.loyalty_points_earned), total_earned=GREATEST(0, a.total_earned-reversed.loyalty_points_earned), updated_at=NOW() FROM reversed WHERE a.customer_phone=reversed.customer_phone`;
-      await sql`WITH redeem AS (SELECT customer_phone, loyalty_points_redeemed FROM direct_orders WHERE id=${req.params.id} AND status='rejected' AND loyalty_points_redeemed > 0), cleared AS (UPDATE direct_orders o SET loyalty_points_redeemed=0 FROM redeem WHERE o.id=${req.params.id} RETURNING redeem.customer_phone, redeem.loyalty_points_redeemed) UPDATE loyalty_accounts a SET points=a.points+cleared.loyalty_points_redeemed, total_redeemed=GREATEST(0,a.total_redeemed-cleared.loyalty_points_redeemed), updated_at=NOW() FROM cleared WHERE a.customer_phone=cleared.customer_phone`;
-    }
     await recordOrderEvent(req.params.id, 'status-changed', { from:previous, to:status });
     res.json({ ok:true });
   } catch (error) { res.status(500).json({ error:error.message }); }
@@ -2319,9 +2339,11 @@ app.post('/api/orders/:id/settle', async (req, res) => { try {
     const existing=await sql`SELECT id FROM direct_orders WHERE id=${req.params.id} AND settlement_request_id=${requestId} LIMIT 1`;
     if (existing.length) return res.json({ ok:true, duplicate:true });
   }
-  const rows=await sql`UPDATE direct_orders SET status='completed',settled_at=NOW(),settlement_type=${paymentType},settlement_amount=${amount},settlement_request_id=${requestId||null},updated_at=NOW() WHERE id=${req.params.id} AND mode='table' AND bill_printed_at IS NOT NULL AND status IN ('accepted','preparing','ready') RETURNING customer_phone,loyalty_points_earned`;
+  const [rows]=await sql.transaction((tx) => [
+    tx`UPDATE direct_orders SET status='completed',settled_at=NOW(),settlement_type=${paymentType},settlement_amount=${amount},settlement_request_id=${requestId||null},updated_at=NOW() WHERE id=${req.params.id} AND mode='table' AND bill_printed_at IS NOT NULL AND status IN ('accepted','preparing','ready') RETURNING customer_phone,loyalty_points_earned`,
+    tx`WITH awarded AS (UPDATE direct_orders SET loyalty_awarded_at=NOW() WHERE id=${req.params.id} AND status='completed' AND loyalty_awarded_at IS NULL RETURNING customer_phone,loyalty_points_earned) INSERT INTO loyalty_accounts (customer_phone,points,total_earned) SELECT customer_phone,loyalty_points_earned,loyalty_points_earned FROM awarded ON CONFLICT (customer_phone) DO UPDATE SET points=loyalty_accounts.points+EXCLUDED.points,total_earned=loyalty_accounts.total_earned+EXCLUDED.total_earned,updated_at=NOW()`
+  ]);
   if (!rows.length) return res.status(409).json({ error:'This table is not waiting for settlement.' });
-  await sql`WITH awarded AS (UPDATE direct_orders SET loyalty_awarded_at=NOW() WHERE id=${req.params.id} AND loyalty_awarded_at IS NULL RETURNING customer_phone,loyalty_points_earned) INSERT INTO loyalty_accounts (customer_phone,points,total_earned) SELECT customer_phone,loyalty_points_earned,loyalty_points_earned FROM awarded ON CONFLICT (customer_phone) DO UPDATE SET points=loyalty_accounts.points+EXCLUDED.points,total_earned=loyalty_accounts.total_earned+EXCLUDED.total_earned,updated_at=NOW()`;
   await recordOrderEvent(req.params.id, 'settled', { paymentType, amount, requestId });
   res.json({ ok:true });
 } catch (error) { res.status(500).json({ error:'Unable to settle this table.' }); } });
@@ -2882,7 +2904,8 @@ app.get('/api/admin/health', async (req, res) => {
     server: { ok: true, message: 'Server function responded.' },
     database: { ok: false, message: 'Not checked.' },
     cloudinary: { ok: false, message: 'Not checked.' },
-    environment: { ok: false, message: 'Not checked.' }
+    environment: { ok: false, message: 'Not checked.' },
+    ordersConsole: { ok: false, message: 'Not checked.' }
   };
   let databaseMetrics = null;
 
@@ -2932,6 +2955,9 @@ app.get('/api/admin/health', async (req, res) => {
     checks.environment = process.env.ADMIN_USERNAME && process.env.ADMIN_PASSWORD
       ? { ok: true, message: 'Admin credentials are configured.' }
       : { ok: false, message: 'ADMIN_USERNAME or ADMIN_PASSWORD is missing.' };
+    checks.ordersConsole = process.env.ORDERS_USERNAME && process.env.ORDERS_PASSWORD
+      ? { ok: true, message: 'Orders console credentials are configured.' }
+      : { ok: false, message: 'ORDERS_USERNAME or ORDERS_PASSWORD is missing.' };
 
     const ok = Object.values(checks).every((check) => check.ok);
     res.status(ok ? 200 : 503).json({

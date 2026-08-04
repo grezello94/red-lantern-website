@@ -16,7 +16,7 @@
     "start": "node server.js",
     "dev": "node server.js",
     "print-bridge": "node print-bridge.js",
-    "test": "npm run build"
+    "test": "npm run build && node scripts/test-print-bridge.js"
   },
   "repository": {
     "type": "git",

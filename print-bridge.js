@@ -99,6 +99,16 @@ function updateLedgerAction(id, status, error = '') {
   return ledgerAction(db.prepare('SELECT * FROM ledger_actions WHERE id=?').get(safeId));
 }
 
+function ledgerSummary() {
+  const rows = localLedger().prepare("SELECT status, COUNT(*) AS count FROM ledger_actions GROUP BY status").all();
+  const counts = { queued:0, syncing:0, blocked:0, synced:0 };
+  rows.forEach((row) => { if (Object.hasOwn(counts, row.status)) counts[row.status] = Number(row.count || 0); });
+  const jobs = localLedger().prepare("SELECT status, COUNT(*) AS count FROM print_jobs GROUP BY status").all();
+  const printJobs = { printing:0, printed:0, failed:0 };
+  jobs.forEach((row) => { if (Object.hasOwn(printJobs, row.status)) printJobs[row.status] = Number(row.count || 0); });
+  return { actions:counts, pendingActions:counts.queued + counts.syncing, blockedActions:counts.blocked, printJobs };
+}
+
 function run(command, args) {
   return new Promise((resolve, reject) => {
     execFile(command, args, { windowsHide: true, timeout: 5000 }, (error, stdout) => {
@@ -325,7 +335,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && req.url === '/health') {
     try { localLedger().prepare('SELECT 1 AS ok').get(); }
     catch (error) { return reply(res, 503, { ok:false, service:'Red Lantern Print Bridge', error:'The local SQLite ledger is unavailable.', detail:error.message }, origin); }
-    return reply(res, 200, { ok: true, service: 'Red Lantern Print Bridge', platform:process.platform, node:process.version, ledger:'ready' }, origin);
+    return reply(res, 200, { ok: true, service: 'Red Lantern Print Bridge', platform:process.platform, node:process.version, ledger:'ready', ledgerSummary:ledgerSummary() }, origin);
   }
   if (req.method === 'GET' && req.url === '/v1/setup-status') {
     try {
@@ -339,7 +349,8 @@ const server = http.createServer(async (req, res) => {
         ledger:'ready',
         printerCount:printers.length,
         configuredPrinterCount:Array.isArray(config.printers) ? config.printers.length : 0,
-        routeCount:Array.isArray(config.routes) ? config.routes.length : 0
+        routeCount:Array.isArray(config.routes) ? config.routes.length : 0,
+        ledgerSummary:ledgerSummary()
       }, origin);
     } catch (error) { return reply(res, 503, { ok:false, error:'Print Bridge needs attention.', detail:error.message }, origin); }
   }

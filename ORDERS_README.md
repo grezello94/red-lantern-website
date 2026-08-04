@@ -171,6 +171,7 @@ The Orders page is designed not to become blank when the internet disconnects.
 - Safe operational edits made while offline—order status, item quantities, table moves, kitchen state, availability, and Operations/table configuration—are also queued in that ledger.
 - When internet returns and the Orders console is open, queued work syncs in order without reloading the page.
 - The page shows an offline/sync message while work is waiting.
+- **Operations → Print & offline setup** shows the number of pending actions and flags blocked actions. Resolve a blocked action before clearing browser data or changing the billing computer.
 
 Settlement records use a unique settlement request ID. When the local Print Bridge is available, a staff settlement made during a network failure is saved locally and reconciles exactly once after reconnecting. Final bill printing remains online-confirmed: creating fully autonomous offline KOT/bill numbering requires a separately authenticated bridge-to-server protocol, so the browser-led ledger sync is intentionally conservative there.
 
@@ -259,8 +260,8 @@ The website calls the bridge only on the same counter device:
 
 | Bridge route | Use |
 | --- | --- |
-| `GET http://127.0.0.1:9124/health` | Detect whether local printing is available. |
-| `GET http://127.0.0.1:9124/v1/setup-status` | Reports the local platform, SQLite ledger, installed printers, and saved printer routes for Operations setup checks. |
+| `GET http://127.0.0.1:9124/health` | Detects local printing and reports queued/blocked ledger actions and protected print-job counts. |
+| `GET http://127.0.0.1:9124/v1/setup-status` | Reports the local platform, SQLite ledger health, installed printers, saved printer routes, and queued/blocked offline work. |
 | `GET http://127.0.0.1:9124/v1/printers` | Lists Windows/CUPS installed printers. |
 | `PUT http://127.0.0.1:9124/v1/config` | Syncs Operations printer/routing configuration. |
 | `POST http://127.0.0.1:9124/v1/print-kot` | Sends one routed KOT ticket to an installed local printer. |
@@ -269,6 +270,10 @@ The website calls the bridge only on the same counter device:
 | `GET http://127.0.0.1:9124/v1/ledger/actions?status=queued` | Reads queued actions for controlled reconciliation. |
 
 The bridge must remain local. Never expose port `9124` to the public internet.
+
+Run `npm test` before a release. It performs syntax/build checks and starts a temporary Bridge with a temporary SQLite ledger to verify health reporting and durable offline queueing.
+
+For production backups, monitoring, credentials, and incident steps, use [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md).
 
 ### Data integrity safeguards
 

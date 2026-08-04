@@ -126,6 +126,7 @@ async function flushBridgeLedger() {
   const body = await response.json().catch(() => ({}));
   if (!response.ok || !Array.isArray(body.actions)) throw new Error(body.error || 'Unable to read the local order ledger.');
   bridgeLedgerPending = body.actions.length;
+  const queuedAtStart = body.actions.length;
   for (const action of body.actions) {
     try {
       const result = await dispatchBridgeAction(action);
@@ -140,6 +141,7 @@ async function flushBridgeLedger() {
     }
   }
   updateConnectivity();
+  return queuedAtStart;
 }
 function reportOrdersDiagnostic(payload = {}) {
   const source = payload.source || 'orders.js';
@@ -169,8 +171,10 @@ async function flushQueuedCounterOrders() {
   if (counterSyncInProgress || !navigator.onLine) return;
   counterSyncInProgress = true;
   try {
-    try { await flushBridgeLedger(); } catch (_) {}
+    let bridgeQueuedAtStart = 0;
+    try { bridgeQueuedAtStart = await flushBridgeLedger() || 0; } catch (_) {}
     let queued = queuedCounterOrders();
+    const browserQueuedAtStart = queued.length;
     while (queued.length && navigator.onLine) {
       try {
         const result = await sendCounterOrder(queued[0]);
@@ -183,7 +187,8 @@ async function flushQueuedCounterOrders() {
         break;
       }
     }
-    if (!queued.length) { updateConnectivity('Queued orders synced successfully.'); setTimeout(() => updateConnectivity(), 4000); loadOrders(); }
+    if (!queued.length && (bridgeQueuedAtStart || browserQueuedAtStart)) { updateConnectivity('Queued orders synced successfully.'); setTimeout(() => updateConnectivity(), 4000); loadOrders(); }
+    else if (!queued.length) updateConnectivity();
     else updateConnectivity();
   } finally { counterSyncInProgress = false; }
 }
@@ -1048,7 +1053,7 @@ function renderPrintBridgeSetup() {
   const checks = status?.checking ? [
     ['Cloud connection', 'Checking…', 'checking'], ['Local Print Bridge', 'Checking…', 'checking'], ['SQLite offline ledger', 'Checking…', 'checking'], ['Installed printers', 'Checking…', 'checking'], ['Printer routing', 'Checking…', 'checking']
   ] : status?.ok ? [
-    ['Cloud connection', status.cloud ? 'Connected' : 'Unavailable', status.cloud ? 'ok' : 'warn'], ['Local Print Bridge', `${status.platformLabel} · running`, 'ok'], ['SQLite offline ledger', 'Ready on this computer', 'ok'], ['Installed printers', `${status.printerCount} detected`, status.printerCount ? 'ok' : 'warn'], ['Printer routing', `${status.configuredPrinterCount} printer${status.configuredPrinterCount===1?'':'s'} · ${status.routeCount} route${status.routeCount===1?'':'s'}`, status.configuredPrinterCount ? 'ok' : 'warn']
+    ['Cloud connection', status.cloud ? 'Connected' : 'Unavailable', status.cloud ? 'ok' : 'warn'], ['Local Print Bridge', `${status.platformLabel} · running`, 'ok'], ['SQLite offline ledger', status.ledgerSummary?.blockedActions ? `${status.ledgerSummary.blockedActions} action${status.ledgerSummary.blockedActions===1?'':'s'} needs review` : status.ledgerSummary?.pendingActions ? `${status.ledgerSummary.pendingActions} action${status.ledgerSummary.pendingActions===1?'':'s'} waiting to sync` : 'Ready on this computer', status.ledgerSummary?.blockedActions ? 'warn' : 'ok'], ['Installed printers', `${status.printerCount} detected`, status.printerCount ? 'ok' : 'warn'], ['Printer routing', `${status.configuredPrinterCount} printer${status.configuredPrinterCount===1?'':'s'} · ${status.routeCount} route${status.routeCount===1?'':'s'}`, status.configuredPrinterCount ? 'ok' : 'warn']
   ] : [
     ['Cloud connection', navigator.onLine ? 'Browser is online' : 'Browser is offline', navigator.onLine ? 'ok' : 'warn'], ['Local Print Bridge', 'Not detected on this computer', 'warn'], ['SQLite offline ledger', 'Available after Bridge setup', 'warn'], ['Installed printers', 'Checked after Bridge setup', 'checking'], ['Printer routing', `${operationsConfig.printers.length} saved in cloud`, operationsConfig.printers.length ? 'ok' : 'warn']
   ];
@@ -1719,5 +1724,8 @@ if (cachedTableAreas.length) { tableViewPanel.hidden = false; renderTableView();
 loadOrders();
 showTableView();
 setInterval(loadOrders, 3000);
+// Cloud reconciliation is deliberately slower than the live table refresh:
+// it retries durable local work promptly without flooding the API or printers.
+setInterval(() => { if (navigator.onLine) flushQueuedCounterOrders().catch((error) => reportOrdersDiagnostic({ level:'warning', message:`Offline ledger sync retry failed: ${error.message}`, source:'offline ledger retry' })); }, 15000);
 setInterval(() => { if (!operationsPanel.hidden && operationsTab === 'kitchen-display') loadOperations().catch(() => {}); }, 3000);
 setInterval(() => { if (!counterPanel.hidden) refreshCounterLiveStatus(); }, 1000);
