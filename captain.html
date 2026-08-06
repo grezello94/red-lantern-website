@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#8e1830">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>Captain · Red Lantern</title>
+  <link rel="stylesheet" href="/captain.css?v=2">
+</head>
+<body>
+  <header class="captain-header">
+    <a class="brand" href="/captain" aria-label="Captain home"><img src="/images/red-lantern-logo-600.webp" alt=""><span><small>Red Lantern Restaurant</small><strong>Captain</strong></span></a>
+    <div class="header-tools"><span id="captain-clock"></span><a href="/orders" title="Open billing console">▣ <span>Console</span></a></div>
+  </header>
+  <main class="captain-app">
+    <section id="tables-screen" class="screen">
+      <div class="screen-head"><div><span class="eyebrow">DINE-IN</span><h1>All tables</h1><p id="captain-connection">Loading live table status…</p></div><button type="button" id="refresh-captain" class="icon-button" aria-label="Refresh tables">↻</button></div>
+      <div id="area-tabs" class="area-tabs" aria-label="Table areas"></div>
+      <div id="table-board" class="table-board" aria-live="polite"></div>
+    </section>
+    <section id="menu-screen" class="screen" hidden>
+      <div class="screen-head menu-head"><div><button type="button" class="back-button" data-captain-back>← Tables</button><span class="eyebrow">NEW ORDER</span><h1 id="menu-table-title">Table</h1></div><button type="button" class="icon-button" id="menu-search-toggle" aria-label="Search menu">⌕</button></div>
+      <label id="menu-search-wrap" class="menu-search" hidden><span>⌕</span><input id="menu-search" type="search" placeholder="Search menu items" autocomplete="off"><button type="button" id="clear-menu-search" aria-label="Clear search">×</button></label>
+      <div id="category-list" class="category-list" aria-label="Menu categories"></div>
+      <div id="menu-list" class="menu-grid" aria-live="polite"></div>
+    </section>
+    <section id="review-screen" class="screen" hidden>
+      <div class="screen-head"><div><button type="button" class="back-button" data-captain-back>← Add items</button><span class="eyebrow">FINAL ORDER</span><h1 id="review-table-title">Table</h1><p id="cart-caption"></p></div></div>
+      <div id="cart-list" class="cart-list"></div>
+      <details class="guest-details"><summary>Guest details &amp; kitchen note <span>Optional</span></summary><div><label>Name<input id="customer-name" maxlength="80" autocomplete="name" placeholder="Guest name"></label><label>Mobile<input id="customer-phone" inputmode="tel" maxlength="16" autocomplete="tel" placeholder="Mobile number"></label><label class="wide">Kitchen note<textarea id="special-request" maxlength="240" placeholder="e.g. less spicy, no onion"></textarea></label></div></details>
+      <div class="review-total"><span>Grand total</span><b id="review-total">₹0</b></div><p id="order-status" class="order-status" aria-live="polite"></p>
+      <label class="send-kot"><input id="send-kot" type="checkbox" checked disabled><span><b>Send KOT to kitchen</b><small>The billing console routes it to the configured printer.</small></span></label>
+      <button id="place-order" class="send-button" type="button">Send to kitchen ↗</button>
+    </section>
+  </main>
+  <button id="basket-bar" class="basket-bar" type="button" hidden><span id="cart-count">0 items</span><i>▣</i><b id="basket-total">₹0</b><strong>View order ›</strong></button>
+  <dialog id="choice-sheet" class="choice-sheet"><div class="sheet-head"><div><span class="eyebrow">CUSTOMISE</span><h2 id="choice-title">Choose option</h2></div><button type="button" id="choice-close" class="icon-button" aria-label="Close">×</button></div><div id="choice-options" class="choice-options"></div><fieldset id="style-options" class="style-options" hidden><legend>Preparation</legend><label><input type="radio" name="captain-style" value="" checked> Regular</label><label><input type="radio" name="captain-style" value="gravy"> Gravy <small>+₹10</small></label><label><input type="radio" name="captain-style" value="semi-gravy"> Semi-gravy <small>+₹10</small></label></fieldset><button type="button" id="choice-add" class="send-button">Add item</button></dialog>
+  <script src="/captain.js?v=2"></script>
+</body>
+</html>

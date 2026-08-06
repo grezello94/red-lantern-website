@@ -401,7 +401,7 @@ function requireAdmin(req, res, next) {
 }
 
 function requireOrdersConsole(req, res, next) {
-  const protectedPath = req.path === '/orders' || req.path === '/orders.html' || req.path === '/orders.js' || req.path === '/orders.css' || req.path.startsWith('/api/orders');
+  const protectedPath = req.path === '/orders' || req.path === '/orders.html' || req.path === '/orders.js' || req.path === '/orders.css' || req.path === '/captain' || req.path === '/captain.html' || req.path === '/captain.js' || req.path === '/captain.css' || req.path.startsWith('/api/orders');
   if (!protectedPath) return next();
   const username = process.env.ORDERS_USERNAME;
   const password = process.env.ORDERS_PASSWORD;
@@ -502,6 +502,7 @@ const cleanPageRoutes = new Map([
   ['/contact', 'contact.html'],
   ['/blog', 'blog-post.html'],
   ['/orders', 'orders.html'],
+  ['/captain', 'captain.html'],
   ['/track-order', 'track-order.html']
 ]);
 
@@ -531,7 +532,7 @@ app.use(express.static(__dirname, {
   maxAge: '1h',
   setHeaders: (res, filePath) => {
     const publicPath = String(filePath).replace(/\\/g, '/');
-    if (/\/(?:orders|track-order)(?:\.html|\.js|\.css|-fixes\.css|-logo\.css|-sw\.js|\.webmanifest)$/i.test(publicPath)) {
+    if (/\/(?:orders|captain|track-order)(?:\.html|\.js|\.css|-fixes\.css|-logo\.css|-sw\.js|\.webmanifest)$/i.test(publicPath)) {
       res.set('Cache-Control', 'no-store, max-age=0');
       return;
     }
@@ -2206,7 +2207,7 @@ app.post('/api/direct-orders', async (req, res) => {
 app.post('/api/orders/counter', async (req, res) => {
   let counterClientRequestId='';
   try {
-    const { customerName, customerPhone, specialRequest, loyaltyPoints, tableArea, tableNumber, items = [], action = 'submit' } = req.body || {};
+    const { customerName, customerPhone, specialRequest, loyaltyPoints, tableArea, tableNumber, items = [], action = 'submit', source = '' } = req.body || {};
     const clientRequestId=String(req.get('X-Counter-Order-Id')||req.body?.clientRequestId||'').trim().slice(0,80);
     counterClientRequestId=clientRequestId;
     const menu = await getSection('airMenu');
@@ -2239,6 +2240,10 @@ app.post('/api/orders/counter', async (req, res) => {
     if (requestedLoyaltyPoints && (suppliedPhone.length<7 || requestedLoyaltyPoints<loyalty.minRedeem || requestedLoyaltyPoints*loyalty.pointValue>subtotal)) return res.status(400).json({ error:`Use a valid mobile number and at least ${loyalty.minRedeem} points, up to the order total.` });
     const dineInArea=String(tableArea||'').trim().slice(0,60), dineInNumber=Number.parseInt(tableNumber,10);
     const isDineIn=!!dineInArea&&Number.isInteger(dineInNumber)&&dineInNumber>0&&dineInNumber<=9999;
+    if (source === 'captain' && isDineIn) {
+      const activeTable=await sql`SELECT id FROM direct_orders WHERE mode='table' AND table_area=${dineInArea} AND table_number=${dineInNumber} AND status IN ('saved','held','accepted','preparing','ready') LIMIT 1`;
+      if (activeTable.length) return res.status(409).json({ error:'This table is already active. Add items from the Orders console to keep one bill and one KOT flow.' });
+    }
     const orderMode=isDineIn?'table':'counter', fulfillment=isDineIn?'dine_in':'takeaway';
     const dineInAction=isDineIn && ['save','hold'].includes(String(action)) ? String(action) : 'submit';
     const initialStatus=dineInAction==='hold' ? 'held' : dineInAction==='save' ? 'saved' : 'accepted';
@@ -2630,7 +2635,7 @@ app.get('/api/admin/qr/:mode', async (req, res) => {
 
 cleanPageRoutes.forEach((file, route) => {
   app.get(route, (req, res) => {
-    if (route === '/orders') res.set('Cache-Control', 'no-store, max-age=0');
+    if (route === '/orders' || route === '/captain') res.set('Cache-Control', 'no-store, max-age=0');
     res.sendFile(path.join(__dirname, file));
   });
 });

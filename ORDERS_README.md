@@ -12,6 +12,16 @@ This document describes the restaurant staff Orders console: QR orders, counter 
 
 All saved orders receive a daily order number. KOT numbers use one restaurant-wide daily sequence across QR, takeaway, and dine-in orders, and reset to `1` at the start of each India/Kolkata day.
 
+## Captain phone workspace
+
+`/captain` is a separate, mobile-first staff link for waiters. It uses the same Orders-console authentication and the same server-side order, menu-price, table, and idempotency protections as `/orders`.
+
+- A captain selects a currently free table, adds available Air Menu dishes, enters an optional guest name/mobile/kitchen note, and sends the dine-in order.
+- The server rechecks table availability when saving, so two phones cannot silently start separate Captain orders for the same active table.
+- Captain is intentionally online-only. Phones do not host the billing computer’s trusted Print Bridge or SQLite ledger; if internet is unavailable, the captain must wait rather than risk a duplicate or uncertain table order.
+- Keep `/orders` open on the billing computer during service. That computer detects accepted Captain orders and sends the routed KOT through the local Print Bridge. Captain phones never connect directly to a printer.
+- Adding items to a table that is already active stays in `/orders` for now, keeping a single bill and KOT record for that table.
+
 ## QR ordering
 
 QR ordering uses the Air Menu and its availability controls.

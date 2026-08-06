@@ -680,7 +680,10 @@ async function loadOrders() {
       hasRenderedOrders = true;
     }
     root.classList.remove('is-stale');
-    if (orderView === 'current') rows.filter((order) => order.mode !== 'table' && new Date(order.created_at).getTime() >= ordersConsoleStartedAt - 15 * 60 * 1000).forEach(autoPrintOrder);
+    // Captain orders are created on staff phones, so the billing computer owns
+    // their local Bridge print dispatch. The KOT claim prevents a repeat poll
+    // from producing another physical ticket.
+    if (orderView === 'current') rows.filter((order) => order.status === 'accepted' && new Date(order.created_at).getTime() >= ordersConsoleStartedAt - 15 * 60 * 1000).forEach(autoPrintOrder);
     if (!tableViewPanel.hidden) renderTableView();
     const clearButton = document.getElementById('clear-order-search');
     const searchStatus = document.getElementById('order-search-status');
