@@ -275,7 +275,7 @@ availability.before(tableViewPanel);
 let moveKotItemsMode = false;
 const moveTableDialog = document.createElement('dialog');
 moveTableDialog.id = 'move-table-dialog';
-moveTableDialog.innerHTML = '<button type="button" class="move-table-close" aria-label="Close">×</button><h2 id="move-table-title">Move KOT / Items</h2><p id="move-table-copy"></p><div class="move-tabs"><button type="button" class="is-active" data-move-mode="table">Table Wise</button><button type="button" data-move-mode="kot">KOT Wise</button><button type="button" data-move-mode="item">Item Wise</button></div><div id="move-table-options"></div><label>Table No.<select id="move-table-target"></select></label><p id="move-table-status" aria-live="polite"></p><div><button type="button" class="move-table-cancel">Cancel</button><button type="button" class="move-table-confirm">Move</button></div>';
+moveTableDialog.innerHTML = '<button type="button" class="move-table-close" aria-label="Close">×</button><h2 id="move-table-title">Move KOT / Items</h2><p id="move-table-copy"></p><div class="move-tabs"><button type="button" class="is-active" data-move-mode="table">Table Wise</button><button type="button" data-move-mode="kot">KOT Wise</button><button type="button" data-move-mode="item">Item Wise</button></div><div id="move-table-options"></div><div id="move-table-target" class="move-table-target" aria-label="Available tables"></div><p id="move-table-status" aria-live="polite"></p><div><button type="button" class="move-table-cancel">Cancel</button><button type="button" class="move-table-confirm">Move</button></div>';
 document.body.appendChild(moveTableDialog);
 const settleTableDialog = document.createElement('dialog');
 settleTableDialog.id = 'settle-table-dialog';
@@ -416,6 +416,9 @@ document.head.appendChild(splitBillStyles);
 const moveTableStyles = document.createElement('style');
 moveTableStyles.textContent = `#move-table-dialog{width:min(760px,calc(100vw - 28px));padding:25px;border:0;border-radius:16px;color:#263b57;box-shadow:0 24px 70px rgba(20,32,52,.28)}#move-table-dialog::backdrop{background:rgba(19,32,52,.45)}#move-table-dialog h2{margin:0 0 7px}#move-table-dialog p{color:#68798f;font-size:13px;line-height:1.45}#move-table-dialog label{display:grid;gap:7px;margin:19px 0;color:#53677f;font-size:11px;font-weight:900;text-transform:uppercase}#move-table-target{padding:11px;border:1px solid #cfdbe8;border-radius:8px;color:#253b59;background:#fff;font:700 13px Manrope,sans-serif}.move-tabs{display:flex;border-bottom:1px solid #dbe3ec;margin:18px -25px 16px}.move-tabs button{padding:13px 25px!important;border-radius:0!important;background:#fff;color:#263b57}.move-tabs button.is-active{color:#b42638;background:#fff1f3;border-bottom:3px solid #c92a36}.move-choice-list{display:grid;gap:8px;max-height:190px;overflow:auto}.move-choice{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid #dbe3ec;border-radius:8px;cursor:pointer}.move-choice b{display:block}.move-choice small{color:#68798f}#move-table-dialog>div:last-child{display:flex;justify-content:flex-end;gap:9px;margin-top:20px}#move-table-dialog button{padding:10px 14px;border-radius:8px;font-weight:900}.move-table-close{position:absolute;top:13px;right:15px;width:34px;height:34px;padding:0!important;border-radius:50%!important;color:#7c2533;background:#fff0f1;font-size:22px}.move-table-confirm{color:#fff;background:#c92a36}.move-table-cancel{color:#42566f;background:#f2f6fa}@media(max-width:600px){#move-table-dialog{padding:20px}.move-tabs{margin-inline:-20px}.move-tabs button{padding:12px 10px!important;font-size:12px}}`;
 document.head.appendChild(moveTableStyles);
+const moveTablePickerStyles = document.createElement('style');
+moveTablePickerStyles.textContent = `.move-table-target{display:grid;gap:16px;max-height:420px;margin-top:18px;overflow:auto}.move-table-area h3{margin:0 0 9px;color:#243650;font-size:14px}.move-table-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(72px,1fr));gap:10px}.move-table-choice{min-height:58px!important;padding:10px!important;border:1px dashed #9dabbc!important;border-radius:9px!important;color:#263d68!important;background:#fff!important;font-size:16px!important}.move-table-choice:hover{border-style:solid!important;border-color:#c92a36!important;background:#fff5f6!important}.move-table-choice.is-selected{color:#fff!important;border-style:solid!important;border-color:#c92a36!important;background:#c92a36!important;box-shadow:0 5px 12px rgba(201,42,54,.2)}@media(max-width:600px){.move-table-grid{grid-template-columns:repeat(auto-fill,minmax(58px,1fr));gap:8px}.move-table-choice{min-height:50px!important;font-size:14px!important}.move-table-target{max-height:330px}}`;
+document.head.appendChild(moveTablePickerStyles);
 let splitMode = 'equal', splitPartCount = 2, splitItemAssignments = [], splitPercentages = [50,50];
 function counterItemTotal(item) { return (Number(item.price) + (item.style ? 10 : 0)) * Number(item.quantity || 0); }
 function splitParts(count) { return Array.from({ length:count }, (_, index) => ({ label:`Part ${index + 1}`, items:[] })); }
@@ -481,7 +484,8 @@ function openMoveTable(orderId) {
   moveTableDialog.dataset.orderId=orderId;
   moveTableDialog.dataset.mode='table';
   document.getElementById('move-table-copy').textContent=`Choose what to move from ${order.table_area} · Table ${String(order.table_number).padStart(2,'0')}.`;
-  document.getElementById('move-table-target').innerHTML=targets.map((table)=>`<option value="${esc(table.area)}::${table.number}">${esc(table.area)} · Table ${String(table.number).padStart(2,'0')}</option>`).join('');
+  const targetGroups=targets.reduce((groups,table)=>{(groups[table.area]||=[]).push(table);return groups;},{});
+  document.getElementById('move-table-target').innerHTML=Object.entries(targetGroups).map(([area,tables])=>`<section class="move-table-area"><h3>${esc(area)}</h3><div class="move-table-grid">${tables.map((table,index)=>`<button type="button" class="move-table-choice${index===0&&area===Object.keys(targetGroups)[0]?' is-selected':''}" data-move-table-area="${esc(table.area)}" data-move-table-number="${table.number}" aria-pressed="${index===0&&area===Object.keys(targetGroups)[0]?'true':'false'}">${String(table.number).padStart(2,'0')}</button>`).join('')}</div></section>`).join('');
   renderMoveOptions();
   document.getElementById('move-table-status').textContent=''; moveTableDialog.showModal();
 }
@@ -497,9 +501,12 @@ moveTableDialog.addEventListener('click', async (event) => {
   if (event.target.closest('.move-table-close,.move-table-cancel')) { moveTableDialog.close(); return; }
   const modeButton=event.target.closest('[data-move-mode]');
   if (modeButton) { moveTableDialog.dataset.mode=modeButton.dataset.moveMode; renderMoveOptions(); return; }
+  const target=event.target.closest('[data-move-table-area]');
+  if (target) { document.querySelectorAll('[data-move-table-area]').forEach((choice)=>{const selected=choice===target;choice.classList.toggle('is-selected',selected);choice.setAttribute('aria-pressed',String(selected));}); return; }
   if (!event.target.closest('.move-table-confirm')) return;
   if ((moveTableDialog.dataset.mode || 'table') !== 'table') { document.getElementById('move-table-status').textContent='Select the KOTs or items, then use the transfer action that is being added to this workflow.'; return; }
-  const button=event.target.closest('.move-table-confirm'), [tableArea,tableNumber]=String(document.getElementById('move-table-target').value||'').split('::');
+  const button=event.target.closest('.move-table-confirm'), selectedTarget=document.querySelector('[data-move-table-area].is-selected'), tableArea=selectedTarget?.dataset.moveTableArea||'', tableNumber=selectedTarget?.dataset.moveTableNumber||'';
+  if (!tableArea || !tableNumber) { document.getElementById('move-table-status').textContent='Choose an available table first.'; return; }
   button.disabled=true; document.getElementById('move-table-status').textContent='Moving table…';
   try { const payload={orderId:moveTableDialog.dataset.orderId,tableArea,tableNumber:Number(tableNumber)}; if(await queueWhenOffline('order-table',payload,()=>{const order=orderRecords.get(payload.orderId);if(order){order.table_area=tableArea;order.table_number=Number(tableNumber);} cacheTableOrders([...orderRecords.values()]);renderTableView();})){moveTableDialog.close();return;} const response=await fetch(`/api/orders/${encodeURIComponent(payload.orderId)}/table`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({tableArea,tableNumber:Number(tableNumber)})}); const data=await response.json().catch(()=>({})); if(!response.ok) throw new Error(data.error||'Unable to move the table.'); moveTableDialog.close(); await showTableView(); }
   catch(error){document.getElementById('move-table-status').textContent=error.message||'Unable to move the table.';}
@@ -1385,7 +1392,7 @@ document.querySelector('[data-fulfillment-filter="pickup"]')?.before(newOrderAct
 const newOrderActionStyles=document.createElement('style');
 newOrderActionStyles.textContent='';
 document.head.appendChild(newOrderActionStyles);
-newOrderAction.addEventListener('click', async () => { counterPanel.hidden=true; await showTableView(); tableViewPanel.scrollIntoView({ behavior:'smooth', block:'start' }); });
+newOrderAction.addEventListener('click', async () => { closeOpenPanels('tables'); await showTableView(); tableViewPanel.scrollIntoView({ behavior:'smooth', block:'start' }); });
 settleTableDialog.addEventListener('click', async (event) => {
   if (event.target.closest('.settle-close,.settle-cancel')) { settleTableDialog.close(); return; }
   const button=event.target.closest('.settle-confirm'); if (!button) return;
@@ -1724,6 +1731,9 @@ if (cachedOperationsConfig) operationsConfig = cachedOperationsConfig;
 if (cachedTableAreas.length) operationsConfig.tableAreas = cachedTableAreas;
 if (cachedTableOrders.length) orderRecords = new Map(cachedTableOrders.map((order) => [order.id, order]));
 if (cachedTableAreas.length) { tableViewPanel.hidden = false; renderTableView(); }
+// Detect the local workstation service on every app launch. This keeps the
+// Operations readiness state current without requiring staff to press Check again.
+void checkPrintBridgeSetup();
 loadOrders();
 showTableView();
 setInterval(loadOrders, 3000);
