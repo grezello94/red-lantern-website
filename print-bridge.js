@@ -319,12 +319,14 @@ function billText(payload) {
   const subtotal = items.reduce((sum, item) => sum + itemPrice(item) * Number(item.quantity || 0), 0);
   const total = Number(order.total) > 0 ? Number(order.total) : subtotal;
   const walletDiscount = Math.max(0, Math.floor(Number(order.loyalty_points_redeemed || 0)));
-  const widePaper = Number(settings.paperWidth) !== 58;
   const itemRows = items.flatMap((item, index) => {
-    const label = `${settings.showItemSerial ? `${index + 1}. ` : ''}${item.name || 'Item'}${item.portion ? ` (${item.portion})` : ''}${item.style ? ` · ${item.style}` : ''}`;
+    const label = `${settings.showItemSerial ? `${index + 1}. ` : ''}${item.name || 'Item'}${item.portion ? ` (${item.portion})` : ''}`;
     const quantity = Number(item.quantity || 0), unit = itemPrice(item), itemAmount = quantity * unit;
-    if (!widePaper) return [`__LEFT__${label}`, `__LEFT__Qty: ${quantity}   Price: ₹${decimal(unit)}`, `__LEFT__Amount: ₹${decimal(itemAmount)}`];
-    return [`__ITEM__${label}|${quantity}|${decimal(unit)}|${decimal(itemAmount)}`];
+    return [
+      `__LEFT__${label}`,
+      `__LEFT__Qty: ${quantity}    Price: ${decimal(unit)}    Amount: ${decimal(itemAmount)}`,
+      item.style ? `__LEFT__  With Gravy: ${item.style} · +₹10` : ''
+    ].filter(Boolean);
   });
   const token = String(order.daily_order_number || '—').padStart(2, '0');
   const placedAt = order.created_at ? new Date(order.created_at) : new Date();
@@ -337,11 +339,11 @@ function billText(payload) {
   const service = order.mode === 'table' ? `Dine In · ${order.table_area || 'Table'} ${order.table_number || ''}`.trim() : order.fulfillment_type === 'delivery' ? 'Delivery' : 'Parcel';
   const customerLine = customer ? `Name: ${customer}${phone ? ` (M: ${phone})` : ''}` : phone ? `Mobile: ${phone}` : 'Name: Walk-in customer';
   const details = [line, `__META__${customerLine}`, line, `__META__Date: ${placedDate}          ${service}`, `__META__${placedTime}`, `__META__Cashier: biller       Bill No.: ${billNumber}`, `__METABOLD__Token No.: ${token}`, line];
-  const itemHeader = widePaper ? '__ITEMHEAD__Item|Qty|Price|Amount' : '__LABEL__ITEMS';
-  const totals = widePaper ? [`__MONO__${`Total Qty: ${quantity}  Sub Total`.padEnd(26)}${money(subtotal)}`, walletDiscount ? `__MONO__${'Points discount'.padEnd(26)}-${money(walletDiscount)}` : ''] : [`__LABEL__Total Qty: ${quantity}   Sub Total: ${money(subtotal)}`, walletDiscount ? `__LABEL__Points discount: -${money(walletDiscount)}` : ''];
+  const itemHeader = '__LABEL__Item                         Qty  Price  Amount';
+  const totals = [`__LABEL__Total Qty: ${quantity}   Sub Total: ${money(subtotal)}`, walletDiscount ? `__LABEL__Points discount: -${money(walletDiscount)}` : ''];
   const defaultHeader='Colva Goa\n9922853605 / 9049558369\n[Follow] Insta ID:\nred_lantern_restaurant';
   const defaultFooter='Thank you choosing Red Lantern\nKindly leave us a Review !\nGoogle | Zomato | Swiggy';
-  return ['__CENTER__Duplicate', settings.showRestaurantName === false ? '' : `__BILLTITLE__${settings.restaurantName || 'Red Lantern Restaurant'}`, `__BILLHEADER__${settings.receiptHeader || defaultHeader}`, ...details, itemHeader, ...itemRows, line, ...totals, `__GRAND__GRAND TOTAL: ${money(total)}`, line, `__FOOTER__${settings.receiptFooter || defaultFooter}`, '\n\n\n'].filter(Boolean).join('\n');
+  return [settings.reprint ? '__CENTER__*** REPRINT ***' : '', settings.showRestaurantName === false ? '' : `__BILLTITLE__${settings.restaurantName || 'Red Lantern Restaurant'}`, `__BILLHEADER__${settings.receiptHeader || defaultHeader}`, ...details, itemHeader, ...itemRows, line, ...totals, `__GRAND__GRAND TOTAL: ${money(total)}`, line, `__FOOTER__${settings.receiptFooter || defaultFooter}`, '\n\n\n'].filter(Boolean).join('\n');
 }
 
 function allowedOrigin(request) {
