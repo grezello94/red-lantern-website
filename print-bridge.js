@@ -275,7 +275,10 @@ $doc.add_PrintPage({ param($sender, $event)
     elseif ($line.StartsWith('__LEFT__')) { $displayLine = $line.Substring(8); $alignment = [System.Drawing.StringAlignment]::Near }
     elseif ($line.StartsWith('__MONO__')) { $displayLine = $line.Substring(8); $alignment = [System.Drawing.StringAlignment]::Near; $size = 13; $fontName = 'Consolas' }
     elseif ($line.StartsWith('__LABEL__')) { $displayLine = $line.Substring(9); $alignment = [System.Drawing.StringAlignment]::Near; $style = [System.Drawing.FontStyle]::Bold; $size = ${dateBillFontSize} }
-    elseif ($line.StartsWith('__ITEMLABEL__')) { $displayLine = $line.Substring(13); $alignment = [System.Drawing.StringAlignment]::Near; $style = [System.Drawing.FontStyle]::Bold; $size = [Math]::Min(10, ${itemFontSize}) }
+    elseif ($line.StartsWith('__ITEMLABEL__')) { $displayLine = $line.Substring(13); $alignment = [System.Drawing.StringAlignment]::Near; $style = [System.Drawing.FontStyle]::Bold; $size = ${itemFontSize} }
+    elseif ($line.StartsWith('__ITEMTEXT__')) { $displayLine = $line.Substring(12); $alignment = [System.Drawing.StringAlignment]::Near; $size = ${itemFontSize} }
+    elseif ($line.StartsWith('__GRIDHEAD__')) { $displayLine = $line.Substring(12); $alignment = [System.Drawing.StringAlignment]::Near; $style = [System.Drawing.FontStyle]::Bold; $size = [Math]::Min(10, ${itemFontSize}); $fontName = 'Consolas' }
+    elseif ($line.StartsWith('__GRID__')) { $displayLine = $line.Substring(8); $alignment = [System.Drawing.StringAlignment]::Near; $size = [Math]::Min(10, ${itemFontSize}); $fontName = 'Consolas' }
     elseif ($line.StartsWith('__GRAND__')) { $displayLine = $line.Substring(9); $alignment = [System.Drawing.StringAlignment]::Near; $style = [System.Drawing.FontStyle]::Bold; $size = ${totalFontSize} }
     elseif ($line.StartsWith('__TABLE__')) { $displayLine = $line.Substring(9); $alignment = [System.Drawing.StringAlignment]::Near; $size = ${itemFontSize} }
     elseif ($line.StartsWith('__TABLEHEAD__')) { $displayLine = $line.Substring(13); $alignment = [System.Drawing.StringAlignment]::Near; $style = [System.Drawing.FontStyle]::Bold; $size = ${totalFontSize} }
@@ -324,9 +327,9 @@ function billText(payload) {
     const label = `${settings.showItemSerial ? `${index + 1}. ` : ''}${item.name || 'Item'}${item.portion ? ` (${item.portion})` : ''}`;
     const quantity = Number(item.quantity || 0), unit = itemPrice(item), itemAmount = quantity * unit;
     return [
-      `__LEFT__${label}`,
-      `__LEFT__Qty: ${quantity}    Price: ${decimal(unit)}    Amount: ${decimal(itemAmount)}`,
-      item.style ? `__LEFT__  With Gravy: ${item.style} · +₹10` : ''
+      `__ITEMTEXT__${label}`,
+      `__ITEMTEXT__Qty: ${quantity}    Price: ${decimal(unit)}    Amount: ${decimal(itemAmount)}`,
+      item.style ? `__ITEMTEXT__  With Gravy: ${item.style} · +₹10` : ''
     ].filter(Boolean);
   });
   const token = String(order.daily_order_number || '—').padStart(2, '0');
