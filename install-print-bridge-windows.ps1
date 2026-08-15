@@ -18,17 +18,16 @@ try {
   }
 } catch { }
 try {
-  $existing = Get-ScheduledTask -TaskName 'Red Lantern Print Bridge' -ErrorAction SilentlyContinue
-  if ($existing) {
-    Start-ScheduledTask -TaskName 'Red Lantern Print Bridge'
-    Write-Host 'Existing Print Bridge setup was started.'
-    exit 0
-  }
   $action = New-ScheduledTaskAction -Execute $node -Argument ('"{0}"' -f $bridge) -WorkingDirectory $project
   $trigger = New-ScheduledTaskTrigger -AtLogOn
-  Register-ScheduledTask -TaskName 'Red Lantern Print Bridge' -Action $action -Trigger $trigger -Description 'Starts the Red Lantern local printer bridge when this user signs in.' -Force | Out-Null
+  # Keep the Bridge alive like a desktop utility. The defaults can stop a task
+  # after a time limit and do not retry it if Node or a printer driver restarts.
+  $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Seconds 0) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
+  Register-ScheduledTask -TaskName 'Red Lantern Print Bridge' -Action $action -Trigger $trigger -Settings $settings -Description 'Starts and keeps the Red Lantern local printer bridge running for this Windows user.' -Force | Out-Null
   Start-ScheduledTask -TaskName 'Red Lantern Print Bridge'
-  Write-Host 'Print Bridge installed as a Windows sign-in task and started.'
+  Start-Sleep -Milliseconds 700
+  if ((Invoke-WebRequest -UseBasicParsing -TimeoutSec 3 'http://127.0.0.1:9124/health').StatusCode -ne 200) { throw 'The Windows task started but the Print Bridge did not become ready.' }
+  Write-Host 'Print Bridge is installed, running, and will restart at sign-in or after an unexpected stop.'
 } catch {
   $startup = [Environment]::GetFolderPath('Startup')
   $launcher = Join-Path $startup 'Red Lantern Print Bridge.cmd'

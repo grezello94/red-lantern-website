@@ -2110,6 +2110,7 @@ app.get('/api/air-menu', async (req, res) => {
     note: menu.note || '',
     showPrices: isCard ? menu.showCardPrices === true : menu.showTablePrices !== false,
     directOrdersEnabled: isCard ? menu.cardDirectOrders !== false : menu.tableDirectOrders === true,
+    deliveryEnabled: menu.deliveryEnabled !== false,
     cardCallEnabled: isCard && menu.cardCallEnabled === true,
     cardOrderPhone: isCard ? String(menu.cardOrderPhone || '') : '',
     mode: req.query.mode,
@@ -2309,19 +2310,21 @@ app.patch('/api/orders/:id', async (req, res) => {
     await ensureDirectOrdersTable();
     await ensureLoyaltyTable();
     const status = String(req.body?.status || '');
-    const transitions={ new:['accepted','rejected'], accepted:['preparing','ready','completed','rejected'], preparing:['ready','completed','rejected'], ready:['completed','rejected'] };
+    const cancellationReason=String(req.body?.reason || '').trim().slice(0,240);
+    const transitions={ new:['accepted','rejected','cancelled'], accepted:['preparing','ready','completed','rejected','cancelled'], preparing:['ready','completed','rejected','cancelled'], ready:['completed','rejected','cancelled'] };
     const currentRows=await sql`SELECT status FROM direct_orders WHERE id=${req.params.id} LIMIT 1`;
     if (!currentRows.length) return res.status(404).json({ error:'Order not found.' });
     const previous=String(currentRows[0].status || '');
     if (previous===status) return res.json({ ok:true, unchanged:true, status });
     if (!transitions[previous]?.includes(status)) return res.status(409).json({ error:`An order cannot move from ${previous || 'its current state'} to ${status || 'that state'}.` });
+    if (status==='cancelled' && cancellationReason.length<3) return res.status(400).json({ error:'Enter a brief reason for cancelling this order.' });
     const [changed] = await sql.transaction((tx) => [
-      tx`UPDATE direct_orders SET status=${status}, updated_at=NOW() WHERE id=${req.params.id} AND status=${previous} RETURNING id`,
+      tx`UPDATE direct_orders SET status=${status}, cancellation_reason=${status==='cancelled'?cancellationReason:null}, cancelled_at=${status==='cancelled'?new Date():null}, updated_at=NOW() WHERE id=${req.params.id} AND status=${previous} RETURNING id`,
       ...(status === 'completed' ? [tx`WITH awarded AS (UPDATE direct_orders SET loyalty_awarded_at=NOW() WHERE id=${req.params.id} AND status='completed' AND loyalty_awarded_at IS NULL RETURNING customer_phone, loyalty_points_earned) INSERT INTO loyalty_accounts (customer_phone, points, total_earned) SELECT customer_phone, loyalty_points_earned, loyalty_points_earned FROM awarded ON CONFLICT (customer_phone) DO UPDATE SET points=loyalty_accounts.points+EXCLUDED.points, total_earned=loyalty_accounts.total_earned+EXCLUDED.total_earned, updated_at=NOW()`] : []),
-      ...(status === 'rejected' ? [tx`WITH reversed AS (UPDATE direct_orders SET loyalty_awarded_at=NULL WHERE id=${req.params.id} AND loyalty_awarded_at IS NOT NULL RETURNING customer_phone, loyalty_points_earned) UPDATE loyalty_accounts a SET points=GREATEST(0, a.points-reversed.loyalty_points_earned), total_earned=GREATEST(0, a.total_earned-reversed.loyalty_points_earned), updated_at=NOW() FROM reversed WHERE a.customer_phone=reversed.customer_phone`, tx`WITH redeem AS (SELECT customer_phone, loyalty_points_redeemed FROM direct_orders WHERE id=${req.params.id} AND status='rejected' AND loyalty_points_redeemed > 0), cleared AS (UPDATE direct_orders o SET loyalty_points_redeemed=0 FROM redeem WHERE o.id=${req.params.id} RETURNING redeem.customer_phone, redeem.loyalty_points_redeemed) UPDATE loyalty_accounts a SET points=a.points+cleared.loyalty_points_redeemed, total_redeemed=GREATEST(0,a.total_redeemed-cleared.loyalty_points_redeemed), updated_at=NOW() FROM cleared WHERE a.customer_phone=cleared.customer_phone`] : [])
+      ...(['rejected','cancelled'].includes(status) ? [tx`WITH reversed AS (UPDATE direct_orders SET loyalty_awarded_at=NULL WHERE id=${req.params.id} AND loyalty_awarded_at IS NOT NULL RETURNING customer_phone, loyalty_points_earned) UPDATE loyalty_accounts a SET points=GREATEST(0, a.points-reversed.loyalty_points_earned), total_earned=GREATEST(0, a.total_earned-reversed.loyalty_points_earned), updated_at=NOW() FROM reversed WHERE a.customer_phone=reversed.customer_phone`, tx`WITH redeem AS (SELECT customer_phone, loyalty_points_redeemed FROM direct_orders WHERE id=${req.params.id} AND status=${status} AND loyalty_points_redeemed > 0), cleared AS (UPDATE direct_orders o SET loyalty_points_redeemed=0 FROM redeem WHERE o.id=${req.params.id} RETURNING redeem.customer_phone, redeem.loyalty_points_redeemed) UPDATE loyalty_accounts a SET points=a.points+cleared.loyalty_points_redeemed, total_redeemed=GREATEST(0,a.total_redeemed-cleared.loyalty_points_redeemed), updated_at=NOW() FROM cleared WHERE a.customer_phone=cleared.customer_phone`] : [])
     ]);
     if (!changed.length) return res.status(409).json({ error:'This order changed on another device. Refresh and try again.' });
-    await recordOrderEvent(req.params.id, 'status-changed', { from:previous, to:status });
+    await recordOrderEvent(req.params.id, 'status-changed', { from:previous, to:status, ...(status==='cancelled'?{reason:cancellationReason}:{}) });
     res.json({ ok:true });
   } catch (error) { res.status(500).json({ error:error.message }); }
 });
