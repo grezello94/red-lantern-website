@@ -343,7 +343,7 @@ function billText(payload) {
   const itemHeader = '__ITEMLABEL__Item                     Qty   Price   Amount';
   const totals = [`__LABEL__Total Qty: ${quantity}   Sub Total: ${money(subtotal)}`, walletDiscount ? `__LABEL__Points discount: -${money(walletDiscount)}` : ''];
   const defaultHeader='Colva Goa\n9922853605 / 9049558369\n[Follow] Insta ID:\nred_lantern_restaurant';
-  const defaultFooter='Thank you choosing Red Lantern\nKindly leave us a Review !\nGoogle | Zomato | Swiggy';
+  const defaultFooter='Thank you for choosing us!\nKindly leave us a review\nGoogle | Zomato | Swiggy';
   return [settings.reprint ? '__CENTER__*** REPRINT ***' : '', settings.showRestaurantName === false ? '' : `__BILLTITLE__${settings.restaurantName || 'Red Lantern Restaurant'}`, `__BILLHEADER__${settings.receiptHeader || defaultHeader}`, ...details, itemHeader, ...itemRows, line, ...totals, `__GRAND__GRAND TOTAL: ${money(total)}`, line, `__FOOTER__${settings.receiptFooter || defaultFooter}`, '\n\n\n'].filter(Boolean).join('\n');
 }
 
