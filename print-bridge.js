@@ -254,7 +254,7 @@ $doc.add_PrintPage({ param($sender, $event)
       $labelLines = New-Object System.Collections.Generic.List[string]; $pending = ''
       foreach ($word in $label.Split(' ')) { $candidate = if ($pending) { "$pending $word" } else { $word }; if ($pending -and $g.MeasureString($candidate, $font).Width -gt $contentWidth) { $labelLines.Add($pending); $pending = $word } else { $pending = $candidate } }
       if ($pending) { $labelLines.Add($pending) }; if ($labelLines.Count -eq 0) { $labelLines.Add('') }
-      $lineHeight = [Math]::Ceiling($g.MeasureString('Ag', $font).Height); $rowHeight = [Math]::Max($labelLines.Count * $lineHeight, $lineHeight)
+      $lineHeight = [Math]::Ceiling($g.MeasureString('Ag', $font).Height); $rowHeight = [Math]::Max($labelLines.Count * $lineHeight, $lineHeight, ${itemMinHeight})
       for ($labelIndex = 0; $labelIndex -lt $labelLines.Count; $labelIndex++) { $g.DrawString($labelLines[$labelIndex], $font, [System.Drawing.Brushes]::Black, [single]$contentLeft, [single]($y + ($labelIndex * $lineHeight))) }
       $qtyText = if ($cells.Count -gt 1) { $cells[1] } else { '' }; $priceText = if ($cells.Count -gt 2) { $cells[2] } else { '' }; $amountText = if ($cells.Count -gt 3) { $cells[3] } else { '' }
       $qtyX = $left + $labelWidth + $qtyWidth - $g.MeasureString($qtyText, $font).Width; $priceX = $left + $labelWidth + $qtyWidth + $columnGap + $priceWidth - $g.MeasureString($priceText, $font).Width; $amountX = $left + $labelWidth + $qtyWidth + $columnGap + $priceWidth + $columnGap + $amountWidth - $g.MeasureString($amountText, $font).Width
