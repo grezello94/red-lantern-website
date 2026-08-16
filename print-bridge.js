@@ -380,7 +380,8 @@ function kotText(payload) {
   const labels = kotHighlightLabels(items);
   const rows = items.flatMap((item, index) => [`__KOTITEM__${settings.showItemSerial ? `${index + 1}. ` : ''}${quantityFirst ? `${Number(item.quantity || 0)}x ` : ''}${labels[index]}${quantityFirst ? '' : ` · ${Number(item.quantity || 0)}x`}`, item.note ? `__KOTNOTE__↳ ${item.note}` : ''].filter(Boolean));
   const sourceLine = order.fulfillment ? `From: ${order.fulfillment}` : `Order #${order.number || order.id || '—'}`;
-  const bottomLines = Math.max(0, Math.min(12, Number(settings.kotBottomFeedLines) || 3)) + Math.max(0, Math.min(2, Number(settings.extraSpace) || 0)) * 2;
+  const savedFeed = Number(settings.kotBottomFeedLines);
+  const bottomLines = (Number.isFinite(savedFeed) ? Math.max(0, Math.min(12, savedFeed)) : 3) + Math.max(0, Math.min(2, Number(settings.extraSpace) || 0)) * 2;
   const meta = settings.kotDetailsCentered ? '__KOTCENTERMETA__' : '__KOTMETA__', metaBold = settings.kotDetailsCentered ? '__KOTCENTERMETABOLD__' : '__KOTMETABOLD__';
   return [`__KOTTITLE__${String(payload.printerLabel || payload.printerName || 'Kitchen').trim()}`, order.reprint ? `${metaBold}*** REPRINT ***` : '', line, `${metaBold}KOT #${order.kotNumber || '—'}`, `${meta}${sourceLine}`, settings.showCustomer !== false ? `${meta}${guestLine}` : '', line, ...rows, order.note && settings.showNotes !== false ? `${line}\n__KOTNOTE__Note: ${order.note}` : '', line, '\n'.repeat(bottomLines)].filter(Boolean).join('\n');
 }
