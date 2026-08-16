@@ -192,8 +192,11 @@ async function printText(printerName, text, settings = {}) {
       // 309 hundredths of an inch is 78.5 mm: the measured printable span of
       // the 80 mm reference receipt.  The driver still owns the actual paper
       // form, so this safely shrinks when a printer has a narrower print area.
-      const configuredMainWidth = layout(settings.billingMainWidth, 160, 400, 309), mainWidth = paperWidth === 80 ? Math.max(300, configuredMainWidth) : configuredMainWidth, leftMargin = layout(settings.billingOuterLeft, 0, 40, 0), rightMargin = layout(settings.billingOuterRight, 0, 40, 0), topMargin = layout(settings.billingOuterTop, 0, 40, 0), bottomMargin = layout(settings.billingOuterBottom, 0, 40, 0);
-      const restaurantFontSize = layout(settings.restaurantNameFontSize, 8, 24, 14), headerFooterFontSize = layout(settings.headerFooterFontSize, 8, 20, 13), dateBillFontSize = layout(settings.dateBillFontSize, 8, 20, 13), itemFontSize = layout(settings.itemListingFontSize, 8, 20, 13), totalFontSize = layout(settings.grandTotalFontSize, 10, 26, 14), kotHeaderFontSize = layout(settings.kotHeaderFontSize, 8, 24, 12), kotTitleFontSize = layout(settings.kotTitleFontSize, 10, 26, 15), kotMetaFontSize = layout(settings.kotMetaFontSize, 8, 20, 10), kotItemFontSize = layout(settings.kotItemFontSize, 8, 22, 12), kotFooterFontSize = layout(settings.kotFooterFontSize, 8, 20, 10), itemGap = layout(settings.itemRowGap, 0, 20, 5), separatorGap = layout(settings.separatorGap, 0, 20, 5), separatorThickness = layout(settings.separatorThickness, 1, 4, 1), grandTotalWidth = layout(settings.grandTotalContentWidth, 120, 400, 261), itemMinHeight = layout(settings.billingItemBoxHeight, 0, 40, 0);
+      // Never enlarge a saved printable width. Some 80 mm drivers expose only
+      // 250 units of usable width; forcing 300 makes the right columns print
+      // outside the paper and causes the clipping seen on the receipt.
+      const configuredMainWidth = layout(settings.billingMainWidth, 160, 400, 309), mainWidth = configuredMainWidth, leftMargin = layout(settings.billingOuterLeft, 0, 40, 0), rightMargin = layout(settings.billingOuterRight, 0, 40, 0), topMargin = layout(settings.billingOuterTop, 0, 40, 0), bottomMargin = layout(settings.billingOuterBottom, 0, 40, 0);
+      const restaurantFontSize = layout(settings.restaurantNameFontSize, 8, 24, 14), headerFooterFontSize = layout(settings.headerFooterFontSize, 8, 20, 13), dateBillFontSize = layout(settings.dateBillFontSize, 8, 20, 13), itemFontSize = layout(settings.itemListingFontSize, 8, 10, 10), totalFontSize = layout(settings.grandTotalFontSize, 10, 11, 11), kotHeaderFontSize = layout(settings.kotHeaderFontSize, 8, 24, 12), kotTitleFontSize = layout(settings.kotTitleFontSize, 10, 26, 15), kotMetaFontSize = layout(settings.kotMetaFontSize, 8, 20, 10), kotItemFontSize = layout(settings.kotItemFontSize, 8, 22, 12), kotFooterFontSize = layout(settings.kotFooterFontSize, 8, 20, 10), itemGap = layout(settings.itemRowGap, 0, 20, 3), separatorGap = layout(settings.separatorGap, 0, 20, 3), separatorThickness = layout(settings.separatorThickness, 1, 4, 1), grandTotalWidth = layout(settings.grandTotalContentWidth, 120, 400, 261), itemMinHeight = layout(settings.billingItemBoxHeight, 0, 40, 0);
       const script = `Add-Type -AssemblyName System.Drawing
 $lines = Get-Content -LiteralPath '${quote(file)}' -Encoding UTF8
 $doc = New-Object System.Drawing.Printing.PrintDocument
@@ -208,7 +211,7 @@ if ($thermalPaper.Count) { $doc.DefaultPageSettings.PaperSize = $thermalPaper[0]
 $doc.DefaultPageSettings.Margins = New-Object System.Drawing.Printing.Margins(${leftMargin}, ${rightMargin}, ${topMargin}, ${bottomMargin})
 $doc.PrintController = New-Object System.Drawing.Printing.StandardPrintController
 $doc.add_PrintPage({ param($sender, $event)
-  $g = $event.Graphics; $width = [Math]::Min($event.MarginBounds.Width, ${mainWidth}); $y = $event.MarginBounds.Top
+  $g = $event.Graphics; $width = [Math]::Max(120, [Math]::Min($event.MarginBounds.Width, ${mainWidth}) - 8); $y = $event.MarginBounds.Top
   $bodySize = ${bodyFontSize}; $sectionStarts = @{}
   foreach ($line in $lines) {
     $displayLine = $line; $style = [System.Drawing.FontStyle]::Regular; $size = $bodySize; $alignment = [System.Drawing.StringAlignment]::Center; $fontName = ''
@@ -238,22 +241,26 @@ $doc.add_PrintPage({ param($sender, $event)
       $style = if ($isHead) { [System.Drawing.FontStyle]::Bold } else { [System.Drawing.FontStyle]::Regular }
       $size = ${itemFontSize}
       $font = New-Object System.Drawing.Font('${fontFamily}', $size, $style)
-      $serialWidth = [Math]::Floor(${layout(settings.serialColumnWidth, 0, 40, 10)}); $qtyWidth = [Math]::Floor(${layout(settings.quantityColumnWidth, 8, 60, 20)}); $priceWidth = [Math]::Floor(${layout(settings.priceColumnWidth, 15, 100, 40)}); $amountWidth = [Math]::Floor(${layout(settings.amountColumnWidth, 15, 120, 55)}); $itemMinWidth = [Math]::Floor(${layout(settings.itemNameMinWidth, 50, 220, 110)}); $maxColumns = [Math]::Max(40, $width - $itemMinWidth); $columnTotal = $qtyWidth + $priceWidth + $amountWidth
-      if ($columnTotal -gt $maxColumns) { $scale = $maxColumns / $columnTotal; $qtyWidth = [Math]::Max(8, [Math]::Floor($qtyWidth * $scale)); $priceWidth = [Math]::Max(15, [Math]::Floor($priceWidth * $scale)); $amountWidth = [Math]::Max(15, $maxColumns - $qtyWidth - $priceWidth) }
-      $labelWidth = [Math]::Max(50, $width - $qtyWidth - $priceWidth - $amountWidth)
+      $serialWidth = [Math]::Floor(${layout(settings.serialColumnWidth, 0, 40, 10)}); $columnGap = 4; $qtyWidth = [Math]::Max(28, [Math]::Floor(${layout(settings.quantityColumnWidth, 8, 60, 20)})); $priceWidth = [Math]::Max(46, [Math]::Floor(${layout(settings.priceColumnWidth, 15, 100, 40)})); $amountWidth = [Math]::Max(60, [Math]::Floor(${layout(settings.amountColumnWidth, 15, 120, 55)})); $itemMinWidth = [Math]::Floor(${layout(settings.itemNameMinWidth, 50, 220, 110)}); $maxColumns = [Math]::Max(40, $width - $itemMinWidth); $columnTotal = $qtyWidth + $priceWidth + $amountWidth + ($columnGap * 2)
+      if ($columnTotal -gt $maxColumns) { $scale = $maxColumns / $columnTotal; $qtyWidth = [Math]::Max(25, [Math]::Floor($qtyWidth * $scale)); $priceWidth = [Math]::Max(40, [Math]::Floor($priceWidth * $scale)); $amountWidth = [Math]::Max(52, $maxColumns - $qtyWidth - $priceWidth - ($columnGap * 2)) }
+      $labelWidth = [Math]::Max(50, $width - $qtyWidth - $priceWidth - $amountWidth - ($columnGap * 2))
       $left = $event.MarginBounds.Left
       $near = New-Object System.Drawing.StringFormat; $near.Alignment = [System.Drawing.StringAlignment]::Near
       $right = New-Object System.Drawing.StringFormat; $right.Alignment = [System.Drawing.StringAlignment]::Far
       $label = if ($cells.Count -gt 0) { $cells[0] } else { '' }; $serial = ''
       if (-not $isHead -and $label -match '^(\\d+\\.\\s+)(.*)$') { $serial = $matches[1]; $label = $matches[2] }
       $contentLeft = $left; $contentWidth = $labelWidth
-      if ($serial) { $g.DrawString($serial, $font, [System.Drawing.Brushes]::Black, (New-Object System.Drawing.RectangleF($left, $y, $serialWidth, 999)), $near); $contentLeft += $serialWidth; $contentWidth = [Math]::Max(50, $labelWidth - $serialWidth) }
-      $labelHeight = $g.MeasureString($label, $font, $contentWidth, $near).Height
-      $rowHeight = [Math]::Max($labelHeight, $g.MeasureString('Ag', $font).Height)
-      $g.DrawString($label, $font, [System.Drawing.Brushes]::Black, (New-Object System.Drawing.RectangleF($contentLeft, $y, $contentWidth, $rowHeight + 4)), $near)
-      $g.DrawString($(if ($cells.Count -gt 1) { $cells[1] } else { '' }), $font, [System.Drawing.Brushes]::Black, (New-Object System.Drawing.RectangleF($left + $labelWidth, $y, $qtyWidth, $rowHeight + 4)), $right)
-      $g.DrawString($(if ($cells.Count -gt 2) { $cells[2] } else { '' }), $font, [System.Drawing.Brushes]::Black, (New-Object System.Drawing.RectangleF($left + $labelWidth + $qtyWidth, $y, $priceWidth, $rowHeight + 4)), $right)
-      $g.DrawString($(if ($cells.Count -gt 3) { $cells[3] } else { '' }), $font, [System.Drawing.Brushes]::Black, (New-Object System.Drawing.RectangleF($left + $labelWidth + $qtyWidth + $priceWidth, $y, $amountWidth, $rowHeight + 4)), $right)
+      if ($serial) { $g.DrawString($serial, $font, [System.Drawing.Brushes]::Black, [single]$left, [single]$y); $contentLeft += $serialWidth; $contentWidth = [Math]::Max(50, $labelWidth - $serialWidth) }
+      $labelLines = New-Object System.Collections.Generic.List[string]; $pending = ''
+      foreach ($word in $label.Split(' ')) { $candidate = if ($pending) { "$pending $word" } else { $word }; if ($pending -and $g.MeasureString($candidate, $font).Width -gt $contentWidth) { $labelLines.Add($pending); $pending = $word } else { $pending = $candidate } }
+      if ($pending) { $labelLines.Add($pending) }; if ($labelLines.Count -eq 0) { $labelLines.Add('') }
+      $lineHeight = [Math]::Ceiling($g.MeasureString('Ag', $font).Height); $rowHeight = [Math]::Max($labelLines.Count * $lineHeight, $lineHeight)
+      for ($labelIndex = 0; $labelIndex -lt $labelLines.Count; $labelIndex++) { $g.DrawString($labelLines[$labelIndex], $font, [System.Drawing.Brushes]::Black, [single]$contentLeft, [single]($y + ($labelIndex * $lineHeight))) }
+      $qtyText = if ($cells.Count -gt 1) { $cells[1] } else { '' }; $priceText = if ($cells.Count -gt 2) { $cells[2] } else { '' }; $amountText = if ($cells.Count -gt 3) { $cells[3] } else { '' }
+      $qtyX = $left + $labelWidth + $qtyWidth - $g.MeasureString($qtyText, $font).Width; $priceX = $left + $labelWidth + $qtyWidth + $columnGap + $priceWidth - $g.MeasureString($priceText, $font).Width; $amountX = $left + $labelWidth + $qtyWidth + $columnGap + $priceWidth + $columnGap + $amountWidth - $g.MeasureString($amountText, $font).Width
+      $g.DrawString($qtyText, $font, [System.Drawing.Brushes]::Black, [single]$qtyX, [single]$y)
+      $g.DrawString($priceText, $font, [System.Drawing.Brushes]::Black, [single]$priceX, [single]$y)
+      $g.DrawString($amountText, $font, [System.Drawing.Brushes]::Black, [single]$amountX, [single]$y)
       $y += [Math]::Ceiling($rowHeight) + $(if ($isHead) { 5 } else { ${itemGap} }); $font.Dispose(); $near.Dispose(); $right.Dispose(); continue
     }
     if ($line.StartsWith('__COMPACTHEAD__') -or $line.StartsWith('__COMPACTITEM__')) {
@@ -288,8 +295,9 @@ $doc.add_PrintPage({ param($sender, $event)
       if ($isTotal -and ${paperWidth} -eq 80) { $rowWidth = [Math]::Min($width, ${grandTotalWidth}); $left += [Math]::Max(0, ($width - $rowWidth) / 2) } else { $rowWidth = $width }
       $near = New-Object System.Drawing.StringFormat; $near.Alignment = [System.Drawing.StringAlignment]::Near; $right = New-Object System.Drawing.StringFormat; $right.Alignment = [System.Drawing.StringAlignment]::Far
       $height = $g.MeasureString('Ag', $font).Height
-      $g.DrawString($(if ($cells.Count) { $cells[0] } else { '' }), $font, [System.Drawing.Brushes]::Black, (New-Object System.Drawing.RectangleF($left, $y, $rowWidth * .65, $height + 4)), $near)
-      $g.DrawString($(if ($cells.Count -gt 1) { $cells[1] } else { '' }), $font, [System.Drawing.Brushes]::Black, (New-Object System.Drawing.RectangleF($left + ($rowWidth * .65), $y, $rowWidth * .35, $height + 4)), $right)
+      $summaryLeft = if ($cells.Count) { $cells[0] } else { '' }; $summaryRight = if ($cells.Count -gt 1) { $cells[1] } else { '' }
+      $summaryLine = if ($isTotal) { ('{0}: {1}' -f $summaryLeft, $summaryRight) } else { ('{0}    {1}' -f $summaryLeft, $summaryRight) }
+      $g.DrawString($summaryLine, $font, [System.Drawing.Brushes]::Black, [single]$left, [single]$y)
       $y += [Math]::Ceiling($height) + $(if ($isTotal) { 6 } else { 3 }); $font.Dispose(); $near.Dispose(); $right.Dispose(); continue
     }
     if ($line.StartsWith('__KOTHEADER__')) { $displayLine = $line.Substring(13); $style = [System.Drawing.FontStyle]::${headerStyle}; $size = ${kotHeaderFontSize} }
@@ -407,7 +415,7 @@ function billText(payload) {
   const totals = [`__SUMMARY__Total Qty: ${quantity}|Sub Total: ${money(subtotal)}`, walletDiscount ? `__SUMMARY__Points discount|-${money(walletDiscount)}` : ''];
   const defaultHeader='Colva Goa\n9922853605 / 9049558369\n[Follow] Insta ID:\nred_lantern_restaurant';
   const defaultFooter='Thank you for choosing us!\nKindly leave us a review\nGoogle | Zomato | Swiggy';
-  return [settings.reprint ? '__CENTER__*** REPRINT ***' : '', '__SECTIONSTART__header', settings.showRestaurantName === false ? '' : `__BILLTITLE__${settings.restaurantName || 'Red Lantern Restaurant'}`, `__BILLHEADER__${settings.receiptHeader || defaultHeader}`, `__SECTIONEND__header|${sectionHeight('billHeaderHeight',173)}`, line, '__SECTIONSTART__name', `__META__${customerLine}`, `__SECTIONEND__name|${sectionHeight('billNameRowHeight',30)}`, line, '__SECTIONSTART__details', ...details.slice(2, -1), `__SECTIONEND__details|${sectionHeight('billDetailsHeight',83)}`, line, '__SECTIONSTART__itemHeader', itemHeader, `__SECTIONEND__itemHeader|${sectionHeight('billItemHeaderHeight',23)}`, line, ...itemRows, line, '__SECTIONSTART__summary', ...totals, `__SECTIONEND__summary|${sectionHeight('billSummaryHeight',26)}`, `__TOTAL__GRAND TOTAL|${money(total)}`, line, '__SECTIONSTART__footer', `__FOOTER__${settings.receiptFooter || defaultFooter}`, `__SECTIONEND__footer|${sectionHeight('billFooterHeight',81)}`, '\n\n\n'].filter(Boolean).join('\n');
+  return [settings.reprint ? '__CENTER__*** REPRINT ***' : '', settings.showRestaurantName === false ? '' : `__BILLTITLE__${settings.restaurantName || 'Red Lantern Restaurant'}`, `__BILLHEADER__${settings.receiptHeader || defaultHeader}`, line, `__META__${customerLine}`, line, ...details.slice(2, -1), line, itemHeader, line, ...itemRows, line, ...totals, `__TOTAL__GRAND TOTAL|${money(total)}`, line, `__FOOTER__${settings.receiptFooter || defaultFooter}`, '\n\n\n'].filter(Boolean).join('\n');
 }
 
 function allowedOrigin(request) {

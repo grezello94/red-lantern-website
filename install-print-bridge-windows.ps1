@@ -12,12 +12,13 @@ $node = if (Test-Path -LiteralPath $bundledNode) { $bundledNode } else { (Get-Co
 $nodeMajor = (& $node -p "process.versions.node.split('.')[0]")
 if ([int]$nodeMajor -lt 22) { throw "Node.js 22 or newer is required. This computer has $(& $node -v). Install a supported Node.js LTS release, then run this setup again." }
 try {
-  if ((Invoke-WebRequest -UseBasicParsing -TimeoutSec 1 'http://127.0.0.1:9124/health').StatusCode -eq 200) {
-    Write-Host 'Print Bridge is already running. No setup changes were made.'
-    exit 0
+  # An installer run is also an upgrade. Stop the old Node process first so it
+  # cannot keep serving an older receipt renderer from memory.
+  $existing = Get-ScheduledTask -TaskName 'Red Lantern Print Bridge' -ErrorAction SilentlyContinue
+  if ($existing) {
+    Stop-ScheduledTask -TaskName 'Red Lantern Print Bridge' -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 500
   }
-} catch { }
-try {
   $action = New-ScheduledTaskAction -Execute $node -Argument ('"{0}"' -f $bridge) -WorkingDirectory $project
   $trigger = New-ScheduledTaskTrigger -AtLogOn
   # Keep the Bridge alive like a desktop utility. The defaults can stop a task

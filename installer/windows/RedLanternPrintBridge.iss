@@ -1,5 +1,5 @@
 #define AppName "Red Lantern Print Bridge"
-#define AppVersion "1.0.0"
+#define AppVersion "1.0.5"
 #ifndef NodeRuntime
   #error NodeRuntime must point to a Node.js 22 node.exe file
 #endif
@@ -9,6 +9,7 @@ AppId={{1B8F76A8-98CE-494E-98B0-05F248445E6B}
 AppName={#AppName}
 AppVersion={#AppVersion}
 DefaultDirName={autopf}\Red Lantern Print Bridge
+PrivilegesRequired=admin
 DisableProgramGroupPage=yes
 OutputDir=..\..\releases
 OutputBaseFilename=Red-Lantern-Print-Bridge-Windows-Setup
