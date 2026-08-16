@@ -2489,6 +2489,7 @@ app.put('/api/orders/operations', async (req, res) => { try {
       showRestaurantName:printer.showRestaurantName!==false,
       showItemSerial:!!printer.showItemSerial,
       showCustomer:printer.showCustomer!==false,
+      kotDetailsCentered:!!printer.kotDetailsCentered,
       quantityFirst:printer.quantityFirst!==false,
       showNotes:printer.showNotes!==false,
       extraSpace:Math.max(0,Math.min(2,Number(printer.extraSpace)||0)),

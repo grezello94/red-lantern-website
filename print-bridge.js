@@ -302,6 +302,8 @@ $doc.add_PrintPage({ param($sender, $event)
     }
     if ($line.StartsWith('__KOTHEADER__')) { $displayLine = $line.Substring(13); $style = [System.Drawing.FontStyle]::${headerStyle}; $size = ${kotHeaderFontSize} }
     elseif ($line.StartsWith('__KOTTITLE__')) { $displayLine = $line.Substring(12); $style = [System.Drawing.FontStyle]::${headerStyle}; $size = ${kotTitleFontSize} }
+    elseif ($line.StartsWith('__KOTCENTERMETABOLD__')) { $displayLine = $line.Substring(21); $alignment = [System.Drawing.StringAlignment]::Center; $style = [System.Drawing.FontStyle]::Bold; $size = ${kotMetaFontSize} }
+    elseif ($line.StartsWith('__KOTCENTERMETA__')) { $displayLine = $line.Substring(17); $alignment = [System.Drawing.StringAlignment]::Center; $size = ${kotMetaFontSize} }
     elseif ($line.StartsWith('__KOTMETA__')) { $displayLine = $line.Substring(11); $alignment = [System.Drawing.StringAlignment]::Near; $size = ${kotMetaFontSize} }
     elseif ($line.StartsWith('__KOTMETABOLD__')) { $displayLine = $line.Substring(15); $alignment = [System.Drawing.StringAlignment]::Near; $style = [System.Drawing.FontStyle]::Bold; $size = ${kotMetaFontSize} }
     elseif ($line.StartsWith('__KOTITEM__')) { $displayLine = $line.Substring(11); $alignment = [System.Drawing.StringAlignment]::Near; $size = ${kotItemFontSize} }
@@ -379,7 +381,8 @@ function kotText(payload) {
   const rows = items.flatMap((item, index) => [`__KOTITEM__${settings.showItemSerial ? `${index + 1}. ` : ''}${quantityFirst ? `${Number(item.quantity || 0)}x ` : ''}${labels[index]}${quantityFirst ? '' : ` · ${Number(item.quantity || 0)}x`}`, item.note ? `__KOTNOTE__↳ ${item.note}` : ''].filter(Boolean));
   const sourceLine = order.fulfillment ? `From: ${order.fulfillment}` : `Order #${order.number || order.id || '—'}`;
   const bottomLines = Math.max(0, Math.min(12, Number(settings.kotBottomFeedLines) || 3)) + Math.max(0, Math.min(2, Number(settings.extraSpace) || 0)) * 2;
-  return [`__KOTTITLE__${String(payload.printerLabel || payload.printerName || 'Kitchen').trim()}`, order.reprint ? '__KOTMETABOLD__*** REPRINT ***' : '', line, `__KOTMETABOLD__KOT #${order.kotNumber || '—'}`, `__KOTMETA__${sourceLine}`, settings.showCustomer !== false ? `__KOTMETA__${guestLine}` : '', line, ...rows, order.note && settings.showNotes !== false ? `${line}\n__KOTNOTE__Note: ${order.note}` : '', line, '\n'.repeat(bottomLines)].filter(Boolean).join('\n');
+  const meta = settings.kotDetailsCentered ? '__KOTCENTERMETA__' : '__KOTMETA__', metaBold = settings.kotDetailsCentered ? '__KOTCENTERMETABOLD__' : '__KOTMETABOLD__';
+  return [`__KOTTITLE__${String(payload.printerLabel || payload.printerName || 'Kitchen').trim()}`, order.reprint ? `${metaBold}*** REPRINT ***` : '', line, `${metaBold}KOT #${order.kotNumber || '—'}`, `${meta}${sourceLine}`, settings.showCustomer !== false ? `${meta}${guestLine}` : '', line, ...rows, order.note && settings.showNotes !== false ? `${line}\n__KOTNOTE__Note: ${order.note}` : '', line, '\n'.repeat(bottomLines)].filter(Boolean).join('\n');
 }
 function billText(payload) {
   const order = payload.order || {}, settings = payload.settings || {}, items = Array.isArray(order.items) ? order.items : [], line = '__SEPARATOR__';
