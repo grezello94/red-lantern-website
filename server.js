@@ -2476,6 +2476,7 @@ app.put('/api/orders/operations', async (req, res) => { try {
     return {
       id:String(printer.id||crypto.randomUUID()).replace(/[^a-zA-Z0-9_-]/g,'').slice(0,60),
       name:String(printer.name||'').trim().slice(0,60),
+      restaurantName:String(printer.restaurantName||'Red Lantern Restaurant').trim().slice(0,60),
       type:printer.type==='bill'?'bill':'kot',
       connection:'system',
       host:String(printer.host||'').trim().slice(0,253),
