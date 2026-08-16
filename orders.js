@@ -982,7 +982,7 @@ function renderPrinterManagement() {
           typography.append(spacing);
         }
         grid.insertBefore(typography, anchor);
-        if (printer.type === 'kot') { document.getElementById('printer-edit-header')?.closest('label')?.remove(); document.getElementById('printer-edit-footer')?.closest('label')?.remove(); }
+        if (printer.type === 'kot') { ['printer-edit-header','printer-edit-footer','printer-edit-show-name','printer-edit-footer-bold','printer-edit-kotHeaderFontSize','printer-edit-kotFooterFontSize'].forEach((id) => document.getElementById(id)?.closest('label')?.remove()); }
       }
     }
     return;
