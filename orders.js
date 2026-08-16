@@ -911,16 +911,20 @@ function renderPrinterManagement() {
             paper.style.setProperty('--bottom', `${Math.min(30, value('billingOuterBottom')) / 3}px`);
             paper.style.setProperty('--receipt-font', typography.querySelector('#printer-edit-font-family')?.value || 'Arial');
             preview.querySelector('[data-rp-name]').textContent = String(typography.querySelector('#printer-edit-restaurant-name')?.value || 'Red Lantern Restaurant');
-            paper.style.width = `${Math.max(180, Math.min(280, value('billingMainWidth',250))) }px`;
-            preview.querySelector('[data-rp-name]').style.fontSize = `${Math.max(10, Math.min(20, value('restaurantNameFontSize',15))) }px`;
+            // Windows renders the receipt in points (1pt = 1.333 CSS px at
+            // 96dpi) and reserves an 8-unit safe edge. Mirror that geometry
+            // so the browser preview wraps at the same points as the print.
+            paper.style.width = `${Math.max(180, Math.min(280, value('billingMainWidth',250) - 8)) }px`;
+            const previewPoints = (points, min, max) => Math.max(min, Math.min(max, points)) * 1.333;
+            preview.querySelector('[data-rp-name]').style.fontSize = `${previewPoints(value('restaurantNameFontSize',15),10,20)}px`;
             preview.querySelector('[data-rp-name]').style.display = document.getElementById('printer-edit-show-name')?.checked === false ? 'none' : '';
             preview.querySelector('[data-rp-name]').style.fontWeight = document.getElementById('printer-edit-header-bold')?.checked === false ? '400' : '800';
-            preview.querySelector('[data-rp-header]').style.fontSize = `${Math.max(8, Math.min(14, value('headerFooterFontSize',10))) }px`;
-            preview.querySelector('[data-rp-date]').style.fontSize = `${Math.max(8, Math.min(14, value('dateBillFontSize',10))) }px`;
-            preview.querySelectorAll('.rp-table').forEach((row) => row.style.fontSize = `${Math.max(8, Math.min(10, value('itemListingFontSize',10))) }px`);
+            preview.querySelector('[data-rp-header]').style.fontSize = `${previewPoints(value('headerFooterFontSize',10),8,14)}px`;
+            preview.querySelector('[data-rp-date]').style.fontSize = `${previewPoints(value('dateBillFontSize',10),8,14)}px`;
+            preview.querySelectorAll('.rp-table').forEach((row) => row.style.fontSize = `${previewPoints(value('itemListingFontSize',10),8,10)}px`);
             preview.querySelectorAll('.rp-table:not(.rp-head)').forEach((row) => { row.style.minHeight=`${Math.max(0, value('billingItemBoxHeight')) / 3}px`; row.style.marginBottom=`${Math.max(0, value('itemRowGap',5)) / 3}px`; });
             preview.querySelectorAll('.rp-rule').forEach((rule) => { rule.style.margin=`${Math.max(0, value('separatorGap',5)) / 2}px 0`; rule.style.height=`${Math.max(1, Math.min(4, value('separatorThickness',1)))}px`; });
-            preview.querySelector('[data-rp-grand]').style.fontSize = `${Math.max(10, Math.min(11, value('grandTotalFontSize',11))) }px`;
+            preview.querySelector('[data-rp-grand]').style.fontSize = `${previewPoints(value('grandTotalFontSize',11),10,11)}px`;
             preview.querySelector('[data-rp-footer]').style.fontWeight = document.getElementById('printer-edit-footer-bold')?.checked ? '800' : '400';
             preview.querySelector('[data-rp-header]').innerHTML = String(document.getElementById('printer-edit-header')?.value || defaultBillHeader).replace(/\n/g,'<br>');
             preview.querySelector('[data-rp-footer]').innerHTML = String(document.getElementById('printer-edit-footer')?.value || defaultBillFooter).replace(/\n/g,'<br>');
