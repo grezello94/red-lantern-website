@@ -982,6 +982,7 @@ function renderPrinterManagement() {
           typography.append(spacing);
         }
         grid.insertBefore(typography, anchor);
+        if (printer.type === 'kot') { document.getElementById('printer-edit-header')?.closest('label')?.remove(); document.getElementById('printer-edit-footer')?.closest('label')?.remove(); }
       }
     }
     return;
