@@ -1,0 +1,9 @@
+{
+  "name":"Red Lantern Captain",
+  "short_name":"Captain",
+  "start_url":"/captain",
+  "display":"standalone",
+  "background_color":"#f3f6fa",
+  "theme_color":"#8e1830",
+  "icons":[{"src":"/images/red-lantern-logo-600.webp","sizes":"600x600","type":"image/webp","purpose":"any maskable"}]
+}

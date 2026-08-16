@@ -8,13 +8,13 @@
   },
   "scripts": {
     "minify:css": "cleancss -o style.min.css style.css",
-    "check": "node --check server.js && node --check admin-cms.js && node --check air-menu.js && node --check orders.js && node --check print-bridge.js && node --check orders-sw.js",
+    "check": "node --check server.js && node --check admin-cms.js && node --check air-menu.js && node --check captain.js && node --check orders.js && node --check print-bridge.js && node --check orders-sw.js",
     "bundle:print-bridge": "bash scripts/build-print-bridge-bundles.sh",
     "package:bridge:macos": "bash scripts/package-print-bridge-macos.sh",
     "package:bridge:windows": "powershell -ExecutionPolicy Bypass -File scripts/package-print-bridge-windows.ps1",
     "build": "npm run check && npm run minify:css && npm run bundle:print-bridge",
-    "start": "node server.js",
-    "dev": "node server.js",
+    "start": "node --env-file-if-exists=.env server.js",
+    "dev": "node --env-file-if-exists=.env server.js",
     "print-bridge": "node print-bridge.js",
     "test": "npm run build && node scripts/test-print-bridge.js"
   },
