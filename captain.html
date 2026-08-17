@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <title>Captain · Red Lantern</title>
   <link rel="stylesheet" href="/captain.css?v=2">
-  <link rel="stylesheet" href="/captain-ux.css?v=43">
+  <link rel="stylesheet" href="/captain-ux.css?v=44">
 </head>
 <body>
   <header class="captain-header">
@@ -71,9 +71,9 @@
   </main>
   <button id="basket-bar" class="basket-bar" type="button" hidden aria-label="View current order"><span class="basket-copy"><small>Current order</small><b id="cart-count">0 items</b></span><i aria-hidden="true">⌑</i><b id="basket-total">₹0</b><strong>Review <span aria-hidden="true">→</span></strong></button>
   <div id="captain-toast" class="captain-toast" hidden role="status" aria-live="polite"></div>
-  <dialog id="choice-sheet" class="choice-sheet"><div class="sheet-head"><div><span class="eyebrow">CUSTOMISE</span><h2 id="choice-title">Choose option</h2></div><button type="button" id="choice-close" class="icon-button" aria-label="Close">×</button></div><div id="choice-options" class="choice-options"></div><fieldset id="style-options" class="style-options" hidden><legend>Preparation</legend><label><input type="radio" name="captain-style" value="" checked> Regular</label><label><input type="radio" name="captain-style" value="gravy"> Gravy <small>+₹10</small></label><label><input type="radio" name="captain-style" value="semi-gravy"> Semi-gravy <small>+₹10</small></label></fieldset><label class="item-note">Kitchen note <input id="choice-note" maxlength="80" placeholder="e.g. less spicy, no onion"></label><button type="button" id="choice-add" class="send-button">Add item</button></dialog>
+  <dialog id="choice-sheet" class="choice-sheet"><div class="sheet-head"><div><span class="eyebrow">CUSTOMISE</span><h2 id="choice-title">Choose option</h2></div><button type="button" id="choice-close" class="icon-button" aria-label="Close">×</button></div><p id="choice-helper" class="choice-helper">Choose a portion to add.</p><div id="choice-options" class="choice-options"></div><fieldset id="style-options" class="style-options" hidden><legend>Preparation</legend><label><input type="radio" name="captain-style" value="" checked> Regular</label><label><input type="radio" name="captain-style" value="gravy"> Gravy <small>+₹10</small></label><label><input type="radio" name="captain-style" value="semi-gravy"> Semi-gravy <small>+₹10</small></label></fieldset><label class="item-note">Kitchen note <input id="choice-note" maxlength="80" placeholder="e.g. less spicy, no onion"></label><button type="button" id="choice-add" class="send-button">Add item</button></dialog>
   <dialog id="category-sheet" class="category-sheet"><div class="sheet-head"><div><span class="eyebrow">MENU</span><h2>Choose category</h2></div><button type="button" id="category-close" class="icon-button" aria-label="Close menu categories">×</button></div><div id="category-picker-list" class="category-picker-list"></div></dialog>
-<script src="/captain.js?v=41"></script>
+<script src="/captain.js?v=42"></script>
   <script>
     if ('serviceWorker' in navigator) {
       let reloadedForCaptainWorker = false;
