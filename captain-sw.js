@@ -1,9 +1,11 @@
-// Keep the Captain app installable, but never serve a stale login page or
-// JavaScript bundle. Staff access always comes from the current server build.
-const CACHE = 'red-lantern-captain-v6';
+// Offline app shell only. Live operational data is handled by Captain's
+// account-scoped snapshot in local storage, never cached as a shared API response.
+const CACHE = 'red-lantern-captain-v7';
 const STATIC_ASSETS = [
+  '/captain',
   '/captain.css',
   '/captain-ux.css',
+  '/captain.js',
   '/captain.webmanifest',
   '/images/red-lantern-logo-600.webp'
 ];
@@ -36,9 +38,10 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(request.url);
   if (request.method !== 'GET' || url.origin !== self.location.origin) return;
 
-  // HTML, scripts and all APIs must always be fetched fresh. Caching these was
-  // the source of a login screen that had no corresponding Captain account.
-  const isStaticAsset = /\/(captain(?:-ux)?\.css|captain\.webmanifest)$/.test(url.pathname)
+  // API responses stay network-only. The shell is network-first so releases
+  // arrive immediately, with a cache fallback only when the device is offline.
+  const isStaticAsset = url.pathname === '/captain'
+    || /\/(captain(?:-ux)?\.css|captain\.js|captain\.webmanifest)$/.test(url.pathname)
     || url.pathname === '/images/red-lantern-logo-600.webp';
   if (!isStaticAsset) return;
 
@@ -48,6 +51,6 @@ self.addEventListener('fetch', (event) => {
         if (response.ok) caches.open(CACHE).then((cache) => cache.put(request, response.clone()));
         return response;
       })
-      .catch(() => caches.match(request).then((cached) => cached || Response.error()))
+      .catch(() => caches.open(CACHE).then((cache) => cache.match(request, { ignoreSearch: true })).then((cached) => cached || Response.error()))
   );
 });

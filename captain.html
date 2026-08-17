@@ -8,14 +8,14 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <title>Captain · Red Lantern</title>
   <link rel="stylesheet" href="/captain.css?v=2">
-  <link rel="stylesheet" href="/captain-ux.css?v=32">
+  <link rel="stylesheet" href="/captain-ux.css?v=37">
 </head>
 <body>
   <header class="captain-header">
     <a class="brand" href="/captain" aria-label="Captain home"><img src="/images/red-lantern-logo-600.webp" alt=""><span><small>Red Lantern Restaurant</small><strong>Captain</strong></span></a>
-    <div class="header-tools"><span id="captain-clock"></span><button id="captain-nav-toggle" class="captain-nav-toggle" type="button" aria-label="Open Captain menu" hidden>☰</button><button id="captain-profile" class="captain-profile" type="button" hidden></button><a href="/orders" title="Open billing console">▣ <span>Console</span></a></div>
+    <div class="header-tools"><time id="captain-clock" class="captain-clock"></time><span class="header-divider" aria-hidden="true"></span><button id="captain-nav-toggle" class="captain-nav-toggle" type="button" aria-label="Open Captain menu" hidden><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span></button><button id="captain-profile" class="captain-profile" type="button" hidden></button><a href="/orders" title="Open billing console"><i class="console-icon" aria-hidden="true"></i><span>Console</span></a></div>
   </header>
-  <aside id="captain-nav" class="captain-nav" hidden aria-label="Captain navigation"><div class="captain-nav-backdrop" data-captain-nav-close></div><section><header><div><span class="eyebrow">CAPTAIN SHIFT</span><b id="captain-nav-name">Captain</b><small id="captain-nav-status">Live service</small></div><button type="button" data-captain-nav-close aria-label="Close Captain menu">×</button></header><div id="captain-nav-summary" class="captain-nav-summary"></div><div id="captain-nav-links" class="captain-nav-links"><button type="button" data-captain-nav-screen="tables"><span>▦</span><div><b>Table board</b><small>Choose a table or start a new order</small></div><i>›</i></button><button type="button" data-captain-nav-screen="review"><span>⌑</span><div><b>Current order</b><small id="captain-nav-cart">No items in cart</small></div><i>›</i></button></div><div class="captain-nav-ready"><div><b>Ready to serve</b><small>Kitchen updates assigned to you</small></div><div id="captain-nav-ready-list"></div></div><div class="captain-nav-active"><div><b>My active tables</b><small>Orders created by your Captain account</small></div><div id="captain-nav-active-list"></div></div><button id="captain-nav-signout" class="captain-nav-signout" type="button">Sign out</button></section></aside>
+  <aside id="captain-nav" class="captain-nav" hidden aria-label="Captain navigation"><div class="captain-nav-backdrop" data-captain-nav-close></div><section><header><div><span class="eyebrow">CAPTAIN SHIFT</span><b id="captain-nav-name">Captain</b><small id="captain-nav-status">Live service</small></div><button type="button" data-captain-nav-close aria-label="Close Captain menu">×</button></header><div id="captain-nav-summary" class="captain-nav-summary"></div><div id="captain-nav-links" class="captain-nav-links"><button type="button" data-captain-nav-screen="tables"><span>▦</span><div><b>Table board</b><small>Choose a table or start a new order</small></div><i>›</i></button><button type="button" data-captain-nav-screen="review"><span>⌑</span><div><b>Current order</b><small id="captain-nav-cart">No items in cart</small></div><i>›</i></button></div><div id="captain-nav-conflicts" class="captain-nav-conflicts" hidden><div><b>Orders needing review</b><small>Another device updated the same table while you were offline.</small></div><div id="captain-nav-conflict-list" class="captain-nav-conflict-list"></div></div><div class="captain-nav-ready"><div><b>Ready to serve</b><small>Kitchen updates assigned to you</small></div><div id="captain-nav-ready-list"></div></div><div class="captain-nav-active"><div><b>My active tables</b><small>Orders created by your Captain account</small></div><div id="captain-nav-active-list"></div></div><button id="captain-nav-signout" class="captain-nav-signout" type="button">Sign out</button></section></aside>
   <section id="captain-login" class="captain-login" aria-labelledby="captain-login-title">
     <div class="captain-login-card">
       <img src="/images/red-lantern-logo-600.webp" alt="Red Lantern Restaurant">
@@ -73,7 +73,7 @@
   <div id="captain-toast" class="captain-toast" hidden role="status" aria-live="polite"></div>
   <dialog id="choice-sheet" class="choice-sheet"><div class="sheet-head"><div><span class="eyebrow">CUSTOMISE</span><h2 id="choice-title">Choose option</h2></div><button type="button" id="choice-close" class="icon-button" aria-label="Close">×</button></div><div id="choice-options" class="choice-options"></div><fieldset id="style-options" class="style-options" hidden><legend>Preparation</legend><label><input type="radio" name="captain-style" value="" checked> Regular</label><label><input type="radio" name="captain-style" value="gravy"> Gravy <small>+₹10</small></label><label><input type="radio" name="captain-style" value="semi-gravy"> Semi-gravy <small>+₹10</small></label></fieldset><label class="item-note">Kitchen note <input id="choice-note" maxlength="80" placeholder="e.g. less spicy, no onion"></label><button type="button" id="choice-add" class="send-button">Add item</button></dialog>
   <dialog id="category-sheet" class="category-sheet"><div class="sheet-head"><div><span class="eyebrow">MENU</span><h2>Choose category</h2></div><button type="button" id="category-close" class="icon-button" aria-label="Close menu categories">×</button></div><div id="category-picker-list" class="category-picker-list"></div></dialog>
-<script src="/captain.js?v=32"></script>
+<script src="/captain.js?v=38"></script>
   <script>
     if ('serviceWorker' in navigator) {
       let reloadedForCaptainWorker = false;
@@ -83,7 +83,7 @@
           window.location.reload();
         }
       });
-      navigator.serviceWorker.register('/captain-sw.js?v=6').then((registration) => {
+      navigator.serviceWorker.register('/captain-sw.js?v=7').then((registration) => {
         registration.update().catch(() => {});
         if (registration.waiting) registration.waiting.postMessage({ type: 'SKIP_WAITING' });
       }).catch(() => {});

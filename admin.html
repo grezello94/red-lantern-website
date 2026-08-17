@@ -114,7 +114,7 @@
       .tab-content { display: none; animation: fadeIn 0.3s ease; }
       .tab-content.active { display: block; }
       @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-      @media (max-width: 760px) { .sidebar { position: static; width: 100%; height: auto; } body { display: block; } .main-content { margin-left: 0; padding: 24px 16px; } .form-grid, .qr-grid, .air-import-grid, .service-sessions, .closure-fields { grid-template-columns: 1fr; } #tab-air-menu .header { padding: 22px; align-items: flex-start; } #tab-air-menu .header h1 { font-size: 30px; } .air-import-card { min-height: 0; } .category-control-row { grid-template-columns: 1fr; gap: 10px; } .scan-stats { grid-template-columns:repeat(2,1fr); } .scan-entry { grid-template-columns:1fr; } #tab-air-menu .hours-card { padding:20px; } .hours-heading,.closure-panel-head { flex-direction:column; } .closure-switch { align-self:flex-start; } }
+      @media (max-width: 760px) { .sidebar { position: static; width: 100%; height: auto; } body { display: block; } .main-content { margin-left: 0; padding: 24px 16px; } .form-grid, .qr-grid, .air-import-grid, .service-sessions, .closure-fields { grid-template-columns: 1fr; } #tab-air-menu .header { padding: 22px; align-items: flex-start; } #tab-air-menu .header h1 { font-size: 30px; } .air-import-card { min-height: 0; } .category-control-row { grid-template-columns: 1fr; gap: 10px; } .scan-stats { grid-template-columns:repeat(2,1fr); } .scan-entry { grid-template-columns:1fr; } #tab-air-menu .hours-card { padding:20px; } .hours-heading,.closure-panel-head { flex-direction:column; } .closure-switch { align-self:flex-start; } .air-sheet-collapse summary{min-height:70px;padding:13px 15px!important}.air-sheet-collapse summary h2{gap:9px;font-size:15px}.air-sheet-collapse summary h2 small{font-size:10px}.air-sheet-summary-end b{display:none}.air-sheet-collapse> .help-text{margin:0 15px 14px;font-size:12px}.sheet-icon{width:32px;height:32px} }
       
       /* Rich Text Editor Mock Styles */
       .rich-text-editor { border: 1px solid #d1d5db; border-radius: 8px; overflow: hidden; background: #f9fafb; margin-top: 8px; transition: border 0.2s; }
@@ -132,11 +132,20 @@
       .growth-ai-button:disabled { opacity: 0.65; cursor: wait; }
       .growth-ai-status { margin-top: 12px; color: #6b7280; font-size: 14px; font-weight: 700; }
       /* Air Menu workspace */
-      .air-sheet-collapse { min-height:0; padding:0 !important; margin-bottom:12px !important; overflow:hidden; }
-      .air-sheet-collapse summary { display:flex; min-height:0; align-items:center; justify-content:space-between; gap:16px; padding:13px 22px !important; cursor:pointer; list-style:none; }
+      .air-sheet-collapse { min-height:0; padding:0 !important; margin-bottom:14px !important; overflow:hidden; border:1px solid #e3eaf2; border-radius:17px !important; background:#fff; box-shadow:0 9px 24px rgba(27,45,71,.05); transition:border-color .18s ease,box-shadow .18s ease; }
+      .air-sheet-collapse[open] { border-color:#bcd2eb; box-shadow:0 13px 30px rgba(27,65,110,.10); }
+      .air-sheet-collapse summary { display:flex; min-height:76px; align-items:center; justify-content:space-between; gap:16px; padding:15px 22px !important; cursor:pointer; list-style:none; }
       .air-sheet-collapse summary::-webkit-details-marker { display:none; }
-      .air-sheet-collapse summary h2 { display:flex; align-items:center; gap:10px; margin:0; font-size:18px; }
-      .sheet-icon { display:grid; width:30px; height:30px; place-items:center; border-radius:9px; color:#7d1e35; background:#fff0f1; }.sheet-icon svg { width:18px; height:18px; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }.bar-sheet .sheet-icon { color:#81511d; background:#fff5df; }.air-menu-sheet .sheet-icon { color:#2463a7; background:#edf6ff; }
+      .air-sheet-collapse summary h2 { display:flex; align-items:center; gap:12px; margin:0; font-size:18px; }.air-sheet-collapse summary h2 span{display:grid;gap:4px}.air-sheet-collapse summary h2 small{color:#75869b;font-size:12px;font-weight:650;line-height:1.35}
+      .air-sheet-summary-end{display:flex;align-items:center;gap:12px;color:#58708d}.air-sheet-summary-end b{padding:7px 10px;border:1px solid #dce7f2;border-radius:999px;color:#51677f;background:#f8fbff;font-size:11px;white-space:nowrap}.air-sheet-summary-end i{display:grid;width:30px;height:30px;place-items:center;border-radius:50%;color:#7d1e35;background:#fff2f4;font-size:21px;font-style:normal;transition:transform .2s ease}.air-sheet-collapse[open] .air-sheet-summary-end i{transform:rotate(180deg)}.bar-sheet .air-sheet-summary-end i{color:#81511d;background:#fff5df}.air-sheet-collapse> .help-text{display:block;margin:0 22px 18px;padding:12px 14px;border-left:3px solid #cbdcf0;border-radius:0 9px 9px 0;background:#f7faff;line-height:1.5}
+      .sheet-icon { display:grid; width:36px; height:36px; place-items:center; border-radius:11px; color:#7d1e35; background:#fff0f1; }.sheet-icon svg { width:19px; height:19px; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }.bar-sheet .sheet-icon { color:#81511d; background:#fff5df; }.air-menu-sheet .sheet-icon { color:#2463a7; background:#edf6ff; }
+      /* Keep the spreadsheet accordions to one deliberate, right-aligned disclosure control. */
+      #tab-air-menu details.air-sheet-collapse > summary { display:flex !important; width:100%; box-sizing:border-box; list-style:none !important; }
+      #tab-air-menu details.air-sheet-collapse > summary::marker { content:""; display:none; }
+      #tab-air-menu details.air-sheet-collapse > summary::-webkit-details-marker { display:none; }
+      #tab-air-menu .air-sheet-collapse summary h2 { flex:1 1 auto; min-width:0; }
+      #tab-air-menu .air-sheet-collapse .air-sheet-summary-end { flex:0 0 auto; margin-left:auto; }
+      #tab-air-menu .air-sheet-collapse .air-sheet-summary-end i { display:none; }
       .loyalty-settings-card { box-sizing:border-box; width:100% !important; max-width:none; margin:22px 0 0 !important; padding:26px 28px !important; }
       .loyalty-settings-card .air-settings-heading { max-width:660px; }
       .loyalty-settings-card .air-settings-heading h2 { display:flex; align-items:center; gap:10px; }
@@ -700,7 +709,7 @@
           </div>
 
           <details class="card air-sheet-collapse bar-sheet">
-            <summary><h2><i class="sheet-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 3h14l-7 8v7"></path><path d="M9 21h6"></path></svg></i>Bar Menu Spreadsheet</h2></summary>
+            <summary><h2><i class="sheet-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 3h14l-7 8v7"></path><path d="M9 21h6"></path></svg></i><span>Bar Menu Spreadsheet<small>Prices, pours, categories and best sellers</small></span></h2><span class="air-sheet-summary-end"><b id="air-bar-sheet-count">0 items</b><i aria-hidden="true">⌄</i></span></summary>
             <span class="help-text" style="margin-bottom:18px;">Use Price for bottles or single-price drinks. Add 30 ML and 60 ML prices where applicable; 90 ML and 180 ML are optional. Duplicate item/category combinations are removed automatically.</span>
             <div class="air-sheet-wrap">
               <table class="air-sheet bar-sheet">
@@ -713,7 +722,7 @@
           </details>
 
           <details class="card air-sheet-collapse air-menu-sheet">
-            <summary><h2><i class="sheet-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"></rect><path d="M8 8h8M8 12h8M8 16h5"></path></svg></i>Air Menu Spreadsheet</h2></summary>
+            <summary><h2><i class="sheet-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"></rect><path d="M8 8h8M8 12h8M8 16h5"></path></svg></i><span>Air Menu Spreadsheet<small>Food items, portions, dietary tags and kitchen options</small></span></h2><span class="air-sheet-summary-end"><b id="air-food-sheet-count">0 items</b><i aria-hidden="true">⌄</i></span></summary>
             <span class="help-text" style="margin-bottom:18px;">Use Price for single-price items. Add Full, Half, With Bone, or Boneless prices where applicable, and leave Price blank. Duplicate item/category combinations are removed automatically.</span>
             <div class="air-sheet-wrap">
               <table class="air-sheet food-sheet">
