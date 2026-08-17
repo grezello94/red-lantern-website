@@ -1,5 +1,5 @@
 #define AppName "Red Lantern Print Bridge"
-#define AppVersion "1.0.10"
+#define AppVersion "1.0.11"
 #ifndef NodeRuntime
   #error NodeRuntime must point to a Node.js 22 node.exe file
 #endif
@@ -27,3 +27,5 @@ Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Fil
 
 [UninstallRun]
 Filename: "schtasks.exe"; Parameters: "/Delete /TN ""Red Lantern Print Bridge"" /F"; Flags: runhidden
+Filename: "schtasks.exe"; Parameters: "/Delete /TN ""Red Lantern Print Bridge Recovery"" /F"; Flags: runhidden
+Filename: "cmd.exe"; Parameters: "/c del /q ""{userstartup}\Red Lantern Print Bridge.vbs"" ""{userstartup}\Red Lantern Print Bridge.cmd"""; Flags: runhidden

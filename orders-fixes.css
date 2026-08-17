@@ -333,6 +333,18 @@ main { gap: 16px; padding-top: 22px; }
 #dine-in-actions button:hover { filter:brightness(.96); transform:translateY(-1px); }
 #dine-in-actions button:disabled { cursor:wait; opacity:.65; transform:none; }
 @media (max-width:760px) { #dine-in-actions { grid-template-columns:repeat(2,minmax(0,1fr)); } #dine-in-actions .dine-in-split { grid-column:1/-1; } }
+
+/* Keep printer setup understandable for staff; technical diagnostics stay out of this flow. */
+.simple-printing-setup { padding:22px; border:1px solid #d9e5dc; border-radius:16px; background:#fbfefc; }
+.simple-printing-setup > .eyebrow { display:block; margin:14px 0 8px; }
+.simple-printing-card { display:flex; align-items:center; gap:15px; max-width:620px; padding:20px; border:1px solid #dce8df; border-radius:14px; background:#fff; }
+.simple-printing-card h3 { margin:0; color:#26394e; font-size:20px; }
+.simple-printing-card p { margin:5px 0 0; color:#617086; font-size:13px; line-height:1.45; }
+.simple-printing-card .operations-save { display:inline-flex; margin-top:14px; text-decoration:none; }
+.printing-status-icon { display:grid; flex:none; width:38px; height:38px; place-items:center; border-radius:50%; color:#087b45; background:#e4f7eb; font-size:21px; font-weight:900; }
+.printing-status-icon.is-warning { color:#9b6500; background:#fff2d9; }
+.printing-status-icon.is-checking { color:#48647f; background:#eaf1f8; }
+@media (max-width:620px) { .simple-printing-setup { padding:16px; } .simple-printing-card { align-items:flex-start; } }
 .saved-bills { margin-top:18px; padding:18px; border:1px solid #eadfd9; border-radius:14px; background:#fffdfb; }
 .saved-bills h3 { margin:3px 0; color:#342324; font-size:18px; }
 .saved-bills p { margin:0; color:#786a65; font-size:12px; }

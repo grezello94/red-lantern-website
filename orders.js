@@ -1169,38 +1169,37 @@ function renderPrintBridgeSetup() {
   if (!content) return;
   const status = printBridgeSetupStatus;
   const platform = status?.platformLabel || detectedDesktopPlatform();
-  const checks = status?.checking ? [
-    ['Cloud connection', 'Checking…', 'checking'], ['Local Print Bridge', 'Checking…', 'checking'], ['SQLite offline ledger', 'Checking…', 'checking'], ['Installed printers', 'Checking…', 'checking'], ['Printer routing', 'Checking…', 'checking']
-  ] : status?.ok ? [
-    ['Cloud connection', status.cloud ? 'Connected' : 'Unavailable', status.cloud ? 'ok' : 'warn'], ['Local Print Bridge', `${status.platformLabel} · running`, 'ok'], ['SQLite offline ledger', status.ledgerSummary?.blockedActions ? `${status.ledgerSummary.blockedActions} action${status.ledgerSummary.blockedActions===1?'':'s'} needs review` : status.ledgerSummary?.pendingActions ? `${status.ledgerSummary.pendingActions} action${status.ledgerSummary.pendingActions===1?'':'s'} waiting to sync` : 'Ready on this computer', status.ledgerSummary?.blockedActions ? 'warn' : 'ok'], ['Installed printers', `${status.printerCount} detected`, status.printerCount ? 'ok' : 'warn'], ['Printer routing', `${status.configuredPrinterCount} printer${status.configuredPrinterCount===1?'':'s'} · ${status.routeCount} route${status.routeCount===1?'':'s'}`, status.configuredPrinterCount ? 'ok' : 'warn']
-  ] : [
-    ['Cloud connection', navigator.onLine ? 'Browser is online' : 'Browser is offline', navigator.onLine ? 'ok' : 'warn'], ['Local Print Bridge', 'Not detected on this computer', 'warn'], ['SQLite offline ledger', 'Available after Bridge setup', 'warn'], ['Installed printers', 'Checked after Bridge setup', 'checking'], ['Printer routing', `${operationsConfig.printers.length} saved in cloud`, operationsConfig.printers.length ? 'ok' : 'warn']
-  ];
-  const command = printBridgeSetupCommand(platform);
   const download = platform === 'macOS'
     ? 'https://github.com/grezello94/red-lantern-website/releases/latest/download/Red-Lantern-Print-Bridge-macOS.pkg'
     : 'https://github.com/grezello94/red-lantern-website/releases/latest/download/Red-Lantern-Print-Bridge-Windows-Setup.exe';
-  const title = status?.checking ? 'Checking this workstation…' : status?.ok ? 'This workstation is ready' : 'Set up this workstation once';
-  const message = status?.checking ? 'Checking cloud connectivity, the local Print Bridge, SQLite ledger, installed printers, and saved routing.' : status?.ok ? 'No install is needed. The Bridge, local SQLite ledger, and printer discovery are working. Use Check again only after changing a printer or computer.' : `This ${platform} computer has not exposed a running Print Bridge. The setup command is safe to run once; if it is already configured, it simply verifies and starts the existing service.`;
-  content.innerHTML = `<section class="bridge-readiness"><div class="operations-section-head"><div><button type="button" class="assignment-back" data-operations-tab="home">‹ Back</button><span class="eyebrow">Counter workstation</span><h3>${esc(title)}</h3><p>${esc(message)}</p></div><span class="operations-count">${esc(platform)}</span></div><div class="bridge-check-grid">${checks.map(([label, value, state])=>`<article class="bridge-check is-${state}"><span aria-hidden="true">${state==='ok'?'✓':state==='warn'?'!':'…'}</span><div><b>${esc(label)}</b><small>${esc(value)}</small></div></article>`).join('')}</div>${status?.ok ? `<div class="bridge-ready-actions"><button type="button" class="operations-save" data-run-bridge-check>Check again</button><button type="button" class="quiet-button" id="restart-print-bridge">Restart Bridge</button></div>` : `<div class="bridge-install-box"><b>Set up ${esc(platform)} printing &amp; offline mode</b><p>Download and open the installer. It installs the local Bridge and SQLite ledger, then returns you here to verify everything.</p><div><a class="operations-save bridge-download" href="${download}">Download setup for ${esc(platform)}</a><button type="button" class="quiet-button" data-run-bridge-check>I've completed setup · Check again</button></div><small class="bridge-node-note">The installer includes the Node.js runtime. No separate Node.js installation is required.</small></div>`}</section>`;
+  const card = status?.checking
+    ? `<span class="printing-status-icon is-checking" aria-hidden="true">…</span><div><h3>Preparing printing…</h3><p>This takes a moment.</p></div>`
+    : status?.ok
+      ? `<span class="printing-status-icon" aria-hidden="true">✓</span><div><h3>Printing is ready</h3><p>This computer is ready to print bills and kitchen orders.</p></div>`
+      : `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Set up printing</h3><p>Install printing once on this ${esc(platform)} computer.</p><a class="operations-save bridge-download" href="${download}">Set up printing</a></div>`;
+  content.innerHTML = `<section class="simple-printing-setup"><button type="button" class="assignment-back" data-operations-tab="home">‹ Back</button><span class="eyebrow">Printing</span><div class="simple-printing-card">${card}</div></section>`;
 }
 async function checkPrintBridgeSetup() {
   printBridgeSetupStatus = { checking:true };
   renderPrintBridgeSetup();
-  let cloud = false;
-  try { const response = await fetch('/api/orders/operations', { cache:'no-store' }); cloud = response.ok; } catch (_) {}
+  const cloudCheck = (async () => {
+    const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 4000);
+    try { return (await fetch('/api/orders/operations', { cache:'no-store', signal:controller.signal })).ok; }
+    catch (_) { return false; }
+    finally { clearTimeout(timeout); }
+  })();
   try {
     const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 2800);
     const response = await fetch(`${printBridgeOrigin}/v1/setup-status`, { cache:'no-store', signal:controller.signal });
     clearTimeout(timeout);
     const data = await response.json().catch(() => ({}));
     if (!response.ok || !data.ok) throw new Error(data.detail || data.error || 'The local service did not complete its check.');
-    printBridgeSetupStatus = { ...data, cloud };
+    printBridgeSetupStatus = { ...data, cloud:await cloudCheck };
     installedSystemPrinters = Array.from({length:Number(data.printerCount)||0}, (_, index) => installedSystemPrinters[index]).filter(Boolean);
     printBridgeState = 'available';
-    await syncOperationsToPrintBridge(operationsConfig);
+    void syncOperationsToPrintBridge(operationsConfig);
   } catch (error) {
-    printBridgeSetupStatus = { ok:false, cloud, detail:error.message || 'Print Bridge was not found.' };
+    printBridgeSetupStatus = { ok:false, cloud:await cloudCheck, detail:error.message || 'Print Bridge was not found.' };
     printBridgeState = 'offline';
   }
   renderPrintBridgeSetup();
@@ -1248,7 +1247,9 @@ async function discoverSystemPrinters() {
 async function syncOperationsToPrintBridge(config) {
   if (printBridgeState !== 'available') { printBridgeConfigState = 'waiting-for-bridge'; return false; }
   try {
-    const response = await fetch('http://127.0.0.1:9124/v1/config', { method:'PUT', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify({ config }) });
+    const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 2800);
+    const response = await fetch('http://127.0.0.1:9124/v1/config', { method:'PUT', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify({ config }), signal:controller.signal });
+    clearTimeout(timeout);
     if (!response.ok) throw new Error('Bridge sync failed.');
     printBridgeConfigState = 'synced';
     return true;
