@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <title>Captain · Red Lantern</title>
   <link rel="stylesheet" href="/captain.css?v=2">
-  <link rel="stylesheet" href="/captain-ux.css?v=48">
+  <link rel="stylesheet" href="/captain-ux.css?v=49">
 </head>
 <body>
   <header class="captain-header">
@@ -44,7 +44,7 @@
       <div class="captain-order-actions"><div id="captain-order-action-list" hidden><button type="button" data-start-takeaway><span class="captain-action-icon">⌑</span><span class="captain-action-copy"><b>Takeaway order</b><small>No table required</small></span></button><button type="button" data-new-table-help><span class="captain-action-icon">＋</span><span class="captain-action-copy"><b>Start table order</b><small>Choose an available table</small></span></button></div><button id="captain-order-action-toggle" type="button" aria-label="Start a new order" aria-expanded="false">＋</button></div>
     </section>
     <section id="menu-screen" class="screen" hidden>
-      <div class="screen-head menu-head"><div><button type="button" class="back-button" data-captain-back>← Tables</button><span class="eyebrow" id="menu-order-mode">NEW ORDER</span><h1 id="menu-table-title">Table</h1><p id="active-table-context" class="active-table-context" hidden></p><p class="captain-flow-hint">Tap once to add · choose options only when needed</p></div><div class="menu-head-actions"><button type="button" id="menu-category-toggle" class="menu-category-button">☷ <span id="menu-category-label">Menu</span></button><button type="button" class="icon-button" id="menu-search-toggle" aria-label="Search menu">⌕</button></div></div>
+      <div class="screen-head menu-head"><div><button type="button" class="back-button" data-captain-back>← Tables</button><span class="eyebrow" id="menu-order-mode">NEW ORDER</span><h1 id="menu-table-title">Table</h1><p id="active-table-context" class="active-table-context" hidden></p><p class="captain-flow-hint">Tap once to add · choose options only when needed</p></div><div class="menu-head-actions"><button type="button" id="menu-category-toggle" class="menu-category-button" aria-haspopup="dialog"><span class="menu-category-icon" aria-hidden="true">☷</span><span class="menu-category-copy"><small>Browse menu</small><strong id="menu-category-label">All dishes</strong></span><span class="menu-category-chevron" aria-hidden="true">›</span></button><button type="button" class="icon-button" id="menu-search-toggle" aria-label="Search menu">⌕</button></div></div>
       <details id="active-bill-summary" class="active-bill-summary" hidden><summary>Items already on this bill <span id="active-bill-total"></span></summary><div id="active-bill-items"></div></details>
       <div id="active-kot-progress" class="active-kot-progress" hidden aria-live="polite"></div>
       <div id="captain-table-service" class="captain-table-service" hidden><button type="button" data-table-service="water_requested">Request water</button><button type="button" data-table-service="assistance_requested">Request help</button><button type="button" data-table-service="bill_requested">Request bill</button></div>
@@ -73,8 +73,8 @@
   <div id="captain-toast" class="captain-toast" hidden role="status" aria-live="polite"></div>
   <dialog id="choice-sheet" class="choice-sheet"><div class="sheet-head"><div><span class="eyebrow">CUSTOMISE</span><h2 id="choice-title">Choose option</h2></div><button type="button" id="choice-close" class="icon-button" aria-label="Close">×</button></div><p id="choice-helper" class="choice-helper">Choose a portion to add.</p><div id="choice-options" class="choice-options"></div><fieldset id="style-options" class="style-options" hidden><legend>Preparation</legend><label><input type="radio" name="captain-style" value="" checked> Regular</label><label><input type="radio" name="captain-style" value="gravy"> Gravy <small>+₹10</small></label><label><input type="radio" name="captain-style" value="semi-gravy"> Semi-gravy <small>+₹10</small></label></fieldset><label class="item-note">Kitchen note <input id="choice-note" maxlength="80" placeholder="e.g. less spicy, no onion"></label><button type="button" id="choice-add" class="send-button">Add item</button></dialog>
   <dialog id="line-note-sheet" class="line-note-sheet" aria-labelledby="line-note-title"><form id="line-note-form" method="dialog"><div class="sheet-head"><div><span class="eyebrow">KITCHEN NOTE</span><h2 id="line-note-title">Add a note</h2><p id="line-note-caption">Visible on the KOT for this item.</p></div><button type="button" id="line-note-close" class="icon-button" aria-label="Close note editor">×</button></div><label>Instruction for kitchen<textarea id="line-note-input" maxlength="80" rows="3" placeholder="e.g. less spicy, no onion"></textarea><small><span id="line-note-count">0</span>/80 characters</small></label><div class="line-note-actions"><button type="button" id="line-note-cancel">Cancel</button><button type="submit" id="line-note-save">Save note</button></div></form></dialog>
-  <dialog id="category-sheet" class="category-sheet"><div class="sheet-head"><div><span class="eyebrow">MENU</span><h2>Choose category</h2></div><button type="button" id="category-close" class="icon-button" aria-label="Close menu categories">×</button></div><div id="category-picker-list" class="category-picker-list"></div></dialog>
-<script src="/captain.js?v=45"></script>
+  <dialog id="category-sheet" class="category-sheet"><div class="sheet-head"><div><span class="eyebrow">MENU</span><h2>Choose a category</h2><p>Pick one to see its dishes.</p></div><button type="button" id="category-close" class="icon-button" aria-label="Close menu categories">×</button></div><div id="category-picker-list" class="category-picker-list"></div></dialog>
+<script src="/captain.js?v=46"></script>
   <script>
     if ('serviceWorker' in navigator) {
       let reloadedForCaptainWorker = false;
@@ -84,7 +84,7 @@
           window.location.reload();
         }
       });
-      navigator.serviceWorker.register('/captain-sw.js?v=7').then((registration) => {
+      navigator.serviceWorker.register('/captain-sw.js?v=8').then((registration) => {
         registration.update().catch(() => {});
         if (registration.waiting) registration.waiting.postMessage({ type: 'SKIP_WAITING' });
       }).catch(() => {});
