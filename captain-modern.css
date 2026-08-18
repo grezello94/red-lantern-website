@@ -50,3 +50,22 @@ html,body{min-height:100%;background:var(--cap-page)}body{color:var(--cap-ink);t
 .captain-action-icon{width:58px;height:58px;border-color:rgba(255,255,255,.28);border-radius:17px;background:rgba(255,255,255,.17);box-shadow:inset 0 1px 1px rgba(255,255,255,.25);font-size:29px}
 #captain-order-action-list button:nth-child(2) .captain-action-icon{border-color:rgba(255,255,255,.2);color:#fff;background:rgba(255,255,255,.12);box-shadow:none}
 .captain-action-copy b{color:#fff;font-size:16px}.captain-action-copy small{color:rgba(255,255,255,.72)}
+
+/* Compact FAB menu: labels float left of stacked blue action circles. */
+.captain-order-actions{align-items:flex-end;gap:14px}
+#captain-order-action-list{display:grid;gap:14px;min-width:0;padding:0;border:0;border-radius:0;background:transparent;box-shadow:none;backdrop-filter:none}
+#captain-order-action-list::before{display:none}
+#captain-order-action-list button{display:grid;grid-template-columns:minmax(0,1fr) 58px;gap:12px;align-items:center;width:238px;min-height:58px;padding:0;border:0;border-radius:0;color:#26313f;background:transparent!important;box-shadow:none!important;filter:none!important;transform:none!important}
+#captain-order-action-list button::after{display:none}
+.captain-action-copy{grid-column:1;grid-row:1;display:block;padding:10px 12px;border:1px solid #e3e5e9;border-radius:9px;background:#fff;box-shadow:0 3px 9px rgba(28,38,52,.16);text-align:left}
+.captain-action-copy b{display:block;color:#30343a;font-size:20px;font-weight:500;letter-spacing:-.03em;white-space:nowrap}
+.captain-action-copy small{display:none}
+.captain-action-icon{grid-column:2;grid-row:1;width:58px;height:58px;border:0;border-radius:50%;color:#fff;background:#247cf0!important;box-shadow:0 7px 14px rgba(36,124,240,.25);font-size:0}
+.captain-action-icon::before{font-size:28px;line-height:1}
+#captain-order-action-list button:first-child .captain-action-icon::before{content:'♧'}
+#captain-order-action-list button:nth-child(2) .captain-action-icon::before{content:'⌒';font-size:35px}
+#captain-order-action-list button:hover .captain-action-icon,#captain-order-action-list button:focus-visible .captain-action-icon{background:#1769d6!important;transform:scale(1.06)}
+.captain-order-actions>button{width:58px;height:58px;border:0;box-shadow:0 7px 14px rgba(36,124,240,.25),none;font-size:33px}
+.captain-order-actions>button.is-open{transform:none}
+.captain-order-actions>button:hover,.captain-order-actions>button:focus-visible{transform:scale(1.06)}
+@media(max-width:620px){#captain-order-action-list button{width:232px}.captain-action-copy b{font-size:19px}}
