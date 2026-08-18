@@ -53,11 +53,13 @@ async function main() {
       try { health = await request(port, '/health'); break; }
       catch (_) { await new Promise((resolve) => setTimeout(resolve, 100)); }
     }
-    if (!health?.ok || health.ledger !== 'ready') throw new Error(`Bridge health check failed. ${output}`);
+    if (!health?.ok || health.ledger !== 'ready' || !health.version) throw new Error(`Bridge health check failed. ${output}`);
     const queued = await request(port, '/v1/ledger/actions', { method:'POST', body:{ id:'smoke-counter-1', type:'counter-order', payload:{ clientRequestId:'smoke-counter-1', items:[{ name:'Smoke test', quantity:1 }] } } });
     if (queued.action?.status !== 'queued') throw new Error('Bridge did not persist the queued ledger action.');
     const status = await request(port, '/health');
     if (status.ledgerSummary?.pendingActions !== 1) throw new Error('Bridge ledger health did not report the queued action.');
+    const setup = await request(port, '/v1/setup-status');
+    if (!setup.ok || !setup.version || setup.ledgerSummary?.pendingActions !== 1 || !Array.isArray(setup.recentPrintFailures) || typeof setup.ledgerSummary?.printJobs?.unresolvedFailed !== 'number') throw new Error('Bridge setup status did not expose the durable ledger state.');
     console.log('Print Bridge smoke test passed.');
   } finally {
     child.kill();

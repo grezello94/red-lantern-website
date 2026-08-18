@@ -1071,7 +1071,8 @@ function renderOperations() {
   if (!content) return;
   if (operationsTab === 'home') {
     const activeOrders = [...orderRecords.values()].filter((order) => !['completed','rejected','cancelled'].includes(order.status));
-    const bridgeSummary = printBridgeSetupStatus?.ok ? `${printBridgeSetupStatus.platformLabel} · local ledger ready` : 'Check cloud, printer and offline readiness';
+    const bridgeConfigured=printBridgeSetupStatus?.ok&&Number(printBridgeSetupStatus.configuredBillPrinterCount)>0&&Number(printBridgeSetupStatus.configuredKotRouteCount)>0&&Number(printBridgeSetupStatus.ledgerSummary?.printJobs?.unresolvedFailed||0)===0;
+    const bridgeSummary = bridgeConfigured ? `${printBridgeSetupStatus.platformLabel} · local ledger and KOT routing ready` : printBridgeSetupStatus?.ok ? 'Bridge is running · finish printer and KOT routing setup' : 'Check cloud, printer and offline readiness';
     content.innerHTML = `<section class="operations-home"><div class="operations-home-title"><span class="eyebrow">Operations</span><h3>Orders &amp; printing</h3><p>Open a workspace to manage the restaurant’s live order flow.</p></div><div class="operations-home-grid"><button type="button" class="operations-home-card operations-setup-card" data-operations-tab="setup"><span class="operations-home-icon" aria-hidden="true">◈</span><span><b>Print &amp; offline setup</b><small>${esc(bridgeSummary)}</small></span><i aria-hidden="true">›</i></button><button type="button" class="operations-home-card" data-operations-tab="kots"><span class="operations-home-icon" aria-hidden="true">⌑</span><span><b>Printed KOTs</b><small>${activeOrders.length} active order${activeOrders.length===1?'':'s'} · View, reprint and keep ticket records</small></span><i aria-hidden="true">›</i></button><button type="button" class="operations-home-card" data-operations-tab="kitchen-display"><span class="operations-home-icon" aria-hidden="true">▤</span><span><b>Kitchen display</b><small>Live screen tickets · Start preparation and mark food ready</small></span><i aria-hidden="true">›</i></button><button type="button" class="operations-home-card" data-operations-tab="printers"><span class="operations-home-icon" aria-hidden="true">▣</span><span><b>Manage printers</b><small>${operationsConfig.printers.length} printer${operationsConfig.printers.length===1?'':'s'} · Add, assign and manage bills or KOTs</small></span><i aria-hidden="true">›</i></button><button type="button" class="operations-home-card" data-operations-tab="tables"><span class="operations-home-icon" aria-hidden="true">▦</span><span><b>Table allocation</b><small>${(operationsConfig.tableAreas||[]).length} area${(operationsConfig.tableAreas||[]).length===1?'':'s'} · Name sections and assign table ranges</small></span><i aria-hidden="true">›</i></button></div></section>`;
     return;
   }
@@ -1172,11 +1173,17 @@ function renderPrintBridgeSetup() {
   const download = platform === 'macOS'
     ? 'https://github.com/grezello94/red-lantern-website/releases/latest/download/Red-Lantern-Print-Bridge-macOS.pkg'
     : 'https://github.com/grezello94/red-lantern-website/releases/latest/download/Red-Lantern-Print-Bridge-Windows-Setup.exe';
+  const configured = Number(status?.configuredBillPrinterCount || 0) > 0 && Number(status?.configuredKotRouteCount || 0) > 0;
+  const failedJobs=Number(status?.ledgerSummary?.printJobs?.unresolvedFailed || 0), failedIds=(Array.isArray(status?.recentPrintFailures)?status.recentPrintFailures:[]).map((job)=>job.id).filter(Boolean), failureDetail=(Array.isArray(status?.recentPrintFailures)?status.recentPrintFailures:[]).map((job)=>`${job.kind.toUpperCase()} · ${job.printerName}`).join(' · ');
   const card = status?.checking
     ? `<span class="printing-status-icon is-checking" aria-hidden="true">…</span><div><h3>Preparing printing…</h3><p>This takes a moment.</p></div>`
-    : status?.ok
-      ? `<span class="printing-status-icon" aria-hidden="true">✓</span><div><h3>Printing is ready</h3><p>This computer is ready to print bills and kitchen orders.</p></div>`
-      : `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Set up printing</h3><p>Install printing once on this ${esc(platform)} computer.</p><a class="operations-save bridge-download" href="${download}">Set up printing</a></div>`;
+    : status?.ok && failedJobs
+      ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Printing needs review</h3><p>${failedJobs} local print job${failedJobs===1?'':'s'} failed${failureDetail?` (${esc(failureDetail)})`:''}. Check paper, power, cable/network and the Windows printer queue, then reprint the affected KOT or Bill from Operations.</p><button type="button" class="quiet-button" data-acknowledge-print-failures="${esc(JSON.stringify(failedIds))}">Mark reviewed</button><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
+      : status?.ok && configured
+      ? `<span class="printing-status-icon" aria-hidden="true">✓</span><div><h3>Printing is ready</h3><p>This computer is ready to print bills and kitchen orders${status.version?` · Bridge ${esc(status.version)}`:''}.</p><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
+      : status?.ok
+        ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Finish printer setup</h3><p>Print Bridge is running, but this computer needs an assigned Bill printer and a KOT route attached to a real system printer before service.</p><button type="button" class="quiet-button" data-operations-tab="printers">Manage printers</button><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
+        : `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Set up printing</h3><p>${esc(status?.detail || `Install printing once on this ${platform} computer.`)}</p><a class="operations-save bridge-download" href="${download}">Set up printing</a><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`;
   content.innerHTML = `<section class="simple-printing-setup"><button type="button" class="assignment-back" data-operations-tab="home">‹ Back</button><span class="eyebrow">Printing</span><div class="simple-printing-card">${card}</div></section>`;
 }
 async function checkPrintBridgeSetup() {
@@ -1680,6 +1687,15 @@ document.getElementById('operations-content')?.addEventListener('click', async (
   }
   const runBridgeCheck = event.target.closest('[data-run-bridge-check]');
   if (runBridgeCheck) { void checkPrintBridgeSetup(); return; }
+  const acknowledgeFailures = event.target.closest('[data-acknowledge-print-failures]');
+  if (acknowledgeFailures) {
+    let ids=[]; try { ids=JSON.parse(acknowledgeFailures.dataset.acknowledgePrintFailures||'[]'); } catch (_) {}
+    if (!ids.length || !confirm('Mark these failed jobs as reviewed only after you have reprinted or otherwise accounted for every affected Bill/KOT.')) return;
+    acknowledgeFailures.disabled=true;
+    try { const response=await fetch(`${printBridgeOrigin}/v1/print-jobs/acknowledge`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})}),data=await response.json().catch(()=>({})); if(!response.ok)throw new Error(data.error||'Unable to mark the print jobs reviewed.'); await checkPrintBridgeSetup(); }
+    catch(error) { alert(error.message||'Unable to mark the print jobs reviewed.'); acknowledgeFailures.disabled=false; }
+    return;
+  }
   const copyBridgeSetup = event.target.closest('[data-copy-bridge-setup]');
   if (copyBridgeSetup) { try { await navigator.clipboard.writeText(copyBridgeSetup.dataset.command || ''); copyBridgeSetup.textContent='Copied'; setTimeout(() => { if (copyBridgeSetup.isConnected) copyBridgeSetup.textContent=`Copy ${detectedDesktopPlatform()==='macOS'?'Terminal':'PowerShell'} command`; }, 1600); } catch (_) { alert(`Run this command in Terminal / PowerShell:\n\n${copyBridgeSetup.dataset.command || ''}`); } return; }
   const kdsAction = event.target.closest('[data-kds-status-action]');

@@ -18,9 +18,9 @@ All saved orders receive a daily order number. KOT numbers use one restaurant-wi
 
 - A captain selects a currently free table, adds available Air Menu dishes, enters an optional guest name/mobile/kitchen note, and sends the dine-in order.
 - The server rechecks table availability when saving, so two phones cannot silently start separate Captain orders for the same active table.
-- Captain is intentionally online-only. Phones do not host the billing computer’s trusted Print Bridge or SQLite ledger; if internet is unavailable, the captain must wait rather than risk a duplicate or uncertain table order.
+- Captain phones do not host the billing computer’s trusted Print Bridge or SQLite ledger. When internet drops, they retain an account-scoped table/menu snapshot and save submitted orders into a durable local queue. Reconnection uses the same request ID, so a retry cannot create a duplicate. If the table changed on another device, the order is held for an explicit Captain review rather than merged silently.
 - Keep `/orders` open on the billing computer during service. That computer detects accepted Captain orders and sends the routed KOT through the local Print Bridge. Captain phones never connect directly to a printer.
-- Adding items to a table that is already active stays in `/orders` for now, keeping a single bill and KOT record for that table.
+- Adding items to an active table is supported as a new Captain KOT round. The server verifies the live table ID before merging; an offline conflict must be reviewed explicitly.
 
 ## QR ordering
 

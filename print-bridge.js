@@ -17,6 +17,7 @@ const path = require('path');
 const { DatabaseSync } = require('node:sqlite');
 
 const PORT = Number(process.env.PRINT_BRIDGE_PORT || 9124);
+const BRIDGE_VERSION = '2026.08.18.3';
 const storageDir = process.env.PRINT_BRIDGE_DATA_DIR || path.join(os.homedir(), '.red-lantern-print-bridge');
 const configFile = path.join(storageDir, 'printer-config.json');
 const queueFile = path.join(storageDir, 'kot-queue.json');
@@ -45,25 +46,34 @@ function localLedger() {
     printer_name TEXT NOT NULL,
     status TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    completed_at TEXT
+    completed_at TEXT,
+    content_hash TEXT NOT NULL DEFAULT '',
+    acknowledged_at TEXT
   )`);
+  // Existing Bridge installations keep their local ledger across upgrades.
+  // Add the payload fingerprint without requiring staff to delete that data.
+  try { ledger.exec("ALTER TABLE print_jobs ADD COLUMN content_hash TEXT NOT NULL DEFAULT ''"); } catch (_) {}
+  try { ledger.exec('ALTER TABLE print_jobs ADD COLUMN acknowledged_at TEXT'); } catch (_) {}
   return ledger;
 }
 
-function claimPrintJob(id, kind, printerName) {
+function claimPrintJob(id, kind, printerName, contentHash = '') {
   const safeId=String(id || '').trim().slice(0,160);
   if (!safeId) return { claim:true, tracked:false };
   const db=localLedger(), now=new Date().toISOString();
-  const existing=db.prepare('SELECT status FROM print_jobs WHERE id=?').get(safeId);
-  if (existing?.status === 'printed') return { claim:false, duplicate:true };
+  const existing=db.prepare('SELECT status, content_hash FROM print_jobs WHERE id=?').get(safeId);
+  // A retry with the same payload must never create a second physical slip.
+  // If the content has changed, however, it is a genuinely new print request
+  // and must not be hidden behind an old completed job.
+  if (existing?.status === 'printed' && (!contentHash || existing.content_hash === contentHash)) return { claim:false, duplicate:true };
   if (existing?.status === 'printing') return { claim:false, pending:true };
-  db.prepare('INSERT INTO print_jobs (id,kind,printer_name,status,created_at,completed_at) VALUES (?,?,?,?,?,NULL) ON CONFLICT(id) DO UPDATE SET status=excluded.status, printer_name=excluded.printer_name, created_at=excluded.created_at, completed_at=NULL').run(safeId, kind, String(printerName||'').slice(0,160), 'printing', now);
+  db.prepare('INSERT INTO print_jobs (id,kind,printer_name,status,created_at,completed_at,content_hash,acknowledged_at) VALUES (?,?,?,?,?,NULL,?,NULL) ON CONFLICT(id) DO UPDATE SET status=excluded.status, printer_name=excluded.printer_name, created_at=excluded.created_at, completed_at=NULL, content_hash=excluded.content_hash, acknowledged_at=NULL').run(safeId, kind, String(printerName||'').slice(0,160), 'printing', now, String(contentHash || '').slice(0,64));
   return { claim:true, tracked:true };
 }
 function finishPrintJob(id, success) {
   const safeId=String(id || '').trim().slice(0,160);
   if (!safeId) return;
-  localLedger().prepare('UPDATE print_jobs SET status=?, completed_at=? WHERE id=?').run(success?'printed':'failed', success?new Date().toISOString():null, safeId);
+  localLedger().prepare('UPDATE print_jobs SET status=?, completed_at=?, acknowledged_at=NULL WHERE id=?').run(success?'printed':'failed', success?new Date().toISOString():null, safeId);
 }
 
 function ledgerAction(row) {
@@ -106,7 +116,21 @@ function ledgerSummary() {
   const jobs = localLedger().prepare("SELECT status, COUNT(*) AS count FROM print_jobs GROUP BY status").all();
   const printJobs = { printing:0, printed:0, failed:0 };
   jobs.forEach((row) => { if (Object.hasOwn(printJobs, row.status)) printJobs[row.status] = Number(row.count || 0); });
-  return { actions:counts, pendingActions:counts.queued + counts.syncing, blockedActions:counts.blocked, printJobs };
+  const unresolvedFailures=localLedger().prepare("SELECT COUNT(*) AS count FROM print_jobs WHERE status='failed' AND acknowledged_at IS NULL").get();
+  return { actions:counts, pendingActions:counts.queued + counts.syncing, blockedActions:counts.blocked, printJobs:{...printJobs, unresolvedFailed:Number(unresolvedFailures?.count||0)} };
+}
+
+function recentPrintFailures() {
+  return localLedger().prepare("SELECT id, kind, printer_name, created_at, completed_at FROM print_jobs WHERE status='failed' AND acknowledged_at IS NULL ORDER BY created_at DESC LIMIT 5").all()
+    .map((job) => ({ id:job.id, kind:job.kind, printerName:job.printer_name, createdAt:job.created_at, completedAt:job.completed_at || '' }));
+}
+
+function acknowledgePrintJobs(ids) {
+  const safeIds=[...new Set((Array.isArray(ids)?ids:[]).map((id)=>String(id||'').trim().slice(0,160)).filter(Boolean))].slice(0,50);
+  if (!safeIds.length) throw new Error('Choose at least one failed print job to mark reviewed.');
+  const placeholders=safeIds.map(()=>'?').join(','), now=new Date().toISOString();
+  const result=localLedger().prepare(`UPDATE print_jobs SET acknowledged_at=? WHERE status='failed' AND acknowledged_at IS NULL AND id IN (${placeholders})`).run(now,...safeIds);
+  return Number(result.changes||0);
 }
 
 function run(command, args) {
@@ -223,17 +247,30 @@ $doc.add_PrintPage({ param($sender, $event)
       $pen.Dispose(); $y += 4 + ${separatorGap}; continue
     }
     if ($line.StartsWith('__KOTITEM__')) {
-      $tokens = [regex]::Matches($line.Substring(11), '\[\[.*?\]\]|\S+')
       $normal = New-Object System.Drawing.Font('${fontFamily}', ${kotItemFontSize}, [System.Drawing.FontStyle]::Regular)
       $bold = New-Object System.Drawing.Font('${fontFamily}', ${kotItemFontSize}, [System.Drawing.FontStyle]::Bold)
-      $left = $event.MarginBounds.Left; $x = $left; $lineY = $y; $lineHeight = [Math]::Ceiling($g.MeasureString('Ag', $normal).Height)
-      foreach ($token in $tokens) {
-        $raw = $token.Value; $isBold = $raw.StartsWith('[[') -and $raw.EndsWith(']]'); $word = if ($isBold) { $raw.Substring(2, $raw.Length - 4) } else { $raw }; $font = if ($isBold) { $bold } else { $normal }
-        $wordWidth = $g.MeasureString($word + ' ', $font).Width
-        if ($x -gt $left -and $x + $wordWidth -gt $left + $width) { $x = $left; $lineY += $lineHeight }
-        $g.DrawString($word, $font, [System.Drawing.Brushes]::Black, $x, $lineY); $x += $wordWidth
+      # Keep emphasis for similar dish names, but never allow a font/driver
+      # issue in that optional enhancement to produce a blank kitchen slip.
+      $rawItem = $line.Substring(11)
+      try {
+        $tokens = [regex]::Matches($rawItem, '\[\[.*?\]\]|\S+')
+        $left = [single]$event.MarginBounds.Left; $x = $left; $lineY = [single]$y; $lineHeight = [Math]::Ceiling($g.MeasureString('Ag', $normal).Height)
+        foreach ($token in $tokens) {
+          $raw = $token.Value; $isBold = $raw.StartsWith('[[') -and $raw.EndsWith(']]'); $word = if ($isBold) { $raw.Substring(2, $raw.Length - 4) } else { $raw }; $font = if ($isBold) { $bold } else { $normal }
+          $wordWidth = [single]$g.MeasureString($word + ' ', $font).Width
+          if ($x -gt $left -and $x + $wordWidth -gt $left + $width) { $x = $left; $lineY += $lineHeight }
+          $g.DrawString($word, $font, [System.Drawing.Brushes]::Black, [single]$x, [single]$lineY); $x += $wordWidth
+        }
+        $y = $lineY + $lineHeight + ${itemGap}
+      } catch {
+        $plainItem = $rawItem.Replace('[[', '').Replace(']]', '')
+        $format = New-Object System.Drawing.StringFormat; $format.Alignment = [System.Drawing.StringAlignment]::Near
+        $bounds = New-Object System.Drawing.RectangleF([single]$event.MarginBounds.Left, [single]$y, [single]$width, 200)
+        $height = $g.MeasureString($plainItem, $normal, $width, $format).Height
+        $g.DrawString($plainItem, $normal, [System.Drawing.Brushes]::Black, $bounds, $format)
+        $y += [Math]::Ceiling($height) + ${itemGap}; $format.Dispose()
       }
-      $y = $lineY + $lineHeight + ${itemGap}; $normal.Dispose(); $bold.Dispose(); continue
+      $normal.Dispose(); $bold.Dispose(); continue
     }
     if ($line.StartsWith('__ITEMHEAD__') -or $line.StartsWith('__ITEM__')) {
       $cells = $line.Substring($(if ($line.StartsWith('__ITEMHEAD__')) { 12 } else { 8 })).Split('|')
@@ -456,22 +493,31 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && req.url === '/health') {
     try { localLedger().prepare('SELECT 1 AS ok').get(); }
     catch (error) { return reply(res, 503, { ok:false, service:'Red Lantern Print Bridge', error:'The local SQLite ledger is unavailable.', detail:error.message }, origin); }
-    return reply(res, 200, { ok: true, service: 'Red Lantern Print Bridge', platform:process.platform, node:process.version, ledger:'ready', ledgerSummary:ledgerSummary() }, origin);
+    return reply(res, 200, { ok: true, service: 'Red Lantern Print Bridge', version:BRIDGE_VERSION, platform:process.platform, node:process.version, ledger:'ready', ledgerSummary:ledgerSummary() }, origin);
   }
   if (req.method === 'GET' && req.url === '/v1/setup-status') {
     try {
       localLedger().prepare('SELECT 1 AS ok').get();
       const [printers, config] = await Promise.all([installedPrinters(), readJson(configFile, { printers: [], routes: [] })]);
+      const savedPrinters=Array.isArray(config.printers) ? config.printers : [];
+      const savedRoutes=Array.isArray(config.routes) ? config.routes : [];
+      const configuredPrinters=savedPrinters.filter((printer)=>String(printer.deviceName||'').trim());
+      const configuredKotIds=new Set(configuredPrinters.filter((printer)=>printer.type==='kot').map((printer)=>String(printer.id)));
+      const configuredKotRoutes=savedRoutes.filter((route)=>configuredKotIds.has(String(route.printerId)));
       return reply(res, 200, {
         ok:true,
         platform:process.platform,
         platformLabel:process.platform === 'win32' ? 'Windows' : process.platform === 'darwin' ? 'macOS' : process.platform,
+        version:BRIDGE_VERSION,
         node:process.version,
         ledger:'ready',
         printerCount:printers.length,
-        configuredPrinterCount:Array.isArray(config.printers) ? config.printers.length : 0,
-        routeCount:Array.isArray(config.routes) ? config.routes.length : 0,
-        ledgerSummary:ledgerSummary()
+        configuredPrinterCount:configuredPrinters.length,
+        configuredBillPrinterCount:configuredPrinters.filter((printer)=>printer.type==='bill').length,
+        configuredKotRouteCount:configuredKotRoutes.length,
+        routeCount:savedRoutes.length,
+        ledgerSummary:ledgerSummary(),
+        recentPrintFailures:recentPrintFailures()
       }, origin);
     } catch (error) { return reply(res, 503, { ok:false, error:'Print Bridge needs attention.', detail:error.message }, origin); }
   }
@@ -516,6 +562,10 @@ const server = http.createServer(async (req, res) => {
       return reply(res, 200, { actions:rows.map(ledgerAction) }, origin);
     } catch (error) { return reply(res, 500, { error:'Unable to read the local order ledger.', detail:error.message }, origin); }
   }
+  if (req.method === 'POST' && req.url === '/v1/print-jobs/acknowledge') {
+    try { const body=await readBody(req); return reply(res, 200, { ok:true, acknowledged:acknowledgePrintJobs(body.ids) }, origin); }
+    catch (error) { return reply(res, 400, { error:error.message || 'Unable to acknowledge print jobs.' }, origin); }
+  }
   if (req.method === 'POST' && req.url === '/v1/ledger/actions') {
     try { return reply(res, 201, { ok:true, action:queueLedgerAction(await readBody(req)) }, origin); }
     catch (error) { return reply(res, 400, { error:error.message || 'Unable to save the offline order.' }, origin); }
@@ -552,11 +602,13 @@ const server = http.createServer(async (req, res) => {
       const printerName = String(payload.printerName || '').trim().slice(0, 160);
       const items = Array.isArray(payload.items) ? payload.items.slice(0, 100) : [];
       if (!printerName || !items.length) throw new Error('A printer and at least one KOT item are required.');
-      const claim=claimPrintJob(payload.printJobId, 'kot', printerName);
+      const ticketText=kotText({ ...payload, items });
+      const contentHash=crypto.createHash('sha256').update(ticketText).digest('hex');
+      const claim=claimPrintJob(payload.printJobId, 'kot', printerName, contentHash);
       if (!claim.claim) return reply(res, claim.duplicate ? 200 : 202, { ok:true, duplicate:!!claim.duplicate, pending:!!claim.pending, printerName }, origin);
-      await printText(printerName, kotText({ ...payload, items }), payload.settings || {});
+      await printText(printerName, ticketText, payload.settings || {});
       finishPrintJob(payload.printJobId, true);
-      return reply(res, 201, { ok: true, printerName }, origin);
+      return reply(res, 201, { ok: true, printerName, itemCount:items.length }, origin);
     } catch (error) { try { finishPrintJob(printJobId, false); } catch (_) {} return reply(res, 400, { error: error.message || 'Unable to print KOT.' }, origin); }
   }
   if (req.method === 'POST' && req.url === '/v1/print-bill') {
