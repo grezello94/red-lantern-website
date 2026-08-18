@@ -69,3 +69,11 @@ html,body{min-height:100%;background:var(--cap-page)}body{color:var(--cap-ink);t
 .captain-order-actions>button.is-open{transform:none}
 .captain-order-actions>button:hover,.captain-order-actions>button:focus-visible{transform:scale(1.06)}
 @media(max-width:620px){#captain-order-action-list button{width:232px}.captain-action-copy b{font-size:19px}}
+
+/* Reference-style launcher sizing and iconography. */
+#captain-order-action-list button{width:238px;grid-template-columns:minmax(0,1fr) 58px}
+.captain-action-copy{padding:9px 14px;border-radius:9px}
+.captain-action-copy b{font-size:18px!important;font-weight:650;letter-spacing:-.02em}
+.captain-action-icon{font-size:0;background-color:#247cf0!important;background-repeat:no-repeat;background-position:center;background-size:29px 29px}
+#captain-order-action-list button:first-child .captain-action-icon{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' fill='none' stroke='white' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 11h14l-1 16H10L9 11Z'/%3E%3Cpath d='M12 11V8a4 4 0 0 1 8 0v3M12 16v6m8-6v6'/%3E%3C/svg%3E")}
+#captain-order-action-list button:nth-child(2) .captain-action-icon{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' fill='none' stroke='white' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cellipse cx='16' cy='11' rx='10' ry='4'/%3E%3Cpath d='M6 11c0 5 20 5 20 0M16 15v10m-5 2h10'/%3E%3C/svg%3E")}
