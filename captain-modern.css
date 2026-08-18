@@ -1,5 +1,6 @@
 /* Captain — consolidated touch-first interface layer. */
 :root{--cap-ink:#1f2d44;--cap-muted:#6c7d94;--cap-line:#dfe7f0;--cap-surface:#fff;--cap-page:#f4f7fb;--cap-blue:#247cf0;--cap-blue-dark:#1768d4;--cap-green:#168654;--cap-amber:#a96d18;--cap-radius:18px}
+html{touch-action:pan-x pan-y}button,a,[role="button"]{touch-action:manipulation}
 html,body{min-height:100%;background:var(--cap-page)}body{color:var(--cap-ink);text-rendering:optimizeLegibility}.captain-app .screen[hidden],.captain-app[hidden]{display:none!important}button,input,textarea{font:inherit}button{touch-action:manipulation}button:focus-visible,input:focus-visible,textarea:focus-visible,summary:focus-visible{outline:3px solid #8fc2ff;outline-offset:2px}
 
 /* Shared shell */
