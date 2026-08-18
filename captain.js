@@ -1,4 +1,11 @@
 const recentKey='red-lantern-captain-recent-items', sessionKey='red-lantern-captain-session', loginSelectionKey='red-lantern-captain-login-selection', readyKey='red-lantern-captain-ready-seen';
+// Keep the operational UI at a fixed scale on touch devices; one-finger scrolling remains enabled.
+document.addEventListener('gesturestart',(event)=>event.preventDefault(),{passive:false});
+document.addEventListener('gesturechange',(event)=>event.preventDefault(),{passive:false});
+document.addEventListener('gestureend',(event)=>event.preventDefault(),{passive:false});
+document.addEventListener('touchmove',(event)=>{if(event.touches.length>1)event.preventDefault()},{passive:false});
+let lastCaptainTap=0;
+document.addEventListener('touchend',(event)=>{const now=Date.now();if(now-lastCaptainTap<300){event.preventDefault()}lastCaptainTap=now},{passive:false});
 const $=(selector)=>document.querySelector(selector);
 const esc=(value)=>String(value??'').replace(/[&<>'"]/g,(character)=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[character]));
 const money=(value)=>`₹${Number(value||0).toFixed(0)}`;
