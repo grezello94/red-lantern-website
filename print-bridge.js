@@ -247,30 +247,16 @@ $doc.add_PrintPage({ param($sender, $event)
       $pen.Dispose(); $y += 4 + ${separatorGap}; continue
     }
     if ($line.StartsWith('__KOTITEM__')) {
-      $normal = New-Object System.Drawing.Font('${fontFamily}', ${kotItemFontSize}, [System.Drawing.FontStyle]::Regular)
-      $bold = New-Object System.Drawing.Font('${fontFamily}', ${kotItemFontSize}, [System.Drawing.FontStyle]::Bold)
-      # Keep emphasis for similar dish names, but never allow a font/driver
-      # issue in that optional enhancement to produce a blank kitchen slip.
-      $rawItem = $line.Substring(11)
-      try {
-        $tokens = [regex]::Matches($rawItem, '\[\[.*?\]\]|\S+')
-        $left = [single]$event.MarginBounds.Left; $x = $left; $lineY = [single]$y; $lineHeight = [Math]::Ceiling($g.MeasureString('Ag', $normal).Height)
-        foreach ($token in $tokens) {
-          $raw = $token.Value; $isBold = $raw.StartsWith('[[') -and $raw.EndsWith(']]'); $word = if ($isBold) { $raw.Substring(2, $raw.Length - 4) } else { $raw }; $font = if ($isBold) { $bold } else { $normal }
-          $wordWidth = [single]$g.MeasureString($word + ' ', $font).Width
-          if ($x -gt $left -and $x + $wordWidth -gt $left + $width) { $x = $left; $lineY += $lineHeight }
-          $g.DrawString($word, $font, [System.Drawing.Brushes]::Black, [single]$x, [single]$lineY); $x += $wordWidth
-        }
-        $y = $lineY + $lineHeight + ${itemGap}
-      } catch {
-        $plainItem = $rawItem.Replace('[[', '').Replace(']]', '')
-        $format = New-Object System.Drawing.StringFormat; $format.Alignment = [System.Drawing.StringAlignment]::Near
-        $bounds = New-Object System.Drawing.RectangleF([single]$event.MarginBounds.Left, [single]$y, [single]$width, 200)
-        $height = $g.MeasureString($plainItem, $normal, $width, $format).Height
-        $g.DrawString($plainItem, $normal, [System.Drawing.Brushes]::Black, $bounds, $format)
-        $y += [Math]::Ceiling($height) + ${itemGap}; $format.Dispose()
-      }
-      $normal.Dispose(); $bold.Dispose(); continue
+      # Draw the complete line in one GDI operation.  The former token-by-token
+      # renderer was driver-sensitive and could print only the first character
+      # of an item on some thermal printers.
+      $plainItem = $line.Substring(11).Replace('[[', '').Replace(']]', '')
+      $font = New-Object System.Drawing.Font('${fontFamily}', ${kotItemFontSize}, [System.Drawing.FontStyle]::Bold)
+      $format = New-Object System.Drawing.StringFormat; $format.Alignment = [System.Drawing.StringAlignment]::Near; $format.Trimming = [System.Drawing.StringTrimming]::Word
+      $bounds = New-Object System.Drawing.RectangleF([single]$event.MarginBounds.Left, [single]$y, [single]$width, 400)
+      $height = $g.MeasureString($plainItem, $font, $width, $format).Height
+      $g.DrawString($plainItem, $font, [System.Drawing.Brushes]::Black, $bounds, $format)
+      $y += [Math]::Ceiling($height) + ${itemGap}; $font.Dispose(); $format.Dispose(); continue
     }
     if ($line.StartsWith('__ITEMHEAD__') -or $line.StartsWith('__ITEM__')) {
       $cells = $line.Substring($(if ($line.StartsWith('__ITEMHEAD__')) { 12 } else { 8 })).Split('|')
