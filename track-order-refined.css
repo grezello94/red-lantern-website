@@ -1,13 +1,55 @@
 /* A warm, legible customer-facing tracking surface. */
-:root { --ink:#2b1e1a; --muted:#786a65; --red:#cf292d; --line:#eedfd8; }
-body { background:radial-gradient(circle at 50% -15%,#fff0e6,#fffaf7 48%,#f8eee8); }
-.track-shell { padding:34px 18px 48px; }
-.brand { color:#4a1719; }
-.brand img { width:54px; height:54px; box-shadow:0 6px 16px rgba(68,31,21,.1); }
-.tracking-card { margin-top:30px; padding:34px 28px; border-color:var(--line); border-radius:24px; background:rgba(255,255,255,.94); box-shadow:0 18px 45px rgba(76,39,24,.11); }
-.status { box-shadow:0 4px 12px rgba(58,32,29,.13); }
-.step { border:1px solid transparent; }
-.step.active { background:#4a1719; }
-.items { margin-top:24px; }
-.cancel-order:focus-visible,.cancel-form button:focus-visible,.brand:focus-visible { outline:3px solid rgba(207,41,45,.25); outline-offset:3px; }
-@media (max-width:390px) { .track-shell { padding-top:24px; } .tracking-card { padding:28px 18px; } }
+:root {
+  --ink: #2b1e1a;
+  --muted: #786a65;
+  --red: #cf292d;
+  --line: #eedfd8;
+}
+body {
+  background: radial-gradient(circle at 50% -15%, #fff0e6, #fffaf7 48%, #f8eee8);
+}
+.track-shell {
+  padding: 34px 18px 48px;
+}
+.brand {
+  color: #4a1719;
+}
+.brand img {
+  width: 54px;
+  height: 54px;
+  box-shadow: 0 6px 16px rgba(68, 31, 21, 0.1);
+}
+.tracking-card {
+  margin-top: 30px;
+  padding: 34px 28px;
+  border-color: var(--line);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 18px 45px rgba(76, 39, 24, 0.11);
+}
+.status {
+  box-shadow: 0 4px 12px rgba(58, 32, 29, 0.13);
+}
+.step {
+  border: 1px solid transparent;
+}
+.step.active {
+  background: #4a1719;
+}
+.items {
+  margin-top: 24px;
+}
+.cancel-order:focus-visible,
+.cancel-form button:focus-visible,
+.brand:focus-visible {
+  outline: 3px solid rgba(207, 41, 45, 0.25);
+  outline-offset: 3px;
+}
+@media (max-width: 390px) {
+  .track-shell {
+    padding-top: 24px;
+  }
+  .tracking-card {
+    padding: 28px 18px;
+  }
+}

@@ -16,7 +16,15 @@
     "start": "node --env-file-if-exists=.env server.js",
     "dev": "node --env-file-if-exists=.env server.js",
     "print-bridge": "node print-bridge.js",
-    "test": "npm run build && node scripts/test-print-bridge.js"
+    "test": "npm run test:unit && npm run build && node scripts/test-print-bridge.js",
+    "test:unit": "jest --runInBand",
+    "lint": "eslint . --ext .js",
+    "format": "prettier --write \"**/*.{js,css,html,json}\"",
+    "typecheck": "tsc --noEmit",
+    "e2e": "playwright test",
+    "release:check": "npm run lint && npm run typecheck && npm run test:unit --silent && npx playwright test",
+    "release:tag": "node scripts/release-tag.js",
+    "release:prepare": "npm run release:check && npm run release:tag"
   },
   "repository": {
     "type": "git",
@@ -45,6 +53,21 @@
     "web-push": "^3.6.7"
   },
   "devDependencies": {
-    "clean-css-cli": "^5.6.3"
+    "@playwright/test": "^1.62.1",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^26.2.0",
+    "clean-css-cli": "^5.6.3",
+    "eslint": "^10.8.1",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-import": "^2.32.0",
+    "eslint-plugin-node": "^11.1.0",
+    "eslint-plugin-prettier": "^5.5.6",
+    "jest": "^30.4.2",
+    "jest-environment-jsdom": "^30.4.1",
+    "jsdom": "^29.1.1",
+    "prettier": "^3.9.6",
+    "typescript": "^7.0.2"
   }
 }

@@ -13,8 +13,13 @@ let directOrdersEnabled = false;
 let loyaltyPoints = 0;
 let loyaltyLookupTimer = null;
 let directOrderRequestId = sessionStorage.getItem(directOrderRequestKey) || '';
-function nextDirectOrderRequestId() { return `qr-${Date.now()}-${crypto.getRandomValues(new Uint32Array(1))[0].toString(36)}`; }
-function clearDirectOrderRequestId() { directOrderRequestId=''; sessionStorage.removeItem(directOrderRequestKey); }
+function nextDirectOrderRequestId() {
+  return `qr-${Date.now()}-${crypto.getRandomValues(new Uint32Array(1))[0].toString(36)}`;
+}
+function clearDirectOrderRequestId() {
+  directOrderRequestId = '';
+  sessionStorage.removeItem(directOrderRequestKey);
+}
 
 function syncOrderVisibleHeight() {
   const height = window.visualViewport?.height || window.innerHeight;
@@ -25,13 +30,25 @@ syncOrderVisibleHeight();
 window.visualViewport?.addEventListener('resize', syncOrderVisibleHeight);
 window.addEventListener('resize', syncOrderVisibleHeight);
 
-try { orderSelections = JSON.parse(sessionStorage.getItem(orderStorageKey) || '{}'); } catch { orderSelections = {}; }
+try {
+  orderSelections = JSON.parse(sessionStorage.getItem(orderStorageKey) || '{}');
+} catch {
+  orderSelections = {};
+}
 
-const escapeHtml = (value) => String(value || '')
-  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-  .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+const escapeHtml = (value) =>
+  String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 
-const slug = (value) => String(value || 'menu').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+const slug = (value) =>
+  String(value || 'menu')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
 
 function displayName(value) {
   return String(value || '')
@@ -72,10 +89,12 @@ function portionPriceHtml(dish) {
     ['30 ML', normalize(dish.price30ml)],
     ['60 ML', normalize(dish.price60ml)],
     ['90 ML', normalize(dish.price90ml)],
-    ['180 ML', normalize(dish.price180ml)]
+    ['180 ML', normalize(dish.price180ml)],
   ].filter(([, price]) => price);
-  if (mlPrices.length) return `<span class="portion-prices ml-prices">${mlPrices.map(([label, price]) => `<span><small>${label}</small>${escapeHtml(price)}</span>`).join('')}</span>`;
-  if (half || full || withBone || boneless) return `<span class="portion-prices">${half ? `<span><small>Half</small>${escapeHtml(half)}</span>` : ''}${full ? `<span><small>Full</small>${escapeHtml(full)}</span>` : ''}${withBone ? `<span><small>With Bone</small>${escapeHtml(withBone)}</span>` : ''}${boneless ? `<span><small>Boneless</small>${escapeHtml(boneless)}</span>` : ''}</span>`;
+  if (mlPrices.length)
+    return `<span class="portion-prices ml-prices">${mlPrices.map(([label, price]) => `<span><small>${label}</small>${escapeHtml(price)}</span>`).join('')}</span>`;
+  if (half || full || withBone || boneless)
+    return `<span class="portion-prices">${half ? `<span><small>Half</small>${escapeHtml(half)}</span>` : ''}${full ? `<span><small>Full</small>${escapeHtml(full)}</span>` : ''}${withBone ? `<span><small>With Bone</small>${escapeHtml(withBone)}</span>` : ''}${boneless ? `<span><small>Boneless</small>${escapeHtml(boneless)}</span>` : ''}</span>`;
   const price = displayPrice(dish);
   return price ? `<span class="dish-price">${escapeHtml(price)}</span>` : '';
 }
@@ -84,9 +103,18 @@ function dietaryTag(dish) {
   const tags = [];
   if (dish.type === 'beverage') tags.push('<span class="tag tag-drink">Beverage</span>');
   const text = `${dish.name || ''} ${dish.description || ''}`;
-  const nonVeg = /\b(chicken|fish|prawn|shrimp|squid|calamari|crab|lobster|mutton|lamb|goat|egg|beef|pork|ham|bacon|sausage)\b/i.test(text);
+  const nonVeg =
+    /\b(chicken|fish|prawn|shrimp|squid|calamari|crab|lobster|mutton|lamb|goat|egg|beef|pork|ham|bacon|sausage)\b/i.test(
+      text
+    );
   const categoryDietary = dietaryFromCategory(dish.category);
-  if (dish.type !== 'beverage') tags.push((dish.dietary === 'nonveg' || (!dish.dietary && (categoryDietary === 'nonveg' || (!categoryDietary && nonVeg)))) ? '<span class="tag tag-nonveg">Non-Veg</span>' : '<span class="tag tag-veg">Veg</span>');
+  if (dish.type !== 'beverage')
+    tags.push(
+      dish.dietary === 'nonveg' ||
+        (!dish.dietary && (categoryDietary === 'nonveg' || (!categoryDietary && nonVeg)))
+        ? '<span class="tag tag-nonveg">Non-Veg</span>'
+        : '<span class="tag tag-veg">Veg</span>'
+    );
   if (dish.bestSeller) tags.push('<span class="tag tag-featured">Best Seller</span>');
   if (dish.mustHave) tags.push('<span class="tag tag-must">Must Have</span>');
   return tags.join('');
@@ -101,8 +129,12 @@ function dietaryFromCategory(category) {
 
 function dietarySymbol(dish) {
   if (dish.type === 'beverage') return '';
-  const inferredNonVeg = /\b(chicken|fish|prawn|shrimp|squid|calamari|crab|lobster|mutton|lamb|goat|egg|beef|pork|ham|bacon|sausage)\b/i.test(`${dish.name || ''} ${dish.description || ''}`);
-  const kind = dish.dietary || dietaryFromCategory(dish.category) || (inferredNonVeg ? 'nonveg' : 'veg');
+  const inferredNonVeg =
+    /\b(chicken|fish|prawn|shrimp|squid|calamari|crab|lobster|mutton|lamb|goat|egg|beef|pork|ham|bacon|sausage)\b/i.test(
+      `${dish.name || ''} ${dish.description || ''}`
+    );
+  const kind =
+    dish.dietary || dietaryFromCategory(dish.category) || (inferredNonVeg ? 'nonveg' : 'veg');
   return `<span class="dietary-symbol ${kind}" aria-label="${kind === 'nonveg' ? 'Non-Veg' : 'Veg'}"><i></i></span>`;
 }
 
@@ -119,23 +151,48 @@ function registerOrderOptions(dish, category, index, showPrices) {
     if (dish.bonelessPrice) variants.push({ portion: 'Boneless', price: dish.bonelessPrice });
   }
   if (!variants.length) variants.push({ portion: '', price: dish.price || displayPrice(dish) });
-  return `<div class="order-pickers">${variants.map((variant) => {
-    const styles = [{ label: 'Dry (default)', value: '' }];
-    const hasGravyStyles = dish.gravyStyleAvailable || dish.gravyAvailable || dish.semiGravyAvailable;
-    if (hasGravyStyles) styles.push({ label: 'Gravy', value: 'Gravy' }, { label: 'Semi-Gravy', value: 'Semi-Gravy' });
-    const baseKey = `${category}|${displayName(dish.name)}|${variant.portion}`;
-    const styleOptions = styles.map((style) => {
-      const key = encodeURIComponent(`${baseKey}|${style.value || 'Dry'}`);
-      orderCatalog.set(key, { key, name: displayName(dish.name), category, portion: variant.portion, style: style.value, price: variant.price || '', showPrices, gravyStyleAvailable: hasGravyStyles });
-      return { ...style, key };
-    });
-    const selected = styleOptions.find((style) => Number(orderSelections[style.key] || 0) > 0) || styleOptions[0];
-    const quantity = Number(orderSelections[selected.key] || 0);
-    const customisation = styleOptions.length > 1
-      ? `<fieldset class="order-customisation"><legend>Choose style <em>(optional · Dry by default)</em></legend>${styleOptions.slice(1).map((style) => `<label><input type="radio" name="menu-style-${index}-${slug(`${category}-${dish.name}-${variant.portion}`)}" data-order-style value="${style.key}" ${style.key === selected.key ? 'checked' : ''}><span>${escapeHtml(style.label)}</span></label>`).join('')}</fieldset>`
-      : '';
-    return `<div class="order-picker" data-order-key="${selected.key}"><span>${variant.portion || 'Add'}</span><div class="quantity-control"><button type="button" data-order-action="minus" data-order-key="${selected.key}" aria-label="Remove one">−</button><strong data-order-quantity="${selected.key}">${quantity}</strong><button type="button" data-order-action="plus" data-order-key="${selected.key}" aria-label="Add one">+</button></div>${customisation}</div>`;
-  }).join('')}</div>`;
+  return `<div class="order-pickers">${variants
+    .map((variant) => {
+      const styles = [{ label: 'Dry (default)', value: '' }];
+      const hasGravyStyles =
+        dish.gravyStyleAvailable || dish.gravyAvailable || dish.semiGravyAvailable;
+      if (hasGravyStyles)
+        styles.push(
+          { label: 'Gravy', value: 'Gravy' },
+          { label: 'Semi-Gravy', value: 'Semi-Gravy' }
+        );
+      const baseKey = `${category}|${displayName(dish.name)}|${variant.portion}`;
+      const styleOptions = styles.map((style) => {
+        const key = encodeURIComponent(`${baseKey}|${style.value || 'Dry'}`);
+        orderCatalog.set(key, {
+          key,
+          name: displayName(dish.name),
+          category,
+          portion: variant.portion,
+          style: style.value,
+          price: variant.price || '',
+          showPrices,
+          gravyStyleAvailable: hasGravyStyles,
+        });
+        return { ...style, key };
+      });
+      const selected =
+        styleOptions.find((style) => Number(orderSelections[style.key] || 0) > 0) ||
+        styleOptions[0];
+      const quantity = Number(orderSelections[selected.key] || 0);
+      const customisation =
+        styleOptions.length > 1
+          ? `<fieldset class="order-customisation"><legend>Choose style <em>(optional · Dry by default)</em></legend>${styleOptions
+              .slice(1)
+              .map(
+                (style) =>
+                  `<label><input type="radio" name="menu-style-${index}-${slug(`${category}-${dish.name}-${variant.portion}`)}" data-order-style value="${style.key}" ${style.key === selected.key ? 'checked' : ''}><span>${escapeHtml(style.label)}</span></label>`
+              )
+              .join('')}</fieldset>`
+          : '';
+      return `<div class="order-picker" data-order-key="${selected.key}"><span>${variant.portion || 'Add'}</span><div class="quantity-control"><button type="button" data-order-action="minus" data-order-key="${selected.key}" aria-label="Remove one">−</button><strong data-order-quantity="${selected.key}">${quantity}</strong><button type="button" data-order-action="plus" data-order-key="${selected.key}" aria-label="Add one">+</button></div>${customisation}</div>`;
+    })
+    .join('')}</div>`;
 }
 
 function orderSummaryText() {
@@ -148,7 +205,9 @@ function orderSummaryText() {
     const item = orderCatalog.get(key);
     if (!item || quantity <= 0) return;
     const price = orderPriceWithStyle(item);
-    lines.push(`${quantity} × ${item.name}${item.portion ? ` (${item.portion})` : ''}${item.style ? ` — ${styleLabel(item)}` : ''}${orderShowsPrices && price ? ` – ${price}${quantity > 1 ? ` each` : ''}` : ''}`);
+    lines.push(
+      `${quantity} × ${item.name}${item.portion ? ` (${item.portion})` : ''}${item.style ? ` — ${styleLabel(item)}` : ''}${orderShowsPrices && price ? ` – ${price}${quantity > 1 ? ` each` : ''}` : ''}`
+    );
   });
   if (orderIsBusinessCard) {
     lines.push('');
@@ -162,7 +221,10 @@ function orderSummaryText() {
 }
 
 function updateOrderUI() {
-  const totalCount = Object.entries(orderSelections).reduce((total, [key, quantity]) => total + (orderCatalog.has(key) ? Number(quantity || 0) : 0), 0);
+  const totalCount = Object.entries(orderSelections).reduce(
+    (total, [key, quantity]) => total + (orderCatalog.has(key) ? Number(quantity || 0) : 0),
+    0
+  );
   document.querySelectorAll('[data-order-quantity]').forEach((element) => {
     const quantity = Number(orderSelections[element.dataset.orderQuantity] || 0);
     element.textContent = quantity;
@@ -177,40 +239,89 @@ function updateOrderUI() {
 
 function renderOrderSummary() {
   const container = document.getElementById('order-summary-items');
-  const items = Object.entries(orderSelections).filter(([key, quantity]) => quantity > 0 && orderCatalog.has(key));
-  container.innerHTML = items.length ? items.map(([key, quantity]) => {
-    const item = orderCatalog.get(key);
-    const styleChoices = item.gravyStyleAvailable ? ['Gravy', 'Semi-Gravy'].map((style) => {
-      const styleKey = encodeURIComponent(`${item.category}|${item.name}|${item.portion}|${style}`);
-      return `<label><input type="radio" name="summary-style-${key}" data-order-style value="${styleKey}" ${item.style === style ? 'checked' : ''}><span>${style} <em>+₹10</em></span></label>`;
-    }).join('') : '';
-    const customisation = styleChoices ? `<fieldset class="summary-style-options"><legend>Style <em>(optional · Dry by default)</em></legend>${styleChoices}</fieldset>` : '';
-    return `<div class="summary-item"><div><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml([item.category, item.portion, styleLabel(item)].filter(Boolean).join(' · '))}</span>${customisation}</div><div class="summary-quantity"><button type="button" data-order-action="minus" data-order-key="${key}">−</button><b>${quantity}</b><button type="button" data-order-action="plus" data-order-key="${key}">+</button></div></div>`;
-  }).join('') : '<p class="empty">No dishes selected yet.</p>';
+  const items = Object.entries(orderSelections).filter(
+    ([key, quantity]) => quantity > 0 && orderCatalog.has(key)
+  );
+  container.innerHTML = items.length
+    ? items
+        .map(([key, quantity]) => {
+          const item = orderCatalog.get(key);
+          const styleChoices = item.gravyStyleAvailable
+            ? ['Gravy', 'Semi-Gravy']
+                .map((style) => {
+                  const styleKey = encodeURIComponent(
+                    `${item.category}|${item.name}|${item.portion}|${style}`
+                  );
+                  return `<label><input type="radio" name="summary-style-${key}" data-order-style value="${styleKey}" ${item.style === style ? 'checked' : ''}><span>${style} <em>+₹10</em></span></label>`;
+                })
+                .join('')
+            : '';
+          const customisation = styleChoices
+            ? `<fieldset class="summary-style-options"><legend>Style <em>(optional · Dry by default)</em></legend>${styleChoices}</fieldset>`
+            : '';
+          return `<div class="summary-item"><div><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml([item.category, item.portion, styleLabel(item)].filter(Boolean).join(' · '))}</span>${customisation}</div><div class="summary-quantity"><button type="button" data-order-action="minus" data-order-key="${key}">−</button><b>${quantity}</b><button type="button" data-order-action="plus" data-order-key="${key}">+</button></div></div>`;
+        })
+        .join('')
+    : '<p class="empty">No dishes selected yet.</p>';
   const customerDetails = document.getElementById('order-customer-details');
   const customerPhone = document.getElementById('order-customer-phone');
   customerDetails.hidden = !(orderIsBusinessCard || directOrdersEnabled);
-  if (customerPhone && customerPhone.value !== orderCustomerPhone) customerPhone.value = orderCustomerPhone;
+  if (customerPhone && customerPhone.value !== orderCustomerPhone)
+    customerPhone.value = orderCustomerPhone;
   const loyaltyPanel = document.getElementById('loyalty-panel');
   const redeemWrap = document.getElementById('loyalty-redeem-wrap');
   const redeemInput = document.getElementById('loyalty-redeem');
-  if (loyaltyPanel) loyaltyPanel.hidden = !(directOrdersEnabled && String(orderCustomerPhone).replace(/\D/g, '').length >= 7);
+  if (loyaltyPanel)
+    loyaltyPanel.hidden = !(
+      directOrdersEnabled && String(orderCustomerPhone).replace(/\D/g, '').length >= 7
+    );
   if (redeemWrap) redeemWrap.hidden = loyaltyPoints < 100;
   if (redeemInput) redeemInput.max = String(loyaltyPoints);
   const redeemPreview = document.getElementById('loyalty-redeem-preview');
-  if (redeemPreview) { const value = Math.floor(Number(redeemInput?.value) || 0); redeemPreview.textContent = value >= 100 ? `₹${Math.min(value, loyaltyPoints)} discount will be applied` : 'No points applied'; }
-  const whatsappTarget = orderWhatsAppNumber ? `https://wa.me/${orderWhatsAppNumber}` : 'https://wa.me/';
-  document.getElementById('share-whatsapp').href = `${whatsappTarget}?text=${encodeURIComponent(orderSummaryText())}`;
+  if (redeemPreview) {
+    const value = Math.floor(Number(redeemInput?.value) || 0);
+    redeemPreview.textContent =
+      value >= 100
+        ? `₹${Math.min(value, loyaltyPoints)} discount will be applied`
+        : 'No points applied';
+  }
+  const whatsappTarget = orderWhatsAppNumber
+    ? `https://wa.me/${orderWhatsAppNumber}`
+    : 'https://wa.me/';
+  document.getElementById('share-whatsapp').href =
+    `${whatsappTarget}?text=${encodeURIComponent(orderSummaryText())}`;
 }
 
 async function loadLoyaltyPoints() {
   const phone = String(orderCustomerPhone).replace(/\D/g, '');
   const panel = document.getElementById('loyalty-panel');
   const balance = document.getElementById('loyalty-balance');
-  if (!directOrdersEnabled || phone.length < 7) { loyaltyPoints = 0; if (panel) panel.hidden = true; return; }
+  if (!directOrdersEnabled || phone.length < 7) {
+    loyaltyPoints = 0;
+    if (panel) panel.hidden = true;
+    return;
+  }
   if (panel) panel.hidden = false;
   if (balance) balance.textContent = 'Checking points…';
-  try { const response = await fetch('/api/loyalty', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ phone }) }); const data = await response.json(); if (!response.ok) throw new Error(); loyaltyPoints = Number(data.points || 0); if (balance) balance.textContent = loyaltyPoints >= 100 ? `${loyaltyPoints} points = ₹${loyaltyPoints} available` : `${loyaltyPoints} points · collect ${100 - loyaltyPoints} more to redeem`; renderOrderSummary(); } catch { loyaltyPoints = 0; if (balance) balance.textContent = 'Points are unavailable right now.'; }
+  try {
+    const response = await fetch('/api/loyalty', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error();
+    loyaltyPoints = Number(data.points || 0);
+    if (balance)
+      balance.textContent =
+        loyaltyPoints >= 100
+          ? `${loyaltyPoints} points = ₹${loyaltyPoints} available`
+          : `${loyaltyPoints} points · collect ${100 - loyaltyPoints} more to redeem`;
+    renderOrderSummary();
+  } catch {
+    loyaltyPoints = 0;
+    if (balance) balance.textContent = 'Points are unavailable right now.';
+  }
 }
 
 function changeOrderQuantity(key, change) {
@@ -221,7 +332,9 @@ function changeOrderQuantity(key, change) {
 
 function changeOrderStyle(control) {
   const picker = control.closest('.order-picker');
-  const previousKey = picker?.dataset.orderKey || control.closest('.summary-item')?.querySelector('[data-order-action]')?.dataset.orderKey;
+  const previousKey =
+    picker?.dataset.orderKey ||
+    control.closest('.summary-item')?.querySelector('[data-order-action]')?.dataset.orderKey;
   const nextKey = control.value;
   if (!previousKey || !nextKey || previousKey === nextKey) return;
   const quantity = Number(orderSelections[previousKey] || 0);
@@ -231,7 +344,9 @@ function changeOrderStyle(control) {
   }
   if (picker) {
     picker.dataset.orderKey = nextKey;
-    picker.querySelectorAll('[data-order-key]').forEach((element) => { element.dataset.orderKey = nextKey; });
+    picker.querySelectorAll('[data-order-key]').forEach((element) => {
+      element.dataset.orderKey = nextKey;
+    });
     const quantityLabel = picker.querySelector('[data-order-quantity]');
     if (quantityLabel) quantityLabel.dataset.orderQuantity = nextKey;
   }
@@ -276,40 +391,102 @@ function setupOrderShortlist() {
     dialog.scrollTop = 0;
   });
   document.getElementById('close-order-summary').addEventListener('click', () => dialog.close());
-  dialog.addEventListener('click', (event) => { if (event.target === dialog) dialog.close(); });
-  document.getElementById('clear-order').addEventListener('click', () => { orderSelections = {}; updateOrderUI(); });
+  dialog.addEventListener('click', (event) => {
+    if (event.target === dialog) dialog.close();
+  });
+  document.getElementById('clear-order').addEventListener('click', () => {
+    orderSelections = {};
+    updateOrderUI();
+  });
   document.getElementById('order-customer-phone').addEventListener('input', (event) => {
     orderCustomerPhone = event.target.value.trim();
     localStorage.setItem('red-lantern-order-phone', orderCustomerPhone);
     renderOrderSummary();
-    clearTimeout(loyaltyLookupTimer); loyaltyLookupTimer = setTimeout(loadLoyaltyPoints, 300);
+    clearTimeout(loyaltyLookupTimer);
+    loyaltyLookupTimer = setTimeout(loadLoyaltyPoints, 300);
   });
-  document.getElementById('loyalty-redeem').addEventListener('input', (event) => { const value=Math.max(0,Math.floor(Number(event.target.value)||0)); event.target.value=String(value >= 100 ? Math.min(value, loyaltyPoints) : 0); renderOrderSummary(); });
+  document.getElementById('loyalty-redeem').addEventListener('input', (event) => {
+    const value = Math.max(0, Math.floor(Number(event.target.value) || 0));
+    event.target.value = String(value >= 100 ? Math.min(value, loyaltyPoints) : 0);
+    renderOrderSummary();
+  });
   document.getElementById('copy-order')?.addEventListener('click', async () => {
     const status = document.getElementById('order-action-status');
     try {
       await navigator.clipboard.writeText(orderSummaryText());
       status.textContent = 'Order summary copied.';
-    } catch { status.textContent = 'Copy is unavailable. Use WhatsApp sharing instead.'; }
+    } catch {
+      status.textContent = 'Copy is unavailable. Use WhatsApp sharing instead.';
+    }
   });
   document.getElementById('place-direct-order').addEventListener('click', async () => {
     const status = document.getElementById('order-action-status');
     const phone = document.getElementById('order-customer-phone').value.trim();
-    const items = Object.entries(orderSelections).filter(([, quantity]) => quantity > 0).map(([key, quantity]) => ({ ...orderCatalog.get(key), quantity }));
-    if (!phone || phone.replace(/\D/g, '').length < 7) { status.textContent = 'Please enter a valid mobile number to place a direct order.'; return; }
-    if (!navigator.onLine) { status.textContent = 'Internet is unavailable. This QR order has not been sent, so it cannot be duplicated. Please reconnect and try again.'; return; }
-    const button = document.getElementById('place-direct-order'); button.disabled = true; status.textContent = 'Placing your order…';
+    const items = Object.entries(orderSelections)
+      .filter(([, quantity]) => quantity > 0)
+      .map(([key, quantity]) => ({ ...orderCatalog.get(key), quantity }));
+    if (!phone || phone.replace(/\D/g, '').length < 7) {
+      status.textContent = 'Please enter a valid mobile number to place a direct order.';
+      return;
+    }
+    if (!navigator.onLine) {
+      status.textContent =
+        'Internet is unavailable. This QR order has not been sent, so it cannot be duplicated. Please reconnect and try again.';
+      return;
+    }
+    const button = document.getElementById('place-direct-order');
+    button.disabled = true;
+    status.textContent = 'Placing your order…';
     try {
-      const loyaltyInput=document.getElementById('loyalty-redeem');
-      const loyaltyPointsToUse=Math.floor(Number(loyaltyInput?.value)||0);
-      directOrderRequestId ||= nextDirectOrderRequestId(); sessionStorage.setItem(directOrderRequestKey,directOrderRequestId);
-      const response = await fetch('/api/direct-orders', { method:'POST', headers:{'Content-Type':'application/json','X-Direct-Order-Id':directOrderRequestId}, body:JSON.stringify({ clientRequestId:directOrderRequestId, mode:params.get('mode'), expires, signature:params.get('signature'), customerPhone:phone, customerName:document.getElementById('order-customer-name').value.trim(), specialRequest:document.getElementById('order-special-request').value.trim(), fulfillmentType: document.getElementById('order-fulfillment-type')?.value, loyaltyPoints: loyaltyPointsToUse, items }) });
+      const loyaltyInput = document.getElementById('loyalty-redeem');
+      const loyaltyPointsToUse = Math.floor(Number(loyaltyInput?.value) || 0);
+      directOrderRequestId ||= nextDirectOrderRequestId();
+      sessionStorage.setItem(directOrderRequestKey, directOrderRequestId);
+      const response = await fetch('/api/direct-orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Direct-Order-Id': directOrderRequestId },
+        body: JSON.stringify({
+          clientRequestId: directOrderRequestId,
+          mode: params.get('mode'),
+          expires,
+          signature: params.get('signature'),
+          customerPhone: phone,
+          customerName: document.getElementById('order-customer-name').value.trim(),
+          specialRequest: document.getElementById('order-special-request').value.trim(),
+          fulfillmentType: document.getElementById('order-fulfillment-type')?.value,
+          loyaltyPoints: loyaltyPointsToUse,
+          items,
+        }),
+      });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error);
-      orderSelections={}; clearDirectOrderRequestId(); loyaltyPoints=Math.max(0,loyaltyPoints-loyaltyPointsToUse); updateOrderUI(); document.getElementById('confirmation-order-number').textContent = `#${result.orderNumber || '—'}`; document.getElementById('view-order-status').href = result.trackingUrl || '#'; document.getElementById('confirmation-copy').textContent = result.autoAccepted ? 'Your order has been accepted. Follow the live status here as it is prepared and marked ready.' : 'Our counter team will confirm your order shortly. Follow the live status here for acceptance, preparation, and ready updates.'; dialog.querySelector('.order-dialog-head').hidden = true; summaryItems.hidden = true; customerDetails.hidden = true; actions.hidden = true; status.hidden = true; confirmation.hidden = false;
-    } catch(error) { status.textContent=error.message || 'Unable to place the order. Please call us.'; } finally { button.disabled=false; }
+      orderSelections = {};
+      clearDirectOrderRequestId();
+      loyaltyPoints = Math.max(0, loyaltyPoints - loyaltyPointsToUse);
+      updateOrderUI();
+      document.getElementById('confirmation-order-number').textContent =
+        `#${result.orderNumber || '—'}`;
+      document.getElementById('view-order-status').href = result.trackingUrl || '#';
+      document.getElementById('confirmation-copy').textContent = result.autoAccepted
+        ? 'Your order has been accepted. Follow the live status here as it is prepared and marked ready.'
+        : 'Our counter team will confirm your order shortly. Follow the live status here for acceptance, preparation, and ready updates.';
+      dialog.querySelector('.order-dialog-head').hidden = true;
+      summaryItems.hidden = true;
+      customerDetails.hidden = true;
+      actions.hidden = true;
+      status.hidden = true;
+      confirmation.hidden = false;
+    } catch (error) {
+      status.textContent = error.message || 'Unable to place the order. Please call us.';
+    } finally {
+      button.disabled = false;
+    }
   });
-  document.getElementById('place-another-order').addEventListener('click', () => { clearDirectOrderRequestId(); resetOrderDialog(); renderOrderSummary(); });
+  document.getElementById('place-another-order').addEventListener('click', () => {
+    clearDirectOrderRequestId();
+    resetOrderDialog();
+    renderOrderSummary();
+  });
   updateOrderUI();
 }
 
@@ -335,7 +512,8 @@ function configureOrderActions(menu) {
   const showCall = isCard && menu.cardCallEnabled && phoneDigits.length >= 7;
   call.hidden = !showCall;
   call.href = showCall ? `tel:${dialNumber}` : '#';
-  if (directOrdersEnabled && String(orderCustomerPhone).replace(/\D/g, '').length >= 7) loadLoyaltyPoints();
+  if (directOrdersEnabled && String(orderCustomerPhone).replace(/\D/g, '').length >= 7)
+    loadLoyaltyPoints();
 }
 
 function setupMenuControls() {
@@ -356,8 +534,12 @@ function setupMenuControls() {
 
   const renderCategoryNav = () => {
     const activeSections = sections.filter((section) => section.dataset.menuType === activeType);
-    categoryNav.innerHTML = activeSections.map((section, index) =>
-      `<button type="button" class="${index === 0 ? 'active' : ''}" data-target="${section.id}">${escapeHtml(section.dataset.category)}</button>`).join('');
+    categoryNav.innerHTML = activeSections
+      .map(
+        (section, index) =>
+          `<button type="button" class="${index === 0 ? 'active' : ''}" data-target="${section.id}">${escapeHtml(section.dataset.category)}</button>`
+      )
+      .join('');
   };
 
   const filterMenu = () => {
@@ -385,17 +567,25 @@ function setupMenuControls() {
     empty.hidden = visibleItems > 0;
   };
   input.addEventListener('input', filterMenu);
-  typeNav.innerHTML = availableTypes.map((type, index) =>
-    `<button type="button" class="${index === 0 ? 'active' : ''}" data-menu-type="${type}">${type === 'bar' ? 'Bar Menu' : 'Food Menu'}</button>`).join('');
+  typeNav.innerHTML = availableTypes
+    .map(
+      (type, index) =>
+        `<button type="button" class="${index === 0 ? 'active' : ''}" data-menu-type="${type}">${type === 'bar' ? 'Bar Menu' : 'Food Menu'}</button>`
+    )
+    .join('');
   typeNav.hidden = availableTypes.length < 2;
   typeNav.addEventListener('click', (event) => {
     const button = event.target.closest('[data-menu-type]');
     if (!button || button.dataset.menuType === activeType) return;
     activeType = button.dataset.menuType;
-    typeNav.querySelectorAll('button').forEach((item) => item.classList.toggle('active', item === button));
+    typeNav
+      .querySelectorAll('button')
+      .forEach((item) => item.classList.toggle('active', item === button));
     renderCategoryNav();
     filterMenu();
-    const firstSection = sections.find((section) => section.dataset.menuType === activeType && !section.hidden);
+    const firstSection = sections.find(
+      (section) => section.dataset.menuType === activeType && !section.hidden
+    );
     sections.forEach((section) => section.classList.remove('category-selected'));
     if (firstSection) firstSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
@@ -419,7 +609,8 @@ function updateTimer() {
   const hours = Math.floor(totalSeconds / 3600);
   const minutes = Math.floor((totalSeconds % 3600) / 60);
   const seconds = totalSeconds % 60;
-  document.getElementById('time-left').textContent = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  document.getElementById('time-left').textContent =
+    `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
 
 function setupPrivacyDeterrents() {
@@ -428,7 +619,9 @@ function setupPrivacyDeterrents() {
   watermark.textContent = `RED LANTERN · ${(params.get('signature') || 'PROTECTED').slice(-8).toUpperCase()}`;
   const showShield = () => shield.classList.add('visible');
   const hideShield = () => shield.classList.remove('visible');
-  document.addEventListener('visibilitychange', () => document.hidden ? showShield() : window.setTimeout(hideShield, 180));
+  document.addEventListener('visibilitychange', () =>
+    document.hidden ? showShield() : window.setTimeout(hideShield, 180)
+  );
   window.addEventListener('blur', showShield);
   window.addEventListener('focus', () => window.setTimeout(hideShield, 180));
   window.addEventListener('beforeprint', showShield);
@@ -436,7 +629,10 @@ function setupPrivacyDeterrents() {
   document.addEventListener('contextmenu', (event) => event.preventDefault());
   document.addEventListener('dragstart', (event) => event.preventDefault());
   document.addEventListener('keydown', (event) => {
-    if (event.key === 'PrintScreen' || ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'p')) {
+    if (
+      event.key === 'PrintScreen' ||
+      ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'p')
+    ) {
       event.preventDefault();
       showShield();
       navigator.clipboard?.writeText('').catch(() => {});
@@ -451,13 +647,15 @@ async function loadMenu() {
     const menu = await response.json();
     if (!response.ok || menu.expired) return window.location.replace(menu.redirect || fallbackUrl);
 
-    document.getElementById('menu-kind').textContent = `${menu.mode === 'card' ? 'Food menu' : 'Complete table menu'} · ${menu.pageTitle}`;
+    document.getElementById('menu-kind').textContent =
+      `${menu.mode === 'card' ? 'Food menu' : 'Complete table menu'} · ${menu.pageTitle}`;
     document.getElementById('menu-title').textContent = 'Red Lantern';
     document.getElementById('menu-subtitle').textContent = menu.pageSubtitle;
     document.getElementById('menu-note').textContent = menu.note;
     if (menu.closed) {
       document.querySelector('.menu-tools').hidden = true;
-      document.getElementById('menu-content').innerHTML = `<section class="restaurant-closed"><span class="closed-icon" aria-hidden="true">◷</span><p class="eyebrow">Restaurant status</p><h2>${escapeHtml(menu.message || 'The restaurant is currently closed.')}</h2><p>${escapeHtml(menu.reopensAt || 'Please check back soon for our reopening time.')}</p></section>`;
+      document.getElementById('menu-content').innerHTML =
+        `<section class="restaurant-closed"><span class="closed-icon" aria-hidden="true">◷</span><p class="eyebrow">Restaurant status</p><h2>${escapeHtml(menu.message || 'The restaurant is currently closed.')}</h2><p>${escapeHtml(menu.reopensAt || 'Please check back soon for our reopening time.')}</p></section>`;
       document.getElementById('menu-note').textContent = '';
       return;
     }
@@ -471,18 +669,40 @@ async function loadMenu() {
       ((all[menuType] ||= {})[category] ||= []).push(dish);
       return all;
     }, {});
-    const entries = ['food', 'bar'].flatMap((menuType) => Object.entries(groups[menuType] || {}).map(([category, dishes]) => ({ menuType, category, dishes })));
-    document.getElementById('menu-content').innerHTML = entries.length ? entries.map(({ menuType, category, dishes }) => `
+    const entries = ['food', 'bar'].flatMap((menuType) =>
+      Object.entries(groups[menuType] || {}).map(([category, dishes]) => ({
+        menuType,
+        category,
+        dishes,
+      }))
+    );
+    document.getElementById('menu-content').innerHTML = entries.length
+      ? entries
+          .map(
+            ({ menuType, category, dishes }) => `
       <section class="category" id="${menuType}-${slug(category)}" data-menu-type="${menuType}" data-category="${escapeHtml(category)}">
         <h2>${escapeHtml(category)}</h2>
-        <div class="dish-grid">${dishes.map((dish, index) => `<article class="dish" data-search="${escapeHtml(`${displayName(dish.name)} ${dish.category} ${dish.description || ''}`.toLowerCase())}">
+        <div class="dish-grid">${dishes
+          .map(
+            (
+              dish,
+              index
+            ) => `<article class="dish" data-search="${escapeHtml(`${displayName(dish.name)} ${dish.category} ${dish.description || ''}`.toLowerCase())}">
           <div class="dish-head"><h3>${dietarySymbol(dish)}<span>${escapeHtml(displayName(dish.name))}</span></h3>${menu.showPrices ? portionPriceHtml(dish) : ''}</div>
           ${dish.description ? `<p class="dish-description">${escapeHtml(dish.description)}</p>` : ''}
           <div class="tags">${dietaryTag(dish)}</div>
           ${registerOrderOptions(dish, category, index, menu.showPrices)}
-        </article>`).join('')}</div>
-      </section>`).join('') : '<p class="empty">The menu is being updated. Please ask our team for today’s selections.</p>';
-    if (entries.length) { setupMenuControls(); updateOrderUI(); }
+        </article>`
+          )
+          .join('')}</div>
+      </section>`
+          )
+          .join('')
+      : '<p class="empty">The menu is being updated. Please ask our team for today’s selections.</p>';
+    if (entries.length) {
+      setupMenuControls();
+      updateOrderUI();
+    }
   } catch (error) {
     // Keep the printed QR useful even if the Air Menu API is temporarily down.
     console.error('Air Menu failed to load; using website menu fallback:', error);

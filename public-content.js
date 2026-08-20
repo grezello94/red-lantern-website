@@ -7,7 +7,7 @@ function reportClientDiagnostic(payload) {
     const body = JSON.stringify({
       path: window.location.pathname,
       href: window.location.href,
-      ...payload
+      ...payload,
     });
     if (navigator.sendBeacon) {
       navigator.sendBeacon('/api/client-log', new Blob([body], { type: 'application/json' }));
@@ -17,35 +17,39 @@ function reportClientDiagnostic(payload) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body,
-      keepalive: true
+      keepalive: true,
     }).catch(() => {});
   } catch {
     // Logging must never affect the visitor experience.
   }
 }
 
-window.addEventListener('error', (event) => {
-  const target = event.target;
-  if (target && target !== window && (target.src || target.href)) {
+window.addEventListener(
+  'error',
+  (event) => {
+    const target = event.target;
+    if (target && target !== window && (target.src || target.href)) {
+      reportClientDiagnostic({
+        category: 'frontend',
+        level: 'error',
+        message: `Asset failed to load: ${target.src || target.href}`,
+        source: target.tagName || 'asset',
+      });
+      return;
+    }
+
     reportClientDiagnostic({
       category: 'frontend',
       level: 'error',
-      message: `Asset failed to load: ${target.src || target.href}`,
-      source: target.tagName || 'asset'
+      message: event.message || 'Browser script error.',
+      source: event.filename || 'browser',
+      line: event.lineno || '',
+      column: event.colno || '',
+      stack: event.error?.stack || '',
     });
-    return;
-  }
-
-  reportClientDiagnostic({
-    category: 'frontend',
-    level: 'error',
-    message: event.message || 'Browser script error.',
-    source: event.filename || 'browser',
-    line: event.lineno || '',
-    column: event.colno || '',
-    stack: event.error?.stack || ''
-  });
-}, true);
+  },
+  true
+);
 
 window.addEventListener('unhandledrejection', (event) => {
   reportClientDiagnostic({
@@ -53,7 +57,7 @@ window.addEventListener('unhandledrejection', (event) => {
     level: 'error',
     message: event.reason?.message || 'Browser promise failed.',
     source: 'browser promise',
-    stack: event.reason?.stack || String(event.reason || '')
+    stack: event.reason?.stack || String(event.reason || ''),
   });
 });
 
@@ -63,19 +67,21 @@ window.addEventListener('load', () => {
     const navigation = performance.getEntriesByType?.('navigation')?.[0];
     const durationMs = Math.round(navigation?.duration || performance.now());
     if (durationMs >= 9000) {
-      const timings = navigation ? {
-        ttfb: Math.round(navigation.responseStart),
-        domContentLoaded: Math.round(navigation.domContentLoadedEventEnd),
-        load: durationMs,
-        transfer: Math.round(navigation.responseEnd - navigation.responseStart)
-      } : {};
+      const timings = navigation
+        ? {
+            ttfb: Math.round(navigation.responseStart),
+            domContentLoaded: Math.round(navigation.domContentLoadedEventEnd),
+            load: durationMs,
+            transfer: Math.round(navigation.responseEnd - navigation.responseStart),
+          }
+        : {};
       reportClientDiagnostic({
         category: 'performance',
         level: 'warning',
         message: `Slow page load detected: ${durationMs}ms.`,
         durationMs,
         metric: 'page-load',
-        timings
+        timings,
       });
     }
   }, 0);
@@ -86,20 +92,26 @@ const setHtml = (element, value) => {
 };
 
 const phoneHref = (phone) => `tel:${phone.replace(/[^\d+]/g, '')}`;
-const escapeHtml = (value) => String(value || '').replace(/[&<>"']/g, (char) => ({
-  '&': '&amp;',
-  '<': '&lt;',
-  '>': '&gt;',
-  '"': '&quot;',
-  "'": '&#39;'
-}[char]));
+const escapeHtml = (value) =>
+  String(value || '').replace(
+    /[&<>"']/g,
+    (char) =>
+      ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;',
+      })[char]
+  );
 
-const paragraphs = (value) => String(value || '')
-  .split(/\n+/)
-  .map((part) => part.trim())
-  .filter(Boolean)
-  .map((part) => `<p>${escapeHtml(part)}</p>`)
-  .join('');
+const paragraphs = (value) =>
+  String(value || '')
+    .split(/\n+/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => `<p>${escapeHtml(part)}</p>`)
+    .join('');
 
 const articleHtml = (value) => {
   const source = String(value || '').trim();
@@ -119,7 +131,8 @@ const articleHtml = (value) => {
     const href = node.tagName === 'A' ? node.getAttribute('href') || '' : '';
     [...node.attributes].forEach((attribute) => node.removeAttribute(attribute.name));
     if (node.tagName === 'A') {
-      const safeHref = href.startsWith('https://') || href.startsWith('http://') || href.startsWith('/');
+      const safeHref =
+        href.startsWith('https://') || href.startsWith('http://') || href.startsWith('/');
       if (safeHref) {
         node.setAttribute('href', href);
         node.setAttribute('target', '_blank');
@@ -160,11 +173,16 @@ const cleanPageMap = {
   '/about': 'about.html',
   '/blogs': 'blogs.html',
   '/contact': 'contact.html',
-  '/blog': 'blog-post.html'
+  '/blog': 'blog-post.html',
 };
 
 const pageFromPath = (path = '') => {
-  const normalized = (`/${String(path).replace(/^https?:\/\/[^/]+/i, '').split('?')[0].split('#')[0].replace(/^\/+/, '')}`).replace(/\/+$/, '') || '/';
+  const normalized =
+    `/${String(path)
+      .replace(/^https?:\/\/[^/]+/i, '')
+      .split('?')[0]
+      .split('#')[0]
+      .replace(/^\/+/, '')}`.replace(/\/+$/, '') || '/';
   if (normalized.startsWith('/blog/')) return 'blog-post.html';
   return cleanPageMap[normalized] || normalized.split('/').pop() || 'index.html';
 };
@@ -173,7 +191,8 @@ const getSlug = () => {
   const querySlug = new URLSearchParams(window.location.search).get('slug');
   if (querySlug) return querySlug;
   const pathParts = location.pathname.split('/').filter(Boolean);
-  if (pathParts[0] === 'blog' && pathParts[1]) return decodeURIComponent(pathParts.slice(1).join('/'));
+  if (pathParts[0] === 'blog' && pathParts[1])
+    return decodeURIComponent(pathParts.slice(1).join('/'));
   return null;
 };
 const indiaScheduleTime = (value) => {
@@ -184,9 +203,10 @@ const indiaScheduleTime = (value) => {
     return Number.isNaN(parsed) ? 0 : parsed;
   }
   const [, year, month, day, hour, minute] = match.map(Number);
-  return Date.UTC(year, month - 1, day, hour, minute) - (330 * 60 * 1000);
+  return Date.UTC(year, month - 1, day, hour, minute) - 330 * 60 * 1000;
 };
-const publishedPosts = (posts = []) => posts.filter((post) => !post.publishAt || indiaScheduleTime(post.publishAt) <= Date.now());
+const publishedPosts = (posts = []) =>
+  posts.filter((post) => !post.publishAt || indiaScheduleTime(post.publishAt) <= Date.now());
 let reviewRotationTimer = null;
 const currentPage = () => {
   return pageFromPath(location.pathname);
@@ -225,20 +245,39 @@ function upsertLink(selector, attributes) {
 function setPageSeo({ title, description, image, type = 'website' }, global = {}) {
   const siteUrl = (global.siteUrl || location.origin).replace(/\/$/, '');
   const pageUrl = absoluteUrl(location.pathname + location.search, siteUrl);
-  const pageImage = absoluteUrl(image || global.ogImage || 'images/red-lantern-logo-600.webp', siteUrl);
-  const pageDescription = description || global.seoDescription || document.querySelector('meta[name="description"]')?.content || '';
+  const pageImage = absoluteUrl(
+    image || global.ogImage || 'images/red-lantern-logo-600.webp',
+    siteUrl
+  );
+  const pageDescription =
+    description ||
+    global.seoDescription ||
+    document.querySelector('meta[name="description"]')?.content ||
+    '';
 
   if (title) document.title = title;
   upsertLink('link[rel="canonical"]', { rel: 'canonical', href: pageUrl });
   upsertMeta('meta[name="description"]', { name: 'description', content: pageDescription });
   upsertMeta('meta[property="og:type"]', { property: 'og:type', content: type });
-  upsertMeta('meta[property="og:title"]', { property: 'og:title', content: title || document.title });
-  upsertMeta('meta[property="og:description"]', { property: 'og:description', content: pageDescription });
+  upsertMeta('meta[property="og:title"]', {
+    property: 'og:title',
+    content: title || document.title,
+  });
+  upsertMeta('meta[property="og:description"]', {
+    property: 'og:description',
+    content: pageDescription,
+  });
   upsertMeta('meta[property="og:image"]', { property: 'og:image', content: pageImage });
   upsertMeta('meta[property="og:url"]', { property: 'og:url', content: pageUrl });
   upsertMeta('meta[name="twitter:card"]', { name: 'twitter:card', content: 'summary_large_image' });
-  upsertMeta('meta[name="twitter:title"]', { name: 'twitter:title', content: title || document.title });
-  upsertMeta('meta[name="twitter:description"]', { name: 'twitter:description', content: pageDescription });
+  upsertMeta('meta[name="twitter:title"]', {
+    name: 'twitter:title',
+    content: title || document.title,
+  });
+  upsertMeta('meta[name="twitter:description"]', {
+    name: 'twitter:description',
+    content: pageDescription,
+  });
   upsertMeta('meta[name="twitter:image"]', { name: 'twitter:image', content: pageImage });
 }
 
@@ -277,7 +316,8 @@ function applyContact(contact = {}) {
 
   document.querySelectorAll('.call-button, a[href^="tel:"]').forEach((link) => {
     if (contact.phone) link.href = phoneHref(contact.phone);
-    if (contact.phone && link.textContent.includes('Call:')) link.textContent = `Call: ${contact.phone}`;
+    if (contact.phone && link.textContent.includes('Call:'))
+      link.textContent = `Call: ${contact.phone}`;
   });
 
   document.querySelectorAll('.footer-contact').forEach((footerContact) => {
@@ -295,21 +335,32 @@ function applyContact(contact = {}) {
 
 function applyGlobal(global = {}) {
   if (currentPage() === 'index.html') {
-    setPageSeo({
-      title: global.seoTitle || 'Red Lantern Restaurant | Chinese & Goan Food in Colva, Goa',
-      description: global.seoDescription || 'Red Lantern Restaurant in Colva, South Goa serves authentic Chinese, Goan seafood, and family-friendly dinner specials. View the menu, call, or order online.',
-      image: global.ogImage
-    }, global);
+    setPageSeo(
+      {
+        title: global.seoTitle || 'Red Lantern Restaurant | Chinese & Goan Food in Colva, Goa',
+        description:
+          global.seoDescription ||
+          'Red Lantern Restaurant in Colva, South Goa serves authentic Chinese, Goan seafood, and family-friendly dinner specials. View the menu, call, or order online.',
+        image: global.ogImage,
+      },
+      global
+    );
   } else {
-    setPageSeo({
-      title: document.title,
-      description: document.querySelector('meta[name="description"]')?.content || '',
-      image: global.ogImage
-    }, global);
+    setPageSeo(
+      {
+        title: document.title,
+        description: document.querySelector('meta[name="description"]')?.content || '',
+        image: global.ogImage,
+      },
+      global
+    );
   }
-  if (global.seoKeywords) upsertMeta('meta[name="keywords"]', { name: 'keywords', content: global.seoKeywords });
+  if (global.seoKeywords)
+    upsertMeta('meta[name="keywords"]', { name: 'keywords', content: global.seoKeywords });
 
-  document.querySelectorAll('.footer-brand p').forEach((item) => setText(item, global.footerDescription));
+  document
+    .querySelectorAll('.footer-brand p')
+    .forEach((item) => setText(item, global.footerDescription));
   document.querySelectorAll('a[href="#order-zomato"], a[href*="zomato.com"]').forEach((link) => {
     if (global.zomatoUrl) link.href = global.zomatoUrl;
   });
@@ -321,17 +372,28 @@ function applyGlobal(global = {}) {
 
 function setupTracking(global = {}) {
   window.dataLayer = window.dataLayer || [];
-  window.gtag = window.gtag || function gtag(){ window.dataLayer.push(arguments); };
+  window.gtag =
+    window.gtag ||
+    function gtag() {
+      window.dataLayer.push(arguments);
+    };
 
   if (global.gaMeasurementId || global.googleAdsId) {
-    injectScript(`https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(global.gaMeasurementId || global.googleAdsId)}`, 'google-tag');
+    injectScript(
+      `https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(global.gaMeasurementId || global.googleAdsId)}`,
+      'google-tag'
+    );
     window.gtag('js', new Date());
     if (global.gaMeasurementId) window.gtag('config', global.gaMeasurementId);
     if (global.googleAdsId) window.gtag('config', global.googleAdsId);
   }
 
   if (global.metaPixelId && !window.fbq) {
-    window.fbq = function fbq(){ window.fbq.callMethod ? window.fbq.callMethod.apply(window.fbq, arguments) : window.fbq.queue.push(arguments); };
+    window.fbq = function fbq() {
+      window.fbq.callMethod
+        ? window.fbq.callMethod.apply(window.fbq, arguments)
+        : window.fbq.queue.push(arguments);
+    };
     window.fbq.queue = [];
     window.fbq.loaded = true;
     window.fbq.version = '2.0';
@@ -359,15 +421,25 @@ function setupTracking(global = {}) {
   document.querySelectorAll('a[href*="zomato"], a[href*="swiggy"]').forEach((link) => {
     link.addEventListener('click', () => track('order_click', global.googleOrderConversionLabel));
   });
-  document.querySelectorAll('a[href*="google.com/maps"], a[href*="maps.app.goo.gl"], a[href*="contact.html"], a[href*="/contact"]').forEach((link) => {
-    link.addEventListener('click', () => track('directions_click', global.googleDirectionsConversionLabel));
-  });
+  document
+    .querySelectorAll(
+      'a[href*="google.com/maps"], a[href*="maps.app.goo.gl"], a[href*="contact.html"], a[href*="/contact"]'
+    )
+    .forEach((link) => {
+      link.addEventListener('click', () =>
+        track('directions_click', global.googleDirectionsConversionLabel)
+      );
+    });
   document.querySelectorAll('a[href*="menu.html"], a[href*="/menu"]').forEach((link) => {
     link.addEventListener('click', () => track('menu_click'));
   });
-  document.querySelectorAll('a[href*="blogs.html"], a[href*="blog-post.html"], a[href*="/blogs"], a[href*="/blog"]').forEach((link) => {
-    link.addEventListener('click', () => track('blog_click'));
-  });
+  document
+    .querySelectorAll(
+      'a[href*="blogs.html"], a[href*="blog-post.html"], a[href*="/blogs"], a[href*="/blog"]'
+    )
+    .forEach((link) => {
+      link.addEventListener('click', () => track('blog_click'));
+    });
 }
 
 function upsertJsonLd(id, data) {
@@ -404,7 +476,7 @@ function applyStructuredData(content = {}) {
       streetAddress: contact.address || 'Near Chinchmorod Vanelim, Colva, Goa, 403708',
       addressLocality: 'Colva',
       addressRegion: 'Goa',
-      addressCountry: 'IN'
+      addressCountry: 'IN',
     },
     openingHours: contact.hours,
     hasMenu: `${siteUrl}/menu`,
@@ -412,17 +484,21 @@ function applyStructuredData(content = {}) {
     keywords: global.seoKeywords,
     sameAs,
     potentialAction: [
-      global.zomatoUrl ? {
-        '@type': 'OrderAction',
-        target: global.zomatoUrl,
-        name: 'Order on Zomato'
-      } : null,
-      global.swiggyUrl ? {
-        '@type': 'OrderAction',
-        target: global.swiggyUrl,
-        name: 'Order on Swiggy'
-      } : null
-    ].filter(Boolean)
+      global.zomatoUrl
+        ? {
+            '@type': 'OrderAction',
+            target: global.zomatoUrl,
+            name: 'Order on Zomato',
+          }
+        : null,
+      global.swiggyUrl
+        ? {
+            '@type': 'OrderAction',
+            target: global.swiggyUrl,
+            name: 'Order on Swiggy',
+          }
+        : null,
+    ].filter(Boolean),
   });
 
   if (currentPage() === 'menu.html' && Array.isArray(menu.dishes)) {
@@ -430,12 +506,14 @@ function applyStructuredData(content = {}) {
       '@context': 'https://schema.org',
       '@type': 'Menu',
       name: menu.pageTitle || 'Red Lantern Menu',
-      hasMenuSection: Object.entries(menu.dishes.reduce((groups, dish) => {
-        const category = dish.category || 'Signature Dishes';
-        groups[category] = groups[category] || [];
-        groups[category].push(dish);
-        return groups;
-      }, {})).map(([category, dishes]) => ({
+      hasMenuSection: Object.entries(
+        menu.dishes.reduce((groups, dish) => {
+          const category = dish.category || 'Signature Dishes';
+          groups[category] = groups[category] || [];
+          groups[category].push(dish);
+          return groups;
+        }, {})
+      ).map(([category, dishes]) => ({
         '@type': 'MenuSection',
         name: category,
         hasMenuItem: dishes.map((dish) => ({
@@ -443,13 +521,15 @@ function applyStructuredData(content = {}) {
           name: dish.name,
           description: dish.description,
           image: dish.image ? absoluteUrl(dish.image, siteUrl) : undefined,
-          offers: dish.price ? {
-            '@type': 'Offer',
-            price: dish.price,
-            priceCurrency: 'INR'
-          } : undefined
-        }))
-      }))
+          offers: dish.price
+            ? {
+                '@type': 'Offer',
+                price: dish.price,
+                priceCurrency: 'INR',
+              }
+            : undefined,
+        })),
+      })),
     });
   }
 
@@ -463,20 +543,22 @@ function applyStructuredData(content = {}) {
         '@type': 'BlogPosting',
         headline: post.title,
         description: post.seoDescription || post.excerpt,
-        image: post.image ? absoluteUrl(post.image, siteUrl) : absoluteUrl(global.ogImage || 'images/red-lantern-logo-600.webp', siteUrl),
+        image: post.image
+          ? absoluteUrl(post.image, siteUrl)
+          : absoluteUrl(global.ogImage || 'images/red-lantern-logo-600.webp', siteUrl),
         author: {
           '@type': 'Organization',
-          name: 'Red Lantern Restaurant'
+          name: 'Red Lantern Restaurant',
         },
         publisher: {
           '@type': 'Organization',
           name: 'Red Lantern Restaurant',
           logo: {
             '@type': 'ImageObject',
-            url: absoluteUrl('images/red-lantern-logo-600.webp', siteUrl)
-          }
+            url: absoluteUrl('images/red-lantern-logo-600.webp', siteUrl),
+          },
         },
-        mainEntityOfPage: `${siteUrl}/blog/${encodeURIComponent(post.slug)}`
+        mainEntityOfPage: `${siteUrl}/blog/${encodeURIComponent(post.slug)}`,
       });
     }
   }
@@ -485,12 +567,22 @@ function applyStructuredData(content = {}) {
 function applyHome(home = {}, blogs = {}) {
   if (currentPage() !== 'index.html') return;
   const hero = document.querySelector('.hero');
-  if (hero && home.heroImage) hero.style.backgroundImage = `linear-gradient(90deg, rgba(18, 11, 8, 0.72), rgba(18, 11, 8, 0.32)), url("${home.heroImage}")`;
-  setHtml(document.querySelector('.hero h1'), escapeHtml(home.heroTitle).replace(/\s+of\s+/i, '<br />of '));
+  if (hero && home.heroImage)
+    hero.style.backgroundImage = `linear-gradient(90deg, rgba(18, 11, 8, 0.72), rgba(18, 11, 8, 0.32)), url("${home.heroImage}")`;
+  setHtml(
+    document.querySelector('.hero h1'),
+    escapeHtml(home.heroTitle).replace(/\s+of\s+/i, '<br />of ')
+  );
   setText(document.querySelector('.hero p'), home.heroSubtitle);
   setText(document.querySelector('.welcome-copy h2'), home.welcomeTitle);
-  setHtml(document.querySelector('.welcome-copy p'), home.welcomeText ? escapeHtml(home.welcomeText) : '');
-  if (home.welcomeImage) document.querySelector('.welcome-media')?.style.setProperty('background-image', `url("${home.welcomeImage}")`);
+  setHtml(
+    document.querySelector('.welcome-copy p'),
+    home.welcomeText ? escapeHtml(home.welcomeText) : ''
+  );
+  if (home.welcomeImage)
+    document
+      .querySelector('.welcome-media')
+      ?.style.setProperty('background-image', `url("${home.welcomeImage}")`);
 
   const featureCards = document.querySelectorAll('.why-us .card');
   setText(featureCards[0]?.querySelector('h3'), home.featureOneTitle);
@@ -505,13 +597,18 @@ function applyHome(home = {}, blogs = {}) {
     let reviewOffset = Math.floor(Date.now() / 60000) % home.reviews.length;
     const renderReviews = () => {
       const ordered = [...home.reviews.slice(reviewOffset), ...home.reviews.slice(0, reviewOffset)];
-      reviewGrid.innerHTML = ordered.slice(0, 3).map((review) => `
+      reviewGrid.innerHTML = ordered
+        .slice(0, 3)
+        .map(
+          (review) => `
         <article class="review-card">
           <div class="stars">${escapeHtml(review.stars || '★★★★★')}</div>
           <p>${escapeHtml(review.text)}</p>
           <span class="reviewer">- ${escapeHtml(review.name)}</span>
         </article>
-      `).join('');
+      `
+        )
+        .join('');
       reviewOffset = (reviewOffset + 1) % home.reviews.length;
     };
     renderReviews();
@@ -521,16 +618,24 @@ function applyHome(home = {}, blogs = {}) {
 
   setText(document.querySelector('.latest-blogs h2'), home.blogSectionTitle);
   setText(document.querySelector('.latest-blogs > p'), home.blogSectionSubtitle);
-  renderBlogCards(document.querySelector('.latest-blogs .blog-grid'), publishedPosts(blogs.posts || []).slice(0, 3));
+  renderBlogCards(
+    document.querySelector('.latest-blogs .blog-grid'),
+    publishedPosts(blogs.posts || []).slice(0, 3)
+  );
 }
 
 function renderMenu(menu = {}, global = {}) {
   if (currentPage() !== 'menu.html') return;
-  setPageSeo({
-    title: `${menu.pageTitle || 'Menu'} | Red Lantern Restaurant Colva`,
-    description: menu.pageSubtitle || 'Explore Red Lantern Restaurant menu in Colva, Goa: Chinese specialties, Goan seafood, fried rice, tandoori dishes, and dinner specials.',
-    image: (menu.dishes || []).find((dish) => dish.image)?.image
-  }, global);
+  setPageSeo(
+    {
+      title: `${menu.pageTitle || 'Menu'} | Red Lantern Restaurant Colva`,
+      description:
+        menu.pageSubtitle ||
+        'Explore Red Lantern Restaurant menu in Colva, Goa: Chinese specialties, Goan seafood, fried rice, tandoori dishes, and dinner specials.',
+      image: (menu.dishes || []).find((dish) => dish.image)?.image,
+    },
+    global
+  );
   setText(document.querySelector('.menu-hero h1'), menu.pageTitle);
   setText(document.querySelector('.menu-hero p'), menu.pageSubtitle);
   const container = document.querySelector('.menu-page');
@@ -545,14 +650,18 @@ function renderMenu(menu = {}, global = {}) {
     return groups;
   }, {});
 
-  const markup = Object.entries(grouped).map(([category, dishes], index) => `
+  const markup = Object.entries(grouped)
+    .map(
+      ([category, dishes], index) => `
     <section class="menu-category-block ${index === 0 ? 'menu-category-block-first' : ''}">
       <div class="menu-category-head">
         <span class="menu-category-icon menu-category-icon-red">✦</span>
         <h2>${escapeHtml(category)}</h2>
       </div>
       <div class="menu-item-grid">
-        ${dishes.map((dish) => `
+        ${dishes
+          .map(
+            (dish) => `
           <article class="menu-item-card ${dish.image ? 'has-image' : ''}">
             ${dish.image ? `<div class="menu-item-image"><img src="${escapeHtml(dish.image)}" alt="${escapeHtml(`${dish.name} at Red Lantern Restaurant in Colva`)}" loading="lazy">${dish.badge ? `<span class="dish-badge">${escapeHtml(dish.badge)}</span>` : ''}</div>` : ''}
             <div class="menu-item-copy">
@@ -561,10 +670,14 @@ function renderMenu(menu = {}, global = {}) {
               ${dish.price ? `<strong>${escapeHtml(dish.price)}</strong>` : ''}
             </div>
           </article>
-        `).join('')}
+        `
+          )
+          .join('')}
       </div>
     </section>
-  `).join('');
+  `
+    )
+    .join('');
 
   document.querySelector('.menu-order-strip')?.insertAdjacentHTML('afterend', markup);
   setText(document.querySelector('.menu-note-strip p'), menu.note);
@@ -572,7 +685,9 @@ function renderMenu(menu = {}, global = {}) {
 
 function renderBlogCards(container, posts = []) {
   if (!container || !posts.length) return;
-  container.innerHTML = posts.map((post, index) => `
+  container.innerHTML = posts
+    .map(
+      (post, index) => `
     <article class="blog-card">
       <a href="/blog/${encodeURIComponent(post.slug)}">
         ${post.image ? `<div class="blog-thumb" style="background-image:url('${post.image}')"></div>` : `<div class="blog-thumb ${index === 1 ? 'blog-thumb-alt' : index === 2 ? 'blog-thumb-third' : ''}"></div>`}
@@ -583,19 +698,29 @@ function renderBlogCards(container, posts = []) {
         </div>
       </a>
     </article>
-  `).join('');
+  `
+    )
+    .join('');
 }
 
 function renderBlogsPage(blogs = {}, global = {}) {
   if (currentPage() !== 'blogs.html') return;
-  setPageSeo({
-    title: `${blogs.pageTitle || 'Red Lantern Journal'} | Colva Food Guides`,
-    description: blogs.pageSubtitle || 'Read Red Lantern Restaurant stories, menu guides, Chinese food recommendations, and local dining tips for Colva and South Goa.',
-    image: publishedPosts(blogs.posts || []).find((post) => post.image)?.image
-  }, global);
+  setPageSeo(
+    {
+      title: `${blogs.pageTitle || 'Red Lantern Journal'} | Colva Food Guides`,
+      description:
+        blogs.pageSubtitle ||
+        'Read Red Lantern Restaurant stories, menu guides, Chinese food recommendations, and local dining tips for Colva and South Goa.',
+      image: publishedPosts(blogs.posts || []).find((post) => post.image)?.image,
+    },
+    global
+  );
   setText(document.querySelector('.blog-hero h1'), blogs.pageTitle);
   setText(document.querySelector('.blog-hero p'), blogs.pageSubtitle);
-  renderBlogCards(document.querySelector('.blog-page > .blog-grid'), publishedPosts(blogs.posts || []));
+  renderBlogCards(
+    document.querySelector('.blog-page > .blog-grid'),
+    publishedPosts(blogs.posts || [])
+  );
 }
 
 function renderBlogPost(blogs = {}, global = {}) {
@@ -604,52 +729,75 @@ function renderBlogPost(blogs = {}, global = {}) {
   const posts = publishedPosts(blogs.posts || []);
   const post = slug ? posts.find((item) => item.slug === slug) : posts[0];
   if (!post) {
-    setPageSeo({
-      title: 'Article Not Available | Red Lantern Journal',
-      description: 'This article is not available yet.',
-      image: global.ogImage,
-      type: 'article'
-    }, global);
+    setPageSeo(
+      {
+        title: 'Article Not Available | Red Lantern Journal',
+        description: 'This article is not available yet.',
+        image: global.ogImage,
+        type: 'article',
+      },
+      global
+    );
     upsertMeta('meta[name="robots"]', { name: 'robots', content: 'noindex,follow' });
     setText(document.querySelector('.blog-post-header h1'), 'Article not available yet');
     setText(document.querySelector('.blog-post-header .blog-meta'), '');
     const hero = document.querySelector('.blog-post-hero');
     if (hero) hero.style.display = 'none';
-    setHtml(document.querySelector('.blog-post-content'), '<p>This article is scheduled and will appear here when it is published.</p><p><a href="/blogs">Back to all articles</a></p>');
+    setHtml(
+      document.querySelector('.blog-post-content'),
+      '<p>This article is scheduled and will appear here when it is published.</p><p><a href="/blogs">Back to all articles</a></p>'
+    );
     return;
   }
 
-  setPageSeo({
-    title: post.seoTitle || `${post.title} | Red Lantern Journal`,
-    description: post.seoDescription || post.excerpt || '',
-    image: post.image,
-    type: 'article'
-  }, global);
+  setPageSeo(
+    {
+      title: post.seoTitle || `${post.title} | Red Lantern Journal`,
+      description: post.seoDescription || post.excerpt || '',
+      image: post.image,
+      type: 'article',
+    },
+    global
+  );
   setText(document.querySelector('.blog-post-header h1'), post.title);
   setText(document.querySelector('.blog-post-header .blog-meta'), post.meta);
-  if (post.image) document.querySelector('.blog-post-hero')?.style.setProperty('background-image', `url("${post.image}")`);
-  setHtml(document.querySelector('.blog-post-content'), articleHtmlWithImage(post.content || post.excerpt, post.articleImage, post.title));
+  if (post.image)
+    document
+      .querySelector('.blog-post-hero')
+      ?.style.setProperty('background-image', `url("${post.image}")`);
+  setHtml(
+    document.querySelector('.blog-post-content'),
+    articleHtmlWithImage(post.content || post.excerpt, post.articleImage, post.title)
+  );
 }
 
 function renderAbout(about = {}, global = {}) {
   if (currentPage() !== 'about.html') return;
-  setPageSeo({
-    title: `${about.heroTitle || 'About Red Lantern'} | Restaurant in Colva, Goa`,
-    description: about.heroSubtitle || 'Learn about Red Lantern Restaurant in Colva, Goa, our story, authentic Chinese and Goan flavors, and open-air dining experience.',
-    image: about.heroImage || about.storyImage
-  }, global);
+  setPageSeo(
+    {
+      title: `${about.heroTitle || 'About Red Lantern'} | Restaurant in Colva, Goa`,
+      description:
+        about.heroSubtitle ||
+        'Learn about Red Lantern Restaurant in Colva, Goa, our story, authentic Chinese and Goan flavors, and open-air dining experience.',
+      image: about.heroImage || about.storyImage,
+    },
+    global
+  );
   setText(document.querySelector('.about-hero h1'), about.heroTitle);
   setText(document.querySelector('.about-hero p'), about.heroSubtitle);
   setText(document.querySelector('.about-page-main .welcome-copy h2'), about.storyTitle);
   const story = document.querySelector('.about-page-main .welcome-copy');
   if (story && about.storyText) setHtml(story.querySelector('p'), escapeHtml(about.storyText));
-  if (about.storyImage) document.querySelector('.about-media-1')?.style.setProperty('background-image', `url("${about.storyImage}")`);
+  if (about.storyImage)
+    document
+      .querySelector('.about-media-1')
+      ?.style.setProperty('background-image', `url("${about.storyImage}")`);
 }
 
 updateActiveNav();
 
 fetch('/api/content')
-  .then((response) => response.ok ? response.json() : {})
+  .then((response) => (response.ok ? response.json() : {}))
   .then((content) => {
     applyContact(content.contact);
     applyGlobal(content.global);

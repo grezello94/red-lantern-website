@@ -1,96 +1,415 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
-  <meta name="theme-color" content="#8e1830">
-  <link rel="manifest" href="/captain.webmanifest">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <title>Captain · Red Lantern</title>
-  <link rel="stylesheet" href="/captain.css?v=2">
-  <link rel="stylesheet" href="/captain-ux.css?v=51">
-  <link rel="stylesheet" href="/captain-modern.css?v=2">
-</head>
-<body>
-  <header class="captain-header">
-    <a class="brand" href="/captain" aria-label="Captain home"><img src="/images/red-lantern-logo-600.webp" alt=""><span><small>Red Lantern Restaurant</small><strong>Captain</strong></span></a>
-    <div class="header-tools"><time id="captain-clock" class="captain-clock"></time><span class="header-divider" aria-hidden="true"></span><button id="captain-nav-toggle" class="captain-nav-toggle" type="button" aria-label="Open Captain menu" hidden><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span></button><button id="captain-profile" class="captain-profile" type="button" hidden></button></div>
-  </header>
-  <aside id="captain-nav" class="captain-nav" hidden aria-label="Captain navigation"><div class="captain-nav-backdrop" data-captain-nav-close></div><section><header><div class="captain-nav-identity"><span id="captain-nav-avatar" aria-hidden="true">C</span><div><span class="eyebrow">CAPTAIN SHIFT</span><b id="captain-nav-name">Captain</b><small id="captain-nav-status">Live service</small></div></div><button type="button" data-captain-nav-close aria-label="Close Captain menu">×</button></header><div id="captain-nav-summary" class="captain-nav-summary"></div><div id="captain-nav-links" class="captain-nav-links"><button type="button" data-captain-nav-screen="tables"><span>▦</span><div><b>Table board</b><small>Choose a table or start a new order</small></div><i>›</i></button><button type="button" data-captain-nav-screen="review"><span>⌑</span><div><b>Current order</b><small id="captain-nav-cart">No items in cart</small></div><i>›</i></button></div><div id="captain-nav-conflicts" class="captain-nav-conflicts" hidden><div><b>Orders needing review</b><small>Another device updated the same table while you were offline.</small></div><div id="captain-nav-conflict-list" class="captain-nav-conflict-list"></div></div><div class="captain-nav-ready"><div><b>Ready to serve</b><small>Kitchen updates assigned to you</small></div><div id="captain-nav-ready-list"></div></div><div class="captain-nav-active"><div><b>My active tables</b><small>Orders created by your Captain account</small></div><div id="captain-nav-active-list"></div></div><button id="captain-nav-signout" class="captain-nav-signout" type="button">Sign out</button></section></aside>
-  <section id="captain-login" class="captain-login" aria-labelledby="captain-login-title">
-    <div class="captain-login-card">
-      <img src="/images/red-lantern-logo-600.webp" alt="Red Lantern Restaurant">
-      <span class="eyebrow">STAFF ACCESS</span>
-      <h1 id="captain-login-title">Who is taking this order?</h1>
-      <p>Choose your name, then enter your personal PIN. Your table access and order trail are recorded automatically.</p>
-      <div id="captain-account-list" class="captain-account-list" aria-live="polite"></div>
-      <form id="captain-pin-form" hidden>
-        <button id="captain-change-account" class="back-button" type="button">← Change Captain</button>
-        <p id="captain-selected-name" class="captain-selected-name"></p>
-        <label>Personal PIN<input id="captain-pin" type="password" inputmode="numeric" autocomplete="current-password" pattern="[0-9]*" minlength="4" maxlength="6" required placeholder="••••"></label>
-        <p id="captain-login-status" class="captain-login-status" aria-live="polite"></p>
-        <button id="captain-login-submit" class="send-button" type="submit">Start taking orders</button>
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#8e1830" />
+    <link rel="manifest" href="/captain.webmanifest" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <title>Captain · Red Lantern</title>
+    <link rel="stylesheet" href="/captain.css?v=2" />
+    <link rel="stylesheet" href="/captain-ux.css?v=51" />
+    <link rel="stylesheet" href="/captain-modern.css?v=2" />
+  </head>
+  <body>
+    <header class="captain-header">
+      <a class="brand" href="/captain" aria-label="Captain home"
+        ><img src="/images/red-lantern-logo-600.webp" alt="" /><span
+          ><small>Red Lantern Restaurant</small><strong>Captain</strong></span
+        ></a
+      >
+      <div class="header-tools">
+        <time id="captain-clock" class="captain-clock"></time
+        ><span class="header-divider" aria-hidden="true"></span
+        ><button
+          id="captain-nav-toggle"
+          class="captain-nav-toggle"
+          type="button"
+          aria-label="Open Captain menu"
+          hidden
+        >
+          <span aria-hidden="true"></span><span aria-hidden="true"></span
+          ><span aria-hidden="true"></span></button
+        ><button id="captain-profile" class="captain-profile" type="button" hidden></button>
+      </div>
+    </header>
+    <aside id="captain-nav" class="captain-nav" hidden aria-label="Captain navigation">
+      <div class="captain-nav-backdrop" data-captain-nav-close></div>
+      <section>
+        <header>
+          <div class="captain-nav-identity">
+            <span id="captain-nav-avatar" aria-hidden="true">C</span>
+            <div>
+              <span class="eyebrow">CAPTAIN SHIFT</span><b id="captain-nav-name">Captain</b
+              ><small id="captain-nav-status">Live service</small>
+            </div>
+          </div>
+          <button type="button" data-captain-nav-close aria-label="Close Captain menu">×</button>
+        </header>
+        <div id="captain-nav-summary" class="captain-nav-summary"></div>
+        <div id="captain-nav-links" class="captain-nav-links">
+          <button type="button" data-captain-nav-screen="tables">
+            <span>▦</span>
+            <div><b>Table board</b><small>Choose a table or start a new order</small></div>
+            <i>›</i></button
+          ><button type="button" data-captain-nav-screen="review">
+            <span>⌑</span>
+            <div><b>Current order</b><small id="captain-nav-cart">No items in cart</small></div>
+            <i>›</i>
+          </button>
+        </div>
+        <div id="captain-nav-conflicts" class="captain-nav-conflicts" hidden>
+          <div>
+            <b>Orders needing review</b
+            ><small>Another device updated the same table while you were offline.</small>
+          </div>
+          <div id="captain-nav-conflict-list" class="captain-nav-conflict-list"></div>
+        </div>
+        <div class="captain-nav-ready">
+          <div><b>Ready to serve</b><small>Kitchen updates assigned to you</small></div>
+          <div id="captain-nav-ready-list"></div>
+        </div>
+        <div class="captain-nav-active">
+          <div><b>My active tables</b><small>Orders created by your Captain account</small></div>
+          <div id="captain-nav-active-list"></div>
+        </div>
+        <button id="captain-nav-signout" class="captain-nav-signout" type="button">Sign out</button>
+      </section>
+    </aside>
+    <section id="captain-login" class="captain-login" aria-labelledby="captain-login-title" aria-live="polite">
+      <div class="captain-login-card">
+        <img src="/images/red-lantern-logo-600.webp" alt="Red Lantern Restaurant" />
+        <span class="eyebrow">STAFF ACCESS</span>
+        <h1 id="captain-login-title">Who is taking this order?</h1>
+        <p>
+          Choose your name, then enter your personal PIN. Your table access and order trail are
+          recorded automatically.
+        </p>
+        <div id="captain-account-list" class="captain-account-list" aria-live="polite"></div>
+        <form id="captain-pin-form" hidden>
+          <button id="captain-change-account" class="back-button" type="button">
+            ← Change Captain
+          </button>
+          <p id="captain-selected-name" class="captain-selected-name"></p>
+          <label
+            >Personal PIN<input
+              id="captain-pin"
+              type="password"
+              inputmode="numeric"
+              autocomplete="current-password"
+              pattern="[0-9]*"
+              minlength="4"
+              maxlength="6"
+              required
+              placeholder="••••"
+          /></label>
+          <p id="captain-login-status" class="captain-login-status" aria-live="polite"></p>
+          <button id="captain-login-submit" class="send-button" type="submit">
+            Start taking orders
+          </button>
+        </form>
+      </div>
+    </section>
+    <main class="captain-app" hidden>
+      <section
+        id="captain-ready-alerts"
+        class="captain-ready-alerts"
+        hidden
+        aria-live="assertive"
+      ></section>
+      <section
+        id="captain-pending-sync"
+        class="captain-pending-sync"
+        hidden
+        aria-live="polite"
+      ></section>
+      <section id="tables-screen" class="screen">
+        <div class="screen-head">
+          <div>
+            <span class="eyebrow">DINE-IN</span>
+            <h1>All tables</h1>
+            <p id="captain-connection">Loading live table status…</p>
+          </div>
+          <button
+            type="button"
+            id="refresh-captain"
+            class="icon-button"
+            aria-label="Refresh tables"
+          >
+            ↻
+          </button>
+        </div>
+        <div id="table-quick-stats" class="table-quick-stats" aria-live="polite" hidden></div>
+        <div
+          id="table-state-filters"
+          class="table-state-filters"
+          aria-label="Filter table status"
+        ></div>
+        <div id="area-tabs" class="area-tabs" aria-label="Table areas"></div>
+        <div id="table-board" class="table-board" aria-live="polite"></div>
+        <div class="captain-order-actions">
+          <div id="captain-order-action-list" hidden>
+            <button type="button" data-start-takeaway>
+              <span class="captain-action-icon" aria-hidden="true"></span
+              ><span class="captain-action-copy"
+                ><b>Take Away</b><small>No table required</small></span
+              ></button
+            ><button type="button" data-new-table-help>
+              <span class="captain-action-icon" aria-hidden="true"></span
+              ><span class="captain-action-copy"
+                ><b>New Table</b><small>Choose an available table</small></span
+              >
+            </button>
+          </div>
+          <button
+            id="captain-order-action-toggle"
+            type="button"
+            aria-label="Start a new order"
+            aria-expanded="false"
+          >
+            ＋
+          </button>
+        </div>
+      </section>
+      <section id="menu-screen" class="screen" hidden>
+        <div class="screen-head menu-head">
+          <div>
+            <button type="button" class="back-button" data-captain-back>← Tables</button
+            ><span class="eyebrow" id="menu-order-mode">NEW ORDER</span>
+            <h1 id="menu-table-title">Table</h1>
+            <p id="active-table-context" class="active-table-context" hidden></p>
+            <p class="captain-flow-hint">Tap once to add · choose options only when needed</p>
+          </div>
+          <div class="menu-head-actions">
+            <button
+              type="button"
+              id="menu-category-toggle"
+              class="menu-category-button"
+              aria-haspopup="dialog"
+            >
+              <span class="menu-category-icon" aria-hidden="true">☷</span
+              ><span class="menu-category-copy"
+                ><small>Browse menu</small
+                ><strong id="menu-category-label">All dishes</strong></span
+              ><span class="menu-category-chevron" aria-hidden="true">›</span></button
+            ><button
+              type="button"
+              class="icon-button"
+              id="menu-search-toggle"
+              aria-label="Search menu"
+            >
+              ⌕
+            </button>
+          </div>
+        </div>
+        <details id="active-bill-summary" class="active-bill-summary" hidden>
+          <summary>Items already on this bill <span id="active-bill-total"></span></summary>
+          <div id="active-bill-items"></div>
+        </details>
+        <div id="active-kot-progress" class="active-kot-progress" hidden aria-live="polite"></div>
+        <div id="captain-table-service" class="captain-table-service" hidden>
+          <button type="button" data-table-service="water_requested">Request water</button
+          ><button type="button" data-table-service="assistance_requested">Request help</button
+          ><button type="button" data-table-service="bill_requested">Request bill</button>
+        </div>
+        <label id="menu-search-wrap" class="menu-search" hidden
+          ><span>⌕</span
+          ><input
+            id="menu-search"
+            type="search"
+            placeholder="Search menu items"
+            autocomplete="off"
+          /><button type="button" id="clear-menu-search" aria-label="Clear search">×</button></label
+        >
+        <p id="captain-draft-status" class="captain-draft-status" hidden aria-live="polite"></p>
+        <div id="menu-quick-picks" class="menu-quick-picks" hidden></div>
+        <div id="category-list" class="category-list" aria-label="Menu categories" hidden></div>
+        <div id="menu-list" class="menu-grid" aria-live="polite"></div>
+        <aside id="order-dock" class="order-dock" aria-label="Current order">
+          <header>
+            <div>
+              <span class="eyebrow">CURRENT ORDER</span>
+              <h2 id="order-dock-title">Your order</h2>
+              <p id="order-dock-caption">Choose dishes from the menu.</p>
+            </div>
+            <button type="button" data-open-review aria-label="Review order">↗</button>
+          </header>
+          <div id="order-dock-list" class="order-dock-list" aria-live="polite"></div>
+          <div class="order-dock-total">
+            <span>Order total</span><b id="order-dock-total">₹0</b>
+          </div>
+          <button type="button" data-open-review class="order-dock-review">
+            Review &amp; send <span>→</span>
+          </button>
+        </aside>
+      </section>
+      <section id="review-screen" class="screen" hidden>
+        <div class="screen-head">
+          <div>
+            <button type="button" class="back-button" data-captain-back>← Add items</button
+            ><span class="eyebrow">FINAL ORDER</span>
+            <h1 id="review-table-title">Table</h1>
+            <p id="cart-caption"></p>
+          </div>
+        </div>
+        <div id="cart-list" class="cart-list"></div>
+        <details class="guest-details">
+          <summary>Guest details &amp; kitchen note <span>Optional</span></summary>
+          <div>
+            <label
+              >Name<input
+                id="customer-name"
+                maxlength="80"
+                autocomplete="name"
+                placeholder="Guest name" /></label
+            ><label
+              >Mobile<input
+                id="customer-phone"
+                inputmode="tel"
+                maxlength="16"
+                autocomplete="tel"
+                placeholder="Mobile number" /></label
+            ><label class="wide"
+              >Kitchen note<textarea
+                id="special-request"
+                maxlength="240"
+                placeholder="e.g. less spicy, no onion"
+              ></textarea>
+            </label>
+          </div>
+        </details>
+        <div class="review-total"><span>Grand total</span><b id="review-total">₹0</b></div>
+        <p id="order-status" class="order-status" aria-live="polite"></p>
+        <label class="send-kot"
+          ><input id="send-kot" type="checkbox" checked /><span
+            ><b>Print KOT in kitchen</b
+            ><small
+              >When enabled, this order is sent to the configured kitchen printer.</small
+            ></span
+          ></label
+        >
+        <button id="place-order" class="send-button" type="button">Send to kitchen ↗</button>
+      </section>
+      <button
+        id="basket-bar"
+        class="basket-bar"
+        type="button"
+        hidden
+        aria-label="View current order"
+      >
+        <span class="basket-copy"><small>Current order</small><b id="cart-count">0 items</b></span
+        ><i aria-hidden="true">⌑</i><b id="basket-total">₹0</b
+        ><strong>Review <span aria-hidden="true">→</span></strong>
+      </button>
+    </main>
+    <div id="captain-toast" class="captain-toast" hidden role="status" aria-live="polite"></div>
+    <dialog id="choice-sheet" class="choice-sheet">
+      <div class="sheet-head">
+        <div>
+          <span class="eyebrow">CUSTOMISE</span>
+          <h2 id="choice-title">Choose option</h2>
+        </div>
+        <button type="button" id="choice-close" class="icon-button" aria-label="Close">×</button>
+      </div>
+      <p id="choice-helper" class="choice-helper">Choose a portion to add.</p>
+      <div id="choice-options" class="choice-options"></div>
+      <fieldset id="style-options" class="style-options" hidden>
+        <legend>Preparation</legend>
+        <label><input type="radio" name="captain-style" value="" checked /> Regular</label
+        ><label
+          ><input type="radio" name="captain-style" value="gravy" /> Gravy
+          <small>+₹10</small></label
+        ><label
+          ><input type="radio" name="captain-style" value="semi-gravy" /> Semi-gravy
+          <small>+₹10</small></label
+        >
+      </fieldset>
+      <label class="item-note"
+        >Kitchen note
+        <input id="choice-note" maxlength="80" placeholder="e.g. less spicy, no onion" /></label
+      ><button type="button" id="choice-add" class="send-button">Add item</button>
+    </dialog>
+    <dialog id="line-note-sheet" class="line-note-sheet" aria-labelledby="line-note-title">
+      <form id="line-note-form" method="dialog">
+        <div class="sheet-head">
+          <div>
+            <span class="eyebrow">KITCHEN NOTE</span>
+            <h2 id="line-note-title">Add a note</h2>
+            <p id="line-note-caption">Visible on the KOT for this item.</p>
+          </div>
+          <button
+            type="button"
+            id="line-note-close"
+            class="icon-button"
+            aria-label="Close note editor"
+          >
+            ×
+          </button>
+        </div>
+        <label
+          >Instruction for kitchen<textarea
+            id="line-note-input"
+            maxlength="80"
+            rows="3"
+            placeholder="e.g. less spicy, no onion"
+          ></textarea
+          ><small><span id="line-note-count">0</span>/80 characters</small></label
+        >
+        <div class="line-note-actions">
+          <button type="button" id="line-note-cancel">Cancel</button
+          ><button type="submit" id="line-note-save">Save note</button>
+        </div>
       </form>
-    </div>
-  </section>
-  <main class="captain-app" hidden>
-    <section id="captain-ready-alerts" class="captain-ready-alerts" hidden aria-live="assertive"></section>
-    <section id="captain-pending-sync" class="captain-pending-sync" hidden aria-live="polite"></section>
-    <section id="tables-screen" class="screen">
-      <div class="screen-head"><div><span class="eyebrow">DINE-IN</span><h1>All tables</h1><p id="captain-connection">Loading live table status…</p></div><button type="button" id="refresh-captain" class="icon-button" aria-label="Refresh tables">↻</button></div>
-      <div id="table-quick-stats" class="table-quick-stats" aria-live="polite" hidden></div>
-      <div id="table-state-filters" class="table-state-filters" aria-label="Filter table status"></div>
-      <div id="area-tabs" class="area-tabs" aria-label="Table areas"></div>
-      <div id="table-board" class="table-board" aria-live="polite"></div>
-      <div class="captain-order-actions"><div id="captain-order-action-list" hidden><button type="button" data-start-takeaway><span class="captain-action-icon" aria-hidden="true"></span><span class="captain-action-copy"><b>Take Away</b><small>No table required</small></span></button><button type="button" data-new-table-help><span class="captain-action-icon" aria-hidden="true"></span><span class="captain-action-copy"><b>New Table</b><small>Choose an available table</small></span></button></div><button id="captain-order-action-toggle" type="button" aria-label="Start a new order" aria-expanded="false">＋</button></div>
-    </section>
-    <section id="menu-screen" class="screen" hidden>
-      <div class="screen-head menu-head"><div><button type="button" class="back-button" data-captain-back>← Tables</button><span class="eyebrow" id="menu-order-mode">NEW ORDER</span><h1 id="menu-table-title">Table</h1><p id="active-table-context" class="active-table-context" hidden></p><p class="captain-flow-hint">Tap once to add · choose options only when needed</p></div><div class="menu-head-actions"><button type="button" id="menu-category-toggle" class="menu-category-button" aria-haspopup="dialog"><span class="menu-category-icon" aria-hidden="true">☷</span><span class="menu-category-copy"><small>Browse menu</small><strong id="menu-category-label">All dishes</strong></span><span class="menu-category-chevron" aria-hidden="true">›</span></button><button type="button" class="icon-button" id="menu-search-toggle" aria-label="Search menu">⌕</button></div></div>
-      <details id="active-bill-summary" class="active-bill-summary" hidden><summary>Items already on this bill <span id="active-bill-total"></span></summary><div id="active-bill-items"></div></details>
-      <div id="active-kot-progress" class="active-kot-progress" hidden aria-live="polite"></div>
-      <div id="captain-table-service" class="captain-table-service" hidden><button type="button" data-table-service="water_requested">Request water</button><button type="button" data-table-service="assistance_requested">Request help</button><button type="button" data-table-service="bill_requested">Request bill</button></div>
-      <label id="menu-search-wrap" class="menu-search" hidden><span>⌕</span><input id="menu-search" type="search" placeholder="Search menu items" autocomplete="off"><button type="button" id="clear-menu-search" aria-label="Clear search">×</button></label>
-      <p id="captain-draft-status" class="captain-draft-status" hidden aria-live="polite"></p>
-      <div id="menu-quick-picks" class="menu-quick-picks" hidden></div>
-      <div id="category-list" class="category-list" aria-label="Menu categories" hidden></div>
-      <div id="menu-list" class="menu-grid" aria-live="polite"></div>
-      <aside id="order-dock" class="order-dock" aria-label="Current order">
-        <header><div><span class="eyebrow">CURRENT ORDER</span><h2 id="order-dock-title">Your order</h2><p id="order-dock-caption">Choose dishes from the menu.</p></div><button type="button" data-open-review aria-label="Review order">↗</button></header>
-        <div id="order-dock-list" class="order-dock-list" aria-live="polite"></div>
-        <div class="order-dock-total"><span>Order total</span><b id="order-dock-total">₹0</b></div>
-        <button type="button" data-open-review class="order-dock-review">Review &amp; send <span>→</span></button>
-      </aside>
-    </section>
-    <section id="review-screen" class="screen" hidden>
-      <div class="screen-head"><div><button type="button" class="back-button" data-captain-back>← Add items</button><span class="eyebrow">FINAL ORDER</span><h1 id="review-table-title">Table</h1><p id="cart-caption"></p></div></div>
-      <div id="cart-list" class="cart-list"></div>
-      <details class="guest-details"><summary>Guest details &amp; kitchen note <span>Optional</span></summary><div><label>Name<input id="customer-name" maxlength="80" autocomplete="name" placeholder="Guest name"></label><label>Mobile<input id="customer-phone" inputmode="tel" maxlength="16" autocomplete="tel" placeholder="Mobile number"></label><label class="wide">Kitchen note<textarea id="special-request" maxlength="240" placeholder="e.g. less spicy, no onion"></textarea></label></div></details>
-      <div class="review-total"><span>Grand total</span><b id="review-total">₹0</b></div><p id="order-status" class="order-status" aria-live="polite"></p>
-      <label class="send-kot"><input id="send-kot" type="checkbox" checked><span><b>Print KOT in kitchen</b><small>When enabled, this order is sent to the configured kitchen printer.</small></span></label>
-      <button id="place-order" class="send-button" type="button">Send to kitchen ↗</button>
-    </section>
-  <button id="basket-bar" class="basket-bar" type="button" hidden aria-label="View current order"><span class="basket-copy"><small>Current order</small><b id="cart-count">0 items</b></span><i aria-hidden="true">⌑</i><b id="basket-total">₹0</b><strong>Review <span aria-hidden="true">→</span></strong></button>
-  </main>
-  <div id="captain-toast" class="captain-toast" hidden role="status" aria-live="polite"></div>
-  <dialog id="choice-sheet" class="choice-sheet"><div class="sheet-head"><div><span class="eyebrow">CUSTOMISE</span><h2 id="choice-title">Choose option</h2></div><button type="button" id="choice-close" class="icon-button" aria-label="Close">×</button></div><p id="choice-helper" class="choice-helper">Choose a portion to add.</p><div id="choice-options" class="choice-options"></div><fieldset id="style-options" class="style-options" hidden><legend>Preparation</legend><label><input type="radio" name="captain-style" value="" checked> Regular</label><label><input type="radio" name="captain-style" value="gravy"> Gravy <small>+₹10</small></label><label><input type="radio" name="captain-style" value="semi-gravy"> Semi-gravy <small>+₹10</small></label></fieldset><label class="item-note">Kitchen note <input id="choice-note" maxlength="80" placeholder="e.g. less spicy, no onion"></label><button type="button" id="choice-add" class="send-button">Add item</button></dialog>
-  <dialog id="line-note-sheet" class="line-note-sheet" aria-labelledby="line-note-title"><form id="line-note-form" method="dialog"><div class="sheet-head"><div><span class="eyebrow">KITCHEN NOTE</span><h2 id="line-note-title">Add a note</h2><p id="line-note-caption">Visible on the KOT for this item.</p></div><button type="button" id="line-note-close" class="icon-button" aria-label="Close note editor">×</button></div><label>Instruction for kitchen<textarea id="line-note-input" maxlength="80" rows="3" placeholder="e.g. less spicy, no onion"></textarea><small><span id="line-note-count">0</span>/80 characters</small></label><div class="line-note-actions"><button type="button" id="line-note-cancel">Cancel</button><button type="submit" id="line-note-save">Save note</button></div></form></dialog>
-  <dialog id="category-sheet" class="category-sheet"><div class="sheet-head"><div><span class="category-sheet-icon" aria-hidden="true">⌑</span><h2>Menu</h2><p>Choose a category to view its dishes.</p></div><button type="button" id="category-close" class="icon-button" aria-label="Close menu categories">×</button></div><div id="category-picker-list" class="category-picker-list"></div></dialog>
-  <dialog id="captain-table-actions" class="captain-table-actions"><button type="button" data-captain-table-actions-close aria-label="Close">×</button><h2 id="captain-table-actions-title">Table</h2><div><button type="button" data-captain-table-action="view">▤ <span>View KOT(s)</span></button><button type="button" data-captain-table-action="move">↔ <span>Move Table</span></button><button type="button" data-captain-table-action="bill">▣ <span>Print Bill</span></button></div></dialog>
-<script src="/captain.js?v=54"></script>
-  <script>
-    if ('serviceWorker' in navigator) {
-      let reloadedForCaptainWorker = false;
-      navigator.serviceWorker.addEventListener('controllerchange', () => {
-        if (!reloadedForCaptainWorker) {
-          reloadedForCaptainWorker = true;
-          window.location.reload();
-        }
-      });
-      navigator.serviceWorker.register('/captain-sw.js?v=20').then((registration) => {
-        registration.update().catch(() => {});
-        if (registration.waiting) registration.waiting.postMessage({ type: 'SKIP_WAITING' });
-      }).catch(() => {});
-    }
-  </script>
-</body>
+    </dialog>
+    <dialog id="category-sheet" class="category-sheet">
+      <div class="sheet-head">
+        <div>
+          <span class="category-sheet-icon" aria-hidden="true">⌑</span>
+          <h2>Menu</h2>
+          <p>Choose a category to view its dishes.</p>
+        </div>
+        <button
+          type="button"
+          id="category-close"
+          class="icon-button"
+          aria-label="Close menu categories"
+        >
+          ×
+        </button>
+      </div>
+      <div id="category-picker-list" class="category-picker-list"></div>
+    </dialog>
+    <dialog id="captain-table-actions" class="captain-table-actions">
+      <button type="button" data-captain-table-actions-close aria-label="Close">×</button>
+      <h2 id="captain-table-actions-title">Table</h2>
+      <div>
+        <button type="button" data-captain-table-action="view">▤ <span>View KOT(s)</span></button
+        ><button type="button" data-captain-table-action="move">↔ <span>Move Table</span></button
+        ><button type="button" data-captain-table-action="bill">▣ <span>Print Bill</span></button>
+      </div>
+    </dialog>
+    <script src="/client-config.js"></script>
+    <script src="/captain.js?v=54"></script>
+    <script>
+      if ('serviceWorker' in navigator) {
+        let reloadedForCaptainWorker = false;
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+          if (!reloadedForCaptainWorker) {
+            reloadedForCaptainWorker = true;
+            window.location.reload();
+          }
+        });
+        navigator.serviceWorker
+          .register('/captain-sw.js?v=20')
+          .then((registration) => {
+            registration.update().catch(() => {});
+            if (registration.waiting) registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+          })
+          .catch(() => {});
+      }
+    </script>
+  </body>
 </html>

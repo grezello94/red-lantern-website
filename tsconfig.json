@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "target": "ES2022",
+    "module": "commonjs",
+    "lib": ["ES2022", "DOM"],
+    "strict": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "types": ["node", "jest"]
+  },
+  "include": [
+    "src/**/*.js",
+    "__tests__/**/*.js",
+    "client-config.js",
+    "jest.config.cjs"
+  ],
+  "exclude": [
+    "node_modules",
+    "downloads",
+    "releases",
+    "images",
+    "uploads"
+  ]
+}

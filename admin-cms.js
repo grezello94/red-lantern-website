@@ -21,7 +21,7 @@ function reportClientDiagnostic(payload) {
     const body = JSON.stringify({
       path: window.location.pathname,
       href: window.location.href,
-      ...payload
+      ...payload,
     });
     if (navigator.sendBeacon) {
       navigator.sendBeacon('/api/client-log', new Blob([body], { type: 'application/json' }));
@@ -31,7 +31,7 @@ function reportClientDiagnostic(payload) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body,
-      keepalive: true
+      keepalive: true,
     }).catch(() => {});
   } catch {
     // Diagnostics must never interrupt the admin UI.
@@ -46,7 +46,7 @@ window.addEventListener('error', (event) => {
     source: event.filename || 'admin browser',
     line: event.lineno || '',
     column: event.colno || '',
-    stack: event.error?.stack || ''
+    stack: event.error?.stack || '',
   });
 });
 
@@ -56,7 +56,7 @@ window.addEventListener('unhandledrejection', (event) => {
     level: 'error',
     message: event.reason?.message || 'Admin browser promise failed.',
     source: 'admin browser promise',
-    stack: event.reason?.stack || String(event.reason || '')
+    stack: event.reason?.stack || String(event.reason || ''),
   });
 });
 
@@ -88,7 +88,9 @@ const firstUsefulSentence = (value) => {
   const text = cleanDescriptionText(value);
   if (!text) return '';
   const sentences = text.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [text];
-  return cleanDescriptionText(sentences.find((sentence) => cleanDescriptionText(sentence).length >= 55) || sentences[0]);
+  return cleanDescriptionText(
+    sentences.find((sentence) => cleanDescriptionText(sentence).length >= 55) || sentences[0]
+  );
 };
 
 const includesLocalContext = (value) => /red lantern|colva|south goa|goa/i.test(value);
@@ -98,15 +100,17 @@ function generatedBlogDescriptions(title, content) {
   const lead = firstUsefulSentence(content) || cleanTitle;
   const localPhrase = 'Red Lantern Restaurant in Colva, South Goa';
 
-  const excerptSeed = cleanTitle && lead && !lead.toLowerCase().includes(cleanTitle.toLowerCase())
-    ? `${cleanTitle}: ${lead}`
-    : lead || cleanTitle;
+  const excerptSeed =
+    cleanTitle && lead && !lead.toLowerCase().includes(cleanTitle.toLowerCase())
+      ? `${cleanTitle}: ${lead}`
+      : lead || cleanTitle;
   const excerpt = trimDescription(excerptSeed, 165);
 
   const leadHasTitle = cleanTitle && lead.toLowerCase().includes(cleanTitle.toLowerCase());
-  const seoSeed = lead && !leadHasTitle
-    ? `${lead} Visit ${localPhrase} for Chinese and Goan food in Colva.`
-    : `${cleanTitle || lead} at ${localPhrase}.`;
+  const seoSeed =
+    lead && !leadHasTitle
+      ? `${lead} Visit ${localPhrase} for Chinese and Goan food in Colva.`
+      : `${cleanTitle || lead} at ${localPhrase}.`;
   const seoDescription = trimDescription(
     includesLocalContext(seoSeed) ? seoSeed : `${seoSeed} Discover Chinese and Goan food in Colva.`,
     155
@@ -124,7 +128,8 @@ function updateBlogGeneratedDescriptions(entry, force = false) {
   const generated = generatedBlogDescriptions(title, content);
 
   if (excerptField && generated.excerpt) {
-    const canUpdate = force || !excerptField.value.trim() || excerptField.dataset.generated === 'true';
+    const canUpdate =
+      force || !excerptField.value.trim() || excerptField.dataset.generated === 'true';
     if (canUpdate) {
       excerptField.value = generated.excerpt;
       excerptField.dataset.generated = 'true';
@@ -144,7 +149,9 @@ function setupBlogDescriptionGenerator() {
   const container = document.getElementById('blogs-container');
   if (!container) return;
 
-  container.querySelectorAll('.blog-entry').forEach((entry) => updateBlogGeneratedDescriptions(entry));
+  container
+    .querySelectorAll('.blog-entry')
+    .forEach((entry) => updateBlogGeneratedDescriptions(entry));
   if (container.dataset.descriptionGeneratorReady === 'true') return;
   container.dataset.descriptionGeneratorReady = 'true';
 
@@ -212,13 +219,19 @@ function fillHome(home = {}) {
     'featureThreeTitle',
     'featureThreeText',
     'blogSectionTitle',
-    'blogSectionSubtitle'
+    'blogSectionSubtitle',
   ].forEach((name) => setField(name, home[name]));
 
-  const heroPreview = document.querySelector('input[name="heroImage"]')?.closest('.form-group')?.querySelector('.image-preview');
+  const heroPreview = document
+    .querySelector('input[name="heroImage"]')
+    ?.closest('.form-group')
+    ?.querySelector('.image-preview');
   if (heroPreview && home.heroImage) heroPreview.src = home.heroImage;
 
-  const welcomePreview = document.querySelector('input[name="welcomeImage"]')?.closest('.form-group')?.querySelector('.image-preview');
+  const welcomePreview = document
+    .querySelector('input[name="welcomeImage"]')
+    ?.closest('.form-group')
+    ?.querySelector('.image-preview');
   if (welcomePreview && home.welcomeImage) welcomePreview.src = home.welcomeImage;
 
   renderHomeReviewEntries(home.reviews);
@@ -254,7 +267,9 @@ function reviewEntryMarkup(review = {}, index = 0) {
 function renderHomeReviewEntries(reviews = []) {
   const reviewsContainer = document.getElementById('reviews-container');
   if (!reviewsContainer || !Array.isArray(reviews) || !reviews.length) return;
-  reviewsContainer.innerHTML = reviews.map((review, index) => reviewEntryMarkup(review, index)).join('');
+  reviewsContainer.innerHTML = reviews
+    .map((review, index) => reviewEntryMarkup(review, index))
+    .join('');
 }
 
 function dishEntryMarkup(dish = {}, index = 0) {
@@ -385,12 +400,17 @@ function fillMenu(menu = {}) {
   setField('menuNote', menu.note);
   const dishesContainer = document.getElementById('dishes-container');
   if (dishesContainer && Array.isArray(menu.dishes) && menu.dishes.length) {
-    dishesContainer.innerHTML = menu.dishes.map((dish, index) => dishEntryMarkup(dish, index)).join('');
+    dishesContainer.innerHTML = menu.dishes
+      .map((dish, index) => dishEntryMarkup(dish, index))
+      .join('');
   }
 }
 
 function cleanAirSheetText(value, isCategory = false) {
-  let text = String(value || '').replace(/[.…·]{2,}/g, ' ').replace(/\s+/g, ' ').trim();
+  let text = String(value || '')
+    .replace(/[.…·]{2,}/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
   if (isCategory) text = text.replace(/^[^a-z0-9(]+/i, '').trim();
   return text;
 }
@@ -459,7 +479,9 @@ let airCategoryOrder = [];
 let airCategoryGroups = new Map();
 
 function isAlcoholCategory(category) {
-  return /\b(bar menu|alcohol|spirits?|feni|beer|wine|whisky|whiskey|scotch|bourbon|rum|vodka|gin|brandy|cognac|liqueur|tequila|cocktail)\b/i.test(category);
+  return /\b(bar menu|alcohol|spirits?|feni|beer|wine|whisky|whiskey|scotch|bourbon|rum|vodka|gin|brandy|cognac|liqueur|tequila|cocktail)\b/i.test(
+    category
+  );
 }
 
 function syncAirCategoryVisibility() {
@@ -476,12 +498,28 @@ function renderAirCategoryOrder(items = []) {
   const container = document.getElementById('air-category-order-controls');
   if (!container) return;
   const categories = [...new Set(items.map((item) => item.category || 'Menu'))];
-  airCategoryGroups = new Map(categories.map((category) => [category, items.some((item) => (item.category || 'Menu') === category && item.isBar) ? 'bar' : 'food']));
-  airCategoryOrder = [...airCategoryOrder.filter((category) => categories.includes(category)), ...categories.filter((category) => !airCategoryOrder.includes(category))];
+  airCategoryGroups = new Map(
+    categories.map((category) => [
+      category,
+      items.some((item) => (item.category || 'Menu') === category && item.isBar) ? 'bar' : 'food',
+    ])
+  );
+  airCategoryOrder = [
+    ...airCategoryOrder.filter((category) => categories.includes(category)),
+    ...categories.filter((category) => !airCategoryOrder.includes(category)),
+  ];
   const food = airCategoryOrder.filter((category) => airCategoryGroups.get(category) !== 'bar');
   const bar = airCategoryOrder.filter((category) => airCategoryGroups.get(category) === 'bar');
   airCategoryOrder = [...food, ...bar];
-  const group = (label, list) => list.length ? `<div class="category-order-group"><b>${label}</b>${list.map((category) => { const index=airCategoryOrder.indexOf(category); return `<div class="category-control-row" data-category-order="${escapeHtml(category)}"><strong><span class="category-order-rank">${index + 1}</span>${escapeHtml(category)}</strong><span><button type="button" class="category-order-move" data-category-move="up" aria-label="Move ${escapeHtml(category)} up">↑</button><button type="button" class="category-order-move" data-category-move="down" aria-label="Move ${escapeHtml(category)} down">↓</button></span></div>`; }).join('')}</div>` : '';
+  const group = (label, list) =>
+    list.length
+      ? `<div class="category-order-group"><b>${label}</b>${list
+          .map((category) => {
+            const index = airCategoryOrder.indexOf(category);
+            return `<div class="category-control-row" data-category-order="${escapeHtml(category)}"><strong><span class="category-order-rank">${index + 1}</span>${escapeHtml(category)}</strong><span><button type="button" class="category-order-move" data-category-move="up" aria-label="Move ${escapeHtml(category)} up">↑</button><button type="button" class="category-order-move" data-category-move="down" aria-label="Move ${escapeHtml(category)} down">↓</button></span></div>`;
+          })
+          .join('')}</div>`
+      : '';
   container.innerHTML = group('Food menu', food) + group('Alcohol & bar', bar);
   syncAirCategoryOrder();
 }
@@ -503,23 +541,32 @@ function renderAirCategoryOptions(items = []) {
 function renderAirCategoryControls(items = []) {
   const container = document.getElementById('air-category-controls');
   const categories = [...new Set(items.map((item) => item.category || 'Menu'))];
-  const barCategories = new Set(items.filter((item) => item.isBar).map((item) => item.category || 'Bar Menu'));
+  const barCategories = new Set(
+    items.filter((item) => item.isBar).map((item) => item.category || 'Bar Menu')
+  );
   categories.forEach((category) => {
     if (!airCategoryVisibility[category]) {
-      airCategoryVisibility[category] = { table: true, card: !barCategories.has(category) && !isAlcoholCategory(category) };
+      airCategoryVisibility[category] = {
+        table: true,
+        card: !barCategories.has(category) && !isAlcoholCategory(category),
+      };
     }
   });
   renderAirCategoryOptions(items);
   renderAirCategoryOrder(items);
   if (!container) return;
-  container.innerHTML = categories.length ? categories.map((category) => {
-    const setting = airCategoryVisibility[category];
-    return `<div class="category-control-row" data-category="${escapeHtml(category)}">
+  container.innerHTML = categories.length
+    ? categories
+        .map((category) => {
+          const setting = airCategoryVisibility[category];
+          return `<div class="category-control-row" data-category="${escapeHtml(category)}">
       <strong>${escapeHtml(category)}</strong>
       <label><input type="checkbox" data-view="table" ${setting.table !== false ? 'checked' : ''}> Table QR</label>
       <label><input type="checkbox" data-view="card" ${setting.card !== false ? 'checked' : ''}> Business Card QR</label>
     </div>`;
-  }).join('') : '<p class="air-empty">Add or import menu items to configure category visibility.</p>';
+        })
+        .join('')
+    : '<p class="air-empty">Add or import menu items to configure category visibility.</p>';
   syncAirCategoryVisibility();
 }
 
@@ -527,59 +574,86 @@ function renderAirItems(items = []) {
   const container = document.getElementById('air-items-container');
   if (!container) return;
   container.innerHTML = items.map((item, index) => airItemMarkup(item, index)).join('');
-  if (!items.length) container.innerHTML = '<tr class="air-empty-row"><td colspan="13"><p class="air-empty">Upload a CSV, paste from Excel, or add your first menu item.</p></td></tr>';
+  if (!items.length)
+    container.innerHTML =
+      '<tr class="air-empty-row"><td colspan="13"><p class="air-empty">Upload a CSV, paste from Excel, or add your first menu item.</p></td></tr>';
   updateAirSheetCounts();
   renderAirCategoryControls([...items, ...airBarSheetItems()]);
 }
 
 function airSheetItems() {
-  return [...document.querySelectorAll('#air-items-container .air-item-entry')].map((row) => {
-    const category = row.querySelector('[name="airItemCategory[]"]')?.value.trim() || 'Menu';
-    return {
-      name: row.querySelector('[name="airItemName[]"]')?.value.trim() || '',
-      price: row.querySelector('[name="airItemPrice[]"]')?.value.trim() || '',
-      fullPrice: row.querySelector('[name="airItemFullPrice[]"]')?.value.trim() || '',
-      halfPrice: row.querySelector('[name="airItemHalfPrice[]"]')?.value.trim() || '',
-      withBonePrice: row.querySelector('[name="airItemWithBonePrice[]"]')?.value.trim() || '',
-      bonelessPrice: row.querySelector('[name="airItemBonelessPrice[]"]')?.value.trim() || '',
-      category,
-      type: row.querySelector('[name="airItemType[]"]')?.value === 'beverage' ? 'beverage' : 'food',
-      dietary: row.querySelector('[name="airItemDietary[]"]')?.value || dietaryFromAirCategory(category),
-      description: row.querySelector('[name="airItemDescription[]"]')?.value.trim() || '',
-      bestSeller: row.querySelector('[data-item-flag="bestSeller"]')?.checked || false,
-      mustHave: row.querySelector('[data-item-flag="mustHave"]')?.checked || false,
-      gravyStyleAvailable: row.querySelector('[data-item-flag="gravyStyleAvailable"]')?.checked || false
-    };
-  }).filter((item) => item.name);
+  return [...document.querySelectorAll('#air-items-container .air-item-entry')]
+    .map((row) => {
+      const category = row.querySelector('[name="airItemCategory[]"]')?.value.trim() || 'Menu';
+      return {
+        name: row.querySelector('[name="airItemName[]"]')?.value.trim() || '',
+        price: row.querySelector('[name="airItemPrice[]"]')?.value.trim() || '',
+        fullPrice: row.querySelector('[name="airItemFullPrice[]"]')?.value.trim() || '',
+        halfPrice: row.querySelector('[name="airItemHalfPrice[]"]')?.value.trim() || '',
+        withBonePrice: row.querySelector('[name="airItemWithBonePrice[]"]')?.value.trim() || '',
+        bonelessPrice: row.querySelector('[name="airItemBonelessPrice[]"]')?.value.trim() || '',
+        category,
+        type:
+          row.querySelector('[name="airItemType[]"]')?.value === 'beverage' ? 'beverage' : 'food',
+        dietary:
+          row.querySelector('[name="airItemDietary[]"]')?.value || dietaryFromAirCategory(category),
+        description: row.querySelector('[name="airItemDescription[]"]')?.value.trim() || '',
+        bestSeller: row.querySelector('[data-item-flag="bestSeller"]')?.checked || false,
+        mustHave: row.querySelector('[data-item-flag="mustHave"]')?.checked || false,
+        gravyStyleAvailable:
+          row.querySelector('[data-item-flag="gravyStyleAvailable"]')?.checked || false,
+      };
+    })
+    .filter((item) => item.name);
 }
 
 function airBarSheetItems() {
-  return [...document.querySelectorAll('#air-bar-items-container .air-bar-item-entry')].map((row) => ({
-    name: row.querySelector('[name="airBarItemName[]"]')?.value.trim() || '',
-    price: row.querySelector('[name="airBarItemPrice[]"]')?.value.trim() || '',
-    price30ml: row.querySelector('[name="airBarItem30mlPrice[]"]')?.value.trim() || '',
-    price60ml: row.querySelector('[name="airBarItem60mlPrice[]"]')?.value.trim() || '',
-    price90ml: row.querySelector('[name="airBarItem90mlPrice[]"]')?.value.trim() || '',
-    price180ml: row.querySelector('[name="airBarItem180mlPrice[]"]')?.value.trim() || '',
-    category: row.querySelector('[name="airBarItemCategory[]"]')?.value.trim() || 'Bar Menu',
-    type: row.querySelector('[name="airBarItemType[]"]')?.value === 'food' ? 'food' : 'beverage',
-    description: row.querySelector('[name="airBarItemDescription[]"]')?.value.trim() || '',
-    bestSeller: row.querySelector('[data-bar-item-flag="bestSeller"]')?.checked || false,
-    isBar: true
-  })).filter((item) => item.name);
+  return [...document.querySelectorAll('#air-bar-items-container .air-bar-item-entry')]
+    .map((row) => ({
+      name: row.querySelector('[name="airBarItemName[]"]')?.value.trim() || '',
+      price: row.querySelector('[name="airBarItemPrice[]"]')?.value.trim() || '',
+      price30ml: row.querySelector('[name="airBarItem30mlPrice[]"]')?.value.trim() || '',
+      price60ml: row.querySelector('[name="airBarItem60mlPrice[]"]')?.value.trim() || '',
+      price90ml: row.querySelector('[name="airBarItem90mlPrice[]"]')?.value.trim() || '',
+      price180ml: row.querySelector('[name="airBarItem180mlPrice[]"]')?.value.trim() || '',
+      category: row.querySelector('[name="airBarItemCategory[]"]')?.value.trim() || 'Bar Menu',
+      type: row.querySelector('[name="airBarItemType[]"]')?.value === 'food' ? 'food' : 'beverage',
+      description: row.querySelector('[name="airBarItemDescription[]"]')?.value.trim() || '',
+      bestSeller: row.querySelector('[data-bar-item-flag="bestSeller"]')?.checked || false,
+      isBar: true,
+    }))
+    .filter((item) => item.name);
 }
 
 function renderAirBarItems(items = []) {
   const container = document.getElementById('air-bar-items-container');
   if (!container) return;
   container.innerHTML = items.map((item, index) => airBarItemMarkup(item, index)).join('');
-  if (!items.length) container.innerHTML = '<tr class="air-empty-row"><td colspan="11"><p class="air-empty">Upload a Bar Menu file, paste spreadsheet rows, or add the first bar item.</p></td></tr>';
+  if (!items.length)
+    container.innerHTML =
+      '<tr class="air-empty-row"><td colspan="11"><p class="air-empty">Upload a Bar Menu file, paste spreadsheet rows, or add the first bar item.</p></td></tr>';
   updateAirSheetCounts();
   renderAirCategoryControls([...airSheetItems(), ...items]);
 }
 
-function updateAirSheetCounts() { const count=(selector)=>[...document.querySelectorAll(selector)].filter((input)=>input.value.trim()).length; const food=document.getElementById('air-food-sheet-count'),bar=document.getElementById('air-bar-sheet-count'); if(food){const total=count('[name="airItemName[]"]');food.textContent=`${total} item${total===1?'':'s'}`;} if(bar){const total=count('[name="airBarItemName[]"]');bar.textContent=`${total} item${total===1?'':'s'}`;} }
-document.addEventListener('input',(event)=>{if(event.target.matches('[name="airItemName[]"],[name="airBarItemName[]"]'))updateAirSheetCounts();});
+function updateAirSheetCounts() {
+  const count = (selector) =>
+    [...document.querySelectorAll(selector)].filter((input) => input.value.trim()).length;
+  const food = document.getElementById('air-food-sheet-count'),
+    bar = document.getElementById('air-bar-sheet-count');
+  if (food) {
+    const total = count('[name="airItemName[]"]');
+    food.textContent = `${total} item${total === 1 ? '' : 's'}`;
+  }
+  if (bar) {
+    const total = count('[name="airBarItemName[]"]');
+    bar.textContent = `${total} item${total === 1 ? '' : 's'}`;
+  }
+}
+document.addEventListener('input', (event) => {
+  if (event.target.matches('[name="airItemName[]"],[name="airBarItemName[]"]'))
+    updateAirSheetCounts();
+});
 
 function dedupeAirSheetItems(items = []) {
   const seen = new Set();
@@ -591,26 +665,154 @@ function dedupeAirSheetItems(items = []) {
   });
 }
 
-const addonUiStyles=document.createElement('style');
-addonUiStyles.textContent=`#air-addon-management{border:1px solid #dce8f6;background:linear-gradient(145deg,#fff,#f7faff)}#air-addon-management .air-addon-group{margin:16px 0;padding:22px;border:1px solid #d9e5f2;border-radius:16px;background:#fff;box-shadow:0 8px 22px rgba(32,59,91,.045)}#air-addon-management .addon-group-head{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:18px;padding-bottom:14px;border-bottom:1px solid #edf1f6}#air-addon-management .addon-group-head b{display:block;color:#1d3150;font-size:17px}#air-addon-management .addon-group-head small{display:block;margin-top:3px;color:#71829a;font-size:12px}#air-addon-management .addon-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:15px 22px}#air-addon-management .addon-fields .form-group{min-width:0;margin:0}#air-addon-management .addon-fields input,#air-addon-management .addon-fields select{box-sizing:border-box;width:100%;min-height:44px;border:1px solid #cbd9e8;border-radius:9px;background:#fff;font:700 14px Manrope,Arial,sans-serif}#air-addon-management .addon-rules{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:18px 0;padding:15px;border-radius:12px;background:#f7faff}#air-addon-management .addon-rules .form-group{margin:0}#air-addon-management .addon-rules input,#air-addon-management .addon-rules select{box-sizing:border-box;width:100%;min-height:42px;border:1px solid #cbd9e8;border-radius:8px;background:#fff;font:700 14px Manrope,Arial,sans-serif}#air-addon-management .addon-rules .switch-row{grid-column:1/-1;min-height:42px;margin:0;padding:10px 12px;border:1px solid #dce6ef;border-radius:8px;background:#fff}#air-addon-management .addon-options{margin-top:14px;border:1px solid #dce6ef;border-radius:12px;overflow:hidden}#air-addon-management .addon-options-head{display:grid;grid-template-columns:minmax(0,2fr) 130px 135px 38px;gap:10px;padding:10px 14px;color:#667991;background:#f3f7fb;font-size:10px;font-weight:900;letter-spacing:.05em;text-transform:uppercase}#air-addon-management .addon-option{display:grid;grid-template-columns:minmax(0,2fr) 130px 135px 38px;gap:10px;align-items:center;padding:10px 14px;border-top:1px solid #edf1f5}#air-addon-management .addon-option input,#air-addon-management .addon-option select{box-sizing:border-box;width:100%;min-height:40px;padding:8px 10px;border:1px solid #cbd9e8;border-radius:8px;background:#fff;font:700 13px Manrope,Arial,sans-serif}#air-addon-management .addon-empty{padding:14px;color:#74859b;background:#fbfcfe;text-align:center;font-size:13px}#air-addon-management .addon-add-option,#add-air-addon-group{width:100%;margin-top:12px;padding:12px;border:1px dashed #9eb8d4;border-radius:9px;color:#24538a;background:#f8fbff;font-weight:900}#add-air-addon-group{margin-top:18px;color:#1a6550;border-color:#9ac9b6;background:#f4fcf7}@media(max-width:720px){#air-addon-management .addon-fields,#air-addon-management .addon-rules{grid-template-columns:1fr}#air-addon-management .addon-options-head{display:none}#air-addon-management .addon-option{grid-template-columns:1fr 1fr 38px}#air-addon-management .addon-option input:first-child{grid-column:1/-1}}`;
+const addonUiStyles = document.createElement('style');
+addonUiStyles.textContent = `#air-addon-management{border:1px solid #dce8f6;background:linear-gradient(145deg,#fff,#f7faff)}#air-addon-management .air-addon-group{margin:16px 0;padding:22px;border:1px solid #d9e5f2;border-radius:16px;background:#fff;box-shadow:0 8px 22px rgba(32,59,91,.045)}#air-addon-management .addon-group-head{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:18px;padding-bottom:14px;border-bottom:1px solid #edf1f6}#air-addon-management .addon-group-head b{display:block;color:#1d3150;font-size:17px}#air-addon-management .addon-group-head small{display:block;margin-top:3px;color:#71829a;font-size:12px}#air-addon-management .addon-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:15px 22px}#air-addon-management .addon-fields .form-group{min-width:0;margin:0}#air-addon-management .addon-fields input,#air-addon-management .addon-fields select{box-sizing:border-box;width:100%;min-height:44px;border:1px solid #cbd9e8;border-radius:9px;background:#fff;font:700 14px Manrope,Arial,sans-serif}#air-addon-management .addon-rules{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:18px 0;padding:15px;border-radius:12px;background:#f7faff}#air-addon-management .addon-rules .form-group{margin:0}#air-addon-management .addon-rules input,#air-addon-management .addon-rules select{box-sizing:border-box;width:100%;min-height:42px;border:1px solid #cbd9e8;border-radius:8px;background:#fff;font:700 14px Manrope,Arial,sans-serif}#air-addon-management .addon-rules .switch-row{grid-column:1/-1;min-height:42px;margin:0;padding:10px 12px;border:1px solid #dce6ef;border-radius:8px;background:#fff}#air-addon-management .addon-options{margin-top:14px;border:1px solid #dce6ef;border-radius:12px;overflow:hidden}#air-addon-management .addon-options-head{display:grid;grid-template-columns:minmax(0,2fr) 130px 135px 38px;gap:10px;padding:10px 14px;color:#667991;background:#f3f7fb;font-size:10px;font-weight:900;letter-spacing:.05em;text-transform:uppercase}#air-addon-management .addon-option{display:grid;grid-template-columns:minmax(0,2fr) 130px 135px 38px;gap:10px;align-items:center;padding:10px 14px;border-top:1px solid #edf1f5}#air-addon-management .addon-option input,#air-addon-management .addon-option select{box-sizing:border-box;width:100%;min-height:40px;padding:8px 10px;border:1px solid #cbd9e8;border-radius:8px;background:#fff;font:700 13px Manrope,Arial,sans-serif}#air-addon-management .addon-empty{padding:14px;color:#74859b;background:#fbfcfe;text-align:center;font-size:13px}#air-addon-management .addon-add-option,#add-air-addon-group{width:100%;margin-top:12px;padding:12px;border:1px dashed #9eb8d4;border-radius:9px;color:#24538a;background:#f8fbff;font-weight:900}#add-air-addon-group{margin-top:18px;color:#1a6550;border-color:#9ac9b6;background:#f4fcf7}@media(max-width:720px){#air-addon-management .addon-fields,#air-addon-management .addon-rules{grid-template-columns:1fr}#air-addon-management .addon-options-head{display:none}#air-addon-management .addon-option{grid-template-columns:1fr 1fr 38px}#air-addon-management .addon-option input:first-child{grid-column:1/-1}}`;
 document.head.appendChild(addonUiStyles);
-const addonUiOverride=document.createElement('style');
-addonUiOverride.textContent=`#air-addon-management{max-width:none!important}#air-addon-management .addon-rules .switch-row{display:flex;align-items:center;justify-content:space-between}#air-addon-management .addon-rules .switch-row input{width:22px;min-height:22px;height:22px;margin-left:auto;accent-color:#df2c2c}`;
+const addonUiOverride = document.createElement('style');
+addonUiOverride.textContent = `#air-addon-management{max-width:none!important}#air-addon-management .addon-rules .switch-row{display:flex;align-items:center;justify-content:space-between}#air-addon-management .addon-rules .switch-row input{width:22px;min-height:22px;height:22px;margin-left:auto;accent-color:#df2c2c}`;
 document.head.appendChild(addonUiOverride);
-const addonUiPolish=document.createElement('style');
-addonUiPolish.textContent=`#air-addon-management{padding:28px!important;border-radius:22px!important;box-shadow:0 14px 34px rgba(25,48,80,.06)}#air-addon-management .air-settings-heading{display:flex;align-items:flex-start;justify-content:space-between;padding-bottom:20px;border-bottom:1px solid #e8eef5}#air-addon-management .air-addon-group{position:relative;margin:20px 0;padding:24px;border-radius:18px;box-shadow:0 10px 26px rgba(32,59,91,.06)}#air-addon-management .addon-group-head{align-items:flex-start}#air-addon-management .addon-group-head b{margin-top:5px;font-size:19px;letter-spacing:-.02em}#air-addon-management .addon-group-state{display:inline-flex;padding:4px 8px;border-radius:999px;font-size:10px;font-weight:900;letter-spacing:.05em;text-transform:uppercase}#air-addon-management .addon-group-state.is-active{color:#176943;background:#eaf8ef}#air-addon-management .addon-group-state.is-inactive{color:#7b6570;background:#f8f0f2}#air-addon-management label>span{margin-left:5px;color:#8392a5;font-size:10px;font-weight:700;text-transform:none}#air-addon-management .addon-rules{grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;padding:18px;background:linear-gradient(135deg,#f5f8fd,#fafcff)}#air-addon-management .addon-rule-note{grid-column:1/-1;margin:0;color:#657b96;font-size:12px;font-weight:700}#air-addon-management .addon-rules .switch-row{min-height:54px;grid-column:1/-1;border-radius:10px}#air-addon-management .switch-row small{display:block;margin-top:4px;color:#73849a;font-size:11px;font-weight:650}#air-addon-management .addon-options-title{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin:20px 0 8px}#air-addon-management .addon-options-title strong{color:#243852;font-size:16px}#air-addon-management .addon-options-title small{color:#71839b;font-size:12px;font-weight:700}#air-addon-management .addon-add-option,#add-air-addon-group{min-height:50px;border-radius:11px;transition:.18s ease}#air-addon-management .addon-add-option:hover,#add-air-addon-group:hover{transform:translateY(-1px);border-style:solid;background:#eef6ff}#add-air-addon-group:hover{background:#ecfbf4}@media(max-width:720px){#air-addon-management{padding:18px!important}#air-addon-management .air-addon-group{padding:16px}#air-addon-management .addon-rules{grid-template-columns:1fr!important}#air-addon-management .addon-options-title{align-items:flex-start;flex-direction:column;gap:3px}#air-addon-management .addon-option{padding:12px}#air-addon-management .addon-option .remove-air-item{align-self:end}}`;
+const addonUiPolish = document.createElement('style');
+addonUiPolish.textContent = `#air-addon-management{padding:28px!important;border-radius:22px!important;box-shadow:0 14px 34px rgba(25,48,80,.06)}#air-addon-management .air-settings-heading{display:flex;align-items:flex-start;justify-content:space-between;padding-bottom:20px;border-bottom:1px solid #e8eef5}#air-addon-management .air-addon-group{position:relative;margin:20px 0;padding:24px;border-radius:18px;box-shadow:0 10px 26px rgba(32,59,91,.06)}#air-addon-management .addon-group-head{align-items:flex-start}#air-addon-management .addon-group-head b{margin-top:5px;font-size:19px;letter-spacing:-.02em}#air-addon-management .addon-group-state{display:inline-flex;padding:4px 8px;border-radius:999px;font-size:10px;font-weight:900;letter-spacing:.05em;text-transform:uppercase}#air-addon-management .addon-group-state.is-active{color:#176943;background:#eaf8ef}#air-addon-management .addon-group-state.is-inactive{color:#7b6570;background:#f8f0f2}#air-addon-management label>span{margin-left:5px;color:#8392a5;font-size:10px;font-weight:700;text-transform:none}#air-addon-management .addon-rules{grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;padding:18px;background:linear-gradient(135deg,#f5f8fd,#fafcff)}#air-addon-management .addon-rule-note{grid-column:1/-1;margin:0;color:#657b96;font-size:12px;font-weight:700}#air-addon-management .addon-rules .switch-row{min-height:54px;grid-column:1/-1;border-radius:10px}#air-addon-management .switch-row small{display:block;margin-top:4px;color:#73849a;font-size:11px;font-weight:650}#air-addon-management .addon-options-title{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin:20px 0 8px}#air-addon-management .addon-options-title strong{color:#243852;font-size:16px}#air-addon-management .addon-options-title small{color:#71839b;font-size:12px;font-weight:700}#air-addon-management .addon-add-option,#add-air-addon-group{min-height:50px;border-radius:11px;transition:.18s ease}#air-addon-management .addon-add-option:hover,#add-air-addon-group:hover{transform:translateY(-1px);border-style:solid;background:#eef6ff}#add-air-addon-group:hover{background:#ecfbf4}@media(max-width:720px){#air-addon-management{padding:18px!important}#air-addon-management .air-addon-group{padding:16px}#air-addon-management .addon-rules{grid-template-columns:1fr!important}#air-addon-management .addon-options-title{align-items:flex-start;flex-direction:column;gap:3px}#air-addon-management .addon-option{padding:12px}#air-addon-management .addon-option .remove-air-item{align-self:end}}`;
 document.head.appendChild(addonUiPolish);
 let airAddonGroups = [];
-function addonId() { return `addon-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,7)}`; }
-function normaliseAddonGroup(group={}) { const selection=group.selection==='multiple'?'multiple':'single',max=selection==='single'?1:Math.max(1,Math.min(20,Number(group.max)||1)),min=Math.min(max,Math.max(0,Math.min(20,Number(group.min)||0))); return {...group,id:group.id||addonId(),name:String(group.name||'').slice(0,80),displayName:String(group.displayName||'').slice(0,100),selection,min,max,active:group.active!==false,options:Array.isArray(group.options)?group.options:[]}; }
-function addonGroupMarkup(rawGroup) { const group=normaliseAddonGroup(rawGroup),options=group.options; return `<article class="air-addon-group" data-addon-group="${escapeHtml(group.id)}"><div class="addon-group-head"><div><span class="addon-group-state ${group.active?'is-active':'is-inactive'}">${group.active?'Active':'Draft'}</span><b>${escapeHtml(group.name||'New add-on group')}</b><small>Reusable choices. You can save the group now and attach it to dishes later.</small></div><button type="button" data-remove-addon-group="${escapeHtml(group.id)}" class="remove-air-item" aria-label="Remove add-on group">×</button></div><div class="addon-fields"><div class="form-group"><label>Group name <span>Internal</span></label><input data-addon-field="name" maxlength="80" value="${escapeHtml(group.name||'')}" placeholder="e.g. Extras"></div><div class="form-group"><label>Online display name <span>Guests see this</span></label><input data-addon-field="displayName" maxlength="100" value="${escapeHtml(group.displayName||'')}" placeholder="e.g. Choose your extras"></div></div><div class="addon-rules"><div class="form-group"><label>Minimum selections</label><input data-addon-field="min" type="number" min="0" max="20" value="${group.min}"></div><div class="form-group"><label>Maximum selections</label><input data-addon-field="max" type="number" min="1" max="20" value="${group.max}" ${group.selection==='single'?'disabled':''}></div><div class="form-group"><label>Selection type</label><select data-addon-field="selection"><option value="single" ${group.selection==='single'?'selected':''}>Choose one</option><option value="multiple" ${group.selection==='multiple'?'selected':''}>Choose multiple</option></select></div><p class="addon-rule-note">${group.selection==='single'?'Guests can choose up to one option.':'Guests can choose between the minimum and maximum.'}</p><label class="switch-row"><span><strong>Active</strong><small>Available to guests after this group is assigned to a dish.</small></span><input data-addon-field="active" type="checkbox" ${group.active?'checked':''}></label></div><div><div class="addon-options-title"><strong>Options</strong><small>${options.length?`${options.length} choice${options.length===1?'':'s'} configured`:'Add the choices guests can select.'}</small></div><div class="addon-options"><div class="addon-options-head"><span>Option name</span><span>Price</span><span>Dietary</span><span></span></div><div data-addon-options>${options.map((option,index)=>`<div class="addon-option"><input data-addon-option="name" data-option-index="${index}" maxlength="80" value="${escapeHtml(option.name||'')}" placeholder="e.g. Extra cheese"><input data-addon-option="price" data-option-index="${index}" type="number" min="0" max="100000" step="0.01" value="${Number(option.price||0)}" placeholder="0"><select data-addon-option="dietary" data-option-index="${index}"><option value="veg" ${option.dietary!=='nonveg'?'selected':''}>Veg</option><option value="nonveg" ${option.dietary==='nonveg'?'selected':''}>Non-Veg</option></select><button type="button" data-remove-addon-option="${index}" class="remove-air-item" aria-label="Remove option">×</button></div>`).join('')||'<p class="addon-empty">No options yet. This group can be saved as a draft, or add choices now.</p>'}</div></div><button type="button" data-add-addon-option class="addon-add-option">+ Add option</button></div></article>`; }
-function syncAirAddonGroups() { document.getElementById('air-addon-groups').value=JSON.stringify(airAddonGroups); }
-function renderAirAddonGroups(groups=airAddonGroups) { airAddonGroups=Array.isArray(groups)?groups.map(normaliseAddonGroup):[]; const list=document.getElementById('air-addon-groups-list'); if(!list)return; list.innerHTML=airAddonGroups.map(addonGroupMarkup).join('')||'<p class="air-empty">No addon groups yet. Add groups such as Extras, Sauces, or Preparation choices.</p>'; syncAirAddonGroups(); }
-function readAirAddonGroup(element) { const id=element.dataset.addonGroup,index=airAddonGroups.findIndex((item)=>item.id===id); if(index<0)return; const current=airAddonGroups[index],selection=element.querySelector('[data-addon-field="selection"]')?.value==='multiple'?'multiple':'single',rawMax=Number(element.querySelector('[data-addon-field="max"]')?.value)||1; airAddonGroups[index]=normaliseAddonGroup({...current,name:element.querySelector('[data-addon-field="name"]')?.value.trim()||'',displayName:element.querySelector('[data-addon-field="displayName"]')?.value.trim()||'',min:Number(element.querySelector('[data-addon-field="min"]')?.value)||0,max:selection==='single'?1:rawMax,selection,active:!!element.querySelector('[data-addon-field="active"]')?.checked,options:[...element.querySelectorAll('[data-addon-option="name"]')].map((input,optionIndex)=>({name:input.value.trim(),price:Math.max(0,Number(element.querySelector(`[data-addon-option="price"][data-option-index="${optionIndex}"]`)?.value)||0),dietary:element.querySelector(`[data-addon-option="dietary"][data-option-index="${optionIndex}"]`)?.value==='nonveg'?'nonveg':'veg'})).filter((option)=>option.name)}); syncAirAddonGroups(); }
-document.addEventListener('click',(event)=>{ const addGroup=event.target.closest('#add-air-addon-group'); if(addGroup){airAddonGroups.push({id:addonId(),name:'',displayName:'',min:0,max:1,selection:'single',active:true,options:[]});renderAirAddonGroups();return;} const card=event.target.closest('[data-addon-group]'); if(!card)return; readAirAddonGroup(card); const removeGroup=event.target.closest('[data-remove-addon-group]'); if(removeGroup){airAddonGroups=airAddonGroups.filter((group)=>group.id!==removeGroup.dataset.removeAddonGroup);renderAirAddonGroups();return;} if(event.target.closest('[data-add-addon-option]')){const group=airAddonGroups.find((item)=>item.id===card.dataset.addonGroup);group?.options.push({name:'',price:0,dietary:'veg'});renderAirAddonGroups();return;} const removeOption=event.target.closest('[data-remove-addon-option]'); if(removeOption){const group=airAddonGroups.find((item)=>item.id===card.dataset.addonGroup);if(group)group.options.splice(Number(removeOption.dataset.removeAddonOption),1);renderAirAddonGroups();}});
-document.addEventListener('input',(event)=>{const card=event.target.closest('[data-addon-group]');if(card)readAirAddonGroup(card);});
-document.addEventListener('change',(event)=>{const card=event.target.closest('[data-addon-group]');if(!card)return;readAirAddonGroup(card);if(event.target.matches('[data-addon-field="selection"]'))renderAirAddonGroups();});
-document.querySelector('form[action="/api/update-airMenu"]')?.addEventListener('submit',(event)=>{document.querySelectorAll('[data-addon-group]').forEach(readAirAddonGroup);const incomplete=airAddonGroups.find((group)=>!group.name.trim());if(!incomplete)return;event.preventDefault();event.stopImmediatePropagation();const card=[...document.querySelectorAll('[data-addon-group]')].find((element)=>element.dataset.addonGroup===incomplete.id);card?.querySelector('[data-addon-field="name"]')?.focus();alert('Give every add-on group a name, or remove the empty group before saving.');});
+function addonId() {
+  return `addon-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+}
+function normaliseAddonGroup(group = {}) {
+  const selection = group.selection === 'multiple' ? 'multiple' : 'single',
+    max = selection === 'single' ? 1 : Math.max(1, Math.min(20, Number(group.max) || 1)),
+    min = Math.min(max, Math.max(0, Math.min(20, Number(group.min) || 0)));
+  return {
+    ...group,
+    id: group.id || addonId(),
+    name: String(group.name || '').slice(0, 80),
+    displayName: String(group.displayName || '').slice(0, 100),
+    selection,
+    min,
+    max,
+    active: group.active !== false,
+    options: Array.isArray(group.options) ? group.options : [],
+  };
+}
+function addonGroupMarkup(rawGroup) {
+  const group = normaliseAddonGroup(rawGroup),
+    options = group.options;
+  return `<article class="air-addon-group" data-addon-group="${escapeHtml(group.id)}"><div class="addon-group-head"><div><span class="addon-group-state ${group.active ? 'is-active' : 'is-inactive'}">${group.active ? 'Active' : 'Draft'}</span><b>${escapeHtml(group.name || 'New add-on group')}</b><small>Reusable choices. You can save the group now and attach it to dishes later.</small></div><button type="button" data-remove-addon-group="${escapeHtml(group.id)}" class="remove-air-item" aria-label="Remove add-on group">×</button></div><div class="addon-fields"><div class="form-group"><label>Group name <span>Internal</span></label><input data-addon-field="name" maxlength="80" value="${escapeHtml(group.name || '')}" placeholder="e.g. Extras"></div><div class="form-group"><label>Online display name <span>Guests see this</span></label><input data-addon-field="displayName" maxlength="100" value="${escapeHtml(group.displayName || '')}" placeholder="e.g. Choose your extras"></div></div><div class="addon-rules"><div class="form-group"><label>Minimum selections</label><input data-addon-field="min" type="number" min="0" max="20" value="${group.min}"></div><div class="form-group"><label>Maximum selections</label><input data-addon-field="max" type="number" min="1" max="20" value="${group.max}" ${group.selection === 'single' ? 'disabled' : ''}></div><div class="form-group"><label>Selection type</label><select data-addon-field="selection"><option value="single" ${group.selection === 'single' ? 'selected' : ''}>Choose one</option><option value="multiple" ${group.selection === 'multiple' ? 'selected' : ''}>Choose multiple</option></select></div><p class="addon-rule-note">${group.selection === 'single' ? 'Guests can choose up to one option.' : 'Guests can choose between the minimum and maximum.'}</p><label class="switch-row"><span><strong>Active</strong><small>Available to guests after this group is assigned to a dish.</small></span><input data-addon-field="active" type="checkbox" ${group.active ? 'checked' : ''}></label></div><div><div class="addon-options-title"><strong>Options</strong><small>${options.length ? `${options.length} choice${options.length === 1 ? '' : 's'} configured` : 'Add the choices guests can select.'}</small></div><div class="addon-options"><div class="addon-options-head"><span>Option name</span><span>Price</span><span>Dietary</span><span></span></div><div data-addon-options>${options.map((option, index) => `<div class="addon-option"><input data-addon-option="name" data-option-index="${index}" maxlength="80" value="${escapeHtml(option.name || '')}" placeholder="e.g. Extra cheese"><input data-addon-option="price" data-option-index="${index}" type="number" min="0" max="100000" step="0.01" value="${Number(option.price || 0)}" placeholder="0"><select data-addon-option="dietary" data-option-index="${index}"><option value="veg" ${option.dietary !== 'nonveg' ? 'selected' : ''}>Veg</option><option value="nonveg" ${option.dietary === 'nonveg' ? 'selected' : ''}>Non-Veg</option></select><button type="button" data-remove-addon-option="${index}" class="remove-air-item" aria-label="Remove option">×</button></div>`).join('') || '<p class="addon-empty">No options yet. This group can be saved as a draft, or add choices now.</p>'}</div></div><button type="button" data-add-addon-option class="addon-add-option">+ Add option</button></div></article>`;
+}
+function syncAirAddonGroups() {
+  document.getElementById('air-addon-groups').value = JSON.stringify(airAddonGroups);
+}
+function renderAirAddonGroups(groups = airAddonGroups) {
+  airAddonGroups = Array.isArray(groups) ? groups.map(normaliseAddonGroup) : [];
+  const list = document.getElementById('air-addon-groups-list');
+  if (!list) return;
+  list.innerHTML =
+    airAddonGroups.map(addonGroupMarkup).join('') ||
+    '<p class="air-empty">No addon groups yet. Add groups such as Extras, Sauces, or Preparation choices.</p>';
+  syncAirAddonGroups();
+}
+function readAirAddonGroup(element) {
+  const id = element.dataset.addonGroup,
+    index = airAddonGroups.findIndex((item) => item.id === id);
+  if (index < 0) return;
+  const current = airAddonGroups[index],
+    selection =
+      element.querySelector('[data-addon-field="selection"]')?.value === 'multiple'
+        ? 'multiple'
+        : 'single',
+    rawMax = Number(element.querySelector('[data-addon-field="max"]')?.value) || 1;
+  airAddonGroups[index] = normaliseAddonGroup({
+    ...current,
+    name: element.querySelector('[data-addon-field="name"]')?.value.trim() || '',
+    displayName: element.querySelector('[data-addon-field="displayName"]')?.value.trim() || '',
+    min: Number(element.querySelector('[data-addon-field="min"]')?.value) || 0,
+    max: selection === 'single' ? 1 : rawMax,
+    selection,
+    active: !!element.querySelector('[data-addon-field="active"]')?.checked,
+    options: [...element.querySelectorAll('[data-addon-option="name"]')]
+      .map((input, optionIndex) => ({
+        name: input.value.trim(),
+        price: Math.max(
+          0,
+          Number(
+            element.querySelector(`[data-addon-option="price"][data-option-index="${optionIndex}"]`)
+              ?.value
+          ) || 0
+        ),
+        dietary:
+          element.querySelector(`[data-addon-option="dietary"][data-option-index="${optionIndex}"]`)
+            ?.value === 'nonveg'
+            ? 'nonveg'
+            : 'veg',
+      }))
+      .filter((option) => option.name),
+  });
+  syncAirAddonGroups();
+}
+document.addEventListener('click', (event) => {
+  const addGroup = event.target.closest('#add-air-addon-group');
+  if (addGroup) {
+    airAddonGroups.push({
+      id: addonId(),
+      name: '',
+      displayName: '',
+      min: 0,
+      max: 1,
+      selection: 'single',
+      active: true,
+      options: [],
+    });
+    renderAirAddonGroups();
+    return;
+  }
+  const card = event.target.closest('[data-addon-group]');
+  if (!card) return;
+  readAirAddonGroup(card);
+  const removeGroup = event.target.closest('[data-remove-addon-group]');
+  if (removeGroup) {
+    airAddonGroups = airAddonGroups.filter(
+      (group) => group.id !== removeGroup.dataset.removeAddonGroup
+    );
+    renderAirAddonGroups();
+    return;
+  }
+  if (event.target.closest('[data-add-addon-option]')) {
+    const group = airAddonGroups.find((item) => item.id === card.dataset.addonGroup);
+    group?.options.push({ name: '', price: 0, dietary: 'veg' });
+    renderAirAddonGroups();
+    return;
+  }
+  const removeOption = event.target.closest('[data-remove-addon-option]');
+  if (removeOption) {
+    const group = airAddonGroups.find((item) => item.id === card.dataset.addonGroup);
+    if (group) group.options.splice(Number(removeOption.dataset.removeAddonOption), 1);
+    renderAirAddonGroups();
+  }
+});
+document.addEventListener('input', (event) => {
+  const card = event.target.closest('[data-addon-group]');
+  if (card) readAirAddonGroup(card);
+});
+document.addEventListener('change', (event) => {
+  const card = event.target.closest('[data-addon-group]');
+  if (!card) return;
+  readAirAddonGroup(card);
+  if (event.target.matches('[data-addon-field="selection"]')) renderAirAddonGroups();
+});
+document
+  .querySelector('form[action="/api/update-airMenu"]')
+  ?.addEventListener('submit', (event) => {
+    document.querySelectorAll('[data-addon-group]').forEach(readAirAddonGroup);
+    const incomplete = airAddonGroups.find((group) => !group.name.trim());
+    if (!incomplete) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    const card = [...document.querySelectorAll('[data-addon-group]')].find(
+      (element) => element.dataset.addonGroup === incomplete.id
+    );
+    card?.querySelector('[data-addon-field="name"]')?.focus();
+    alert('Give every add-on group a name, or remove the empty group before saving.');
+  });
 
 function fillAirMenu(menu = {}) {
   setField('airMenuTitle', menu.pageTitle);
@@ -640,14 +842,19 @@ function fillAirMenu(menu = {}) {
     airCardDirectOrders: menu.cardDirectOrders !== false,
     airDeliveryEnabled: menu.deliveryEnabled !== false,
     airRestaurantClosed: menu.restaurantClosed === true,
-    airLoyaltyEnabled: menu.loyalty?.enabled !== false
+    airLoyaltyEnabled: menu.loyalty?.enabled !== false,
   };
   Object.entries(toggles).forEach(([name, checked]) => {
     const field = document.querySelector(`[name="${name}"]`);
     if (field) field.checked = checked;
   });
-  airCategoryVisibility = menu.categoryVisibility && typeof menu.categoryVisibility === 'object' ? { ...menu.categoryVisibility } : {};
-  airCategoryOrder = Array.isArray(menu.categoryOrder) ? menu.categoryOrder.map((category) => String(category || '').trim()).filter(Boolean) : [];
+  airCategoryVisibility =
+    menu.categoryVisibility && typeof menu.categoryVisibility === 'object'
+      ? { ...menu.categoryVisibility }
+      : {};
+  airCategoryOrder = Array.isArray(menu.categoryOrder)
+    ? menu.categoryOrder.map((category) => String(category || '').trim()).filter(Boolean)
+    : [];
   renderAirItems(Array.isArray(menu.items) ? menu.items : []);
   renderAirBarItems(Array.isArray(menu.barItems) ? menu.barItems : []);
 }
@@ -661,7 +868,10 @@ function setupAirMenuEditor() {
 
   addButton?.addEventListener('click', () => {
     container.querySelector('.air-empty-row')?.remove();
-    container.insertAdjacentHTML('beforeend', airItemMarkup({}, container.querySelectorAll('.air-item-entry').length));
+    container.insertAdjacentHTML(
+      'beforeend',
+      airItemMarkup({}, container.querySelectorAll('.air-item-entry').length)
+    );
     container.querySelector('.air-item-entry:last-child [name="airItemName[]"]')?.focus();
   });
 
@@ -669,9 +879,14 @@ function setupAirMenuEditor() {
     if (!event.target.matches('.remove-air-item')) return;
     event.target.closest('.air-item-entry')?.remove();
     if (!container.querySelector('.air-item-entry')) renderAirItems([]);
-    else renderAirCategoryControls([...container.querySelectorAll('.air-item-entry')].map((entry) => ({
-      category: entry.querySelector('[name="airItemCategory[]"]')?.value.trim() || 'Menu'
-    })).concat(airBarSheetItems()));
+    else
+      renderAirCategoryControls(
+        [...container.querySelectorAll('.air-item-entry')]
+          .map((entry) => ({
+            category: entry.querySelector('[name="airItemCategory[]"]')?.value.trim() || 'Menu',
+          }))
+          .concat(airBarSheetItems())
+      );
   });
 
   container.addEventListener('input', (event) => {
@@ -680,7 +895,7 @@ function setupAirMenuEditor() {
       return;
     }
     const items = [...container.querySelectorAll('.air-item-entry')].map((entry) => ({
-      category: entry.querySelector('[name="airItemCategory[]"]')?.value.trim() || 'Menu'
+      category: entry.querySelector('[name="airItemCategory[]"]')?.value.trim() || 'Menu',
     }));
     renderAirCategoryControls([...items, ...airBarSheetItems()]);
   });
@@ -695,25 +910,39 @@ function setupAirMenuEditor() {
     if (dietary) {
       const picker = dietary.closest('.dietary-picker');
       const hidden = picker?.querySelector('[name="airItemDietary[]"]');
-      if (dietary.checked) picker.querySelectorAll('[data-dietary]').forEach((choice) => { if (choice !== dietary) choice.checked = false; });
+      if (dietary.checked)
+        picker.querySelectorAll('[data-dietary]').forEach((choice) => {
+          if (choice !== dietary) choice.checked = false;
+        });
       if (hidden) hidden.value = dietary.checked ? dietary.dataset.dietary : '';
       const row = dietary.closest('.air-item-entry');
       const status = document.getElementById('air-sheet-status');
       const payload = {
         name: row?.querySelector('[name="airItemName[]"]')?.value.trim() || '',
         category: row?.querySelector('[name="airItemCategory[]"]')?.value.trim() || 'Menu',
-        dietary: hidden?.value || ''
+        dietary: hidden?.value || '',
       };
-      if (status) { status.textContent = 'Saving dietary selection…'; status.style.color = '#6b7280'; }
+      if (status) {
+        status.textContent = 'Saving dietary selection…';
+        status.style.color = '#6b7280';
+      }
       try {
         const response = await fetch('/api/admin/air-menu/dietary', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
         });
         const result = await response.json();
         if (!response.ok) throw new Error(result.error || 'Unable to save selection.');
-        if (status) { status.textContent = `${payload.name}: ${payload.dietary === 'nonveg' ? 'Non-Veg' : payload.dietary === 'veg' ? 'Veg' : 'dietary selection cleared'} saved live.`; status.style.color = '#166534'; }
+        if (status) {
+          status.textContent = `${payload.name}: ${payload.dietary === 'nonveg' ? 'Non-Veg' : payload.dietary === 'veg' ? 'Veg' : 'dietary selection cleared'} saved live.`;
+          status.style.color = '#166534';
+        }
       } catch (error) {
-        if (status) { status.textContent = error.message; status.style.color = '#b91c1c'; }
+        if (status) {
+          status.textContent = error.message;
+          status.style.color = '#b91c1c';
+        }
       }
       return;
     }
@@ -728,18 +957,29 @@ function setupAirMenuEditor() {
     const payload = {
       name: row?.querySelector('[name="airItemName[]"]')?.value.trim() || '',
       category: row?.querySelector('[name="airItemCategory[]"]')?.value.trim() || 'Menu',
-      gravyStyleAvailable: flag.checked
+      gravyStyleAvailable: flag.checked,
     };
-    if (status) { status.textContent = 'Saving Gravy / Semi-Gravy setting…'; status.style.color = '#6b7280'; }
+    if (status) {
+      status.textContent = 'Saving Gravy / Semi-Gravy setting…';
+      status.style.color = '#6b7280';
+    }
     try {
       const response = await fetch('/api/admin/air-menu/gravy-style', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Unable to save setting.');
-      if (status) { status.textContent = `${payload.name}: Gravy / Semi-Gravy ${payload.gravyStyleAvailable ? 'enabled' : 'disabled'} and saved live.`; status.style.color = '#166534'; }
+      if (status) {
+        status.textContent = `${payload.name}: Gravy / Semi-Gravy ${payload.gravyStyleAvailable ? 'enabled' : 'disabled'} and saved live.`;
+        status.style.color = '#166534';
+      }
     } catch (error) {
-      if (status) { status.textContent = error.message; status.style.color = '#b91c1c'; }
+      if (status) {
+        status.textContent = error.message;
+        status.style.color = '#b91c1c';
+      }
     }
   });
 
@@ -748,8 +988,26 @@ function setupAirMenuEditor() {
     const clipboard = event.clipboardData?.getData('text/plain') || '';
     if (!target || (!clipboard.includes('\t') && !clipboard.includes('\n'))) return;
     event.preventDefault();
-    const pastedRows = clipboard.replace(/\r/g, '').split('\n').filter((row) => row.trim()).map((row) => row.split('\t'));
-    const fields = ['bestSeller', 'mustHave', 'gravyStyleAvailable', 'airItemName[]', 'airItemPrice[]', 'airItemFullPrice[]', 'airItemHalfPrice[]', 'airItemWithBonePrice[]', 'airItemBonelessPrice[]', 'airItemCategory[]', 'airItemType[]', 'dietary', 'airItemDescription[]'];
+    const pastedRows = clipboard
+      .replace(/\r/g, '')
+      .split('\n')
+      .filter((row) => row.trim())
+      .map((row) => row.split('\t'));
+    const fields = [
+      'bestSeller',
+      'mustHave',
+      'gravyStyleAvailable',
+      'airItemName[]',
+      'airItemPrice[]',
+      'airItemFullPrice[]',
+      'airItemHalfPrice[]',
+      'airItemWithBonePrice[]',
+      'airItemBonelessPrice[]',
+      'airItemCategory[]',
+      'airItemType[]',
+      'dietary',
+      'airItemDescription[]',
+    ];
     const startColumn = Math.max(0, Math.min(12, target.closest('td')?.cellIndex || 0));
     let tableRows = [...container.querySelectorAll('.air-item-entry')];
     const startRow = Math.max(0, tableRows.indexOf(target.closest('.air-item-entry')));
@@ -764,23 +1022,39 @@ function setupAirMenuEditor() {
       cells.slice(0, 13 - startColumn).forEach((value, columnOffset) => {
         const fieldName = fields[startColumn + columnOffset];
         if (fieldName === 'dietary') {
-          const dietaryValue = /non[\s-]?veg/i.test(value) ? 'nonveg' : /veg/i.test(value) ? 'veg' : '';
+          const dietaryValue = /non[\s-]?veg/i.test(value)
+            ? 'nonveg'
+            : /veg/i.test(value)
+              ? 'veg'
+              : '';
           const checkbox = row.querySelector(`[data-dietary="${dietaryValue}"]`);
-          if (checkbox) { checkbox.checked = true; checkbox.dispatchEvent(new Event('change', { bubbles:true })); }
+          if (checkbox) {
+            checkbox.checked = true;
+            checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+          }
           return;
         }
         if (['bestSeller', 'mustHave', 'gravyStyleAvailable'].includes(fieldName)) {
           const checkbox = row.querySelector(`[data-item-flag="${fieldName}"]`);
-          const checked = /^(1|true|yes|y|checked|best seller|must have|must try|popular|gravy|semi[-\s]?gravy)$/i.test(value.trim());
-          if (checkbox) { checkbox.checked = checked; checkbox.dispatchEvent(new Event('change', { bubbles: true })); }
+          const checked =
+            /^(1|true|yes|y|checked|best seller|must have|must try|popular|gravy|semi[-\s]?gravy)$/i.test(
+              value.trim()
+            );
+          if (checkbox) {
+            checkbox.checked = checked;
+            checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+          }
           return;
         }
         const field = row.querySelector(`[name="${fieldName}"]`);
         if (!field) return;
         const cleanValue = value.trim();
-        field.value = fieldName === 'airItemType[]'
-          ? (/beverage|drink/i.test(cleanValue) ? 'beverage' : 'food')
-          : cleanValue;
+        field.value =
+          fieldName === 'airItemType[]'
+            ? /beverage|drink/i.test(cleanValue)
+              ? 'beverage'
+              : 'food'
+            : cleanValue;
       });
     });
 
@@ -802,23 +1076,43 @@ function setupAirMenuEditor() {
     if (!button) return;
     const category = button.closest('[data-category-order]')?.dataset.categoryOrder;
     const group = airCategoryGroups.get(category) || 'food';
-    const groupCategories = airCategoryOrder.filter((item) => (airCategoryGroups.get(item) || 'food') === group);
+    const groupCategories = airCategoryOrder.filter(
+      (item) => (airCategoryGroups.get(item) || 'food') === group
+    );
     const index = groupCategories.indexOf(category);
     const direction = button.dataset.categoryMove === 'up' ? -1 : 1;
     const next = index + direction;
     if (index < 0 || next < 0 || next >= groupCategories.length) return;
-    [groupCategories[index], groupCategories[next]] = [groupCategories[next], groupCategories[index]];
-    const food = group === 'food' ? groupCategories : airCategoryOrder.filter((item) => (airCategoryGroups.get(item) || 'food') === 'food');
-    const bar = group === 'bar' ? groupCategories : airCategoryOrder.filter((item) => airCategoryGroups.get(item) === 'bar');
+    [groupCategories[index], groupCategories[next]] = [
+      groupCategories[next],
+      groupCategories[index],
+    ];
+    const food =
+      group === 'food'
+        ? groupCategories
+        : airCategoryOrder.filter((item) => (airCategoryGroups.get(item) || 'food') === 'food');
+    const bar =
+      group === 'bar'
+        ? groupCategories
+        : airCategoryOrder.filter((item) => airCategoryGroups.get(item) === 'bar');
     airCategoryOrder = [...food, ...bar];
-    renderAirCategoryOrder(airCategoryOrder.map((item) => ({ category: item, isBar: airCategoryGroups.get(item) === 'bar' })));
+    renderAirCategoryOrder(
+      airCategoryOrder.map((item) => ({
+        category: item,
+        isBar: airCategoryGroups.get(item) === 'bar',
+      }))
+    );
   });
 
   extractButton?.addEventListener('click', async () => {
     const fileInput = document.getElementById('air-menu-file');
     const status = document.getElementById('air-extract-status');
     const file = fileInput?.files?.[0];
-    if (!file) { status.textContent = 'Choose a PDF, CSV, or XLSX file first.'; status.style.color = '#b91c1c'; return; }
+    if (!file) {
+      status.textContent = 'Choose a PDF, CSV, or XLSX file first.';
+      status.style.color = '#b91c1c';
+      return;
+    }
     extractButton.disabled = true;
     status.textContent = /\.(csv|xlsx)$/i.test(file.name)
       ? 'Reading spreadsheet rows and organising menu items…'
@@ -831,13 +1125,28 @@ function setupAirMenuEditor() {
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'PDF analysis failed.');
       const importedItems = dedupeAirSheetItems(result.items || []);
-      const importedCategories = new Set(importedItems.map((item) => cleanAirSheetText(item.category || 'Menu', true).toLowerCase()));
-      const preservedItems = airSheetItems().filter((item) => !importedCategories.has(cleanAirSheetText(item.category, true).toLowerCase()));
+      const importedCategories = new Set(
+        importedItems.map((item) => cleanAirSheetText(item.category || 'Menu', true).toLowerCase())
+      );
+      const preservedItems = airSheetItems().filter(
+        (item) => !importedCategories.has(cleanAirSheetText(item.category, true).toLowerCase())
+      );
       renderAirItems(dedupeAirSheetItems([...preservedItems, ...importedItems]));
       setField('airSourceFileName', result.fileName || file.name);
-      const method = result.extractionMethod === 'ocr' ? 'local OCR' : result.extractionMethod === 'csv' ? 'CSV columns' : result.extractionMethod === 'xlsx' ? 'XLSX columns' : 'embedded PDF text';
-      const sourceDetail = /^(csv|xlsx)$/.test(result.extractionMethod) ? '' : ` from ${result.pageCount} page${result.pageCount === 1 ? '' : 's'}`;
-      status.textContent = result.warning || `Updated ${importedCategories.size} categor${importedCategories.size === 1 ? 'y' : 'ies'} with ${importedItems.length} unique items${sourceDetail} using ${method}. Other categories were preserved.`;
+      const method =
+        result.extractionMethod === 'ocr'
+          ? 'local OCR'
+          : result.extractionMethod === 'csv'
+            ? 'CSV columns'
+            : result.extractionMethod === 'xlsx'
+              ? 'XLSX columns'
+              : 'embedded PDF text';
+      const sourceDetail = /^(csv|xlsx)$/.test(result.extractionMethod)
+        ? ''
+        : ` from ${result.pageCount} page${result.pageCount === 1 ? '' : 's'}`;
+      status.textContent =
+        result.warning ||
+        `Updated ${importedCategories.size} categor${importedCategories.size === 1 ? 'y' : 'ies'} with ${importedItems.length} unique items${sourceDetail} using ${method}. Other categories were preserved.`;
       status.style.color = result.warning ? '#92400e' : '#166534';
     } catch (error) {
       status.textContent = error.message || 'PDF analysis failed.';
@@ -854,10 +1163,14 @@ function setupAirBarMenuEditor() {
   const extractButton = document.getElementById('extract-air-bar-menu');
   if (!container) return;
 
-  const refreshCategories = () => renderAirCategoryControls([...airSheetItems(), ...airBarSheetItems()]);
+  const refreshCategories = () =>
+    renderAirCategoryControls([...airSheetItems(), ...airBarSheetItems()]);
   addButton?.addEventListener('click', () => {
     container.querySelector('.air-empty-row')?.remove();
-    container.insertAdjacentHTML('beforeend', airBarItemMarkup({}, container.querySelectorAll('.air-bar-item-entry').length));
+    container.insertAdjacentHTML(
+      'beforeend',
+      airBarItemMarkup({}, container.querySelectorAll('.air-bar-item-entry').length)
+    );
     container.querySelector('.air-bar-item-entry:last-child [name="airBarItemName[]"]')?.focus();
     refreshCategories();
   });
@@ -888,8 +1201,23 @@ function setupAirBarMenuEditor() {
     const clipboard = event.clipboardData?.getData('text/plain') || '';
     if (!target || (!clipboard.includes('\t') && !clipboard.includes('\n'))) return;
     event.preventDefault();
-    const pastedRows = clipboard.replace(/\r/g, '').split('\n').filter((row) => row.trim()).map((row) => row.split('\t'));
-    const fields = ['airBarItemName[]', 'airBarItemPrice[]', 'airBarItem30mlPrice[]', 'airBarItem60mlPrice[]', 'airBarItem90mlPrice[]', 'airBarItem180mlPrice[]', 'airBarItemCategory[]', 'airBarItemType[]', 'airBarItemDescription[]', 'bestSeller'];
+    const pastedRows = clipboard
+      .replace(/\r/g, '')
+      .split('\n')
+      .filter((row) => row.trim())
+      .map((row) => row.split('\t'));
+    const fields = [
+      'airBarItemName[]',
+      'airBarItemPrice[]',
+      'airBarItem30mlPrice[]',
+      'airBarItem60mlPrice[]',
+      'airBarItem90mlPrice[]',
+      'airBarItem180mlPrice[]',
+      'airBarItemCategory[]',
+      'airBarItemType[]',
+      'airBarItemDescription[]',
+      'bestSeller',
+    ];
     const startColumn = Math.max(0, Math.min(9, target.closest('td')?.cellIndex || 0));
     let tableRows = [...container.querySelectorAll('.air-bar-item-entry')];
     const startRow = Math.max(0, tableRows.indexOf(target.closest('.air-bar-item-entry')));
@@ -910,7 +1238,12 @@ function setupAirBarMenuEditor() {
         }
         const field = row.querySelector(`[name="${fieldName}"]`);
         if (!field) return;
-        field.value = fieldName === 'airBarItemType[]' ? (/food/i.test(value) ? 'food' : 'beverage') : value.trim();
+        field.value =
+          fieldName === 'airBarItemType[]'
+            ? /food/i.test(value)
+              ? 'food'
+              : 'beverage'
+            : value.trim();
       });
     });
     renderAirBarItems(dedupeAirSheetItems(airBarSheetItems()));
@@ -920,23 +1253,47 @@ function setupAirBarMenuEditor() {
     const fileInput = document.getElementById('air-bar-menu-file');
     const status = document.getElementById('air-bar-extract-status');
     const file = fileInput?.files?.[0];
-    if (!file) { status.textContent = 'Choose a Bar Menu PDF, CSV, or XLSX file first.'; status.style.color = '#b91c1c'; return; }
+    if (!file) {
+      status.textContent = 'Choose a Bar Menu PDF, CSV, or XLSX file first.';
+      status.style.color = '#b91c1c';
+      return;
+    }
     extractButton.disabled = true;
-    status.textContent = /\.(csv|xlsx)$/i.test(file.name) ? 'Reading Bar Menu spreadsheet…' : 'Scanning the Bar Menu PDF with local OCR…';
+    status.textContent = /\.(csv|xlsx)$/i.test(file.name)
+      ? 'Reading Bar Menu spreadsheet…'
+      : 'Scanning the Bar Menu PDF with local OCR…';
     status.style.color = '#6b7280';
     try {
       const data = new FormData();
       data.append('menuFile', file);
-      const response = await fetch('/api/admin/air-menu/extract-bar', { method: 'POST', body: data });
+      const response = await fetch('/api/admin/air-menu/extract-bar', {
+        method: 'POST',
+        body: data,
+      });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Bar Menu extraction failed.');
       const importedItems = dedupeAirSheetItems(result.items || []);
-      const importedCategories = new Set(importedItems.map((item) => cleanAirSheetText(item.category || 'Bar Menu', true).toLowerCase()));
-      const preservedItems = airBarSheetItems().filter((item) => !importedCategories.has(cleanAirSheetText(item.category, true).toLowerCase()));
+      const importedCategories = new Set(
+        importedItems.map((item) =>
+          cleanAirSheetText(item.category || 'Bar Menu', true).toLowerCase()
+        )
+      );
+      const preservedItems = airBarSheetItems().filter(
+        (item) => !importedCategories.has(cleanAirSheetText(item.category, true).toLowerCase())
+      );
       renderAirBarItems(dedupeAirSheetItems([...preservedItems, ...importedItems]));
       setField('airBarSourceFileName', result.fileName || file.name);
-      const method = result.extractionMethod === 'ocr' ? 'local OCR' : result.extractionMethod === 'xlsx' ? 'XLSX columns' : result.extractionMethod === 'csv' ? 'CSV columns' : 'embedded PDF text';
-      status.textContent = result.warning || `Updated ${importedCategories.size} bar categor${importedCategories.size === 1 ? 'y' : 'ies'} with ${importedItems.length} unique items using ${method}. Other bar categories were preserved.`;
+      const method =
+        result.extractionMethod === 'ocr'
+          ? 'local OCR'
+          : result.extractionMethod === 'xlsx'
+            ? 'XLSX columns'
+            : result.extractionMethod === 'csv'
+              ? 'CSV columns'
+              : 'embedded PDF text';
+      status.textContent =
+        result.warning ||
+        `Updated ${importedCategories.size} bar categor${importedCategories.size === 1 ? 'y' : 'ies'} with ${importedItems.length} unique items using ${method}. Other bar categories were preserved.`;
       status.style.color = result.warning ? '#92400e' : '#166534';
     } catch (error) {
       status.textContent = error.message || 'Bar Menu extraction failed.';
@@ -953,7 +1310,9 @@ function fillBlogs(blogs = {}) {
 
   const blogsContainer = document.getElementById('blogs-container');
   if (blogsContainer && Array.isArray(blogs.posts) && blogs.posts.length) {
-    blogsContainer.innerHTML = blogs.posts.map((post, index) => blogEntryMarkup(post, index)).join('');
+    blogsContainer.innerHTML = blogs.posts
+      .map((post, index) => blogEntryMarkup(post, index))
+      .join('');
   }
 }
 
@@ -1022,8 +1381,9 @@ async function compressImageFile(file, options = {}) {
 
 async function buildOptimizedFormData(form) {
   const formData = new FormData(form);
-  const fileInputs = [...form.querySelectorAll('input[type="file"]')]
-    .filter((input) => input.files && input.files.length > 0);
+  const fileInputs = [...form.querySelectorAll('input[type="file"]')].filter(
+    (input) => input.files && input.files.length > 0
+  );
 
   for (const input of fileInputs) {
     const optimizedFile = await compressImageFile(input.files[0]);
@@ -1078,35 +1438,42 @@ function setupRichTextToolbar() {
 const renderGrowthItems = (id, items) => {
   const container = document.getElementById(id);
   if (!container) return;
-  container.innerHTML = items.map((item) => `
+  container.innerHTML = items
+    .map(
+      (item) => `
     <div class="growth-item">
       <strong>${item.title}</strong>
       <span>${item.detail}</span>
       ${item.tag ? `<div class="growth-tag">${item.tag}</div>` : ''}
     </div>
-  `).join('');
+  `
+    )
+    .join('');
 };
 
-const escapeHtml = (value) => String(value || '')
-  .replace(/&/g, '&amp;')
-  .replace(/</g, '&lt;')
-  .replace(/>/g, '&gt;')
-  .replace(/"/g, '&quot;')
-  .replace(/'/g, '&#039;');
+const escapeHtml = (value) =>
+  String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
 
 const renderAiItems = (id, items, mapper) => {
   const container = document.getElementById(id);
   if (!container) return;
-  container.innerHTML = (items || []).map((item) => {
-    const mapped = mapper(item);
-    return `
+  container.innerHTML = (items || [])
+    .map((item) => {
+      const mapped = mapper(item);
+      return `
       <div class="growth-item">
         <strong>${escapeHtml(mapped.title)}</strong>
         <span>${escapeHtml(mapped.detail)}</span>
         ${mapped.tag ? `<div class="growth-tag">${escapeHtml(mapped.tag)}</div>` : ''}
       </div>
     `;
-  }).join('');
+    })
+    .join('');
 };
 
 function renderAiGrowthPlan(plan) {
@@ -1118,47 +1485,51 @@ function renderAiGrowthPlan(plan) {
   renderAiItems('growth-ai-trends', plan.trendSignals, (item) => ({
     title: item.title,
     detail: item.detail,
-    tag: item.priority
+    tag: item.priority,
   }));
 
   renderAiItems('growth-ai-actions', plan.priorityActions, (item) => ({
     title: item.title,
     detail: item.detail,
-    tag: item.impact
+    tag: item.impact,
   }));
 
   renderAiItems('growth-ai-seo', plan.seoWinningMoves, (item) => ({
     title: item.title,
     detail: item.detail,
-    tag: item.searchTarget
+    tag: item.searchTarget,
   }));
 
   renderAiItems('growth-ai-content', plan.contentIdeas, (item) => ({
     title: item.title,
     detail: `${item.searchIntent} ${item.outline} Keywords: ${(item.keywords || []).join(', ')}`,
-    tag: 'Content'
+    tag: 'Content',
   }));
 
   renderAiItems('growth-ai-ads', plan.adIdeas, (item) => ({
     title: item.campaign,
     detail: `${item.audience} ${item.message} Landing page: ${item.landingPage}`,
-    tag: 'Ads'
+    tag: 'Ads',
   }));
 
   renderAiItems('growth-ai-missing', plan.missingWebsiteItems, (item) => ({
     title: item,
     detail: 'Add or improve this to strengthen local SEO and conversion.',
-    tag: 'Missing'
+    tag: 'Missing',
   }));
 
   const sources = document.getElementById('growth-ai-sources');
   if (sources) {
-    sources.innerHTML = (plan.sources || []).map((source) => `
+    sources.innerHTML = (plan.sources || [])
+      .map(
+        (source) => `
       <div class="growth-item">
         <strong>${escapeHtml(source.title)}</strong>
         <a class="growth-source-link" href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(source.url)}</a>
       </div>
-    `).join('');
+    `
+      )
+      .join('');
   }
 }
 
@@ -1211,16 +1582,33 @@ function buildGrowthDashboard(content = {}) {
   const dishes = menu.dishes || [];
   const season = currentSeason();
   const hasAds = global.gaMeasurementId || global.googleAdsId || global.metaPixelId;
-  const hasLocalSeo = contact.address && contact.phone && contact.mapEmbedUrl && global.googleBusinessUrl;
+  const hasLocalSeo =
+    contact.address && contact.phone && contact.mapEmbedUrl && global.googleBusinessUrl;
   const hasBlogEngine = posts.length >= 3;
   const hasMenuDepth = dishes.length >= 8;
   const hasOrdering = global.zomatoUrl && global.swiggyUrl;
-  const hasSeoBasics = global.siteUrl && global.seoTitle && global.seoDescription && global.seoKeywords;
-  const targetLocations = String(global.targetLocations || 'Colva, South Goa').split(',').map((item) => item.trim()).filter(Boolean);
-  const targetCuisines = String(global.targetCuisines || 'Chinese food, Goan seafood').split(',').map((item) => item.trim()).filter(Boolean);
-  const competitors = String(global.competitorNames || '').split(',').map((item) => item.trim()).filter(Boolean);
-  const score = [hasAds, hasLocalSeo, hasBlogEngine, hasMenuDepth, hasOrdering, hasSeoBasics]
-    .filter(Boolean).length;
+  const hasSeoBasics =
+    global.siteUrl && global.seoTitle && global.seoDescription && global.seoKeywords;
+  const targetLocations = String(global.targetLocations || 'Colva, South Goa')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const targetCuisines = String(global.targetCuisines || 'Chinese food, Goan seafood')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const competitors = String(global.competitorNames || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const score = [
+    hasAds,
+    hasLocalSeo,
+    hasBlogEngine,
+    hasMenuDepth,
+    hasOrdering,
+    hasSeoBasics,
+  ].filter(Boolean).length;
 
   const scoreText = document.getElementById('growth-score');
   const scoreLabel = document.getElementById('growth-score-label');
@@ -1234,58 +1622,67 @@ function buildGrowthDashboard(content = {}) {
     }
   }
   if (scoreLabel) {
-    scoreLabel.textContent = score === 6
-      ? '✅ Green signal: all core readiness items are complete. Well done!'
-      : 'Use Refresh progress after saving content changes to update the readiness score.';
+    scoreLabel.textContent =
+      score === 6
+        ? '✅ Green signal: all core readiness items are complete. Well done!'
+        : 'Use Refresh progress after saving content changes to update the readiness score.';
   }
 
   const actions = [
     !hasLocalSeo && {
       title: 'Finish local SEO fields (Contact & Global Settings)',
-      detail: 'Go to the "Contact Page" tab and add your exact Address, Phone, and Google Map Embed URL. Then go to "Footer & Settings" > "SEO Defaults" and add your Google Business Profile URL. These are critical for ranking on Google Maps in Colva.',
-      tag: 'High impact'
+      detail:
+        'Go to the "Contact Page" tab and add your exact Address, Phone, and Google Map Embed URL. Then go to "Footer & Settings" > "SEO Defaults" and add your Google Business Profile URL. These are critical for ranking on Google Maps in Colva.',
+      tag: 'High impact',
     },
     !hasMenuDepth && {
       title: 'Expand the dynamic menu (Menu Page)',
-      detail: 'Go to the "Menu Page" tab and add at least 8-12 signature dishes. Be sure to use categories (e.g., "Goan Seafood") and write descriptions with keywords to help Google understand what you serve.',
-      tag: 'SEO content'
+      detail:
+        'Go to the "Menu Page" tab and add at least 8-12 signature dishes. Be sure to use categories (e.g., "Goan Seafood") and write descriptions with keywords to help Google understand what you serve.',
+      tag: 'SEO content',
     },
     !hasBlogEngine && {
       title: 'Publish more local food blogs (Blogs Page)',
-      detail: 'Go to the "Blogs Page" tab and publish at least 3-6 posts. Use the blog ideas below. For example, write about "Best Chinese Food in Colva" using H2 tags for keywords and include original photos.',
-      tag: 'Visibility'
+      detail:
+        'Go to the "Blogs Page" tab and publish at least 3-6 posts. Use the blog ideas below. For example, write about "Best Chinese Food in Colva" using H2 tags for keywords and include original photos.',
+      tag: 'Visibility',
     },
     !hasAds && {
       title: 'Add ad tracking before spending (Footer & Settings)',
-      detail: 'Go to the "Footer & Settings" tab > "Ads & Tracking" and paste your GA4, Google Ads, and Meta Pixel IDs. Do this before running any ads so you can track calls, menu views, and orders.',
-      tag: 'Before ads'
+      detail:
+        'Go to the "Footer & Settings" tab > "Ads & Tracking" and paste your GA4, Google Ads, and Meta Pixel IDs. Do this before running any ads so you can track calls, menu views, and orders.',
+      tag: 'Before ads',
     },
     !hasOrdering && {
       title: 'Add real Zomato and Swiggy links (Footer & Settings)',
-      detail: 'Go to "Footer & Settings" > "Footer Content" and add your exact Zomato and Swiggy URLs. This turns website visitors into paying customers immediately.',
-      tag: 'Conversion'
+      detail:
+        'Go to "Footer & Settings" > "Footer Content" and add your exact Zomato and Swiggy URLs. This turns website visitors into paying customers immediately.',
+      tag: 'Conversion',
     },
     {
       title: 'Compare your offer against nearby competitors',
       detail: competitors.length
         ? `You listed: ${competitors.slice(0, 4).join(', ')}. Go to the "Menu" and "About" pages to ensure your photos, prices, and story look more appealing than theirs.`
         : 'Go to "Footer & Settings" > "Market Research Inputs". Add competitor names so we can suggest targeted content to beat them.',
-      tag: 'Competition'
+      tag: 'Competition',
     },
     {
       title: `Plan content for ${season}`,
-      detail: season === 'monsoon season'
-        ? 'Update your "Home Page" hero subtitle and "Blogs Page" to push cozy indoor dining, hot soups, and delivery options.'
-        : 'Update your "Home Page" hero and "Blogs" to push tourist-friendly searches, seafood, and late-night dinners near Colva Beach.',
-      tag: 'Seasonal'
-    }
+      detail:
+        season === 'monsoon season'
+          ? 'Update your "Home Page" hero subtitle and "Blogs Page" to push cozy indoor dining, hot soups, and delivery options.'
+          : 'Update your "Home Page" hero and "Blogs" to push tourist-friendly searches, seafood, and late-night dinners near Colva Beach.',
+      tag: 'Seasonal',
+    },
   ].filter(Boolean);
 
-  if (actions.length <= 2 && score === 6) { // Only Competitor/Seasonal are left
+  if (actions.length <= 2 && score === 6) {
+    // Only Competitor/Seasonal are left
     actions.unshift({
       title: '✅ 100% SEO Foundation Ready! (Green Signal)',
-      detail: 'Amazing work! Your website has strong foundational SEO, rich menus, full tracking, and contact details. Now focus on publishing more blogs and running targeted ads based on the ideas below.',
-      tag: 'All Good!'
+      detail:
+        'Amazing work! Your website has strong foundational SEO, rich menus, full tracking, and contact details. Now focus on publishing more blogs and running targeted ads based on the ideas below.',
+      tag: 'All Good!',
     });
   }
 
@@ -1300,126 +1697,165 @@ function buildGrowthDashboard(content = {}) {
       detail: global.googleBusinessUrl
         ? 'Your Google Business Profile is linked. Keep it active with weekly dish photos, fresh posts, accurate hours, menu highlights, and review replies using phrases like Chinese food in Colva and Goan seafood near Colva Beach.'
         : 'Add your Google Business Profile URL in Footer & Settings. Then keep the profile updated weekly with photos, menu items, posts, services, attributes, and review replies.',
-      tag: 'Local Pack'
+      tag: 'Local Pack',
     },
     {
       title: 'Build one page for each money search',
       detail: `Create focused website sections or landing pages for searches like "${primaryCuisine} in ${primaryLocation}", "${secondaryCuisine} near ${primaryLocation}", "family restaurant in ${secondaryLocation}", and "restaurants near Colva Beach". Each page needs unique text, photos, menu links, map, phone, and ordering buttons.`,
-      tag: 'Pages'
+      tag: 'Pages',
     },
     {
       title: 'Turn the menu into SEO content',
       detail: hasMenuDepth
         ? 'You have enough menu depth to start ranking pages around individual dishes. Add prices, original photos, descriptions, spice level, cuisine category, and internal links from blogs to each signature dish.'
         : 'Add at least 8-12 dishes with categories, descriptions, and original photos. Google needs clear menu content to understand what food searches Red Lantern should rank for.',
-      tag: 'Menu SEO'
+      tag: 'Menu SEO',
     },
     {
       title: 'Publish blog clusters, not random posts',
       detail: hasBlogEngine
         ? `You have ${posts.length} blog post(s). Next, create clusters around Colva restaurants, Chinese food, Goan seafood, family dining, delivery/order searches, and tourist food guides. Link every post back to Menu and Contact.`
         : 'Publish at least 3 starter posts: best Chinese food in Colva, Goan seafood near Colva Beach, and family restaurant in South Goa. Then expand each topic into related posts.',
-      tag: 'Content'
+      tag: 'Content',
     },
     {
       title: 'Beat competitors with comparison intent',
       detail: competitors.length
         ? `You are tracking ${competitors.slice(0, 4).join(', ')}. Create comparison-style content that highlights Red Lantern strengths: cuisine range, ambience, location, value, delivery links, photos, and signature dishes. Keep the tone factual, not negative.`
         : 'Add competitor names in Market Research Inputs. The AI scanner can then generate comparison topics and ad angles against restaurants people already search for.',
-      tag: 'Competitors'
+      tag: 'Competitors',
     },
     {
       title: 'Improve trust signals everywhere',
-      detail: 'Add real customer reviews, restaurant photos, chef/story details, exact address, phone, map, opening hours, order links, and social profiles. These help both Google and visitors trust the business.',
-      tag: 'Trust'
+      detail:
+        'Add real customer reviews, restaurant photos, chef/story details, exact address, phone, map, opening hours, order links, and social profiles. These help both Google and visitors trust the business.',
+      tag: 'Trust',
     },
     {
       title: 'Track what is working',
       detail: hasAds
         ? 'Tracking is partly configured. Use GA4/Search Console/Google Business Profile insights to watch calls, directions, menu clicks, order clicks, and the searches people use to find you.'
         : 'Add GA4, Google Search Console, Google Business Profile insights, and ad conversion tracking before serious ad spend. Ranking work needs measurement.',
-      tag: 'Tracking'
-    }
+      tag: 'Tracking',
+    },
   ];
 
   const blogIdeas = [
     {
       title: `Best ${primaryCuisine} in ${primaryLocation}: What to Order at Red Lantern`,
       detail: `Go to "Blogs Page" tab. Feature ${dishNames.slice(0, 3).join(', ') || 'your top dishes'} with photos, prices, reviews, and why guests love them. Link to your Menu page.`,
-      tag: 'Blog'
+      tag: 'Blog',
     },
     {
       title: `${secondaryCuisine} Restaurant Near ${primaryLocation}: A Local Guide`,
       detail: `Go to "Blogs Page" tab. Target tourists searching around ${primaryLocation}. Include distance, ambience, opening hours, fish/prawn dishes, and embed your Google Map.`,
-      tag: 'Local SEO'
+      tag: 'Local SEO',
     },
     {
       title: `Family Restaurant in ${secondaryLocation}: Why Red Lantern Works for Groups`,
-      detail: 'Go to "Blogs Page" tab. Write about seating, budget-friendly dishes, kids/family choices, order online options, and dinner timing. Link to your Contact page.',
-      tag: 'Commercial'
+      detail:
+        'Go to "Blogs Page" tab. Write about seating, budget-friendly dishes, kids/family choices, order online options, and dinner timing. Link to your Contact page.',
+      tag: 'Commercial',
     },
     {
       title: `${secondaryLocation} Food Guide: ${targetCuisines.slice(0, 3).join(', ') || 'Chinese, Goan seafood, and comfort food'}`,
-      detail: 'Go to "Blogs Page" tab. Create a broad guide that can rank for tourists planning where to eat in Goa before they arrive.',
-      tag: 'Tourist search'
+      detail:
+        'Go to "Blogs Page" tab. Create a broad guide that can rank for tourists planning where to eat in Goa before they arrive.',
+      tag: 'Tourist search',
     },
     {
       title: `${primaryLocation} Restaurant Comparison: What Makes Red Lantern Different`,
       detail: competitors.length
         ? `Go to "Blogs Page" tab. Compare your strengths against ${competitors.slice(0, 3).join(', ')} without attacking them: cuisine variety, ambience, prices, order links, photos, and location.`
         : 'Go to "Footer & Settings" > "Market Research Inputs" to add competitors. Then write a blog comparing your restaurant to them.',
-      tag: 'Competitive'
+      tag: 'Competitive',
     },
     {
       title: `${season.charAt(0).toUpperCase() + season.slice(1)} Food Picks in Goa`,
-      detail: 'Go to "Blogs Page" tab. Tie current season to practical menu recommendations, photos, and calls to action for directions and orders.',
-      tag: 'Seasonal'
-    }
+      detail:
+        'Go to "Blogs Page" tab. Tie current season to practical menu recommendations, photos, and calls to action for directions and orders.',
+      tag: 'Seasonal',
+    },
   ];
 
   const adIdeas = [
     {
       title: `Google Search Campaign: “restaurants near ${primaryLocation}”`,
-      detail: 'Create a Google Ad sending traffic to your Home or Contact page. Make sure "Footer & Settings" has tracking IDs and conversion labels set up first.',
-      tag: 'High intent'
+      detail:
+        'Create a Google Ad sending traffic to your Home or Contact page. Make sure "Footer & Settings" has tracking IDs and conversion labels set up first.',
+      tag: 'High intent',
     },
     {
       title: `Google Search Campaign: “best ${primaryCuisine} in ${primaryLocation}”`,
       detail: `Create a Google Ad sending traffic directly to your Menu page. Focus keywords on ${primaryCuisine}.`,
-      tag: 'Keyword'
+      tag: 'Keyword',
     },
     {
       title: 'Instagram Campaign: food photos + directions',
-      detail: 'Create a Meta/Instagram Ad using your best dish photos. Set the Call-To-Action to "Get Directions" or "Order Now". Ensure Meta Pixel ID is saved in "Footer & Settings".',
-      tag: 'Awareness'
+      detail:
+        'Create a Meta/Instagram Ad using your best dish photos. Set the Call-To-Action to "Get Directions" or "Order Now". Ensure Meta Pixel ID is saved in "Footer & Settings".',
+      tag: 'Awareness',
     },
     {
       title: 'Tourist campaign before arrival',
-      detail: 'Target Google/Meta ads to people interested in Goa travel, Colva, South Goa hotels, beaches, seafood, and family restaurants.',
-      tag: 'Future'
+      detail:
+        'Target Google/Meta ads to people interested in Goa travel, Colva, South Goa hotels, beaches, seafood, and family restaurants.',
+      tag: 'Future',
     },
     {
       title: 'Competitor defense campaign',
       detail: competitors.length
         ? `Create Google Ads targeting people searching for ${competitors.slice(0, 3).join(', ')}. Highlight your better prices or ambience.`
         : 'Go to "Footer & Settings" and add competitors first to get specific ad targets here.',
-      tag: 'Competitive'
-    }
+      tag: 'Competitive',
+    },
   ];
 
   const checklist = [
-    ['Google Business Profile linked', Boolean(global.googleBusinessUrl), 'Go to "Footer & Settings" > "SEO Defaults" > Add "Google Business Profile URL"'],
-    ['GA4 / Google Ads / Meta Pixel added', Boolean(hasAds), 'Go to "Footer & Settings" > "Ads & Tracking" > Add at least one Tracking ID'],
-    ['Real Zomato and Swiggy URLs added', Boolean(hasOrdering), 'Go to "Footer & Settings" > "Footer Content" > Add both Order Links'],
-    ['At least 8 menu items added', Boolean(hasMenuDepth), 'Go to "Menu Page" > Add 8+ dishes with photos and descriptions'],
-    ['At least 3 blogs published', Boolean(hasBlogEngine), 'Go to "Blogs Page" > Publish 3+ SEO-optimized articles'],
-    ['SEO title, description, keywords, and site URL saved', Boolean(hasSeoBasics), 'Go to "Footer & Settings" > "SEO Defaults" > Fill all 4 SEO fields'],
-    ['Map embed, address, phone, and hours saved', Boolean(contact.mapEmbedUrl && contact.address && contact.phone && contact.hours), 'Go to "Contact Page" > Fill out Contact Details and Google Map Embed'],
-    ['Competitors, target locations, and target searches saved', Boolean(competitors.length && targetLocations.length && targetCuisines.length), 'Go to "Footer & Settings" > "Market Research Inputs" > Fill all 3 fields']
+    [
+      'Google Business Profile linked',
+      Boolean(global.googleBusinessUrl),
+      'Go to "Footer & Settings" > "SEO Defaults" > Add "Google Business Profile URL"',
+    ],
+    [
+      'GA4 / Google Ads / Meta Pixel added',
+      Boolean(hasAds),
+      'Go to "Footer & Settings" > "Ads & Tracking" > Add at least one Tracking ID',
+    ],
+    [
+      'Real Zomato and Swiggy URLs added',
+      Boolean(hasOrdering),
+      'Go to "Footer & Settings" > "Footer Content" > Add both Order Links',
+    ],
+    [
+      'At least 8 menu items added',
+      Boolean(hasMenuDepth),
+      'Go to "Menu Page" > Add 8+ dishes with photos and descriptions',
+    ],
+    [
+      'At least 3 blogs published',
+      Boolean(hasBlogEngine),
+      'Go to "Blogs Page" > Publish 3+ SEO-optimized articles',
+    ],
+    [
+      'SEO title, description, keywords, and site URL saved',
+      Boolean(hasSeoBasics),
+      'Go to "Footer & Settings" > "SEO Defaults" > Fill all 4 SEO fields',
+    ],
+    [
+      'Map embed, address, phone, and hours saved',
+      Boolean(contact.mapEmbedUrl && contact.address && contact.phone && contact.hours),
+      'Go to "Contact Page" > Fill out Contact Details and Google Map Embed',
+    ],
+    [
+      'Competitors, target locations, and target searches saved',
+      Boolean(competitors.length && targetLocations.length && targetCuisines.length),
+      'Go to "Footer & Settings" > "Market Research Inputs" > Fill all 3 fields',
+    ],
   ].map(([title, done, instruction]) => ({
     title: `${done ? '✅ Done' : '❌ Needed'}: ${title}`,
     detail: done ? 'This part is ready.' : `ACTION: ${instruction}`,
-    tag: done ? 'Ready' : 'Missing'
+    tag: done ? 'Ready' : 'Missing',
   }));
 
   renderGrowthItems('growth-actions', actions);
@@ -1460,7 +1896,7 @@ function formatLogTime(value) {
   return new Intl.DateTimeFormat('en-IN', {
     dateStyle: 'medium',
     timeStyle: 'short',
-    timeZone: 'Asia/Kolkata'
+    timeZone: 'Asia/Kolkata',
   }).format(new Date(value));
 }
 
@@ -1478,9 +1914,8 @@ function logRoute(log) {
 }
 
 function formatLogForCopy(log) {
-  const details = log.details && Object.keys(log.details).length
-    ? JSON.stringify(log.details, null, 2)
-    : '';
+  const details =
+    log.details && Object.keys(log.details).length ? JSON.stringify(log.details, null, 2) : '';
 
   return [
     `Message: ${log.message || 'Website event'}`,
@@ -1493,8 +1928,10 @@ function formatLogForCopy(log) {
     `Load time: ${log.duration_ms ? `${log.duration_ms}ms` : ''}`,
     `IP hash: ${log.ip_hash || ''}`,
     `Suggested fix: ${log.solution || 'Review this event and the details below.'}`,
-    details ? `Details:\n${details}` : ''
-  ].filter(Boolean).join('\n');
+    details ? `Details:\n${details}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
 async function copyTextToClipboard(text) {
@@ -1543,7 +1980,7 @@ async function copyLogs(logs) {
       level: 'error',
       message: `Admin log copy failed: ${error.message}`,
       source: 'admin-cms.js copyLogs',
-      stack: error.stack || ''
+      stack: error.stack || '',
     });
   }
 }
@@ -1554,15 +1991,22 @@ function renderHealth(data = {}) {
   if (!grid) return;
   const checks = data.checks || {};
   const entries = Object.entries(checks);
-  grid.innerHTML = entries.length ? entries.map(([name, check]) => `
+  grid.innerHTML = entries.length
+    ? entries
+        .map(
+          ([name, check]) => `
     <div class="health-item ${check.ok ? 'ok' : 'bad'}">
       <strong>${check.ok ? 'Ready' : 'Needs attention'}: ${escapeHtml(name)}</strong>
       <span>${escapeHtml(check.message || '')}</span>
     </div>
-  `).join('') : '<p class="log-status">No health data available.</p>';
-  if (status) status.textContent = data.checkedAt
-    ? `${data.ok ? 'Healthy' : 'Needs attention'} · ${formatLogTime(data.checkedAt)}`
-    : 'Health check unavailable.';
+  `
+        )
+        .join('')
+    : '<p class="log-status">No health data available.</p>';
+  if (status)
+    status.textContent = data.checkedAt
+      ? `${data.ok ? 'Healthy' : 'Needs attention'} · ${formatLogTime(data.checkedAt)}`
+      : 'Health check unavailable.';
   renderDatabaseHealth(data.databaseMetrics);
 }
 
@@ -1571,7 +2015,7 @@ function formatDatabaseBytes(bytes) {
   if (!Number.isFinite(value) || value <= 0) return '0 B';
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
   const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
-  return `${(value / (1024 ** index)).toFixed(index ? 1 : 0)} ${units[index]}`;
+  return `${(value / 1024 ** index).toFixed(index ? 1 : 0)} ${units[index]}`;
 }
 
 function renderDatabaseHealth(metrics) {
@@ -1579,7 +2023,8 @@ function renderDatabaseHealth(metrics) {
   const details = document.getElementById('database-health-details');
   if (!summary || !details) return;
   if (!metrics) {
-    summary.innerHTML = '<div class="database-metric warning"><strong>Unavailable</strong><span>Connect Neon to show database health.</span></div>';
+    summary.innerHTML =
+      '<div class="database-metric warning"><strong>Unavailable</strong><span>Connect Neon to show database health.</span></div>';
     details.innerHTML = '';
     return;
   }
@@ -1590,10 +2035,19 @@ function renderDatabaseHealth(metrics) {
     <div class="database-metric"><strong>${metrics.latestOrderAt ? escapeHtml(formatLogTime(metrics.latestOrderAt)) : 'No orders yet'}</strong><span>Latest saved order</span></div>`;
   const counts = metrics.counts || {};
   const entries = [
-    ['Orders', counts.orders], ['KOTs', counts.kots], ['Printer configurations', counts.printerConfigs],
-    ['Currently unavailable items', counts.unavailableItems], ['Loyalty accounts', counts.loyaltyAccounts], ['Alert devices', counts.alertDevices]
+    ['Orders', counts.orders],
+    ['KOTs', counts.kots],
+    ['Printer configurations', counts.printerConfigs],
+    ['Currently unavailable items', counts.unavailableItems],
+    ['Loyalty accounts', counts.loyaltyAccounts],
+    ['Alert devices', counts.alertDevices],
   ];
-  details.innerHTML = entries.map(([label, value]) => `<div class="health-item ok"><strong>${escapeHtml(String(Number(value || 0).toLocaleString('en-IN')))}</strong><span>${escapeHtml(label)}</span></div>`).join('');
+  details.innerHTML = entries
+    .map(
+      ([label, value]) =>
+        `<div class="health-item ok"><strong>${escapeHtml(String(Number(value || 0).toLocaleString('en-IN')))}</strong><span>${escapeHtml(label)}</span></div>`
+    )
+    .join('');
 }
 
 async function refreshHealth() {
@@ -1612,7 +2066,7 @@ async function refreshHealth() {
       level: 'error',
       message: `Admin health check UI failed: ${error.message}`,
       source: 'admin-cms.js refreshHealth',
-      stack: error.stack || ''
+      stack: error.stack || '',
     });
   } finally {
     refreshHealth.inFlight = false;
@@ -1632,13 +2086,13 @@ function renderLogs() {
     return;
   }
 
-  list.innerHTML = logs.map((log) => {
-    const details = log.details && Object.keys(log.details).length
-      ? JSON.stringify(log.details, null, 2)
-      : '';
-    const logId = getLogId(log);
-    const isSelected = selectedLogIds.has(logId);
-    return `
+  list.innerHTML = logs
+    .map((log) => {
+      const details =
+        log.details && Object.keys(log.details).length ? JSON.stringify(log.details, null, 2) : '';
+      const logId = getLogId(log);
+      const isSelected = selectedLogIds.has(logId);
+      return `
       <article class="log-entry ${escapeHtml(log.level || 'info')} ${isSelected ? 'selected' : ''}" data-log-id="${escapeHtml(logId)}">
         <div class="log-entry-header">
           <h3>${escapeHtml(log.message || 'Website event')}</h3>
@@ -1664,7 +2118,8 @@ function renderLogs() {
         ${details ? `<pre class="log-details">${escapeHtml(details)}</pre>` : ''}
       </article>
     `;
-  }).join('');
+    })
+    .join('');
 }
 
 async function refreshLogs() {
@@ -1684,7 +2139,7 @@ async function refreshLogs() {
       level: 'error',
       message: `Admin logs UI failed: ${error.message}`,
       source: 'admin-cms.js refreshLogs',
-      stack: error.stack || ''
+      stack: error.stack || '',
     });
   }
 }
@@ -1693,20 +2148,25 @@ function renderOrdersErrorLogs() {
   const list = document.getElementById('orders-errors-list');
   const status = document.getElementById('orders-errors-status');
   if (!list) return;
-  if (status) status.textContent = `${ordersErrorLogs.length} Orders issue${ordersErrorLogs.length === 1 ? '' : 's'} loaded`;
+  if (status)
+    status.textContent = `${ordersErrorLogs.length} Orders issue${ordersErrorLogs.length === 1 ? '' : 's'} loaded`;
   if (!ordersErrorLogs.length) {
-    list.innerHTML = '<p class="log-status">No Orders errors recorded. Everything is running normally.</p>';
+    list.innerHTML =
+      '<p class="log-status">No Orders errors recorded. Everything is running normally.</p>';
     return;
   }
-  list.innerHTML = ordersErrorLogs.map((log) => {
-    const details = log.details && Object.keys(log.details).length ? JSON.stringify(log.details, null, 2) : '';
-    return `<article class="log-entry ${escapeHtml(log.level || 'error')}">
+  list.innerHTML = ordersErrorLogs
+    .map((log) => {
+      const details =
+        log.details && Object.keys(log.details).length ? JSON.stringify(log.details, null, 2) : '';
+      return `<article class="log-entry ${escapeHtml(log.level || 'error')}">
       <div class="log-entry-header"><h3>${escapeHtml(log.message || 'Orders issue')}</h3><span class="log-badge ${escapeHtml(log.level || 'error')}">${escapeHtml(log.level || 'error')}</span></div>
       <div class="log-meta"><span><strong>When:</strong> ${escapeHtml(formatLogTime(log.created_at))}</span><span><strong>Area:</strong> ${escapeHtml(log.location || log.path || 'Orders console')}</span><span><strong>Route:</strong> ${escapeHtml(logRoute(log))}</span><span><strong>Status:</strong> ${escapeHtml(log.status_code || 'Browser/device')}</span><span><strong>Load time:</strong> ${log.duration_ms ? `${escapeHtml(log.duration_ms)}ms` : '—'}</span></div>
       <div class="log-solution"><strong>How to resolve:</strong> ${escapeHtml(log.solution || 'Review the event details and retry the affected action.')}</div>
       ${details ? `<pre class="log-details">${escapeHtml(details)}</pre>` : ''}
     </article>`;
-  }).join('');
+    })
+    .join('');
 }
 
 async function refreshOrdersErrorLogs() {
@@ -1716,13 +2176,21 @@ async function refreshOrdersErrorLogs() {
     const response = await fetch('/api/admin/orders-errors?limit=100', { cache: 'no-store' });
     const raw = await response.text();
     let data = {};
-    try { data = raw ? JSON.parse(raw) : {}; } catch {
-      throw new Error(response.status === 404 ? 'This server has not received the Orders Error Logs update yet. Restart or deploy the latest code.' : `Orders Error Logs service returned ${response.status}. Please check the admin login and server deployment.`);
+    try {
+      data = raw ? JSON.parse(raw) : {};
+    } catch {
+      throw new Error(
+        response.status === 404
+          ? 'This server has not received the Orders Error Logs update yet. Restart or deploy the latest code.'
+          : `Orders Error Logs service returned ${response.status}. Please check the admin login and server deployment.`
+      );
     }
     if (!response.ok) throw new Error(data.error || 'Unable to load Orders error logs.');
     ordersErrorLogs = data.logs || [];
     renderOrdersErrorLogs();
-  } catch (error) { if (status) status.textContent = error.message || 'Unable to load Orders error logs.'; }
+  } catch (error) {
+    if (status) status.textContent = error.message || 'Unable to load Orders error logs.';
+  }
 }
 
 async function clearOrdersErrorLogs() {
@@ -1733,7 +2201,9 @@ async function clearOrdersErrorLogs() {
     const response = await fetch('/api/admin/orders-errors', { method: 'DELETE' });
     if (!response.ok) throw new Error('Unable to clear Orders error logs.');
     await refreshOrdersErrorLogs();
-  } catch (error) { if (status) status.textContent = error.message || 'Unable to clear Orders error logs.'; }
+  } catch (error) {
+    if (status) status.textContent = error.message || 'Unable to clear Orders error logs.';
+  }
 }
 
 async function clearLogs() {
@@ -1761,20 +2231,32 @@ function renderQrScans(data = {}) {
     ['Last 24 hours', summary.scans_24h || 0],
     ['Unique in 24h', summary.unique_24h || 0],
     ['Table QR', summary.table_scans || 0],
-    ['Business Card QR', summary.card_scans || 0]
+    ['Business Card QR', summary.card_scans || 0],
   ];
-  stats.innerHTML = statItems.map(([label, value]) => `<div class="scan-stat"><strong>${escapeHtml(value)}</strong><span>${escapeHtml(label)}</span></div>`).join('');
+  stats.innerHTML = statItems
+    .map(
+      ([label, value]) =>
+        `<div class="scan-stat"><strong>${escapeHtml(value)}</strong><span>${escapeHtml(label)}</span></div>`
+    )
+    .join('');
   const scans = data.scans || [];
-  if (status) status.textContent = `${scans.length} recent scan${scans.length === 1 ? '' : 's'} loaded`;
-  list.innerHTML = scans.length ? scans.map((scan) => {
-    const details = scan.details || {};
-    const place = [details.city, details.region, details.country].filter(Boolean).join(', ') || 'Approximate location unavailable';
-    return `<article class="scan-entry">
+  if (status)
+    status.textContent = `${scans.length} recent scan${scans.length === 1 ? '' : 's'} loaded`;
+  list.innerHTML = scans.length
+    ? scans
+        .map((scan) => {
+          const details = scan.details || {};
+          const place =
+            [details.city, details.region, details.country].filter(Boolean).join(', ') ||
+            'Approximate location unavailable';
+          return `<article class="scan-entry">
       <div><strong>${escapeHtml(details.qrType || scan.message || 'QR scan')}</strong><span>${escapeHtml(formatLogTime(scan.created_at))}</span></div>
       <div><strong>${details.mode === 'card' ? 'Visiting-card menu' : 'In-store table menu'}</strong><span>Anonymous visitor: ${escapeHtml(scan.ip_hash || 'unavailable')} · ${escapeHtml(scan.visitor_scan_count || 1)} scan${Number(scan.visitor_scan_count || 1) === 1 ? '' : 's'}</span></div>
       <div><strong>${escapeHtml(place)}</strong><span>Approximate network location</span></div>
     </article>`;
-  }).join('') : '<p class="log-status">No QR scans have been recorded yet.</p>';
+        })
+        .join('')
+    : '<p class="log-status">No QR scans have been recorded yet.</p>';
 }
 
 async function refreshQrScans() {
@@ -1814,7 +2296,9 @@ function setupDiagnosticsDashboard() {
   document.getElementById('refresh-health')?.addEventListener('click', refreshHealth);
   document.getElementById('refresh-logs')?.addEventListener('click', refreshLogs);
   document.getElementById('clear-logs')?.addEventListener('click', clearLogs);
-  document.getElementById('refresh-orders-errors')?.addEventListener('click', refreshOrdersErrorLogs);
+  document
+    .getElementById('refresh-orders-errors')
+    ?.addEventListener('click', refreshOrdersErrorLogs);
   document.getElementById('clear-orders-errors')?.addEventListener('click', clearOrdersErrorLogs);
   document.getElementById('log-level-filter')?.addEventListener('change', renderLogs);
   document.getElementById('select-visible-logs')?.addEventListener('click', () => {
@@ -1850,10 +2334,18 @@ function setupDiagnosticsDashboard() {
   refreshHealth();
   refreshLogs();
   refreshOrdersErrorLogs();
-  document.querySelector('[data-target="tab-database-health"]')?.addEventListener('click', refreshHealth);
-  document.querySelector('[data-target="tab-orders-errors"]')?.addEventListener('click', refreshOrdersErrorLogs);
+  document
+    .querySelector('[data-target="tab-database-health"]')
+    ?.addEventListener('click', refreshHealth);
+  document
+    .querySelector('[data-target="tab-orders-errors"]')
+    ?.addEventListener('click', refreshOrdersErrorLogs);
   window.setInterval(() => {
-    if (document.visibilityState === 'visible' && document.getElementById('tab-database-health')?.classList.contains('active')) refreshHealth();
+    if (
+      document.visibilityState === 'visible' &&
+      document.getElementById('tab-database-health')?.classList.contains('active')
+    )
+      refreshHealth();
   }, 30000);
 }
 
@@ -1899,43 +2391,175 @@ function setupCustomerInsights() {
   const leaderboard = document.getElementById('customer-insight-leaderboard');
   const status = document.getElementById('customer-insight-status');
   if (!date || !rows) return;
-  const decorateInsightPills = () => rows.querySelectorAll('tr').forEach((row) => {
-    const cells = row.children;
-    const points = cells[5]?.querySelector('.insight-pill');
-    const credit = cells[6]?.querySelector('.insight-pill');
-    const orderStatus = cells[7]?.querySelector('.insight-pill');
-    if (points) { const value=Number.parseInt(points.textContent,10)||0; points.classList.add('points'); points.classList.toggle('is-empty', value <= 0); }
-    if (credit) { const value=Number(String(credit.textContent).replace(/[^0-9.-]/g,''))||0; credit.classList.remove('credit'); credit.classList.add(value > 0 ? 'credit-due' : 'credit-clear'); }
-    if (orderStatus) { const value=String(orderStatus.textContent||'').trim().toLowerCase().replace(/[^a-z]+/g,'-'); orderStatus.classList.add('status', `status-${value}`); }
-  });
-  new MutationObserver(decorateInsightPills).observe(rows, { childList:true });
-  const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;' })[char]);
+  const decorateInsightPills = () =>
+    rows.querySelectorAll('tr').forEach((row) => {
+      const cells = row.children;
+      const points = cells[5]?.querySelector('.insight-pill');
+      const credit = cells[6]?.querySelector('.insight-pill');
+      const orderStatus = cells[7]?.querySelector('.insight-pill');
+      if (points) {
+        const value = Number.parseInt(points.textContent, 10) || 0;
+        points.classList.add('points');
+        points.classList.toggle('is-empty', value <= 0);
+      }
+      if (credit) {
+        const value = Number(String(credit.textContent).replace(/[^0-9.-]/g, '')) || 0;
+        credit.classList.remove('credit');
+        credit.classList.add(value > 0 ? 'credit-due' : 'credit-clear');
+      }
+      if (orderStatus) {
+        const value = String(orderStatus.textContent || '')
+          .trim()
+          .toLowerCase()
+          .replace(/[^a-z]+/g, '-');
+        orderStatus.classList.add('status', `status-${value}`);
+      }
+    });
+  new MutationObserver(decorateInsightPills).observe(rows, { childList: true });
+  const esc = (value) =>
+    String(value ?? '').replace(
+      /[&<>"']/g,
+      (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' })[char]
+    );
   const money = (value) => `₹${Number(value || 0).toFixed(0)}`;
   let ordersById = new Map();
   const showBill = (order) => {
     if (!order) return;
     const items = Array.isArray(order.items) ? order.items : [];
-    const unitPrice = (item) => Number(String(item.price || '').replace(/[^0-9.]/g, '')) + (item.style ? 10 : 0);
+    const unitPrice = (item) =>
+      Number(String(item.price || '').replace(/[^0-9.]/g, '')) + (item.style ? 10 : 0);
     const totalQuantity = items.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
-    const calculatedTotal = items.reduce((sum, item) => sum + Number(item.quantity || 0) * unitPrice(item), 0);
+    const calculatedTotal = items.reduce(
+      (sum, item) => sum + Number(item.quantity || 0) * unitPrice(item),
+      0
+    );
     const total = Number(order.total) > 0 ? Number(order.total) : calculatedTotal;
     const orderNumber = String(order.daily_order_number || '—').padStart(2, '0');
-    const placed = new Date(order.created_at).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' });
+    const placed = new Date(order.created_at).toLocaleString('en-IN', {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+      timeZone: 'Asia/Kolkata',
+    });
     let dialog = document.getElementById('customer-order-bill-dialog');
-    if (!dialog) { dialog = document.createElement('dialog'); dialog.id = 'customer-order-bill-dialog'; dialog.className = 'customer-order-bill-dialog'; document.body.appendChild(dialog); }
-    dialog.innerHTML = `<button class="bill-close" aria-label="Close bill">×</button><div class="bill-heading"><div><span>Red Lantern Restaurant · staff view</span><h2>Order #${esc(orderNumber)}</h2><p>${esc(placed)} · ${esc(order.status)}</p></div><strong>${money(total)}</strong></div><div class="bill-customer"><div><span>Customer</span><b>${esc(order.customer_name || 'Guest')}</b></div><div><span>Mobile</span><b>${esc(order.customer_phone || '—')}</b></div><div><span>Wallet points</span><b>${Number(order.loyalty_points || 0)}</b></div></div>${order.special_request ? `<div class="bill-request"><b>Special request</b>${esc(order.special_request)}</div>` : ''}<div class="bill-items"><div class="bill-items-head"><span>Item</span><span>Qty</span><span>Price</span><span>Amount</span></div>${items.map((item) => { const qty=Number(item.quantity||0); const price=unitPrice(item); const label=`${item.name || 'Item'}${item.portion ? ` (${item.portion})` : ''}${item.style ? ` · ${item.style}` : ''}`; return `<div class="bill-item"><span>${esc(label)}</span><span>${qty}</span><span>${money(price)}</span><span>${money(qty * price)}</span></div>`; }).join('') || '<p class="help-text">No item details were saved for this order.</p>'}</div><div class="bill-total"><span>Total quantity: ${totalQuantity}</span><strong>Grand total ${money(total)}</strong></div>`;
-    const printButton=document.createElement('button'); printButton.type='button'; printButton.className='bill-print'; printButton.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9V3h12v6"></path><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><path d="M6 14h12v7H6z"></path></svg>Print bill'; const billActions=document.createElement('div'); billActions.className='bill-actions'; billActions.append(printButton); dialog.querySelector('.bill-total')?.after(billActions);
+    if (!dialog) {
+      dialog = document.createElement('dialog');
+      dialog.id = 'customer-order-bill-dialog';
+      dialog.className = 'customer-order-bill-dialog';
+      document.body.appendChild(dialog);
+    }
+    dialog.innerHTML = `<button class="bill-close" aria-label="Close bill">×</button><div class="bill-heading"><div><span>Red Lantern Restaurant · staff view</span><h2>Order #${esc(orderNumber)}</h2><p>${esc(placed)} · ${esc(order.status)}</p></div><strong>${money(total)}</strong></div><div class="bill-customer"><div><span>Customer</span><b>${esc(order.customer_name || 'Guest')}</b></div><div><span>Mobile</span><b>${esc(order.customer_phone || '—')}</b></div><div><span>Wallet points</span><b>${Number(order.loyalty_points || 0)}</b></div></div>${order.special_request ? `<div class="bill-request"><b>Special request</b>${esc(order.special_request)}</div>` : ''}<div class="bill-items"><div class="bill-items-head"><span>Item</span><span>Qty</span><span>Price</span><span>Amount</span></div>${
+      items
+        .map((item) => {
+          const qty = Number(item.quantity || 0);
+          const price = unitPrice(item);
+          const label = `${item.name || 'Item'}${item.portion ? ` (${item.portion})` : ''}${item.style ? ` · ${item.style}` : ''}`;
+          return `<div class="bill-item"><span>${esc(label)}</span><span>${qty}</span><span>${money(price)}</span><span>${money(qty * price)}</span></div>`;
+        })
+        .join('') || '<p class="help-text">No item details were saved for this order.</p>'
+    }</div><div class="bill-total"><span>Total quantity: ${totalQuantity}</span><strong>Grand total ${money(total)}</strong></div>`;
+    const printButton = document.createElement('button');
+    printButton.type = 'button';
+    printButton.className = 'bill-print';
+    printButton.innerHTML =
+      '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9V3h12v6"></path><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><path d="M6 14h12v7H6z"></path></svg>Print bill';
+    const billActions = document.createElement('div');
+    billActions.className = 'bill-actions';
+    billActions.append(printButton);
+    dialog.querySelector('.bill-total')?.after(billActions);
     printButton.addEventListener('click', () => window.print());
     dialog.showModal();
     dialog.querySelector('.bill-close').addEventListener('click', () => dialog.close());
   };
-  const load = async () => { try { status.style.color=''; status.textContent='Loading customer history…'; const response=await fetch(`/api/admin/customer-insights?date=${encodeURIComponent(date.value)}&search=${encodeURIComponent(search.value)}`,{cache:'no-store'}); const raw=await response.text(); let data; try{data=JSON.parse(raw);}catch{throw new Error(response.status===401?'Admin login is required. Please refresh and sign in again.':'Customer Insights is unavailable. Refresh the local server or deploy the latest code.');} if(!response.ok)throw new Error(data.error||'Unable to load customer insights.'); ordersById = new Map(data.orders.map((order) => [order.id, order])); const sales=data.orders.filter((order)=>!['cancelled','rejected'].includes(order.status)); const totalSales=sales.reduce((sum,order)=>sum+Number(order.total||0),0); const businessSales=sales.filter((order)=>order.mode==='card').reduce((sum,order)=>sum+Number(order.total||0),0); const tableSales=sales.filter((order)=>order.mode==='table').reduce((sum,order)=>sum+Number(order.total||0),0); stats.innerHTML=[['Direct Place Order sales',money(totalSales)],['Business Card QR sales',money(businessSales)],['Table QR sales',money(tableSales)],['Live orders',sales.length],['Points in wallets',data.summary.points],['Credit outstanding',money(data.summary.credit)]].map(([label,value])=>`<div class="insight-stat"><strong>${esc(value)}</strong><span>${esc(label)}</span></div>`).join(''); rows.innerHTML=data.orders.length?data.orders.map((order)=>{const items=Array.isArray(order.items)?order.items.reduce((sum,item)=>sum+Number(item.quantity||0),0):0;const placed=new Date(order.created_at).toLocaleString('en-IN',{dateStyle:'medium',timeStyle:'short'});const orderNumber=String(order.daily_order_number||'—').padStart(2,'0');return `<tr><td><button type="button" class="insight-order-link" data-insight-order="${esc(order.id)}" aria-label="View bill for order ${esc(orderNumber)}">#${esc(orderNumber)}</button></td><td>${esc(placed)}</td><td><strong>${esc(order.customer_name||'Guest')}</strong><br>${esc(order.customer_phone)}</td><td>${items} items</td><td><strong>${money(order.total)}</strong></td><td><span class="insight-pill">${Number(order.loyalty_points||0)} points</span></td><td><span class="insight-pill ${Number(order.credit_balance||0)>0?'credit':''}">${money(order.credit_balance||0)}</span></td><td><span class="insight-pill">${esc(order.status)}</span></td></tr>`;}).join(''):'<tr><td colspan="8">No orders match this date or search.</td></tr>'; leaderboard.innerHTML=data.leaderboard.length?data.leaderboard.map((customer,index)=>`<div class="customer-leader"><span>#${index+1} · ${esc(customer.customer_phone)}</span><b>${Number(customer.points||0)} points</b><span>Earned ${Number(customer.total_earned||0)} · Redeemed ${Number(customer.total_redeemed||0)}</span></div>`).join(''):'<p class="help-text">No loyalty points have been earned yet.</p>'; status.textContent=`Showing ${data.orders.length} order${data.orders.length===1?'':'s'}. Select an order number to view its bill. Sales exclude cancelled and rejected orders.`; }catch(error){status.textContent=error.message;status.style.color='#b91c1c';} };
-  rows.addEventListener('click', (event) => { const button=event.target.closest('[data-insight-order]'); if (button) showBill(ordersById.get(button.dataset.insightOrder)); });
-  refresh?.addEventListener('click',load); date.addEventListener('change',load); let timer; search.addEventListener('input',()=>{clearTimeout(timer);timer=setTimeout(load,250);}); document.querySelector('[data-target="tab-customer-insights"]')?.addEventListener('click',load); load();
+  const load = async () => {
+    try {
+      status.style.color = '';
+      status.textContent = 'Loading customer history…';
+      const response = await fetch(
+        `/api/admin/customer-insights?date=${encodeURIComponent(date.value)}&search=${encodeURIComponent(search.value)}`,
+        { cache: 'no-store' }
+      );
+      const raw = await response.text();
+      let data;
+      try {
+        data = JSON.parse(raw);
+      } catch {
+        throw new Error(
+          response.status === 401
+            ? 'Admin login is required. Please refresh and sign in again.'
+            : 'Customer Insights is unavailable. Refresh the local server or deploy the latest code.'
+        );
+      }
+      if (!response.ok) throw new Error(data.error || 'Unable to load customer insights.');
+      ordersById = new Map(data.orders.map((order) => [order.id, order]));
+      const sales = data.orders.filter(
+        (order) => !['cancelled', 'rejected'].includes(order.status)
+      );
+      const totalSales = sales.reduce((sum, order) => sum + Number(order.total || 0), 0);
+      const businessSales = sales
+        .filter((order) => order.mode === 'card')
+        .reduce((sum, order) => sum + Number(order.total || 0), 0);
+      const tableSales = sales
+        .filter((order) => order.mode === 'table')
+        .reduce((sum, order) => sum + Number(order.total || 0), 0);
+      stats.innerHTML = [
+        ['Direct Place Order sales', money(totalSales)],
+        ['Business Card QR sales', money(businessSales)],
+        ['Table QR sales', money(tableSales)],
+        ['Live orders', sales.length],
+        ['Points in wallets', data.summary.points],
+        ['Credit outstanding', money(data.summary.credit)],
+      ]
+        .map(
+          ([label, value]) =>
+            `<div class="insight-stat"><strong>${esc(value)}</strong><span>${esc(label)}</span></div>`
+        )
+        .join('');
+      rows.innerHTML = data.orders.length
+        ? data.orders
+            .map((order) => {
+              const items = Array.isArray(order.items)
+                ? order.items.reduce((sum, item) => sum + Number(item.quantity || 0), 0)
+                : 0;
+              const placed = new Date(order.created_at).toLocaleString('en-IN', {
+                dateStyle: 'medium',
+                timeStyle: 'short',
+              });
+              const orderNumber = String(order.daily_order_number || '—').padStart(2, '0');
+              return `<tr><td><button type="button" class="insight-order-link" data-insight-order="${esc(order.id)}" aria-label="View bill for order ${esc(orderNumber)}">#${esc(orderNumber)}</button></td><td>${esc(placed)}</td><td><strong>${esc(order.customer_name || 'Guest')}</strong><br>${esc(order.customer_phone)}</td><td>${items} items</td><td><strong>${money(order.total)}</strong></td><td><span class="insight-pill">${Number(order.loyalty_points || 0)} points</span></td><td><span class="insight-pill ${Number(order.credit_balance || 0) > 0 ? 'credit' : ''}">${money(order.credit_balance || 0)}</span></td><td><span class="insight-pill">${esc(order.status)}</span></td></tr>`;
+            })
+            .join('')
+        : '<tr><td colspan="8">No orders match this date or search.</td></tr>';
+      leaderboard.innerHTML = data.leaderboard.length
+        ? data.leaderboard
+            .map(
+              (customer, index) =>
+                `<div class="customer-leader"><span>#${index + 1} · ${esc(customer.customer_phone)}</span><b>${Number(customer.points || 0)} points</b><span>Earned ${Number(customer.total_earned || 0)} · Redeemed ${Number(customer.total_redeemed || 0)}</span></div>`
+            )
+            .join('')
+        : '<p class="help-text">No loyalty points have been earned yet.</p>';
+      status.textContent = `Showing ${data.orders.length} order${data.orders.length === 1 ? '' : 's'}. Select an order number to view its bill. Sales exclude cancelled and rejected orders.`;
+    } catch (error) {
+      status.textContent = error.message;
+      status.style.color = '#b91c1c';
+    }
+  };
+  rows.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-insight-order]');
+    if (button) showBill(ordersById.get(button.dataset.insightOrder));
+  });
+  refresh?.addEventListener('click', load);
+  date.addEventListener('change', load);
+  let timer;
+  search.addEventListener('input', () => {
+    clearTimeout(timer);
+    timer = setTimeout(load, 250);
+  });
+  document.querySelector('[data-target="tab-customer-insights"]')?.addEventListener('click', load);
+  load();
 }
 
 fetch('/api/admin/content')
-  .then((response) => response.ok ? response.json() : {})
+  .then((response) => (response.ok ? response.json() : {}))
   .then((content) => {
     fillHome(content.home);
     fillMenu(content.menu);
@@ -1974,7 +2598,9 @@ document.querySelectorAll('form[action^="/api/update-"]').forEach((form) => {
     indexRepeatingFileInputs(form, '.blog-entry', 'blogImage');
     indexRepeatingFileInputs(form, '.blog-entry', 'blogArticleImage');
     if (form.matches('form[action="/api/update-blogs"]')) {
-      form.querySelectorAll('.blog-entry').forEach((entry) => updateBlogGeneratedDescriptions(entry));
+      form
+        .querySelectorAll('.blog-entry')
+        .forEach((entry) => updateBlogGeneratedDescriptions(entry));
     }
 
     try {
@@ -1982,11 +2608,14 @@ document.querySelectorAll('form[action^="/api/update-"]').forEach((form) => {
       setStatus(form, 'Saving...');
       const response = await fetch(form.action, {
         method: 'POST',
-        body: formData
+        body: formData,
       });
       const text = await response.text();
       if (!response.ok) throw new Error(text);
-      setStatus(form, 'Saved. Go to Growth Ideas and click Refresh progress to update the readiness score.');
+      setStatus(
+        form,
+        'Saved. Go to Growth Ideas and click Refresh progress to update the readiness score.'
+      );
     } catch (error) {
       setStatus(form, error.message || 'Save failed.', true);
     }

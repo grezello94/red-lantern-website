@@ -8,12 +8,13 @@ const STATIC_ASSETS = [
   '/captain-modern.css',
   '/captain.js',
   '/captain.webmanifest',
-  '/images/red-lantern-logo-600.webp'
+  '/images/red-lantern-logo-600.webp',
 ];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE)
+    caches
+      .open(CACHE)
       .then((cache) => cache.addAll(STATIC_ASSETS))
       .catch(() => undefined)
       .then(() => self.skipWaiting())
@@ -22,10 +23,15 @@ self.addEventListener('install', (event) => {
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys()
-      .then((keys) => Promise.all(keys
-        .filter((key) => key.startsWith('red-lantern-captain-') && key !== CACHE)
-        .map((key) => caches.delete(key))))
+    caches
+      .keys()
+      .then((keys) =>
+        Promise.all(
+          keys
+            .filter((key) => key.startsWith('red-lantern-captain-') && key !== CACHE)
+            .map((key) => caches.delete(key))
+        )
+      )
       .then(() => self.clients.claim())
   );
 });
@@ -41,9 +47,10 @@ self.addEventListener('fetch', (event) => {
 
   // API responses stay network-only. The shell is network-first so releases
   // arrive immediately, with a cache fallback only when the device is offline.
-  const isStaticAsset = url.pathname === '/captain'
-    || /\/(captain(?:-ux|-modern)?\.css|captain\.js|captain\.webmanifest)$/.test(url.pathname)
-    || url.pathname === '/images/red-lantern-logo-600.webp';
+  const isStaticAsset =
+    url.pathname === '/captain' ||
+    /\/(captain(?:-ux|-modern)?\.css|captain\.js|captain\.webmanifest)$/.test(url.pathname) ||
+    url.pathname === '/images/red-lantern-logo-600.webp';
   if (!isStaticAsset) return;
 
   event.respondWith(
@@ -52,6 +59,11 @@ self.addEventListener('fetch', (event) => {
         if (response.ok) caches.open(CACHE).then((cache) => cache.put(request, response.clone()));
         return response;
       })
-      .catch(() => caches.open(CACHE).then((cache) => cache.match(request, { ignoreSearch: true })).then((cached) => cached || Response.error()))
+      .catch(() =>
+        caches
+          .open(CACHE)
+          .then((cache) => cache.match(request, { ignoreSearch: true }))
+          .then((cached) => cached || Response.error())
+      )
   );
 });

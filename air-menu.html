@@ -1,21 +1,26 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="robots" content="noindex, nofollow, noarchive">
-    <meta name="theme-color" content="#6f1718">
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow, noarchive" />
+    <meta name="theme-color" content="#6f1718" />
     <title>Air Menu | Red Lantern Restaurant</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=Playfair+Display:wght@700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="air-menu.css?v=20260728-30">
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=Playfair+Display:wght@700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="air-menu.css?v=20260728-30" />
   </head>
   <body>
-    <div id="privacy-shield" class="privacy-shield" aria-hidden="true"><span>Protected Red Lantern Menu</span></div>
+    <div id="privacy-shield" class="privacy-shield" aria-hidden="true">
+      <span>Protected Red Lantern Menu</span>
+    </div>
     <div id="session-watermark" class="session-watermark" aria-hidden="true"></div>
     <header class="menu-header">
-      <img src="/images/red-lantern-logo-600.webp" alt="Red Lantern Restaurant" class="logo">
+      <img src="/images/red-lantern-logo-600.webp" alt="Red Lantern Restaurant" class="logo" />
       <div>
         <p class="eyebrow" id="menu-kind">Table menu</p>
         <h1 id="menu-title">Red Lantern</h1>
@@ -26,43 +31,97 @@
     <main>
       <div class="menu-tools">
         <label class="search-box">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 21-4.4-4.4m2.4-5.1a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0Z"/></svg>
-          <input id="menu-search" type="search" placeholder="Search dishes, drinks or categories" autocomplete="off">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="m21 21-4.4-4.4m2.4-5.1a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0Z" />
+          </svg>
+          <input
+            id="menu-search"
+            type="search"
+            placeholder="Search dishes, drinks or categories"
+            autocomplete="off"
+          />
         </label>
-        <nav id="menu-type-nav" class="menu-type-nav" aria-label="Choose Food Menu or Bar Menu"></nav>
+        <nav
+          id="menu-type-nav"
+          class="menu-type-nav"
+          aria-label="Choose Food Menu or Bar Menu"
+        ></nav>
         <nav id="category-nav" class="category-nav" aria-label="Menu categories"></nav>
       </div>
       <div id="menu-content" aria-live="polite"><p class="loading">Preparing the menu…</p></div>
       <p id="menu-note" class="menu-note"></p>
     </main>
 
-    <button type="button" id="open-order-summary" class="order-fab" hidden><span>View selections</span><strong id="order-count">0</strong></button>
+    <button type="button" id="open-order-summary" class="order-fab" hidden>
+      <span>View selections</span><strong id="order-count">0</strong>
+    </button>
     <dialog id="order-summary" class="order-dialog">
-      <div class="order-dialog-head"><div><p>Your selection</p><h2>Order Summary</h2></div><button type="button" id="close-order-summary" aria-label="Close">×</button></div>
+      <div class="order-dialog-head">
+        <div>
+          <p>Your selection</p>
+          <h2>Order Summary</h2>
+        </div>
+        <button type="button" id="close-order-summary" aria-label="Close">×</button>
+      </div>
       <div id="order-summary-items" class="order-summary-items"></div>
       <div id="order-customer-details" class="order-customer-details" hidden>
         <label for="order-customer-name">Your Name <small>(optional)</small></label>
-        <input id="order-customer-name" type="text" autocomplete="name" placeholder="e.g. Rahul">
+        <input id="order-customer-name" type="text" autocomplete="name" placeholder="e.g. Rahul" />
         <label for="order-customer-phone">Your Mobile Number</label>
-        <input id="order-customer-phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="e.g. +91 98765 43210">
+        <input
+          id="order-customer-phone"
+          type="tel"
+          inputmode="tel"
+          autocomplete="tel"
+          placeholder="e.g. +91 98765 43210"
+        />
         <label for="order-fulfillment-type">How would you like your order?</label>
         <select id="order-fulfillment-type">
           <option value="delivery">Delivery</option>
           <option value="pickup">Pick Up</option>
         </select>
         <div id="loyalty-panel" class="loyalty-panel" hidden>
-          <div class="loyalty-panel-head"><strong>Red Lantern Rewards</strong><i>1 point = ₹1</i></div>
+          <div class="loyalty-panel-head">
+            <strong>Red Lantern Rewards</strong><i>1 point = ₹1</i>
+          </div>
           <span id="loyalty-balance">Checking points…</span>
-          <label id="loyalty-redeem-wrap" hidden>Use points as ₹ discount <small>Minimum redemption: 100 points</small><input id="loyalty-redeem" type="number" min="100" step="1" value="0" inputmode="numeric"><b id="loyalty-redeem-preview">No points applied</b></label>
+          <label id="loyalty-redeem-wrap" hidden
+            >Use points as ₹ discount <small>Minimum redemption: 100 points</small
+            ><input
+              id="loyalty-redeem"
+              type="number"
+              min="100"
+              step="1"
+              value="0"
+              inputmode="numeric"
+            /><b id="loyalty-redeem-preview">No points applied</b></label
+          >
         </div>
         <label for="order-special-request">Special request <small>(optional)</small></label>
-        <input id="order-special-request" type="text" maxlength="240" placeholder="e.g. Less spicy">
-        <span>We cannot access your WhatsApp number automatically. This helps the restaurant contact you about this order.</span>
+        <input
+          id="order-special-request"
+          type="text"
+          maxlength="240"
+          placeholder="e.g. Less spicy"
+        />
+        <span
+          >We cannot access your WhatsApp number automatically. This helps the restaurant contact
+          you about this order.</span
+        >
       </div>
       <div class="order-summary-actions">
         <button type="button" id="place-direct-order" hidden>Place Direct Order</button>
-        <a id="share-whatsapp" class="card-order-action" href="#" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 3.5A11.8 11.8 0 0 0 12.1 0C5.6 0 .3 5.3.3 11.8c0 2.1.5 4 1.5 5.7L.2 24l6.7-1.7a11.8 11.8 0 0 0 5.2 1.2h.1c6.5 0 11.8-5.3 11.8-11.8 0-3.2-1.2-6.1-3.5-8.2ZM12.1 21.5c-1.7 0-3.3-.4-4.8-1.2L7 20.1l-4 1 1.1-3.9-.3-.4a9.7 9.7 0 0 1-1.5-5.1c0-5.4 4.4-9.8 9.8-9.8 2.6 0 5.1 1 6.9 2.9a9.7 9.7 0 0 1 2.8 6.9c0 5.4-4.4 9.8-9.7 9.8Zm5.4-7.3c-.3-.2-1.9-.9-2.2-1-.3-.1-.5-.2-.7.2-.2.3-.8 1-.9 1.2-.2.2-.3.2-.6.1-1.8-.9-3-1.6-4.2-3.7-.3-.5.3-.5.9-1.6.1-.2 0-.4 0-.6-.1-.1-.7-1.7-1-2.3-.3-.7-.6-.6-.9-.6h-.7c-.2 0-.6.1-.9.4-.3.3-1.2 1.2-1.2 2.9s1.2 3.4 1.3 3.6c.2.2 2.3 3.6 5.6 5 .8.3 1.4.5 1.9.6.8.2 1.5.2 2.1.1.6-.1 1.9-.8 2.2-1.5.3-.8.3-1.4.2-1.5-.1-.1-.3-.2-.6-.3Z" fill="currentColor"/></svg><span>Send to WhatsApp</span></a>
-        <a id="call-to-order" class="call-order card-order-action" href="#" hidden>Call to Place Order</a>
+        <a id="share-whatsapp" class="card-order-action" href="#" target="_blank" rel="noopener"
+          ><svg viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              d="M20.5 3.5A11.8 11.8 0 0 0 12.1 0C5.6 0 .3 5.3.3 11.8c0 2.1.5 4 1.5 5.7L.2 24l6.7-1.7a11.8 11.8 0 0 0 5.2 1.2h.1c6.5 0 11.8-5.3 11.8-11.8 0-3.2-1.2-6.1-3.5-8.2ZM12.1 21.5c-1.7 0-3.3-.4-4.8-1.2L7 20.1l-4 1 1.1-3.9-.3-.4a9.7 9.7 0 0 1-1.5-5.1c0-5.4 4.4-9.8 9.8-9.8 2.6 0 5.1 1 6.9 2.9a9.7 9.7 0 0 1 2.8 6.9c0 5.4-4.4 9.8-9.7 9.8Zm5.4-7.3c-.3-.2-1.9-.9-2.2-1-.3-.1-.5-.2-.7.2-.2.3-.8 1-.9 1.2-.2.2-.3.2-.6.1-1.8-.9-3-1.6-4.2-3.7-.3-.5.3-.5.9-1.6.1-.2 0-.4 0-.6-.1-.1-.7-1.7-1-2.3-.3-.7-.6-.6-.9-.6h-.7c-.2 0-.6.1-.9.4-.3.3-1.2 1.2-1.2 2.9s1.2 3.4 1.3 3.6c.2.2 2.3 3.6 5.6 5 .8.3 1.4.5 1.9.6.8.2 1.5.2 2.1.1.6-.1 1.9-.8 2.2-1.5.3-.8.3-1.4.2-1.5-.1-.1-.3-.2-.6-.3Z"
+              fill="currentColor"
+            /></svg
+          ><span>Send to WhatsApp</span></a
+        >
+        <a id="call-to-order" class="call-order card-order-action" href="#" hidden
+          >Call to Place Order</a
+        >
         <button type="button" id="clear-order" class="clear-order">Clear Selection</button>
       </div>
       <p id="order-action-status" class="order-action-status"></p>
@@ -72,13 +131,20 @@
         <h2>Thank you for your order!</h2>
         <span>Your restaurant order number</span>
         <strong id="confirmation-order-number">—</strong>
-        <p id="confirmation-copy" class="confirmation-copy">The restaurant will update this page as your order is accepted, prepared, and ready.</p>
+        <p id="confirmation-copy" class="confirmation-copy">
+          The restaurant will update this page as your order is accepted, prepared, and ready.
+        </p>
         <a id="view-order-status" href="#">View order status</a>
-        <button type="button" id="place-another-order" class="confirmation-secondary">Place another order</button>
+        <button type="button" id="place-another-order" class="confirmation-secondary">
+          Place another order
+        </button>
       </section>
     </dialog>
 
-    <footer><span>Red Lantern Restaurant · Colva, South Goa</span><span class="access-pill">Session: <strong id="time-left">2 hours</strong></span></footer>
+    <footer>
+      <span>Red Lantern Restaurant · Colva, South Goa</span
+      ><span class="access-pill">Session: <strong id="time-left">2 hours</strong></span>
+    </footer>
     <script src="air-menu.js?v=20260728-30" defer></script>
   </body>
 </html>

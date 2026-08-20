@@ -18,7 +18,8 @@ const { DatabaseSync } = require('node:sqlite');
 
 const PORT = Number(process.env.PRINT_BRIDGE_PORT || 9124);
 const BRIDGE_VERSION = '2026.08.18.3';
-const storageDir = process.env.PRINT_BRIDGE_DATA_DIR || path.join(os.homedir(), '.red-lantern-print-bridge');
+const storageDir =
+  process.env.PRINT_BRIDGE_DATA_DIR || path.join(os.homedir(), '.red-lantern-print-bridge');
 const configFile = path.join(storageDir, 'printer-config.json');
 const queueFile = path.join(storageDir, 'kot-queue.json');
 const ledgerFile = path.join(storageDir, 'orders-ledger.sqlite');
@@ -26,7 +27,7 @@ let ledger = null;
 
 function localLedger() {
   if (ledger) return ledger;
-  fsSync.mkdirSync(storageDir, { recursive:true });
+  fsSync.mkdirSync(storageDir, { recursive: true });
   ledger = new DatabaseSync(ledgerFile);
   ledger.exec(`CREATE TABLE IF NOT EXISTS ledger_actions (
     id TEXT PRIMARY KEY,
@@ -39,7 +40,9 @@ function localLedger() {
     updated_at TEXT NOT NULL,
     synced_at TEXT
   )`);
-  ledger.exec('CREATE INDEX IF NOT EXISTS ledger_actions_status_created ON ledger_actions(status, created_at)');
+  ledger.exec(
+    'CREATE INDEX IF NOT EXISTS ledger_actions_status_created ON ledger_actions(status, created_at)'
+  );
   ledger.exec(`CREATE TABLE IF NOT EXISTS print_jobs (
     id TEXT PRIMARY KEY,
     kind TEXT NOT NULL,
@@ -52,85 +55,182 @@ function localLedger() {
   )`);
   // Existing Bridge installations keep their local ledger across upgrades.
   // Add the payload fingerprint without requiring staff to delete that data.
-  try { ledger.exec("ALTER TABLE print_jobs ADD COLUMN content_hash TEXT NOT NULL DEFAULT ''"); } catch (_) {}
-  try { ledger.exec('ALTER TABLE print_jobs ADD COLUMN acknowledged_at TEXT'); } catch (_) {}
+  try {
+    ledger.exec("ALTER TABLE print_jobs ADD COLUMN content_hash TEXT NOT NULL DEFAULT ''");
+  } catch (_) {}
+  try {
+    ledger.exec('ALTER TABLE print_jobs ADD COLUMN acknowledged_at TEXT');
+  } catch (_) {}
   return ledger;
 }
 
 function claimPrintJob(id, kind, printerName, contentHash = '') {
-  const safeId=String(id || '').trim().slice(0,160);
-  if (!safeId) return { claim:true, tracked:false };
-  const db=localLedger(), now=new Date().toISOString();
-  const existing=db.prepare('SELECT status, content_hash FROM print_jobs WHERE id=?').get(safeId);
+  const safeId = String(id || '')
+    .trim()
+    .slice(0, 160);
+  if (!safeId) return { claim: true, tracked: false };
+  const db = localLedger(),
+    now = new Date().toISOString();
+  const existing = db.prepare('SELECT status, content_hash FROM print_jobs WHERE id=?').get(safeId);
   // A retry with the same payload must never create a second physical slip.
   // If the content has changed, however, it is a genuinely new print request
   // and must not be hidden behind an old completed job.
-  if (existing?.status === 'printed' && (!contentHash || existing.content_hash === contentHash)) return { claim:false, duplicate:true };
-  if (existing?.status === 'printing') return { claim:false, pending:true };
-  db.prepare('INSERT INTO print_jobs (id,kind,printer_name,status,created_at,completed_at,content_hash,acknowledged_at) VALUES (?,?,?,?,?,NULL,?,NULL) ON CONFLICT(id) DO UPDATE SET status=excluded.status, printer_name=excluded.printer_name, created_at=excluded.created_at, completed_at=NULL, content_hash=excluded.content_hash, acknowledged_at=NULL').run(safeId, kind, String(printerName||'').slice(0,160), 'printing', now, String(contentHash || '').slice(0,64));
-  return { claim:true, tracked:true };
+  if (existing?.status === 'printed' && (!contentHash || existing.content_hash === contentHash))
+    return { claim: false, duplicate: true };
+  if (existing?.status === 'printing') return { claim: false, pending: true };
+  db.prepare(
+    'INSERT INTO print_jobs (id,kind,printer_name,status,created_at,completed_at,content_hash,acknowledged_at) VALUES (?,?,?,?,?,NULL,?,NULL) ON CONFLICT(id) DO UPDATE SET status=excluded.status, printer_name=excluded.printer_name, created_at=excluded.created_at, completed_at=NULL, content_hash=excluded.content_hash, acknowledged_at=NULL'
+  ).run(
+    safeId,
+    kind,
+    String(printerName || '').slice(0, 160),
+    'printing',
+    now,
+    String(contentHash || '').slice(0, 64)
+  );
+  return { claim: true, tracked: true };
 }
 function finishPrintJob(id, success) {
-  const safeId=String(id || '').trim().slice(0,160);
+  const safeId = String(id || '')
+    .trim()
+    .slice(0, 160);
   if (!safeId) return;
-  localLedger().prepare('UPDATE print_jobs SET status=?, completed_at=?, acknowledged_at=NULL WHERE id=?').run(success?'printed':'failed', success?new Date().toISOString():null, safeId);
+  localLedger()
+    .prepare('UPDATE print_jobs SET status=?, completed_at=?, acknowledged_at=NULL WHERE id=?')
+    .run(success ? 'printed' : 'failed', success ? new Date().toISOString() : null, safeId);
 }
 
 function ledgerAction(row) {
   let payload = {};
-  try { payload = JSON.parse(row.payload || '{}'); } catch (_) {}
-  return { id:row.id, type:row.type, payload, status:row.status, attempts:Number(row.attempts || 0), lastError:row.last_error || '', createdAt:row.created_at, updatedAt:row.updated_at, syncedAt:row.synced_at || '' };
+  try {
+    payload = JSON.parse(row.payload || '{}');
+  } catch (_) {}
+  return {
+    id: row.id,
+    type: row.type,
+    payload,
+    status: row.status,
+    attempts: Number(row.attempts || 0),
+    lastError: row.last_error || '',
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    syncedAt: row.synced_at || '',
+  };
 }
 
 function queueLedgerAction(input) {
   const type = String(input.type || '');
-  const id = String(input.id || input.payload?.clientRequestId || '').trim().slice(0, 120);
-  const supportedTypes = new Set(['counter-order','order-status','order-items','order-table','kitchen-status','availability-update','operations-config','table-areas','settlement']);
-  if (!supportedTypes.has(type) || !id) throw new Error('This offline action needs a unique action ID.');
-  const payload = input.payload && typeof input.payload === 'object' && !Array.isArray(input.payload) ? input.payload : null;
+  const id = String(input.id || input.payload?.clientRequestId || '')
+    .trim()
+    .slice(0, 120);
+  const supportedTypes = new Set([
+    'counter-order',
+    'order-status',
+    'order-items',
+    'order-table',
+    'kitchen-status',
+    'availability-update',
+    'operations-config',
+    'table-areas',
+    'settlement',
+  ]);
+  if (!supportedTypes.has(type) || !id)
+    throw new Error('This offline action needs a unique action ID.');
+  const payload =
+    input.payload && typeof input.payload === 'object' && !Array.isArray(input.payload)
+      ? input.payload
+      : null;
   if (!payload) throw new Error('Offline action details are required.');
-  if (type === 'counter-order' && (!Array.isArray(payload.items) || !payload.items.length)) throw new Error('An offline order needs at least one item.');
+  if (type === 'counter-order' && (!Array.isArray(payload.items) || !payload.items.length))
+    throw new Error('An offline order needs at least one item.');
   const encoded = JSON.stringify(payload);
   if (encoded.length > 250000) throw new Error('Offline order is too large to store locally.');
   const now = new Date().toISOString();
   const db = localLedger();
-  db.prepare('INSERT INTO ledger_actions (id,type,payload,status,created_at,updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING').run(id, type, encoded, 'queued', now, now);
+  db.prepare(
+    'INSERT INTO ledger_actions (id,type,payload,status,created_at,updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING'
+  ).run(id, type, encoded, 'queued', now, now);
   return ledgerAction(db.prepare('SELECT * FROM ledger_actions WHERE id=?').get(id));
 }
 
 function updateLedgerAction(id, status, error = '') {
   const safeId = String(id || '').slice(0, 120);
-  if (!safeId || !['queued','syncing','synced','blocked'].includes(status)) throw new Error('Invalid ledger action update.');
+  if (!safeId || !['queued', 'syncing', 'synced', 'blocked'].includes(status))
+    throw new Error('Invalid ledger action update.');
   const now = new Date().toISOString();
   const db = localLedger();
   const existing = db.prepare('SELECT id FROM ledger_actions WHERE id=?').get(safeId);
   if (!existing) throw new Error('Offline action was not found.');
-  db.prepare('UPDATE ledger_actions SET status=?, attempts=attempts+1, last_error=?, updated_at=?, synced_at=? WHERE id=?').run(status, String(error || '').slice(0, 500), now, status === 'synced' ? now : null, safeId);
+  db.prepare(
+    'UPDATE ledger_actions SET status=?, attempts=attempts+1, last_error=?, updated_at=?, synced_at=? WHERE id=?'
+  ).run(status, String(error || '').slice(0, 500), now, status === 'synced' ? now : null, safeId);
   return ledgerAction(db.prepare('SELECT * FROM ledger_actions WHERE id=?').get(safeId));
 }
 
 function ledgerSummary() {
-  const rows = localLedger().prepare("SELECT status, COUNT(*) AS count FROM ledger_actions GROUP BY status").all();
-  const counts = { queued:0, syncing:0, blocked:0, synced:0 };
-  rows.forEach((row) => { if (Object.hasOwn(counts, row.status)) counts[row.status] = Number(row.count || 0); });
-  const jobs = localLedger().prepare("SELECT status, COUNT(*) AS count FROM print_jobs GROUP BY status").all();
-  const printJobs = { printing:0, printed:0, failed:0 };
-  jobs.forEach((row) => { if (Object.hasOwn(printJobs, row.status)) printJobs[row.status] = Number(row.count || 0); });
-  const unresolvedFailures=localLedger().prepare("SELECT COUNT(*) AS count FROM print_jobs WHERE status='failed' AND acknowledged_at IS NULL").get();
-  return { actions:counts, pendingActions:counts.queued + counts.syncing, blockedActions:counts.blocked, printJobs:{...printJobs, unresolvedFailed:Number(unresolvedFailures?.count||0)} };
+  const rows = localLedger()
+    .prepare('SELECT status, COUNT(*) AS count FROM ledger_actions GROUP BY status')
+    .all();
+  const counts = { queued: 0, syncing: 0, blocked: 0, synced: 0 };
+  rows.forEach((row) => {
+    if (Object.hasOwn(counts, row.status)) counts[row.status] = Number(row.count || 0);
+  });
+  const jobs = localLedger()
+    .prepare('SELECT status, COUNT(*) AS count FROM print_jobs GROUP BY status')
+    .all();
+  const printJobs = { printing: 0, printed: 0, failed: 0 };
+  jobs.forEach((row) => {
+    if (Object.hasOwn(printJobs, row.status)) printJobs[row.status] = Number(row.count || 0);
+  });
+  const unresolvedFailures = localLedger()
+    .prepare(
+      "SELECT COUNT(*) AS count FROM print_jobs WHERE status='failed' AND acknowledged_at IS NULL"
+    )
+    .get();
+  return {
+    actions: counts,
+    pendingActions: counts.queued + counts.syncing,
+    blockedActions: counts.blocked,
+    printJobs: { ...printJobs, unresolvedFailed: Number(unresolvedFailures?.count || 0) },
+  };
 }
 
 function recentPrintFailures() {
-  return localLedger().prepare("SELECT id, kind, printer_name, created_at, completed_at FROM print_jobs WHERE status='failed' AND acknowledged_at IS NULL ORDER BY created_at DESC LIMIT 5").all()
-    .map((job) => ({ id:job.id, kind:job.kind, printerName:job.printer_name, createdAt:job.created_at, completedAt:job.completed_at || '' }));
+  return localLedger()
+    .prepare(
+      "SELECT id, kind, printer_name, created_at, completed_at FROM print_jobs WHERE status='failed' AND acknowledged_at IS NULL ORDER BY created_at DESC LIMIT 5"
+    )
+    .all()
+    .map((job) => ({
+      id: job.id,
+      kind: job.kind,
+      printerName: job.printer_name,
+      createdAt: job.created_at,
+      completedAt: job.completed_at || '',
+    }));
 }
 
 function acknowledgePrintJobs(ids) {
-  const safeIds=[...new Set((Array.isArray(ids)?ids:[]).map((id)=>String(id||'').trim().slice(0,160)).filter(Boolean))].slice(0,50);
+  const safeIds = [
+    ...new Set(
+      (Array.isArray(ids) ? ids : [])
+        .map((id) =>
+          String(id || '')
+            .trim()
+            .slice(0, 160)
+        )
+        .filter(Boolean)
+    ),
+  ].slice(0, 50);
   if (!safeIds.length) throw new Error('Choose at least one failed print job to mark reviewed.');
-  const placeholders=safeIds.map(()=>'?').join(','), now=new Date().toISOString();
-  const result=localLedger().prepare(`UPDATE print_jobs SET acknowledged_at=? WHERE status='failed' AND acknowledged_at IS NULL AND id IN (${placeholders})`).run(now,...safeIds);
-  return Number(result.changes||0);
+  const placeholders = safeIds.map(() => '?').join(','),
+    now = new Date().toISOString();
+  const result = localLedger()
+    .prepare(
+      `UPDATE print_jobs SET acknowledged_at=? WHERE status='failed' AND acknowledged_at IS NULL AND id IN (${placeholders})`
+    )
+    .run(now, ...safeIds);
+  return Number(result.changes || 0);
 }
 
 function run(command, args) {
@@ -148,17 +248,33 @@ async function installedPrinters() {
     // Different Windows installations expose printer data through different
     // management providers, so try all supported built-in discovery routes.
     const attempts = [
-      ['powershell.exe', ['-NoProfile', '-Command', 'Get-CimInstance -ClassName Win32_Printer | Select-Object -ExpandProperty Name']],
-      ['powershell.exe', ['-NoProfile', '-Command', 'Get-Printer | Select-Object -ExpandProperty Name']],
-      ['wmic.exe', ['printer', 'get', 'name', '/value']]
+      [
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-Command',
+          'Get-CimInstance -ClassName Win32_Printer | Select-Object -ExpandProperty Name',
+        ],
+      ],
+      [
+        'powershell.exe',
+        ['-NoProfile', '-Command', 'Get-Printer | Select-Object -ExpandProperty Name'],
+      ],
+      ['wmic.exe', ['printer', 'get', 'name', '/value']],
     ];
     const failures = [];
     for (const [command, args] of attempts) {
-      try { output = await run(command, args); break; }
-      catch (error) { failures.push(error.message); }
+      try {
+        output = await run(command, args);
+        break;
+      } catch (error) {
+        failures.push(error.message);
+      }
     }
     if (!output && failures.length === attempts.length) {
-      throw new Error('Windows could not read installed printers. Confirm the Print Spooler is running and install the printer manufacturer’s Windows driver.');
+      throw new Error(
+        'Windows could not read installed printers. Confirm the Print Spooler is running and install the printer manufacturer’s Windows driver.'
+      );
     }
     const names = output.includes('Name=')
       ? output.split(/\r?\n/).map((line) => line.replace(/^Name=/i, ''))
@@ -166,19 +282,33 @@ async function installedPrinters() {
     return formatPrinters(names);
   }
   if (process.platform === 'darwin') {
-    try { output = await run('lpstat', ['-p']); }
-    catch (_) { throw new Error('macOS printing is unavailable. Add the printer in System Settings > Printers & Scanners, then install its AirPrint or manufacturer driver.'); }
-    return formatPrinters(output.split(/\r?\n/).map((line) => {
-      const match = line.match(/^printer\s+([^\s]+)/i);
-      return match ? match[1] : '';
-    }));
+    try {
+      output = await run('lpstat', ['-p']);
+    } catch (_) {
+      throw new Error(
+        'macOS printing is unavailable. Add the printer in System Settings > Printers & Scanners, then install its AirPrint or manufacturer driver.'
+      );
+    }
+    return formatPrinters(
+      output.split(/\r?\n/).map((line) => {
+        const match = line.match(/^printer\s+([^\s]+)/i);
+        return match ? match[1] : '';
+      })
+    );
   } else {
-    try { output = await run('lpstat', ['-p']); }
-    catch (_) { throw new Error('CUPS printer discovery is unavailable. Install and configure CUPS and the printer driver.'); }
-    return formatPrinters(output.split(/\r?\n/).map((line) => {
-      const match = line.match(/^printer\s+([^\s]+)/i);
-      return match ? match[1] : '';
-    }));
+    try {
+      output = await run('lpstat', ['-p']);
+    } catch (_) {
+      throw new Error(
+        'CUPS printer discovery is unavailable. Install and configure CUPS and the printer driver.'
+      );
+    }
+    return formatPrinters(
+      output.split(/\r?\n/).map((line) => {
+        const match = line.match(/^printer\s+([^\s]+)/i);
+        return match ? match[1] : '';
+      })
+    );
   }
 }
 
@@ -189,8 +319,12 @@ function formatPrinters(names) {
 }
 
 async function readJson(file, fallback) {
-  try { return JSON.parse(await fs.readFile(file, 'utf8')); }
-  catch (error) { if (error.code === 'ENOENT') return fallback; throw error; }
+  try {
+    return JSON.parse(await fs.readFile(file, 'utf8'));
+  } catch (error) {
+    if (error.code === 'ENOENT') return fallback;
+    throw error;
+  }
 }
 
 async function writeJson(file, value) {
@@ -207,20 +341,53 @@ async function printText(printerName, text, settings = {}) {
     if (process.platform === 'win32') {
       const quote = (value) => String(value).replace(/'/g, "''");
       const paperWidth = Number(settings.paperWidth) === 58 ? 58 : 80;
-      const fontFamily = ['Arial','Calibri','Verdana','Tahoma','Trebuchet MS','Georgia','Times New Roman','Courier New','Consolas','Lucida Console'].includes(String(settings.fontFamily)) ? String(settings.fontFamily).replace(/'/g, "''") : 'Arial';
+      const fontFamily = [
+        'Arial',
+        'Calibri',
+        'Verdana',
+        'Tahoma',
+        'Trebuchet MS',
+        'Georgia',
+        'Times New Roman',
+        'Courier New',
+        'Consolas',
+        'Lucida Console',
+      ].includes(String(settings.fontFamily))
+        ? String(settings.fontFamily).replace(/'/g, "''")
+        : 'Arial';
       const bodyFontSize = Math.max(8, Math.min(13, Number(settings.fontSize) || 10));
       const headerFontSize = Math.max(12, Math.min(18, Number(settings.headerFontSize) || 15));
       const headerStyle = settings.headerBold === false ? 'Regular' : 'Bold';
       const footerStyle = settings.footerBold ? 'Bold' : 'Regular';
-      const layout = (value, min, max, fallback) => Math.max(min, Math.min(max, Number(value) || fallback));
+      const layout = (value, min, max, fallback) =>
+        Math.max(min, Math.min(max, Number(value) || fallback));
       // 309 hundredths of an inch is 78.5 mm: the measured printable span of
       // the 80 mm reference receipt.  The driver still owns the actual paper
       // form, so this safely shrinks when a printer has a narrower print area.
       // Never enlarge a saved printable width. Some 80 mm drivers expose only
       // 250 units of usable width; forcing 300 makes the right columns print
       // outside the paper and causes the clipping seen on the receipt.
-      const configuredMainWidth = layout(settings.billingMainWidth, 160, 400, 309), mainWidth = configuredMainWidth, leftMargin = layout(settings.billingOuterLeft, 0, 40, 0), rightMargin = layout(settings.billingOuterRight, 0, 40, 0), topMargin = layout(settings.billingOuterTop, 0, 40, 0), bottomMargin = layout(settings.billingOuterBottom, 0, 40, 0);
-      const restaurantFontSize = layout(settings.restaurantNameFontSize, 8, 24, 14), headerFooterFontSize = layout(settings.headerFooterFontSize, 8, 20, 13), dateBillFontSize = layout(settings.dateBillFontSize, 8, 20, 13), itemFontSize = layout(settings.itemListingFontSize, 8, 10, 10), totalFontSize = layout(settings.grandTotalFontSize, 10, 11, 11), kotHeaderFontSize = layout(settings.kotHeaderFontSize, 8, 24, 12), kotTitleFontSize = layout(settings.kotTitleFontSize, 10, 26, 15), kotMetaFontSize = layout(settings.kotMetaFontSize, 8, 20, 10), kotItemFontSize = layout(settings.kotItemFontSize, 8, 22, 12), kotFooterFontSize = layout(settings.kotFooterFontSize, 8, 20, 10), itemGap = layout(settings.itemRowGap, 0, 20, 3), separatorGap = layout(settings.separatorGap, 0, 20, 3), separatorThickness = layout(settings.separatorThickness, 1, 4, 1), grandTotalWidth = layout(settings.grandTotalContentWidth, 120, 400, 261), itemMinHeight = layout(settings.billingItemBoxHeight, 0, 40, 0);
+      const configuredMainWidth = layout(settings.billingMainWidth, 160, 400, 309),
+        mainWidth = configuredMainWidth,
+        leftMargin = layout(settings.billingOuterLeft, 0, 40, 0),
+        rightMargin = layout(settings.billingOuterRight, 0, 40, 0),
+        topMargin = layout(settings.billingOuterTop, 0, 40, 0),
+        bottomMargin = layout(settings.billingOuterBottom, 0, 40, 0);
+      const restaurantFontSize = layout(settings.restaurantNameFontSize, 8, 24, 14),
+        headerFooterFontSize = layout(settings.headerFooterFontSize, 8, 20, 13),
+        dateBillFontSize = layout(settings.dateBillFontSize, 8, 20, 13),
+        itemFontSize = layout(settings.itemListingFontSize, 8, 10, 10),
+        totalFontSize = layout(settings.grandTotalFontSize, 10, 11, 11),
+        kotHeaderFontSize = layout(settings.kotHeaderFontSize, 8, 24, 12),
+        kotTitleFontSize = layout(settings.kotTitleFontSize, 10, 26, 15),
+        kotMetaFontSize = layout(settings.kotMetaFontSize, 8, 20, 10),
+        kotItemFontSize = layout(settings.kotItemFontSize, 8, 22, 12),
+        kotFooterFontSize = layout(settings.kotFooterFontSize, 8, 20, 10),
+        itemGap = layout(settings.itemRowGap, 0, 20, 3),
+        separatorGap = layout(settings.separatorGap, 0, 20, 3),
+        separatorThickness = layout(settings.separatorThickness, 1, 4, 1),
+        grandTotalWidth = layout(settings.grandTotalContentWidth, 120, 400, 261),
+        itemMinHeight = layout(settings.billingItemBoxHeight, 0, 40, 0);
       const script = `Add-Type -AssemblyName System.Drawing
 $lines = Get-Content -LiteralPath '${quote(file)}' -Encoding UTF8
 $doc = New-Object System.Drawing.Printing.PrintDocument
@@ -370,23 +537,37 @@ $doc.Print()`;
     } else {
       await run('lp', ['-d', printerName, file]);
     }
-  } finally { await fs.unlink(file).catch(() => {}); }
+  } finally {
+    await fs.unlink(file).catch(() => {});
+  }
 }
 
 function kotHighlightLabels(items) {
-  const words = (value) => String(value || '').toLowerCase().match(/[a-z]+/g) || [];
-  const labels = items.map((item) => `${item.name || 'Item'}${item.portion ? ` (${item.portion})` : ''}${item.style ? ` ${item.style}` : ''}`);
+  const words = (value) =>
+    String(value || '')
+      .toLowerCase()
+      .match(/[a-z]+/g) || [];
+  const labels = items.map(
+    (item) =>
+      `${item.name || 'Item'}${item.portion ? ` (${item.portion})` : ''}${item.style ? ` ${item.style}` : ''}`
+  );
   const sets = labels.map((label) => new Set(words(label)));
   return labels.map((label, index) => {
     if (labels.length < 2) return label;
     const own = [...sets[index]];
-    let nearest = null, overlap = -1;
+    let nearest = null,
+      overlap = -1;
     sets.forEach((candidate, candidateIndex) => {
       if (candidateIndex === index) return;
       const shared = own.filter((word) => candidate.has(word)).length;
-      if (shared > overlap) { overlap = shared; nearest = candidate; }
+      if (shared > overlap) {
+        overlap = shared;
+        nearest = candidate;
+      }
     });
-    const distinctive = own.filter((word) => !nearest?.has(word)).sort((a, b) => b.length - a.length)[0];
+    const distinctive = own
+      .filter((word) => !nearest?.has(word))
+      .sort((a, b) => b.length - a.length)[0];
     if (!distinctive) return label;
     return label.replace(new RegExp(`\\b(${distinctive})\\b`, 'i'), '[[$1]]');
   });
@@ -397,57 +578,156 @@ function kotText(payload) {
   const settings = payload.settings || {};
   const items = Array.isArray(payload.items) ? payload.items : [];
   const line = '-'.repeat(34);
-  const placed = order.createdAt ? new Intl.DateTimeFormat('en-IN', { timeZone:'Asia/Kolkata', hour:'2-digit', minute:'2-digit', hour12:false }).format(new Date(order.createdAt)) : '';
+  const placed = order.createdAt
+    ? new Intl.DateTimeFormat('en-IN', {
+        timeZone: 'Asia/Kolkata',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      }).format(new Date(order.createdAt))
+    : '';
   const guestLine = `Guest: ${order.customer || 'Guest'}${order.fulfillment ? ` · ${order.fulfillment}` : ''}${placed ? ` · ${placed}` : ''}${order.phone ? ` · ${order.phone}` : ''}`;
   const quantityFirst = settings.quantityFirst !== false;
   const labels = kotHighlightLabels(items);
-  const rows = items.flatMap((item, index) => [`__KOTITEM__${settings.showItemSerial ? `${index + 1}. ` : ''}${quantityFirst ? `${Number(item.quantity || 0)}x ` : ''}${labels[index]}${quantityFirst ? '' : ` · ${Number(item.quantity || 0)}x`}`, item.note ? `__KOTNOTE__↳ ${item.note}` : ''].filter(Boolean));
-  const sourceLine = order.fulfillment ? `From: ${order.fulfillment}` : `Order #${order.number || order.id || '—'}`;
+  const rows = items.flatMap((item, index) =>
+    [
+      `__KOTITEM__${settings.showItemSerial ? `${index + 1}. ` : ''}${quantityFirst ? `${Number(item.quantity || 0)}x ` : ''}${labels[index]}${quantityFirst ? '' : ` · ${Number(item.quantity || 0)}x`}`,
+      item.note ? `__KOTNOTE__↳ ${item.note}` : '',
+    ].filter(Boolean)
+  );
+  const sourceLine = order.fulfillment
+    ? `From: ${order.fulfillment}`
+    : `Order #${order.number || order.id || '—'}`;
   const savedFeed = Number(settings.kotBottomFeedLines);
-  const bottomLines = (Number.isFinite(savedFeed) ? Math.max(0, Math.min(12, savedFeed)) : 3) + Math.max(0, Math.min(2, Number(settings.extraSpace) || 0)) * 2;
-  const meta = settings.kotDetailsCentered ? '__KOTCENTERMETA__' : '__KOTMETA__', metaBold = settings.kotDetailsCentered ? '__KOTCENTERMETABOLD__' : '__KOTMETABOLD__';
-  return [`__KOTTITLE__${String(payload.printerLabel || payload.printerName || 'Kitchen').trim()}`, order.reprint ? `${metaBold}*** REPRINT ***` : '', line, `${metaBold}KOT #${order.kotNumber || '—'}`, `${meta}${sourceLine}`, settings.showCustomer !== false ? `${meta}${guestLine}` : '', line, ...rows, order.note && settings.showNotes !== false ? `${line}\n__KOTNOTE__Note: ${order.note}` : '', line, '\n'.repeat(bottomLines)].filter(Boolean).join('\n');
+  const bottomLines =
+    (Number.isFinite(savedFeed) ? Math.max(0, Math.min(12, savedFeed)) : 3) +
+    Math.max(0, Math.min(2, Number(settings.extraSpace) || 0)) * 2;
+  const meta = settings.kotDetailsCentered ? '__KOTCENTERMETA__' : '__KOTMETA__',
+    metaBold = settings.kotDetailsCentered ? '__KOTCENTERMETABOLD__' : '__KOTMETABOLD__';
+  return [
+    `__KOTTITLE__${String(payload.printerLabel || payload.printerName || 'Kitchen').trim()}`,
+    order.reprint ? `${metaBold}*** REPRINT ***` : '',
+    line,
+    `${metaBold}KOT #${order.kotNumber || '—'}`,
+    `${meta}${sourceLine}`,
+    settings.showCustomer !== false ? `${meta}${guestLine}` : '',
+    line,
+    ...rows,
+    order.note && settings.showNotes !== false ? `${line}\n__KOTNOTE__Note: ${order.note}` : '',
+    line,
+    '\n'.repeat(bottomLines),
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 function billText(payload) {
-  const order = payload.order || {}, settings = payload.settings || {}, items = Array.isArray(order.items) ? order.items : [], line = '__SEPARATOR__';
-  const sectionHeight = (key, fallback) => Math.max(0, Math.min(500, Number(settings[key]) || fallback));
+  const order = payload.order || {},
+    settings = payload.settings || {},
+    items = Array.isArray(order.items) ? order.items : [],
+    line = '__SEPARATOR__';
+  const sectionHeight = (key, fallback) =>
+    Math.max(0, Math.min(500, Number(settings[key]) || fallback));
   const money = (value) => `₹${Math.round(Number(value) || 0)}`;
   const decimal = (value) => (Number(value) || 0).toFixed(2);
-  const itemPrice = (item) => Number(String(item.price || '').replace(/[^0-9.]/g, '')) + (item.style ? 10 : 0);
-  const subtotal = items.reduce((sum, item) => sum + itemPrice(item) * Number(item.quantity || 0), 0);
+  const itemPrice = (item) =>
+    Number(String(item.price || '').replace(/[^0-9.]/g, '')) + (item.style ? 10 : 0);
+  const subtotal = items.reduce(
+    (sum, item) => sum + itemPrice(item) * Number(item.quantity || 0),
+    0
+  );
   const total = Number(order.total) > 0 ? Number(order.total) : subtotal;
   const walletDiscount = Math.max(0, Math.floor(Number(order.loyalty_points_redeemed || 0)));
   const itemRows = items.flatMap((item, index) => {
     const label = `${settings.showItemSerial ? `${index + 1}. ` : ''}${item.name || 'Item'}${item.portion ? ` (${item.portion})` : ''}`;
-    const quantity = Number(item.quantity || 0), unit = itemPrice(item), itemAmount = quantity * unit;
+    const quantity = Number(item.quantity || 0),
+      unit = itemPrice(item),
+      itemAmount = quantity * unit;
     return [
       `__ITEM__${label}|${quantity}|${decimal(unit)}|${decimal(itemAmount)}`,
-      item.style ? `__ITEM__  ${item.style} gravy|||` : ''
+      item.style ? `__ITEM__  ${item.style} gravy|||` : '',
     ].filter(Boolean);
   });
   const token = String(order.daily_order_number || '—').padStart(2, '0');
   const placedAt = order.created_at ? new Date(order.created_at) : new Date();
-  const placedDate = new Intl.DateTimeFormat('en-IN', { timeZone:'Asia/Kolkata', day:'2-digit', month:'2-digit', year:'2-digit' }).format(placedAt);
-  const placedTime = new Intl.DateTimeFormat('en-IN', { timeZone:'Asia/Kolkata', hour:'2-digit', minute:'2-digit', hour12:false }).format(placedAt);
+  const placedDate = new Intl.DateTimeFormat('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit',
+    month: '2-digit',
+    year: '2-digit',
+  }).format(placedAt);
+  const placedTime = new Intl.DateTimeFormat('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(placedAt);
   const quantity = items.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
   const billNumber = order.bill_number ? String(order.bill_number).padStart(2, '0') : '—';
   const customer = String(order.customer_name || '').trim();
   const phone = String(order.customer_phone || '').replace(/^walkin-.*$/i, '');
-  const service = order.mode === 'table' ? `Dine In · ${order.table_area || 'Table'} ${order.table_number || ''}`.trim() : order.fulfillment_type === 'delivery' ? 'Delivery' : 'Parcel';
-  const customerLine = customer ? `Name: ${customer}${phone ? ` (M: ${phone})` : ''}` : phone ? `Mobile: ${phone}` : 'Name: Walk-in customer';
+  const service =
+    order.mode === 'table'
+      ? `Dine In · ${order.table_area || 'Table'} ${order.table_number || ''}`.trim()
+      : order.fulfillment_type === 'delivery'
+        ? 'Delivery'
+        : 'Parcel';
+  const customerLine = customer
+    ? `Name: ${customer}${phone ? ` (M: ${phone})` : ''}`
+    : phone
+      ? `Mobile: ${phone}`
+      : 'Name: Walk-in customer';
   // Keep this as the same compact three-line block as the measured reference:
   // date/order type, cashier/bill number, then the emphasised token.
-  const details = [line, `__META__${customerLine}`, `__META__Date: ${placedDate} ${placedTime}          ${service}`, `__META__Cashier: biller       Bill No.: ${billNumber}`, `__METABOLD__Token No.: ${token}`, line];
+  const details = [
+    line,
+    `__META__${customerLine}`,
+    `__META__Date: ${placedDate} ${placedTime}          ${service}`,
+    `__META__Cashier: biller       Bill No.: ${billNumber}`,
+    `__METABOLD__Token No.: ${token}`,
+    line,
+  ];
   const itemHeader = '__ITEMHEAD__Item|Qty|Price|Amount';
-  const totals = [`__SUMMARY__Total Qty: ${quantity}|Sub Total: ${money(subtotal)}`, walletDiscount ? `__SUMMARY__Points discount|-${money(walletDiscount)}` : ''];
-  const defaultHeader='Colva Goa\n9922853605 / 9049558369\n[Follow] Insta ID:\nred_lantern_restaurant';
-  const defaultFooter='Thank you for choosing us!\nKindly leave us a review\nGoogle | Zomato | Swiggy';
-  return [settings.reprint ? '__CENTER__*** REPRINT ***' : '', settings.showRestaurantName === false ? '' : `__BILLTITLE__${settings.restaurantName || 'Red Lantern Restaurant'}`, `__BILLHEADER__${settings.receiptHeader || defaultHeader}`, line, `__META__${customerLine}`, line, ...details.slice(2, -1), line, itemHeader, line, ...itemRows, line, ...totals, `__TOTAL__GRAND TOTAL|${money(total)}`, line, `__FOOTER__${settings.receiptFooter || defaultFooter}`, '\n\n\n'].filter(Boolean).join('\n');
+  const totals = [
+    `__SUMMARY__Total Qty: ${quantity}|Sub Total: ${money(subtotal)}`,
+    walletDiscount ? `__SUMMARY__Points discount|-${money(walletDiscount)}` : '',
+  ];
+  const defaultHeader =
+    'Colva Goa\n9922853605 / 9049558369\n[Follow] Insta ID:\nred_lantern_restaurant';
+  const defaultFooter =
+    'Thank you for choosing us!\nKindly leave us a review\nGoogle | Zomato | Swiggy';
+  return [
+    settings.reprint ? '__CENTER__*** REPRINT ***' : '',
+    settings.showRestaurantName === false
+      ? ''
+      : `__BILLTITLE__${settings.restaurantName || 'Red Lantern Restaurant'}`,
+    `__BILLHEADER__${settings.receiptHeader || defaultHeader}`,
+    line,
+    `__META__${customerLine}`,
+    line,
+    ...details.slice(2, -1),
+    line,
+    itemHeader,
+    line,
+    ...itemRows,
+    line,
+    ...totals,
+    `__TOTAL__GRAND TOTAL|${money(total)}`,
+    line,
+    `__FOOTER__${settings.receiptFooter || defaultFooter}`,
+    '\n\n\n',
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
 function allowedOrigin(request) {
   const origin = request.headers.origin || '';
-  if (!origin || /^https:\/\/(www\.)?redlanternrestaurant\.in$/i.test(origin) || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)) return origin || '*';
+  if (
+    !origin ||
+    /^https:\/\/(www\.)?redlanternrestaurant\.in$/i.test(origin) ||
+    /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)
+  )
+    return origin || '*';
   return '';
 }
 
@@ -455,8 +735,17 @@ function readBody(req) {
   return new Promise((resolve, reject) => {
     let raw = '';
     req.setEncoding('utf8');
-    req.on('data', (chunk) => { raw += chunk; if (raw.length > 512000) reject(new Error('Request too large.')); });
-    req.on('end', () => { try { resolve(raw ? JSON.parse(raw) : {}); } catch (_) { reject(new Error('Invalid JSON.')); } });
+    req.on('data', (chunk) => {
+      raw += chunk;
+      if (raw.length > 512000) reject(new Error('Request too large.'));
+    });
+    req.on('end', () => {
+      try {
+        resolve(raw ? JSON.parse(raw) : {});
+      } catch (_) {
+        reject(new Error('Invalid JSON.'));
+      }
+    });
     req.on('error', reject);
   });
 }
@@ -467,50 +756,112 @@ function reply(res, status, body, origin = '') {
     ...(origin ? { 'Access-Control-Allow-Origin': origin, Vary: 'Origin' } : {}),
     'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
-    'Cache-Control': 'no-store'
+    'Cache-Control': 'no-store',
   });
   res.end(JSON.stringify(body));
 }
 
 const server = http.createServer(async (req, res) => {
   const origin = allowedOrigin(req);
-  if (req.headers.origin && !origin) return reply(res, 403, { error: 'This website is not allowed to access the Print Bridge.' });
+  if (req.headers.origin && !origin)
+    return reply(res, 403, { error: 'This website is not allowed to access the Print Bridge.' });
   if (req.method === 'OPTIONS') return reply(res, 204, {}, origin);
   if (req.method === 'GET' && req.url === '/health') {
-    try { localLedger().prepare('SELECT 1 AS ok').get(); }
-    catch (error) { return reply(res, 503, { ok:false, service:'Red Lantern Print Bridge', error:'The local SQLite ledger is unavailable.', detail:error.message }, origin); }
-    return reply(res, 200, { ok: true, service: 'Red Lantern Print Bridge', version:BRIDGE_VERSION, platform:process.platform, node:process.version, ledger:'ready', ledgerSummary:ledgerSummary() }, origin);
+    try {
+      localLedger().prepare('SELECT 1 AS ok').get();
+    } catch (error) {
+      return reply(
+        res,
+        503,
+        {
+          ok: false,
+          service: 'Red Lantern Print Bridge',
+          error: 'The local SQLite ledger is unavailable.',
+          detail: error.message,
+        },
+        origin
+      );
+    }
+    return reply(
+      res,
+      200,
+      {
+        ok: true,
+        service: 'Red Lantern Print Bridge',
+        version: BRIDGE_VERSION,
+        platform: process.platform,
+        node: process.version,
+        ledger: 'ready',
+        ledgerSummary: ledgerSummary(),
+      },
+      origin
+    );
   }
   if (req.method === 'GET' && req.url === '/v1/setup-status') {
     try {
       localLedger().prepare('SELECT 1 AS ok').get();
-      const [printers, config] = await Promise.all([installedPrinters(), readJson(configFile, { printers: [], routes: [] })]);
-      const savedPrinters=Array.isArray(config.printers) ? config.printers : [];
-      const savedRoutes=Array.isArray(config.routes) ? config.routes : [];
-      const configuredPrinters=savedPrinters.filter((printer)=>String(printer.deviceName||'').trim());
-      const configuredKotIds=new Set(configuredPrinters.filter((printer)=>printer.type==='kot').map((printer)=>String(printer.id)));
-      const configuredKotRoutes=savedRoutes.filter((route)=>configuredKotIds.has(String(route.printerId)));
-      return reply(res, 200, {
-        ok:true,
-        platform:process.platform,
-        platformLabel:process.platform === 'win32' ? 'Windows' : process.platform === 'darwin' ? 'macOS' : process.platform,
-        version:BRIDGE_VERSION,
-        node:process.version,
-        ledger:'ready',
-        printerCount:printers.length,
-        configuredPrinterCount:configuredPrinters.length,
-        configuredBillPrinterCount:configuredPrinters.filter((printer)=>printer.type==='bill').length,
-        configuredKotRouteCount:configuredKotRoutes.length,
-        routeCount:savedRoutes.length,
-        ledgerSummary:ledgerSummary(),
-        recentPrintFailures:recentPrintFailures()
-      }, origin);
-    } catch (error) { return reply(res, 503, { ok:false, error:'Print Bridge needs attention.', detail:error.message }, origin); }
+      const [printers, config] = await Promise.all([
+        installedPrinters(),
+        readJson(configFile, { printers: [], routes: [] }),
+      ]);
+      const savedPrinters = Array.isArray(config.printers) ? config.printers : [];
+      const savedRoutes = Array.isArray(config.routes) ? config.routes : [];
+      const configuredPrinters = savedPrinters.filter((printer) =>
+        String(printer.deviceName || '').trim()
+      );
+      const configuredKotIds = new Set(
+        configuredPrinters
+          .filter((printer) => printer.type === 'kot')
+          .map((printer) => String(printer.id))
+      );
+      const configuredKotRoutes = savedRoutes.filter((route) =>
+        configuredKotIds.has(String(route.printerId))
+      );
+      return reply(
+        res,
+        200,
+        {
+          ok: true,
+          platform: process.platform,
+          platformLabel:
+            process.platform === 'win32'
+              ? 'Windows'
+              : process.platform === 'darwin'
+                ? 'macOS'
+                : process.platform,
+          version: BRIDGE_VERSION,
+          node: process.version,
+          ledger: 'ready',
+          printerCount: printers.length,
+          configuredPrinterCount: configuredPrinters.length,
+          configuredBillPrinterCount: configuredPrinters.filter(
+            (printer) => printer.type === 'bill'
+          ).length,
+          configuredKotRouteCount: configuredKotRoutes.length,
+          routeCount: savedRoutes.length,
+          ledgerSummary: ledgerSummary(),
+          recentPrintFailures: recentPrintFailures(),
+        },
+        origin
+      );
+    } catch (error) {
+      return reply(
+        res,
+        503,
+        { ok: false, error: 'Print Bridge needs attention.', detail: error.message },
+        origin
+      );
+    }
   }
   if (req.method === 'POST' && req.url === '/v1/restart') {
     reply(res, 202, { ok: true, message: 'Print Bridge is restarting.' }, origin);
     setTimeout(() => {
-      const child = spawn(process.execPath, [__filename], { cwd: __dirname, detached: true, stdio: 'ignore', windowsHide: true });
+      const child = spawn(process.execPath, [__filename], {
+        cwd: __dirname,
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true,
+      });
       child.unref();
       server.close(() => process.exit(0));
       setTimeout(() => process.exit(0), 1000).unref();
@@ -518,96 +869,246 @@ const server = http.createServer(async (req, res) => {
     return;
   }
   if (req.method === 'GET' && req.url === '/v1/printers') {
-    try { return reply(res, 200, { printers: await installedPrinters() }, origin); }
-    catch (error) { return reply(res, 500, { error: 'Unable to read installed printers.', detail: error.message }, origin); }
+    try {
+      return reply(res, 200, { printers: await installedPrinters() }, origin);
+    } catch (error) {
+      return reply(
+        res,
+        500,
+        { error: 'Unable to read installed printers.', detail: error.message },
+        origin
+      );
+    }
   }
   if (req.method === 'GET' && req.url === '/v1/config') {
-    try { return reply(res, 200, { config: await readJson(configFile, { printers: [], routes: [] }) }, origin); }
-    catch (error) { return reply(res, 500, { error: 'Unable to read local printer configuration.', detail: error.message }, origin); }
+    try {
+      return reply(
+        res,
+        200,
+        { config: await readJson(configFile, { printers: [], routes: [] }) },
+        origin
+      );
+    } catch (error) {
+      return reply(
+        res,
+        500,
+        { error: 'Unable to read local printer configuration.', detail: error.message },
+        origin
+      );
+    }
   }
   if (req.method === 'PUT' && req.url === '/v1/config') {
     try {
       const config = (await readBody(req)).config || {};
-      const printers = (Array.isArray(config.printers) ? config.printers : []).slice(0, 250)
-        .map((printer) => ({ id: String(printer.id || '').slice(0, 60), name: String(printer.name || '').trim().slice(0, 60), type: printer.type === 'bill' ? 'bill' : 'kot', deviceId: String(printer.deviceId || '').slice(0, 160), deviceName: String(printer.deviceName || '').slice(0, 120) }))
+      const printers = (Array.isArray(config.printers) ? config.printers : [])
+        .slice(0, 250)
+        .map((printer) => ({
+          id: String(printer.id || '').slice(0, 60),
+          name: String(printer.name || '')
+            .trim()
+            .slice(0, 60),
+          type: printer.type === 'bill' ? 'bill' : 'kot',
+          deviceId: String(printer.deviceId || '').slice(0, 160),
+          deviceName: String(printer.deviceName || '').slice(0, 120),
+        }))
         .filter((printer) => printer.id && printer.name);
       const printerIds = new Set(printers.map((printer) => printer.id));
-      const routes = (Array.isArray(config.routes) ? config.routes : []).slice(0, 2000)
-        .map((route) => ({ id: String(route.id || '').slice(0, 60), printerId: String(route.printerId || '').slice(0, 60), category: String(route.category || '').trim().slice(0, 100), itemName: String(route.itemName || '').trim().slice(0, 160) }))
+      const routes = (Array.isArray(config.routes) ? config.routes : [])
+        .slice(0, 2000)
+        .map((route) => ({
+          id: String(route.id || '').slice(0, 60),
+          printerId: String(route.printerId || '').slice(0, 60),
+          category: String(route.category || '')
+            .trim()
+            .slice(0, 100),
+          itemName: String(route.itemName || '')
+            .trim()
+            .slice(0, 160),
+        }))
         .filter((route) => route.id && printerIds.has(route.printerId) && route.category);
       const safeConfig = { printers, routes, savedAt: new Date().toISOString() };
       await writeJson(configFile, safeConfig);
       return reply(res, 200, { ok: true, savedAt: safeConfig.savedAt }, origin);
-    } catch (error) { return reply(res, 400, { error: error.message || 'Unable to save local printer configuration.' }, origin); }
+    } catch (error) {
+      return reply(
+        res,
+        400,
+        { error: error.message || 'Unable to save local printer configuration.' },
+        origin
+      );
+    }
   }
   if (req.method === 'GET' && req.url.startsWith('/v1/ledger/actions')) {
     try {
-      const requested = new URL(req.url, `http://127.0.0.1:${PORT}`).searchParams.get('status') || 'queued';
-      const statuses = requested === 'all' ? ['queued','syncing','blocked','synced'] : requested.split(',').filter((status) => ['queued','syncing','blocked'].includes(status));
-      const rows = statuses.length ? localLedger().prepare(`SELECT * FROM ledger_actions WHERE status IN (${statuses.map(() => '?').join(',')}) ORDER BY created_at ASC LIMIT 500`).all(...statuses) : [];
-      return reply(res, 200, { actions:rows.map(ledgerAction) }, origin);
-    } catch (error) { return reply(res, 500, { error:'Unable to read the local order ledger.', detail:error.message }, origin); }
+      const requested =
+        new URL(req.url, `http://127.0.0.1:${PORT}`).searchParams.get('status') || 'queued';
+      const statuses =
+        requested === 'all'
+          ? ['queued', 'syncing', 'blocked', 'synced']
+          : requested
+              .split(',')
+              .filter((status) => ['queued', 'syncing', 'blocked'].includes(status));
+      const rows = statuses.length
+        ? localLedger()
+            .prepare(
+              `SELECT * FROM ledger_actions WHERE status IN (${statuses.map(() => '?').join(',')}) ORDER BY created_at ASC LIMIT 500`
+            )
+            .all(...statuses)
+        : [];
+      return reply(res, 200, { actions: rows.map(ledgerAction) }, origin);
+    } catch (error) {
+      return reply(
+        res,
+        500,
+        { error: 'Unable to read the local order ledger.', detail: error.message },
+        origin
+      );
+    }
   }
   if (req.method === 'POST' && req.url === '/v1/print-jobs/acknowledge') {
-    try { const body=await readBody(req); return reply(res, 200, { ok:true, acknowledged:acknowledgePrintJobs(body.ids) }, origin); }
-    catch (error) { return reply(res, 400, { error:error.message || 'Unable to acknowledge print jobs.' }, origin); }
+    try {
+      const body = await readBody(req);
+      return reply(res, 200, { ok: true, acknowledged: acknowledgePrintJobs(body.ids) }, origin);
+    } catch (error) {
+      return reply(
+        res,
+        400,
+        { error: error.message || 'Unable to acknowledge print jobs.' },
+        origin
+      );
+    }
   }
   if (req.method === 'POST' && req.url === '/v1/ledger/actions') {
-    try { return reply(res, 201, { ok:true, action:queueLedgerAction(await readBody(req)) }, origin); }
-    catch (error) { return reply(res, 400, { error:error.message || 'Unable to save the offline order.' }, origin); }
+    try {
+      return reply(res, 201, { ok: true, action: queueLedgerAction(await readBody(req)) }, origin);
+    } catch (error) {
+      return reply(
+        res,
+        400,
+        { error: error.message || 'Unable to save the offline order.' },
+        origin
+      );
+    }
   }
   const ledgerUpdateMatch = req.url.match(/^\/v1\/ledger\/actions\/([^/]+)\/(synced|blocked)$/);
   if (req.method === 'POST' && ledgerUpdateMatch) {
     try {
       const body = await readBody(req);
-      return reply(res, 200, { ok:true, action:updateLedgerAction(decodeURIComponent(ledgerUpdateMatch[1]), ledgerUpdateMatch[2], body.error) }, origin);
-    } catch (error) { return reply(res, 400, { error:error.message || 'Unable to update the offline order.' }, origin); }
+      return reply(
+        res,
+        200,
+        {
+          ok: true,
+          action: updateLedgerAction(
+            decodeURIComponent(ledgerUpdateMatch[1]),
+            ledgerUpdateMatch[2],
+            body.error
+          ),
+        },
+        origin
+      );
+    } catch (error) {
+      return reply(
+        res,
+        400,
+        { error: error.message || 'Unable to update the offline order.' },
+        origin
+      );
+    }
   }
   if (req.method === 'GET' && req.url === '/v1/kot-queue') {
-    try { return reply(res, 200, { jobs: await readJson(queueFile, []) }, origin); }
-    catch (error) { return reply(res, 500, { error: 'Unable to read local KOT queue.', detail: error.message }, origin); }
+    try {
+      return reply(res, 200, { jobs: await readJson(queueFile, []) }, origin);
+    } catch (error) {
+      return reply(
+        res,
+        500,
+        { error: 'Unable to read local KOT queue.', detail: error.message },
+        origin
+      );
+    }
   }
   if (req.method === 'POST' && req.url === '/v1/kot-queue') {
     try {
       const payload = await readBody(req);
       const printerId = String(payload.printerId || '').slice(0, 60);
       const items = Array.isArray(payload.items) ? payload.items.slice(0, 100) : [];
-      if (!printerId || !items.length) throw new Error('A KOT needs a printer and at least one item.');
+      if (!printerId || !items.length)
+        throw new Error('A KOT needs a printer and at least one item.');
       const jobs = await readJson(queueFile, []);
-      const job = { id: crypto.randomUUID(), status: 'queued', queuedAt: new Date().toISOString(), order: payload.order || null, printerId, items };
+      const job = {
+        id: crypto.randomUUID(),
+        status: 'queued',
+        queuedAt: new Date().toISOString(),
+        order: payload.order || null,
+        printerId,
+        items,
+      };
       jobs.push(job);
       await writeJson(queueFile, jobs.slice(-1000));
       return reply(res, 201, { ok: true, job }, origin);
-    } catch (error) { return reply(res, 400, { error: error.message || 'Unable to queue KOT.' }, origin); }
+    } catch (error) {
+      return reply(res, 400, { error: error.message || 'Unable to queue KOT.' }, origin);
+    }
   }
   if (req.method === 'POST' && req.url === '/v1/print-kot') {
-    let printJobId='';
+    let printJobId = '';
     try {
       const payload = await readBody(req);
-      printJobId=String(payload.printJobId || '');
-      const printerName = String(payload.printerName || '').trim().slice(0, 160);
+      printJobId = String(payload.printJobId || '');
+      const printerName = String(payload.printerName || '')
+        .trim()
+        .slice(0, 160);
       const items = Array.isArray(payload.items) ? payload.items.slice(0, 100) : [];
-      if (!printerName || !items.length) throw new Error('A printer and at least one KOT item are required.');
-      const ticketText=kotText({ ...payload, items });
-      const contentHash=crypto.createHash('sha256').update(ticketText).digest('hex');
-      const claim=claimPrintJob(payload.printJobId, 'kot', printerName, contentHash);
-      if (!claim.claim) return reply(res, claim.duplicate ? 200 : 202, { ok:true, duplicate:!!claim.duplicate, pending:!!claim.pending, printerName }, origin);
+      if (!printerName || !items.length)
+        throw new Error('A printer and at least one KOT item are required.');
+      const ticketText = kotText({ ...payload, items });
+      const contentHash = crypto.createHash('sha256').update(ticketText).digest('hex');
+      const claim = claimPrintJob(payload.printJobId, 'kot', printerName, contentHash);
+      if (!claim.claim)
+        return reply(
+          res,
+          claim.duplicate ? 200 : 202,
+          { ok: true, duplicate: !!claim.duplicate, pending: !!claim.pending, printerName },
+          origin
+        );
       await printText(printerName, ticketText, payload.settings || {});
       finishPrintJob(payload.printJobId, true);
-      return reply(res, 201, { ok: true, printerName, itemCount:items.length }, origin);
-    } catch (error) { try { finishPrintJob(printJobId, false); } catch (_) {} return reply(res, 400, { error: error.message || 'Unable to print KOT.' }, origin); }
+      return reply(res, 201, { ok: true, printerName, itemCount: items.length }, origin);
+    } catch (error) {
+      try {
+        finishPrintJob(printJobId, false);
+      } catch (_) {}
+      return reply(res, 400, { error: error.message || 'Unable to print KOT.' }, origin);
+    }
   }
   if (req.method === 'POST' && req.url === '/v1/print-bill') {
-    let printJobId='';
+    let printJobId = '';
     try {
-      const payload = await readBody(req); printJobId=String(payload.printJobId || ''); const printerName = String(payload.printerName || '').trim().slice(0, 160);
-      if (!printerName || !payload.order?.id) throw new Error('A bill printer and order are required.');
-      const claim=claimPrintJob(payload.printJobId, 'bill', printerName);
-      if (!claim.claim) return reply(res, claim.duplicate ? 200 : 202, { ok:true, duplicate:!!claim.duplicate, pending:!!claim.pending, printerName }, origin);
+      const payload = await readBody(req);
+      printJobId = String(payload.printJobId || '');
+      const printerName = String(payload.printerName || '')
+        .trim()
+        .slice(0, 160);
+      if (!printerName || !payload.order?.id)
+        throw new Error('A bill printer and order are required.');
+      const claim = claimPrintJob(payload.printJobId, 'bill', printerName);
+      if (!claim.claim)
+        return reply(
+          res,
+          claim.duplicate ? 200 : 202,
+          { ok: true, duplicate: !!claim.duplicate, pending: !!claim.pending, printerName },
+          origin
+        );
       await printText(printerName, billText(payload), payload.settings || {});
       finishPrintJob(payload.printJobId, true);
       return reply(res, 201, { ok: true, printerName }, origin);
-    } catch (error) { try { finishPrintJob(printJobId, false); } catch (_) {} return reply(res, 400, { error: error.message || 'Unable to print bill.' }, origin); }
+    } catch (error) {
+      try {
+        finishPrintJob(printJobId, false);
+      } catch (_) {}
+      return reply(res, 400, { error: error.message || 'Unable to print bill.' }, origin);
+    }
   }
   return reply(res, 404, { error: 'Not found.' }, origin);
 });
