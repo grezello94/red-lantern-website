@@ -14,7 +14,70 @@ let loyaltyPoints = 0;
 let loyaltyLookupTimer = null;
 let directOrderRequestId = sessionStorage.getItem(directOrderRequestKey) || '';
 let proximityProof = null;
-function verifyProximity(proximity) { if(!proximity?.required)return Promise.resolve(); if(!navigator.geolocation)return Promise.reject(new Error('This device cannot verify its location.')); return new Promise((resolve,reject)=>navigator.geolocation.getCurrentPosition((position)=>{proximityProof={latitude:position.coords.latitude,longitude:position.coords.longitude,accuracy:position.coords.accuracy};resolve();},()=>reject(new Error('Location permission is required to place an order from this QR code.')),{enableHighAccuracy:true,timeout:15000,maximumAge:60000})); }
+function distanceInMetres(latitudeA, longitudeA, latitudeB, longitudeB) {
+  const radians = (value) => (Number(value) * Math.PI) / 180;
+  const latitudeDelta = radians(latitudeB - latitudeA);
+  const longitudeDelta = radians(longitudeB - longitudeA);
+  const a =
+    Math.sin(latitudeDelta / 2) ** 2 +
+    Math.cos(radians(latitudeA)) * Math.cos(radians(latitudeB)) * Math.sin(longitudeDelta / 2) ** 2;
+  return 6371000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function verifyProximity(proximity) {
+  if (!proximity?.required) return Promise.resolve();
+  if (!navigator.geolocation)
+    return Promise.reject(new Error('This device cannot verify its location.'));
+  return new Promise((resolve, reject) =>
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        proximityProof = {
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          accuracy: position.coords.accuracy,
+        };
+        const distance = distanceInMetres(
+          proximity.latitude,
+          proximity.longitude,
+          proximityProof.latitude,
+          proximityProof.longitude
+        );
+        const accuracyAllowance = Math.min(100, Math.max(0, Number(proximityProof.accuracy) || 0));
+        if (distance > Number(proximity.radius) + accuracyAllowance) {
+          const error = new Error('outside-proximity-radius');
+          error.code = 'outside-proximity-radius';
+          return reject(error);
+        }
+        resolve();
+      },
+      () => reject(new Error('Location permission is required to place an order from this QR code.')),
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 }
+    )
+  );
+}
+
+function proximityCallLink(menu) {
+  const phone = String(menu.cardOrderPhone || '').trim();
+  const digits = phone.replace(/\D/g, '');
+  if (digits.length < 7) return '';
+  return `<a class="proximity-call-button" href="tel:${phone.startsWith('+') ? '+' : ''}${digits}"><span aria-hidden="true">☎</span> Call to Place an Order</a>`;
+}
+
+function showProximityRestriction(menu) {
+  const radius = Math.round(Number(menu.proximity?.radius) || 0);
+  document.querySelector('.menu-tools').hidden = true;
+  document.getElementById('open-order-summary').hidden = true;
+  document.getElementById('menu-content').innerHTML = `
+    <section class="proximity-restriction" role="alert">
+      <span class="proximity-icon" aria-hidden="true">⌖</span>
+      <p class="eyebrow">Ordering location limit</p>
+      <h2>You’re too far from Red Lantern Restaurant to order from this QR menu.</h2>
+      <p>To place an order here, please be within <strong>${radius} metres</strong> of the restaurant.</p>
+      <p class="proximity-help">Need help? Call us and we’ll be happy to take your order.</p>
+      ${proximityCallLink(menu)}
+    </section>`;
+  document.getElementById('menu-note').textContent = '';
+}
 function nextDirectOrderRequestId() {
   return `qr-${Date.now()}-${crypto.getRandomValues(new Uint32Array(1))[0].toString(36)}`;
 }
@@ -505,7 +568,6 @@ function configureOrderActions(menu) {
   document.body.classList.toggle('card-menu-mode', isCard);
   const whatsapp = document.getElementById('share-whatsapp');
   directOrdersEnabled = menu.directOrdersEnabled === true;
-  if(directOrdersEnabled&&menu.proximity?.required){directOrdersEnabled=false;verifyProximity(menu.proximity).then(()=>{directOrdersEnabled=true;document.getElementById('place-direct-order').hidden=false;renderOrderSummary();}).catch((error)=>{document.getElementById('menu-note').textContent=error.message;});}
   document.getElementById('place-direct-order').hidden = !directOrdersEnabled;
   whatsapp.hidden = !isCard;
   const call = document.getElementById('call-to-order');
@@ -662,6 +724,22 @@ async function loadMenu() {
         `<section class="restaurant-closed"><span class="closed-icon" aria-hidden="true">◷</span><p class="eyebrow">Restaurant status</p><h2>${escapeHtml(menu.message || 'The restaurant is currently closed.')}</h2><p>${escapeHtml(menu.reopensAt || 'Please check back soon for our reopening time.')}</p></section>`;
       document.getElementById('menu-note').textContent = '';
       return;
+    }
+    if (menu.proximity?.required) {
+      try {
+        await verifyProximity(menu.proximity);
+      } catch (error) {
+        if (error.code === 'outside-proximity-radius') {
+          showProximityRestriction(menu);
+          return;
+        }
+        document.getElementById('menu-note').textContent =
+          'Location permission is required to show this ordering menu.';
+        document.getElementById('menu-content').innerHTML =
+          '<p class="empty">Please allow location access and scan the QR code again.</p>';
+        document.querySelector('.menu-tools').hidden = true;
+        return;
+      }
     }
     configureOrderActions(menu);
     orderCatalog.clear();

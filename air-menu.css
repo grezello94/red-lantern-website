@@ -904,6 +904,23 @@ input:focus-visible {
   font-weight: 700;
   line-height: 1.6;
 }
+.proximity-restriction {
+  max-width: 620px;
+  margin: 52px auto;
+  padding: 38px 28px;
+  border: 2px solid #d8292f;
+  border-radius: 24px;
+  background: linear-gradient(145deg, #fff 0%, #fff1f1 100%);
+  box-shadow: 0 20px 44px rgba(170, 28, 35, 0.17);
+  text-align: center;
+}
+.proximity-icon { display: grid; width: 64px; height: 64px; margin: 0 auto 16px; place-items: center; border-radius: 50%; color: #fff; background: linear-gradient(145deg, #e2393e, #a5161c); box-shadow: 0 10px 22px rgba(180, 25, 31, 0.28); font-size: 32px; font-weight: 900; }
+.proximity-restriction h2 { margin: 5px 0 13px; color: #8f151a; font-size: clamp(24px, 6vw, 33px); font-weight: 900; letter-spacing: -0.035em; line-height: 1.15; }
+.proximity-restriction p { max-width: 480px; margin: 0 auto; color: #493432; font-size: 15px; font-weight: 700; line-height: 1.65; }
+.proximity-restriction .proximity-help { margin-top: 12px; color: #8f151a; font-weight: 900; }
+.proximity-call-button { display: inline-flex; align-items: center; justify-content: center; gap: 9px; min-height: 54px; margin-top: 24px; padding: 12px 22px; border-radius: 14px; color: #fff; background: linear-gradient(135deg, #168d48, #087337); box-shadow: 0 12px 24px rgba(8, 115, 55, 0.28); font-size: 14px; font-weight: 900; text-decoration: none; }
+.proximity-call-button:hover { filter: brightness(1.06); transform: translateY(-1px); }
+.proximity-call-button span { font-size: 19px; }
 .menu-note {
   margin: 4px 0 0;
   font-size: 11px;
