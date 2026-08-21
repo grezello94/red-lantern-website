@@ -822,6 +822,10 @@ function fillAirMenu(menu = {}) {
   setField('airSourceFileName', menu.sourceFileName);
   setField('airBarSourceFileName', menu.barSourceFileName);
   setField('airCardOrderPhone', menu.cardOrderPhone);
+  setField('airProximityLatitude', menu.proximity?.latitude ?? '');
+  setField('airProximityLongitude', menu.proximity?.longitude ?? '');
+  setField('airTableProximityRadius', menu.proximity?.tableRadius ?? 0);
+  setField('airCardProximityRadius', menu.proximity?.cardRadius ?? 0);
   setField('airLoyaltySpend', menu.loyalty?.spend || 10);
   setField('airLoyaltyEarn', menu.loyalty?.earn || 1);
   setField('airLoyaltyMinRedeem', menu.loyalty?.minRedeem || 100);
