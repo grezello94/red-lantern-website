@@ -13,6 +13,8 @@ let directOrdersEnabled = false;
 let loyaltyPoints = 0;
 let loyaltyLookupTimer = null;
 let directOrderRequestId = sessionStorage.getItem(directOrderRequestKey) || '';
+let proximityProof = null;
+function verifyProximity(proximity) { if(!proximity?.required)return Promise.resolve(); if(!navigator.geolocation)return Promise.reject(new Error('This device cannot verify its location.')); return new Promise((resolve,reject)=>navigator.geolocation.getCurrentPosition((position)=>{proximityProof={latitude:position.coords.latitude,longitude:position.coords.longitude,accuracy:position.coords.accuracy};resolve();},()=>reject(new Error('Location permission is required to place an order from this QR code.')),{enableHighAccuracy:true,timeout:15000,maximumAge:60000})); }
 function nextDirectOrderRequestId() {
   return `qr-${Date.now()}-${crypto.getRandomValues(new Uint32Array(1))[0].toString(36)}`;
 }
@@ -454,6 +456,7 @@ function setupOrderShortlist() {
           customerName: document.getElementById('order-customer-name').value.trim(),
           specialRequest: document.getElementById('order-special-request').value.trim(),
           fulfillmentType: document.getElementById('order-fulfillment-type')?.value,
+          proximity: proximityProof,
           loyaltyPoints: loyaltyPointsToUse,
           items,
         }),
@@ -502,6 +505,7 @@ function configureOrderActions(menu) {
   document.body.classList.toggle('card-menu-mode', isCard);
   const whatsapp = document.getElementById('share-whatsapp');
   directOrdersEnabled = menu.directOrdersEnabled === true;
+  if(directOrdersEnabled&&menu.proximity?.required){directOrdersEnabled=false;verifyProximity(menu.proximity).then(()=>{directOrdersEnabled=true;document.getElementById('place-direct-order').hidden=false;renderOrderSummary();}).catch((error)=>{document.getElementById('menu-note').textContent=error.message;});}
   document.getElementById('place-direct-order').hidden = !directOrdersEnabled;
   whatsapp.hidden = !isCard;
   const call = document.getElementById('call-to-order');

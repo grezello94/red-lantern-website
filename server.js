@@ -194,6 +194,8 @@ function qrScanDetails(req, mode) {
   };
 }
 
+function distanceInMetres(aLat, aLng, bLat, bLng) { const r=(value)=>value*Math.PI/180, dLat=r(bLat-aLat), dLng=r(bLng-aLng), a=Math.sin(dLat/2)**2+Math.cos(r(aLat))*Math.cos(r(bLat))*Math.sin(dLng/2)**2; return 6371000*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a)); }
+
 function diagnosticSolution(category, message = '') {
   const text = String(message).toLowerCase();
   if (category === 'security')
@@ -327,7 +329,7 @@ function securityHeaders(req, res, next) {
     'X-Content-Type-Options': 'nosniff',
     'X-Frame-Options': 'DENY',
     'Referrer-Policy': 'strict-origin-when-cross-origin',
-    'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+    'Permissions-Policy': 'camera=(), microphone=(), geolocation=(self)',
     'Cross-Origin-Resource-Policy': 'same-origin',
   });
   next();
@@ -1089,6 +1091,7 @@ function normalizeAirMenu(body) {
     addonGroups = [];
   }
   const isValidTime = (value) => /^([01]\d|2[0-3]):[0-5]\d$/.test(String(value || ''));
+  const proximity={ latitude:Number.isFinite(Number(body.airProximityLatitude))&&Number(body.airProximityLatitude)>=-90&&Number(body.airProximityLatitude)<=90?Number(body.airProximityLatitude):null, longitude:Number.isFinite(Number(body.airProximityLongitude))&&Number(body.airProximityLongitude)>=-180&&Number(body.airProximityLongitude)<=180?Number(body.airProximityLongitude):null, tableRadius:Math.max(0,Math.min(100000,Math.floor(Number(body.airTableProximityRadius)||0))), cardRadius:Math.max(0,Math.min(100000,Math.floor(Number(body.airCardProximityRadius)||0))) };
   const scheduleWasSubmitted = [
     'airService1Open',
     'airService1Close',
@@ -1119,6 +1122,7 @@ function normalizeAirMenu(body) {
     showCardPrices: body.airShowCardPrices === 'on',
     cardCallEnabled: body.airCardCallEnabled === 'on',
     cardOrderPhone: String(body.airCardOrderPhone || '').trim(),
+    proximity,
     loyalty: {
       enabled: body.airLoyaltyEnabled === 'on',
       spend: Math.max(1, Math.min(100000, Math.floor(Number(body.airLoyaltySpend) || 10))),
@@ -2847,6 +2851,7 @@ app.get('/api/air-menu', async (req, res) => {
     deliveryEnabled: menu.deliveryEnabled !== false,
     cardCallEnabled: isCard && menu.cardCallEnabled === true,
     cardOrderPhone: isCard ? String(menu.cardOrderPhone || '') : '',
+    proximity:{required:Boolean(Number(isCard?menu.proximity?.cardRadius:menu.proximity?.tableRadius)>0&&Number.isFinite(Number(menu.proximity?.latitude))&&Number.isFinite(Number(menu.proximity?.longitude))),radius:Math.max(0,Number(isCard?menu.proximity?.cardRadius:menu.proximity?.tableRadius)||0)},
     mode: req.query.mode,
     expires: Number(req.query.expires),
     dishes: visibleDishes,
@@ -2864,7 +2869,7 @@ app.post('/api/direct-orders', async (req, res) => {
       customerPhone,
       customerName,
       specialRequest,
-      fulfillmentType,
+      fulfillmentType, proximity,
       items = [],
     } = req.body || {};
     const clientRequestId = String(req.get('X-Direct-Order-Id') || req.body?.clientRequestId || '')
@@ -2878,6 +2883,8 @@ app.post('/api/direct-orders', async (req, res) => {
       mode === 'card' ? menu.cardDirectOrders !== false : menu.tableDirectOrders === true;
     if (!enabled)
       return res.status(403).json({ error: 'Direct ordering is unavailable for this QR menu.' });
+    const requiredRadius=Math.max(0,Number(mode==='card'?menu.proximity?.cardRadius:menu.proximity?.tableRadius)||0), restaurantLatitude=Number(menu.proximity?.latitude), restaurantLongitude=Number(menu.proximity?.longitude);
+    if(requiredRadius>0&&Number.isFinite(restaurantLatitude)&&Number.isFinite(restaurantLongitude)){const latitude=Number(proximity?.latitude),longitude=Number(proximity?.longitude),accuracy=Number(proximity?.accuracy);if(!Number.isFinite(latitude)||!Number.isFinite(longitude))return res.status(403).json({error:'Location permission is required to place an order from this QR code.'});const tolerance=Math.min(100,Math.max(0,Number.isFinite(accuracy)?accuracy:0));if(distanceInMetres(restaurantLatitude,restaurantLongitude,latitude,longitude)>requiredRadius+tolerance)return res.status(403).json({error:`You need to be within ${requiredRadius} m of the restaurant to place this order.`});}
     const operatingStatus = restaurantStatus(menu);
     if (!operatingStatus.open)
       return res
