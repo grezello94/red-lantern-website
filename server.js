@@ -352,6 +352,8 @@ function isProtectedAdminPath(req) {
     req.path === '/api/admin/qr-scans' ||
     req.path === '/api/admin/health' ||
     req.path === '/api/admin/customer-insights' ||
+    req.path === '/api/admin/table-qr-codes' ||
+    req.path.startsWith('/api/admin/table-qr-codes/') ||
     req.path.startsWith('/api/admin/qr/') ||
     req.path.startsWith('/api/admin/air-menu/') ||
     req.path.startsWith('/api/update-') ||
@@ -677,6 +679,7 @@ const labels = {
 };
 
 let publicContentCache = null;
+let contentRevisionsTableReady = null;
 let directOrdersTableReady = null;
 let kotsTableReady = null;
 let loyaltyTableReady = null;
@@ -928,10 +931,25 @@ async function getSection(section) {
   }
 }
 
+async function ensureContentRevisionsTable() {
+  if (!sql) throw new Error('Neon is not configured.');
+  if (!contentRevisionsTableReady)
+    contentRevisionsTableReady = (async () => {
+      await sql`CREATE TABLE IF NOT EXISTS website_content_revisions (revision_id BIGSERIAL PRIMARY KEY, section TEXT NOT NULL, data JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;
+      await sql`CREATE INDEX IF NOT EXISTS website_content_revisions_section_created_index ON website_content_revisions (section, created_at DESC)`;
+    })();
+  return contentRevisionsTableReady;
+}
+
 async function saveSection(section, data) {
   if (!sql) throw new Error('Neon is not configured. Add NEON_DATABASE_URL to your .env file.');
   const existing = await getSection(section);
   const merged = { ...existing, ...data };
+  if (section === 'airMenu' && Object.keys(existing).length) {
+    await ensureContentRevisionsTable();
+    await sql`INSERT INTO website_content_revisions (section, data) VALUES (${section}, ${existing})`;
+    await sql`DELETE FROM website_content_revisions WHERE section=${section} AND revision_id NOT IN (SELECT revision_id FROM website_content_revisions WHERE section=${section} ORDER BY revision_id DESC LIMIT 30)`;
+  }
   await sql`
     INSERT INTO website_content (id, data) 
     VALUES (${collections[section]}, ${merged})
@@ -1090,6 +1108,13 @@ function normalizeAirMenu(body) {
   } catch {
     addonGroups = [];
   }
+  let tableQrDisabled = {};
+  try {
+    const parsed = JSON.parse(body.airTableQrDisabled || '{}');
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) tableQrDisabled = parsed;
+  } catch {
+    tableQrDisabled = {};
+  }
   const isValidTime = (value) => /^([01]\d|2[0-3]):[0-5]\d$/.test(String(value || ''));
   const proximity={ latitude:Number.isFinite(Number(body.airProximityLatitude))&&Number(body.airProximityLatitude)>=-90&&Number(body.airProximityLatitude)<=90?Number(body.airProximityLatitude):null, longitude:Number.isFinite(Number(body.airProximityLongitude))&&Number(body.airProximityLongitude)>=-180&&Number(body.airProximityLongitude)<=180?Number(body.airProximityLongitude):null, tableRadius:Math.max(0,Math.min(100000,Math.floor(Number(body.airTableProximityRadius)||0))), cardRadius:Math.max(0,Math.min(100000,Math.floor(Number(body.airCardProximityRadius)||0))) };
   const scheduleWasSubmitted = [
@@ -1140,6 +1165,7 @@ function normalizeAirMenu(body) {
       .slice(0, 240),
     categoryVisibility,
     categoryOrder,
+    tableQrDisabled,
     addonGroups,
     sourceFileName: body.airSourceFileName || '',
     barSourceFileName: body.airBarSourceFileName || '',
@@ -2734,11 +2760,40 @@ async function extractAirMenuFromPdf(file) {
   return { items, extractionMethod, pageCount, rawText };
 }
 
+const tableQrKey = (areaId, tableNumber) => `${String(areaId || '').trim()}:${Number(tableNumber)}`;
+
+async function resolveTableQr(areaId, tableNumber) {
+  const id = String(areaId || '').trim();
+  const number = Number.parseInt(tableNumber, 10);
+  if (!id || !Number.isInteger(number) || number < 1 || number > 9999) return null;
+  await ensureOperationsConfigTable();
+  const rows =
+    await sql`SELECT config FROM order_operations_config WHERE config_key='default' LIMIT 1`;
+  const areas = Array.isArray(rows[0]?.config?.tableAreas) ? rows[0].config.tableAreas : [];
+  const area = areas.find(
+    (candidate) =>
+      String(candidate.id || '') === id &&
+      number >= Number(candidate.from) &&
+      number <= Number(candidate.to)
+  );
+  return area
+    ? { id, number, name: String(area.name || '').trim(), key: tableQrKey(id, number) }
+    : null;
+}
+
 app.get('/scan/:mode', async (req, res) => {
   const mode = req.params.mode;
   if (!['table', 'card'].includes(mode)) return res.redirect(302, '/menu');
   try {
     const menu = await getSection('airMenu');
+    const tableQr =
+      mode === 'table' && (req.query.area || req.query.table)
+        ? await resolveTableQr(req.query.area, req.query.table)
+        : null;
+    if (mode === 'table' && (req.query.area || req.query.table) && !tableQr)
+      return res.redirect(302, 'https://www.redlanternrestaurant.in/menu');
+    if (tableQr && menu.tableQrDisabled?.[tableQr.key])
+      return res.redirect(302, 'https://www.redlanternrestaurant.in/menu');
     if (
       (mode === 'table' && menu.tableLive === false) ||
       (mode === 'card' && menu.cardLive === false)
@@ -2763,7 +2818,7 @@ app.get('/scan/:mode', async (req, res) => {
     res.set('Cache-Control', 'no-store');
     return res.redirect(
       302,
-      `/air-menu?mode=${mode}&expires=${expires}&signature=${encodeURIComponent(signature)}`
+      `/air-menu?mode=${mode}&expires=${expires}&signature=${encodeURIComponent(signature)}${tableQr ? `&area=${encodeURIComponent(tableQr.id)}&table=${tableQr.number}` : ''}`
     );
   } catch (error) {
     // A database or analytics outage must not strand customers at a 500 page.
@@ -2788,6 +2843,14 @@ app.get('/api/air-menu', async (req, res) => {
       .json({ expired: true, redirect: 'https://www.redlanternrestaurant.in/menu' });
   }
   const menu = await getSection('airMenu');
+  const tableQr =
+    req.query.mode === 'table' && (req.query.area || req.query.table)
+      ? await resolveTableQr(req.query.area, req.query.table)
+      : null;
+  if (req.query.mode === 'table' && (req.query.area || req.query.table) && !tableQr)
+    return res.status(410).json({ unavailable: true, redirect: 'https://www.redlanternrestaurant.in/menu' });
+  if (tableQr && menu.tableQrDisabled?.[tableQr.key])
+    return res.status(410).json({ unavailable: true, redirect: 'https://www.redlanternrestaurant.in/menu' });
   const dishes = [
     ...(Array.isArray(menu.items) ? menu.items : []),
     ...(Array.isArray(menu.barItems)
@@ -2809,6 +2872,9 @@ app.get('/api/air-menu', async (req, res) => {
       note: menu.note || '',
       message: operatingStatus.message,
       reopensAt: operatingStatus.reopensAt,
+      tableLabel: tableQr ? `${tableQr.name} Table ${tableQr.number}` : '',
+      tableArea: tableQr?.name || '',
+      tableNumber: tableQr?.number || null,
       mode: req.query.mode,
       expires: Number(req.query.expires),
       dishes: [],
@@ -2852,6 +2918,9 @@ app.get('/api/air-menu', async (req, res) => {
     cardCallEnabled: isCard && menu.cardCallEnabled === true,
     cardOrderPhone: String(menu.cardOrderPhone || ''),
     proximity:{required:Boolean(Number(isCard?menu.proximity?.cardRadius:menu.proximity?.tableRadius)>0&&Number.isFinite(Number(menu.proximity?.latitude))&&Number.isFinite(Number(menu.proximity?.longitude))),radius:Math.max(0,Number(isCard?menu.proximity?.cardRadius:menu.proximity?.tableRadius)||0),latitude:Number(menu.proximity?.latitude),longitude:Number(menu.proximity?.longitude)},
+    tableLabel: tableQr ? `${tableQr.name} Table ${tableQr.number}` : '',
+    tableArea: tableQr?.name || '',
+    tableNumber: tableQr?.number || null,
     mode: req.query.mode,
     expires: Number(req.query.expires),
     dishes: visibleDishes,
@@ -4529,7 +4598,13 @@ app.get('/api/admin/qr/:mode', async (req, res) => {
     const permanentQrBaseUrl = String(
       process.env.AIR_MENU_QR_BASE_URL || 'https://www.redlanternrestaurant.in'
     ).replace(/\/$/, '');
-    const target = `${permanentQrBaseUrl}/scan/${mode}`;
+    const tableQr =
+      mode === 'table' && (req.query.area || req.query.table)
+        ? await resolveTableQr(req.query.area, req.query.table)
+        : null;
+    if (mode === 'table' && (req.query.area || req.query.table) && !tableQr)
+      return res.status(404).send('Table QR code not found.');
+    const target = `${permanentQrBaseUrl}/scan/${mode}${tableQr ? `?area=${encodeURIComponent(tableQr.id)}&table=${tableQr.number}` : ''}`;
     const qrSvg = await QRCode.toString(target, {
       type: 'svg',
       errorCorrectionLevel: 'H',
@@ -4542,7 +4617,7 @@ app.get('/api/admin/qr/:mode', async (req, res) => {
       '<rect x="17.25" y="17.25" width="10.5" height="10.5" rx="1.2" fill="#ffffff" stroke="#dc2626" stroke-width="0.45"/>',
       '<text x="22.5" y="20.8" text-anchor="middle" fill="#111827" font-family="Arial, Helvetica, sans-serif" font-size="2.15" font-weight="800" letter-spacing="0.12">SCAN</text>',
       '<text x="22.5" y="23.1" text-anchor="middle" fill="#dc2626" font-family="Arial, Helvetica, sans-serif" font-size="1.35" font-weight="800" letter-spacing="0.08">FOR</text>',
-      '<text x="22.5" y="25.85" text-anchor="middle" fill="#111827" font-family="Arial, Helvetica, sans-serif" font-size="2.15" font-weight="800" letter-spacing="0.08">MENU</text>',
+      `<text x="22.5" y="25.85" text-anchor="middle" fill="#111827" font-family="Arial, Helvetica, sans-serif" font-size="${tableQr ? '1.4' : '2.15'}" font-weight="800" letter-spacing="0.08">${tableQr ? `${String(tableQr.name).slice(0, 10).toUpperCase()} ${tableQr.number}` : 'MENU'}</text>`,
       '</g>',
     ].join('');
     const svg = qrSvg.replace('</svg>', `${centerLabel}</svg>`);
@@ -4554,6 +4629,43 @@ app.get('/api/admin/qr/:mode', async (req, res) => {
     res.send(svg);
   } catch (error) {
     res.status(500).send('Unable to generate QR code.');
+  }
+});
+
+app.get('/api/admin/table-qr-codes', async (req, res) => {
+  try {
+    await ensureOperationsConfigTable();
+    const [rows, menu] = await Promise.all([
+      sql`SELECT config FROM order_operations_config WHERE config_key='default' LIMIT 1`,
+      getSection('airMenu'),
+    ]);
+    const areas = Array.isArray(rows[0]?.config?.tableAreas) ? rows[0].config.tableAreas : [];
+    const codes = areas.flatMap((area) =>
+      Array.from({ length: Math.max(0, Number(area.to) - Number(area.from) + 1) }, (_, index) => {
+        const number = Number(area.from) + index;
+        const key = tableQrKey(area.id, number);
+        return { areaId: String(area.id), areaName: String(area.name), tableNumber: number, enabled: !menu.tableQrDisabled?.[key] };
+      })
+    );
+    res.set('Cache-Control', 'no-store');
+    res.json({ codes });
+  } catch (error) {
+    res.status(500).json({ error: 'Unable to load table QR codes.' });
+  }
+});
+
+app.put('/api/admin/table-qr-codes/:areaId/:tableNumber', async (req, res) => {
+  try {
+    const tableQr = await resolveTableQr(req.params.areaId, req.params.tableNumber);
+    if (!tableQr) return res.status(404).json({ error: 'Table QR code not found.' });
+    const menu = await getSection('airMenu');
+    const disabled = { ...(menu.tableQrDisabled || {}) };
+    if (req.body?.enabled === false) disabled[tableQr.key] = true;
+    else delete disabled[tableQr.key];
+    await saveSection('airMenu', { tableQrDisabled: disabled });
+    res.json({ ok: true, enabled: !disabled[tableQr.key] });
+  } catch (error) {
+    res.status(500).json({ error: 'Unable to update this table QR code.' });
   }
 });
 
@@ -5692,7 +5804,21 @@ Object.keys(collections).forEach((section) => {
           file.publicUrl = result.secure_url;
         }
       }
-      await saveSection(section, normalizeSection(section, req.body, req.files || []));
+      const normalized = normalizeSection(section, req.body, req.files || []);
+      if (section === 'airMenu') {
+        const existing = await getSection('airMenu');
+        const existingItems = [...(existing.items || []), ...(existing.barItems || [])].filter(
+          (item) => item?.name
+        ).length;
+        const submittedItems = [...(normalized.items || []), ...(normalized.barItems || [])].filter(
+          (item) => item?.name
+        ).length;
+        if (existingItems && !submittedItems && req.body.airMenuConfirmEmpty !== 'on')
+          throw new Error(
+            'Your saved menu has items, but this publish contains none. The menu was not changed. If you truly want to clear every item, confirm that choice in Admin and publish again.'
+          );
+      }
+      await saveSection(section, normalized);
       clearPublicContentCache();
       logDiagnostic({
         level: 'info',

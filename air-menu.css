@@ -113,6 +113,16 @@ h1 {
   font-size: 13px;
   line-height: 1.4;
 }
+.table-identity {
+  display: inline-flex;
+  margin: 10px 0 0;
+  padding: 6px 0;
+  border-bottom: 3px solid #e43a3e;
+  color: #9f1d24;
+  font-size: 14px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+}
 main {
   width: min(100%, 1420px);
   margin: 0 auto;
@@ -918,6 +928,87 @@ input:focus-visible {
 .proximity-restriction h2 { margin: 5px 0 13px; color: #8f151a; font-size: clamp(24px, 6vw, 33px); font-weight: 900; letter-spacing: -0.035em; line-height: 1.15; }
 .proximity-restriction p { max-width: 480px; margin: 0 auto; color: #493432; font-size: 15px; font-weight: 700; line-height: 1.65; }
 .proximity-restriction .proximity-help { margin-top: 12px; color: #8f151a; font-weight: 900; }
+.order-outage-fallback {
+  max-width: 560px;
+  margin: 34px auto;
+  padding: clamp(28px, 7vw, 46px) clamp(20px, 6vw, 42px);
+  border: 1px solid #f1c6c7;
+  border-radius: 22px;
+  background: linear-gradient(145deg, #fffafa, #fff 72%);
+  box-shadow: 0 16px 38px rgba(109, 32, 35, 0.12);
+  text-align: center;
+}
+.order-outage-icon {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  margin: 0 auto 13px;
+  place-items: center;
+  border-radius: 50%;
+  color: #fff;
+  background: #b4232b;
+  font-size: 28px;
+  font-weight: 900;
+}
+.order-outage-fallback h2 {
+  margin: 5px 0 12px;
+  color: #8f151a;
+  font-size: clamp(23px, 6vw, 31px);
+  font-weight: 900;
+  letter-spacing: -0.035em;
+  line-height: 1.15;
+}
+.order-outage-fallback > p {
+  margin: 0 auto;
+  color: #493432;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.6;
+}
+.order-outage-fallback .order-outage-table {
+  margin-top: 13px;
+  color: #8f151a;
+  font-size: 15px;
+}
+.order-outage-fallback .order-outage-help {
+  margin-top: 13px;
+}
+.order-outage-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 22px;
+}
+.order-outage-actions a {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  color: #fff;
+  font: 800 12px Manrope, sans-serif;
+  text-align: center;
+  text-decoration: none;
+}
+.order-outage-call { background: #17264a; }
+.order-outage-whatsapp { background: #159447; }
+.order-outage-contact { margin-top: 18px !important; color: #8f151a !important; }
+.order-confirmation .order-outage-fallback {
+  margin: 0;
+  padding: 22px 8px 12px;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+}
+.order-confirmation .order-outage-icon { width: 42px; height: 42px; margin-bottom: 10px; font-size: 24px; }
+.order-confirmation .order-outage-fallback h2 { font-size: 23px; }
+.order-confirmation .confirmation-secondary { margin-top: 16px; }
+@media (max-width: 390px) {
+  .order-outage-actions { grid-template-columns: 1fr; }
+}
 .proximity-call-button { display: inline-flex; align-items: center; justify-content: center; gap: 9px; min-height: 54px; margin-top: 24px; padding: 12px 22px; border-radius: 14px; color: #fff; background: linear-gradient(135deg, #168d48, #087337); box-shadow: 0 12px 24px rgba(8, 115, 55, 0.28); font-size: 14px; font-weight: 900; text-decoration: none; }
 .proximity-call-button:hover { filter: brightness(1.06); transform: translateY(-1px); }
 .proximity-call-button span { font-size: 19px; }

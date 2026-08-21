@@ -14,6 +14,8 @@ let loyaltyPoints = 0;
 let loyaltyLookupTimer = null;
 let directOrderRequestId = sessionStorage.getItem(directOrderRequestKey) || '';
 let proximityProof = null;
+let activeMenu = null;
+const menuCacheKey = `red-lantern-menu:${params.get('signature') || expires || 'public'}`;
 function distanceInMetres(latitudeA, longitudeA, latitudeB, longitudeB) {
   const radians = (value) => (Number(value) * Math.PI) / 180;
   const latitudeDelta = radians(latitudeB - latitudeA);
@@ -61,6 +63,57 @@ function proximityCallLink(menu) {
   const digits = phone.replace(/\D/g, '');
   if (digits.length < 7) return '';
   return `<a class="proximity-call-button" href="tel:${phone.startsWith('+') ? '+' : ''}${digits}"><span aria-hidden="true">☎</span> Call to Place an Order</a>`;
+}
+
+function orderPhoneDetails(menu = activeMenu) {
+  const phone = String(menu?.cardOrderPhone || '').trim();
+  const digits = phone.replace(/\D/g, '');
+  return {
+    digits,
+    dialNumber: `${phone.startsWith('+') ? '+' : ''}${digits}`,
+  };
+}
+
+function scannedTableLabel(menu = activeMenu) {
+  if (menu?.tableLabel) return menu.tableLabel;
+  const table = params.get('table');
+  return table ? `Table ${table}` : '';
+}
+
+function orderFallbackActions(menu = activeMenu) {
+  const { digits, dialNumber } = orderPhoneDetails(menu);
+  const whatsappCopy = `*Red Lantern Order Request*\n\n${orderSummaryText()}`;
+  if (digits.length < 7)
+    return '<p class="order-outage-contact">Please call a member of our team to place your order.</p>';
+  return `<div class="order-outage-actions"><a class="order-outage-call" href="tel:${dialNumber}"><span aria-hidden="true">☎</span> Call to Place Order</a><a class="order-outage-whatsapp" href="https://wa.me/${digits}?text=${encodeURIComponent(whatsappCopy)}" target="_blank" rel="noopener"><span aria-hidden="true">◉</span> Send Order on WhatsApp</a></div>`;
+}
+
+function showOrderOutageFallback(menu = activeMenu, { fullScreen = false } = {}) {
+  const tableLabel = scannedTableLabel(menu);
+  const tableCopy = tableLabel
+    ? `<p class="order-outage-table">Your scanned table: <strong>${escapeHtml(tableLabel)}</strong></p>`
+    : '';
+  const content = `<section class="order-outage-fallback" role="alert"><span class="order-outage-icon" aria-hidden="true">⌁</span><p class="eyebrow">Ordering service temporarily unavailable</p><h2>Online ordering is taking longer than usual.</h2><p>Your order has <strong>not</strong> been sent, so it cannot be duplicated.</p>${tableCopy}<p class="order-outage-help">Call us or send your selected items on WhatsApp and our team will take your order right away.</p>${orderFallbackActions(menu)}</section>`;
+  if (fullScreen) {
+    document.querySelector('.menu-tools').hidden = true;
+    document.getElementById('open-order-summary').hidden = true;
+    document.getElementById('menu-content').innerHTML = content;
+    document.getElementById('menu-note').textContent = '';
+    return;
+  }
+  const dialog = document.getElementById('order-summary');
+  const summaryItems = document.getElementById('order-summary-items');
+  const customerDetails = document.getElementById('order-customer-details');
+  const actions = dialog.querySelector('.order-summary-actions');
+  const status = document.getElementById('order-action-status');
+  const confirmation = document.getElementById('order-confirmation');
+  dialog.querySelector('.order-dialog-head').hidden = true;
+  summaryItems.hidden = true;
+  customerDetails.hidden = true;
+  actions.hidden = true;
+  status.hidden = true;
+  confirmation.innerHTML = `${content}<button type="button" id="fallback-try-again" class="confirmation-secondary">Try Online Order Again</button>`;
+  confirmation.hidden = false;
 }
 
 function showProximityRestriction(menu) {
@@ -262,6 +315,8 @@ function registerOrderOptions(dish, category, index, showPrices) {
 
 function orderSummaryText() {
   const lines = ['*Red Lantern Order Selection For:*'];
+  const tableLabel = scannedTableLabel();
+  if (tableLabel) lines.push(`Table: ${tableLabel}`);
   if (orderIsBusinessCard) {
     lines.push(`Your Mobile Number: ${orderCustomerPhone || 'Not provided'}`);
     lines.push('');
@@ -424,7 +479,9 @@ function setupOrderShortlist() {
   const customerDetails = document.getElementById('order-customer-details');
   const actions = dialog.querySelector('.order-summary-actions');
   const confirmation = document.getElementById('order-confirmation');
+  const confirmationTemplate = confirmation.innerHTML;
   const resetOrderDialog = () => {
+    confirmation.innerHTML = confirmationTemplate;
     confirmation.hidden = true;
     dialog.querySelector('.order-dialog-head').hidden = false;
     summaryItems.hidden = false;
@@ -495,8 +552,7 @@ function setupOrderShortlist() {
       return;
     }
     if (!navigator.onLine) {
-      status.textContent =
-        'Internet is unavailable. This QR order has not been sent, so it cannot be duplicated. Please reconnect and try again.';
+      showOrderOutageFallback();
       return;
     }
     const button = document.getElementById('place-direct-order');
@@ -524,8 +580,12 @@ function setupOrderShortlist() {
           items,
         }),
       });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error);
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const error = new Error(result.error || 'Unable to place the order.');
+        error.status = response.status;
+        throw error;
+      }
       orderSelections = {};
       clearDirectOrderRequestId();
       loyaltyPoints = Math.max(0, loyaltyPoints - loyaltyPointsToUse);
@@ -543,13 +603,22 @@ function setupOrderShortlist() {
       status.hidden = true;
       confirmation.hidden = false;
     } catch (error) {
-      status.textContent = error.message || 'Unable to place the order. Please call us.';
+      if (!error.status || error.status >= 500 || error.status === 429) {
+        showOrderOutageFallback();
+      } else {
+        status.textContent = error.message || 'Unable to place the order. Please call us.';
+      }
     } finally {
       button.disabled = false;
     }
   });
   document.getElementById('place-another-order').addEventListener('click', () => {
     clearDirectOrderRequestId();
+    resetOrderDialog();
+    renderOrderSummary();
+  });
+  confirmation.addEventListener('click', (event) => {
+    if (event.target.id !== 'fallback-try-again') return;
     resetOrderDialog();
     renderOrderSummary();
   });
@@ -574,7 +643,7 @@ function configureOrderActions(menu) {
   const phone = String(menu.cardOrderPhone || '').trim();
   const phoneDigits = phone.replace(/\D/g, '');
   const dialNumber = `${phone.startsWith('+') ? '+' : ''}${phoneDigits}`;
-  orderWhatsAppNumber = isCard && phoneDigits.length >= 7 ? phoneDigits : '';
+  orderWhatsAppNumber = phoneDigits.length >= 7 ? phoneDigits : '';
   const showCall = isCard && menu.cardCallEnabled && phoneDigits.length >= 7;
   call.hidden = !showCall;
   call.href = showCall ? `tel:${dialNumber}` : '#';
@@ -712,9 +781,16 @@ async function loadMenu() {
     const response = await fetch(`/api/air-menu?${params.toString()}`, { cache: 'no-store' });
     const menu = await response.json();
     if (!response.ok || menu.expired) return window.location.replace(menu.redirect || fallbackUrl);
+    activeMenu = menu;
+    sessionStorage.setItem(menuCacheKey, JSON.stringify(menu));
 
     document.getElementById('menu-kind').textContent =
-      `${menu.mode === 'card' ? 'Food menu' : 'Complete table menu'} · ${menu.pageTitle}`;
+      `${menu.tableLabel || (menu.mode === 'card' ? 'Food menu' : 'Complete table menu')} · ${menu.pageTitle}`;
+    const tableIdentity = document.getElementById('table-identity');
+    tableIdentity.hidden = !menu.tableLabel;
+    tableIdentity.textContent = menu.tableLabel
+      ? `Table No. ${menu.tableNumber} · ${menu.tableArea}`
+      : '';
     document.getElementById('menu-title').textContent = 'Red Lantern';
     document.getElementById('menu-subtitle').textContent = menu.pageSubtitle;
     document.getElementById('menu-note').textContent = menu.note;
@@ -786,8 +862,20 @@ async function loadMenu() {
       updateOrderUI();
     }
   } catch (error) {
-    // Keep the printed QR useful even if the Air Menu API is temporarily down.
-    console.error('Air Menu failed to load; using website menu fallback:', error);
+    console.error('Air Menu failed to load; showing the saved QR-order fallback:', error);
+    try {
+      activeMenu = JSON.parse(sessionStorage.getItem(menuCacheKey) || 'null');
+    } catch {
+      activeMenu = null;
+    }
+    if (activeMenu) {
+      document.getElementById('table-identity').hidden = !activeMenu.tableLabel;
+      document.getElementById('table-identity').textContent = activeMenu.tableLabel
+        ? `Table No. ${activeMenu.tableNumber} · ${activeMenu.tableArea}`
+        : '';
+      showOrderOutageFallback(activeMenu, { fullScreen: true });
+      return;
+    }
     window.location.replace(fallbackUrl);
   }
 }

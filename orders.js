@@ -2535,7 +2535,7 @@ function renderTableAllocation() {
   const content = document.getElementById('operations-content');
   if (!content) return;
   const areas = Array.isArray(operationsConfig.tableAreas) ? operationsConfig.tableAreas : [];
-  content.innerHTML = `<section class="printer-assignment"><button type="button" class="assignment-back" data-operations-tab="home">‹ Back</button><h3>▦ Table allocation</h3><p>Create each restaurant area, then give it an inclusive table-number range. Example: A/C tables 1–28 and Non-A/C tables 1–9. The same table number can exist in different areas.</p><div class="table-allocation-form"><label>Area name<input id="table-area-name" maxlength="60" placeholder="e.g. Garden seating"></label><label>From table<input id="table-area-from" type="number" min="1" max="9999" inputmode="numeric" placeholder="1"></label><label>To table<input id="table-area-to" type="number" min="1" max="9999" inputmode="numeric" placeholder="20"></label><button type="button" class="operations-save" data-add-table-area>Add area</button></div><div class="table-allocation-list">${areas.map((area) => `<article><div><b>${esc(area.name)}</b><span>Tables ${esc(area.from)} to ${esc(area.to)} · ${Number(area.to) - Number(area.from) + 1} tables</span></div><button type="button" data-remove-table-area="${esc(area.id)}">Remove</button></article>`).join('') || '<p class="operations-empty">No table areas configured yet.</p>'}</div><div class="assignment-actions"><button type="button" class="operations-save" data-save-table-allocation>Save table allocation</button></div></section>`;
+  content.innerHTML = `<section class="printer-assignment"><button type="button" class="assignment-back" data-operations-tab="home">‹ Back</button><h3>▦ Table allocation</h3><p>Create each restaurant area, then give it an inclusive table-number range. Example: A/C tables 1–28 and Non-A/C tables 1–9. The same table number can exist in different areas.</p><div class="table-allocation-form" data-table-allocation-form><label>Area name<input id="table-area-name" maxlength="60" placeholder="e.g. Garden seating"></label><label>From table<input id="table-area-from" type="number" min="1" max="9999" inputmode="numeric" placeholder="1"></label><label>To table<input id="table-area-to" type="number" min="1" max="9999" inputmode="numeric" placeholder="20"></label><button type="button" class="operations-save" data-add-table-area>Add area</button></div><div class="table-allocation-list">${areas.map((area) => `<article><div><b>${esc(area.name)}</b><span>Tables ${esc(area.from)} to ${esc(area.to)} · ${Number(area.to) - Number(area.from) + 1} tables</span></div><div class="table-area-actions"><button type="button" data-edit-table-area="${esc(area.id)}">Edit</button><button type="button" data-remove-table-area="${esc(area.id)}">Remove</button></div></article>`).join('') || '<p class="operations-empty">No table areas configured yet.</p>'}</div><div class="assignment-actions"><button type="button" class="operations-save" data-save-table-allocation>Save table allocation</button></div></section>`;
 }
 function renderKitchenDisplay() {
   const content = document.getElementById('operations-content');
@@ -4336,6 +4336,8 @@ document.getElementById('operations-content')?.addEventListener('click', async (
     return;
   }
   if (event.target.closest('[data-add-table-area]')) {
+    const allocationForm = document.querySelector('[data-table-allocation-form]');
+    const editingAreaId = allocationForm?.dataset.editingArea || '';
     const name = String(document.getElementById('table-area-name')?.value || '').trim();
     const fromInput = document.getElementById('table-area-from');
     const toInput = document.getElementById('table-area-to');
@@ -4353,10 +4355,11 @@ document.getElementById('operations-content')?.addEventListener('click', async (
       fromInput?.focus();
       return;
     }
-    operationsConfig.tableAreas = [
-      ...(operationsConfig.tableAreas || []),
-      { id: operationId(), name, from, to },
-    ];
+    operationsConfig.tableAreas = editingAreaId
+      ? (operationsConfig.tableAreas || []).map((area) =>
+          area.id === editingAreaId ? { ...area, name, from, to } : area
+        )
+      : [...(operationsConfig.tableAreas || []), { id: operationId(), name, from, to }];
     cacheTableAreas(operationsConfig.tableAreas);
     try {
       await saveTableAllocation(null);
@@ -4368,6 +4371,24 @@ document.getElementById('operations-content')?.addEventListener('click', async (
       );
       renderTableAllocation();
     }
+    return;
+  }
+  const editTableArea = event.target.closest('[data-edit-table-area]');
+  if (editTableArea) {
+    const area = (operationsConfig.tableAreas || []).find(
+      (item) => item.id === editTableArea.dataset.editTableArea
+    );
+    if (!area) return;
+    const form = document.querySelector('[data-table-allocation-form]');
+    if (!form) return;
+    form.dataset.editingArea = area.id;
+    document.getElementById('table-area-name').value = area.name;
+    document.getElementById('table-area-from').value = area.from;
+    document.getElementById('table-area-to').value = area.to;
+    const button = form.querySelector('[data-add-table-area]');
+    if (button) button.textContent = 'Update area';
+    document.getElementById('table-area-name')?.focus();
+    form.scrollIntoView({ behavior: 'smooth', block: 'center' });
     return;
   }
   const removeTableArea = event.target.closest('[data-remove-table-area]');

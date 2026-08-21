@@ -16,6 +16,29 @@ const setStatus = (form, message, isError = false) => {
   status.style.color = isError ? '#b91c1c' : '#166534';
 };
 
+let saveToastTimer = null;
+function showSaveToast() {
+  let toast = document.getElementById('admin-save-toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'admin-save-toast';
+    toast.className = 'admin-save-toast';
+    toast.setAttribute('role', 'status');
+    toast.setAttribute('aria-live', 'polite');
+    toast.innerHTML = '<span class="admin-save-toast-check" aria-hidden="true">✓</span><span>Changes saved</span>';
+    document.body.appendChild(toast);
+  }
+  window.clearTimeout(saveToastTimer);
+  toast.classList.remove('is-visible');
+  void toast.offsetWidth;
+  toast.classList.add('is-visible');
+  saveToastTimer = window.setTimeout(() => toast.classList.remove('is-visible'), 2600);
+}
+
+const saveToastStyles = document.createElement('style');
+saveToastStyles.textContent = `#admin-save-toast{position:fixed;left:50%;top:50%;z-index:10000;display:flex;align-items:center;gap:12px;padding:18px 24px;border:1px solid rgba(255,255,255,.7);border-radius:18px;color:#fff;background:linear-gradient(135deg,#14834a,#08713a);box-shadow:0 22px 60px rgba(4,70,35,.34);font:900 18px Manrope,Arial,sans-serif;opacity:0;pointer-events:none;transform:translate(-50%,-42%) scale(.9);transition:opacity .22s ease,transform .28s cubic-bezier(.2,.9,.2,1)}#admin-save-toast.is-visible{opacity:1;transform:translate(-50%,-50%) scale(1)}.admin-save-toast-check{display:grid;width:30px;height:30px;place-items:center;border-radius:50%;color:#08713a;background:#fff;font-size:19px;font-weight:900}@media(max-width:560px){#admin-save-toast{width:calc(100% - 40px);justify-content:center;padding:16px 18px;font-size:16px}}`;
+document.head.appendChild(saveToastStyles);
+
 function reportClientDiagnostic(payload) {
   try {
     const body = JSON.stringify({
@@ -803,6 +826,20 @@ document
   .querySelector('form[action="/api/update-airMenu"]')
   ?.addEventListener('submit', (event) => {
     document.querySelectorAll('[data-addon-group]').forEach(readAirAddonGroup);
+    const form = event.currentTarget;
+    const menuItemCount = [
+      ...form.querySelectorAll('[name="airItemName[]"], [name="airBarItemName[]"]'),
+    ].filter((input) => input.value.trim()).length;
+    if (!menuItemCount) {
+      const confirmed = window.confirm(
+        'This will permanently clear every food and bar item from the live QR menu. A backup will be kept, but do you really want to continue?'
+      );
+      if (!confirmed) {
+        event.preventDefault();
+        return;
+      }
+      form.querySelector('[name="airMenuConfirmEmpty"]').value = 'on';
+    }
     const incomplete = airAddonGroups.find((group) => !group.name.trim());
     if (!incomplete) return;
     event.preventDefault();
@@ -822,6 +859,7 @@ function fillAirMenu(menu = {}) {
   setField('airSourceFileName', menu.sourceFileName);
   setField('airBarSourceFileName', menu.barSourceFileName);
   setField('airCardOrderPhone', menu.cardOrderPhone);
+  setField('airTableQrDisabled', JSON.stringify(menu.tableQrDisabled || {}));
   setField('airProximityLatitude', menu.proximity?.latitude ?? '');
   setField('airProximityLongitude', menu.proximity?.longitude ?? '');
   setField('airTableProximityRadius', menu.proximity?.tableRadius ?? 0);
@@ -862,6 +900,48 @@ function fillAirMenu(menu = {}) {
   renderAirItems(Array.isArray(menu.items) ? menu.items : []);
   renderAirBarItems(Array.isArray(menu.barItems) ? menu.barItems : []);
 }
+
+const tableQrStyles = document.createElement('style');
+tableQrStyles.textContent = `.table-qr-manager{margin-top:22px;padding:20px;border:1px solid #d9e5f2;border-radius:16px;background:#f8fbff}.table-qr-manager>div:first-child{display:grid;gap:4px}.table-qr-manager strong{color:#223b5c;font-size:16px}.table-qr-code-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:14px;margin-top:16px}.table-qr-code{padding:14px;border:1px solid #dce6f0;border-radius:14px;background:#fff;text-align:center}.table-qr-code img{display:block;width:138px;height:138px;margin:8px auto;object-fit:contain}.table-qr-code b,.table-qr-code small{display:block}.table-qr-code b{color:#243852;font-size:14px}.table-qr-code small{margin:4px 0 10px;color:#71839b;font-size:11px}.table-qr-actions{display:flex;align-items:center;justify-content:center;gap:9px}.table-qr-actions a{padding:8px 10px;border-radius:8px;color:#175b9a;background:#eef6ff;font-size:11px;font-weight:800;text-decoration:none}.table-qr-toggle{display:inline-flex;align-items:center;gap:6px;color:#52677f;font-size:11px;font-weight:800}.table-qr-toggle input{appearance:none;width:38px;height:22px;margin:0;border-radius:999px;background:radial-gradient(circle at 11px 50%,#fff 0 8px,transparent 9px),#cbd5e1;cursor:pointer}.table-qr-toggle input:checked{background:radial-gradient(circle at 27px 50%,#fff 0 8px,transparent 9px),#c22635}`;
+document.head.appendChild(tableQrStyles);
+
+async function loadTableQrCodes() {
+  const container = document.getElementById('table-qr-codes');
+  if (!container) return;
+  try {
+    const response = await fetch('/api/admin/table-qr-codes', { cache: 'no-store' });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Unable to load table QR codes.');
+    container.innerHTML = data.codes?.length
+      ? data.codes
+          .map((code) => {
+            const query = `area=${encodeURIComponent(code.areaId)}&table=${code.tableNumber}`;
+            return `<article class="table-qr-code"><b>${escapeHtml(`${code.areaName} Table ${code.tableNumber}`)}</b><small>Permanent table menu QR</small><img src="/api/admin/qr/table?${query}" alt="${escapeHtml(`${code.areaName} Table ${code.tableNumber} QR code`)}"><div class="table-qr-actions"><a href="/api/admin/qr/table?${query}" download="red-lantern-table-${code.tableNumber}-qr.svg">Download</a><label class="table-qr-toggle"><input type="checkbox" data-table-qr-area="${escapeHtml(code.areaId)}" data-table-qr-number="${code.tableNumber}" ${code.enabled ? 'checked' : ''}>${code.enabled ? 'Live' : 'Disabled'}</label></div></article>`;
+          })
+          .join('')
+      : '<p class="help-text">Add table areas in Orders → Operations → Table allocation. Their permanent QR codes will appear here automatically.</p>';
+  } catch (error) {
+    container.innerHTML = `<p class="help-text">${escapeHtml(error.message || 'Unable to load table QR codes.')}</p>`;
+  }
+}
+
+document.addEventListener('change', async (event) => {
+  const toggle = event.target.closest('[data-table-qr-area]');
+  if (!toggle) return;
+  toggle.disabled = true;
+  try {
+    const response = await fetch(`/api/admin/table-qr-codes/${encodeURIComponent(toggle.dataset.tableQrArea)}/${encodeURIComponent(toggle.dataset.tableQrNumber)}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: toggle.checked }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Unable to update this QR code.');
+    showSaveToast();
+    await loadTableQrCodes();
+  } catch (error) {
+    toggle.checked = !toggle.checked;
+    alert(error.message || 'Unable to update this QR code.');
+  } finally { toggle.disabled = false; }
+});
 
 function setupAirMenuEditor() {
   const container = document.getElementById('air-items-container');
@@ -1877,6 +1957,7 @@ async function refreshGrowthProgress() {
     if (!response.ok) throw new Error('Unable to refresh progress.');
     const content = await response.json();
     buildGrowthDashboard(content);
+    loadTableQrCodes();
   } catch (error) {
     const scoreLabel = document.getElementById('growth-score-label');
     if (scoreLabel) scoreLabel.textContent = error.message || 'Unable to refresh progress.';
@@ -2574,6 +2655,7 @@ fetch('/api/admin/content')
     fillContact(content.contact);
     fillGlobal(content.global);
     buildGrowthDashboard(content);
+    loadTableQrCodes();
   })
   .catch(() => {});
 
@@ -2616,10 +2698,8 @@ document.querySelectorAll('form[action^="/api/update-"]').forEach((form) => {
       });
       const text = await response.text();
       if (!response.ok) throw new Error(text);
-      setStatus(
-        form,
-        'Saved. Go to Growth Ideas and click Refresh progress to update the readiness score.'
-      );
+      setStatus(form, '');
+      showSaveToast();
     } catch (error) {
       setStatus(form, error.message || 'Save failed.', true);
     }
