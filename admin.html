@@ -3612,6 +3612,7 @@
         <div class="nav-item" data-target="tab-customer-insights">Customer &amp; Orders</div>
         <div class="nav-item" data-target="tab-captain-app">Captain App</div>
         <div class="nav-item" data-target="tab-air-menu">Air Menu & QR Ordering</div>
+        <div class="nav-item" data-target="tab-trusted-contacts">Trusted Contacts</div>
 
         <div class="nav-category system">Insights & System</div>
         <div class="nav-item" data-target="tab-growth">Growth Ideas</div>
@@ -4613,6 +4614,32 @@ Availability may vary. Please ask our team about today’s specials.</textarea>
             Ranked by available Red Lantern points. Points are credited when an order is completed.
           </p>
           <div id="customer-insight-leaderboard" class="customer-leaderboard"></div>
+        </div>
+      </div>
+
+      <div id="tab-trusted-contacts" class="tab-content">
+        <div class="header">
+          <div>
+            <h1>Trusted Contacts</h1>
+            <p>Manage the customers whose QR orders can go directly to the kitchen.</p>
+          </div>
+        </div>
+        <div class="card insight-card">
+          <h2>Trusted contacts</h2>
+          <p class="help-text">These numbers are auto-accepted for QR orders. Add one contact per line as <code>Name, mobile number</code>, or enter only the mobile number. Blocking a contact restores counter approval even if they have ordered before.</p>
+          <p class="help-text"><a href="/api/admin/trusted-contacts/template">Download the Excel template</a> — the name column is optional.</p>
+          <div class="insight-toolbar">
+            <label class="form-group" style="flex:1"><span>Add or import contacts</span><textarea id="trusted-contact-import" rows="4" placeholder="Asha, 9876543210&#10;9876543211"></textarea></label>
+            <div class="form-group" style="align-self:end"><button type="button" id="trusted-contact-import-button" class="btn-save">Save trusted contacts</button></div>
+          </div>
+          <div class="insight-toolbar">
+            <label class="form-group" style="flex:1"><span>Upload completed Excel template</span><input id="trusted-contact-file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"></label>
+            <div class="form-group" style="align-self:end"><button type="button" id="trusted-contact-upload-button" class="btn-save">Upload Excel contacts</button></div>
+          </div>
+          <div id="trusted-contact-status" class="growth-ai-status"></div>
+          <div class="insight-table-wrap">
+            <table class="insight-table"><thead><tr><th>Contact</th><th>Auto-accept</th><th>Last purchase</th><th></th></tr></thead><tbody id="trusted-contact-list"></tbody></table>
+          </div>
         </div>
       </div>
 

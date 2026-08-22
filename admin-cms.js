@@ -2643,6 +2643,125 @@ function setupCustomerInsights() {
   load();
 }
 
+function setupTrustedContacts() {
+  const input = document.getElementById('trusted-contact-import');
+  const save = document.getElementById('trusted-contact-import-button');
+  const file = document.getElementById('trusted-contact-file');
+  const upload = document.getElementById('trusted-contact-upload-button');
+  const list = document.getElementById('trusted-contact-list');
+  const status = document.getElementById('trusted-contact-status');
+  if (!input || !save || !file || !upload || !list || !status) return;
+  const esc = (value) =>
+    String(value ?? '').replace(
+      /[&<>"']/g,
+      (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' })[char]
+    );
+  const setStatus = (message, error = false) => {
+    status.textContent = message;
+    status.style.color = error ? '#b91c1c' : '';
+  };
+  const purchase = (contact) => {
+    const items = Array.isArray(contact.last_items) ? contact.last_items : [];
+    if (!items.length) return 'No previous purchase saved';
+    return items
+      .map((item) => `${Number(item.quantity || 0)}× ${item.name || 'Item'}`)
+      .join(', ');
+  };
+  const load = async () => {
+    try {
+      const response = await fetch('/api/admin/trusted-contacts', { cache: 'no-store' });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to load verified contacts.');
+      list.innerHTML = data.contacts.length
+        ? data.contacts
+            .map(
+              (contact) =>
+                `<tr data-trusted-phone="${esc(contact.customer_phone)}"><td><input data-trusted-name value="${esc(contact.customer_name || '')}" placeholder="Optional name"><br><small>${esc(contact.customer_phone)}</small></td><td><span class="insight-pill">${contact.blocked ? 'Blocked — counter approval' : 'Enabled — auto-accept'}</span></td><td>${esc(purchase(contact))}${contact.last_order_at ? `<br><small>${esc(new Date(contact.last_order_at).toLocaleDateString('en-IN'))}</small>` : ''}</td><td><button type="button" class="btn-save" data-trusted-save>${contact.blocked ? 'Unblock' : 'Save name'}</button>${contact.blocked ? '' : '<button type="button" class="btn-delete" data-trusted-block>Block</button>'}</td></tr>`
+            )
+            .join('')
+        : '<tr><td colspan="4">No verified contacts yet. Add contacts above, or complete an order to add that customer automatically.</td></tr>';
+      setStatus(`${data.contacts.length} verified contact${data.contacts.length === 1 ? '' : 's'} saved.`);
+    } catch (error) {
+      setStatus(error.message || 'Unable to load verified contacts.', true);
+    }
+  };
+  const update = async (row, blocked) => {
+    const phone = row.dataset.trustedPhone;
+    const name = row.querySelector('[data-trusted-name]')?.value || '';
+    const response = await fetch(`/api/admin/trusted-contacts/${encodeURIComponent(phone)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, blocked }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Unable to update this contact.');
+    await load();
+  };
+  save.addEventListener('click', async () => {
+    const contacts = input.value
+      .split(/\r?\n/)
+      .map((line) => {
+        const pieces = line.split(',');
+        return pieces.length > 1
+          ? { name: pieces.slice(0, -1).join(',').trim(), phone: pieces.at(-1).trim() }
+          : { name: '', phone: line.trim() };
+      })
+      .filter((contact) => contact.phone);
+    if (!contacts.length) return setStatus('Enter at least one mobile number.', true);
+    try {
+      save.disabled = true;
+      const response = await fetch('/api/admin/trusted-contacts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contacts }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to save contacts.');
+      input.value = '';
+      await load();
+      setStatus(`${data.added} contact${data.added === 1 ? '' : 's'} saved and enabled for auto-accept.`);
+    } catch (error) {
+      setStatus(error.message || 'Unable to save contacts.', true);
+    } finally {
+      save.disabled = false;
+    }
+  });
+  upload.addEventListener('click', async () => {
+    const selected = file.files?.[0];
+    if (!selected) return setStatus('Choose the completed Excel template first.', true);
+    try {
+      upload.disabled = true;
+      const form = new FormData();
+      form.append('contactsFile', selected);
+      const response = await fetch('/api/admin/trusted-contacts/import', {
+        method: 'POST',
+        body: form,
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to import contacts.');
+      file.value = '';
+      await load();
+      setStatus(`${data.added} contact${data.added === 1 ? '' : 's'} imported and enabled for auto-accept.`);
+    } catch (error) {
+      setStatus(error.message || 'Unable to import contacts.', true);
+    } finally {
+      upload.disabled = false;
+    }
+  });
+  list.addEventListener('click', async (event) => {
+    const row = event.target.closest('[data-trusted-phone]');
+    if (!row) return;
+    try {
+      if (event.target.closest('[data-trusted-save]')) await update(row, false);
+      else if (event.target.closest('[data-trusted-block]')) await update(row, true);
+    } catch (error) {
+      setStatus(error.message || 'Unable to update this contact.', true);
+    }
+  });
+  document.querySelector('[data-target="tab-trusted-contacts"]')?.addEventListener('click', load);
+  load();
+}
+
 fetch('/api/admin/content')
   .then((response) => (response.ok ? response.json() : {}))
   .then((content) => {
@@ -2669,6 +2788,7 @@ setupBlogDescriptionGenerator();
 setupAirMenuEditor();
 setupAirBarMenuEditor();
 setupCustomerInsights();
+setupTrustedContacts();
 
 document.querySelectorAll('.logout-btn:not(#clear-logs)').forEach((button) => {
   button.addEventListener('click', () => {

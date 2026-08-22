@@ -323,6 +323,14 @@ const menuFileUpload = multer({
     cb(isMenuFile ? null : new Error('Please upload a PDF, CSV, or XLSX file.'), isMenuFile);
   },
 });
+const trustedContactUpload = multer({
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024, files: 1 },
+  fileFilter: (req, file, cb) => {
+    const extension = path.extname(file.originalname).toLowerCase();
+    cb(extension === '.xlsx' ? null : new Error('Upload an Excel (.xlsx) contacts file.'), extension === '.xlsx');
+  },
+});
 
 function securityHeaders(req, res, next) {
   res.set({
@@ -352,6 +360,8 @@ function isProtectedAdminPath(req) {
     req.path === '/api/admin/qr-scans' ||
     req.path === '/api/admin/health' ||
     req.path === '/api/admin/customer-insights' ||
+    req.path === '/api/admin/trusted-contacts' ||
+    req.path.startsWith('/api/admin/trusted-contacts/') ||
     req.path === '/api/admin/table-qr-codes' ||
     req.path.startsWith('/api/admin/table-qr-codes/') ||
     req.path.startsWith('/api/admin/qr/') ||
@@ -683,6 +693,7 @@ let contentRevisionsTableReady = null;
 let directOrdersTableReady = null;
 let kotsTableReady = null;
 let loyaltyTableReady = null;
+let trustedContactsTableReady = null;
 let creditTableReady = null;
 let menuAvailabilityTableReady = null;
 let pushSubscriptionsTableReady = null;
@@ -805,6 +816,17 @@ async function ensureLoyaltyTable() {
       await sql`ALTER TABLE loyalty_accounts ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`;
     })();
   return loyaltyTableReady;
+}
+async function ensureTrustedContactsTable() {
+  if (!sql) throw new Error('Orders database is not configured.');
+  await ensureDirectOrdersTable();
+  if (!trustedContactsTableReady)
+    trustedContactsTableReady = (async () => {
+      await sql`CREATE TABLE IF NOT EXISTS trusted_contacts (customer_phone TEXT PRIMARY KEY, customer_name TEXT NOT NULL DEFAULT '', blocked BOOLEAN NOT NULL DEFAULT FALSE, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;
+      await sql`CREATE INDEX IF NOT EXISTS trusted_contacts_active_index ON trusted_contacts (blocked, updated_at DESC)`;
+      await sql`INSERT INTO trusted_contacts (customer_phone,customer_name) SELECT DISTINCT ON (customer_phone) customer_phone,COALESCE(customer_name,'') FROM direct_orders WHERE status='completed' ORDER BY customer_phone,created_at DESC ON CONFLICT (customer_phone) DO NOTHING`;
+    })();
+  return trustedContactsTableReady;
 }
 async function ensureCreditTable() {
   if (!sql) throw new Error('Orders database is not configured.');
@@ -3083,13 +3105,18 @@ app.post('/api/direct-orders', async (req, res) => {
     const requestedLoyaltyPoints = loyalty.enabled
       ? Math.max(0, Math.floor(Number(req.body?.loyaltyPoints) || 0))
       : 0;
-    // Only a customer who has successfully completed an earlier order is trusted
-    // for auto-acceptance. A number with only cancelled/rejected attempts remains
-    // a new order for the counter to confirm first.
-    const trustedCustomerRows =
-      await sql`SELECT EXISTS (SELECT 1 FROM direct_orders WHERE customer_phone=${phone} AND status='completed') AS is_trusted`;
-    const isTrustedCustomer =
-      trustedCustomerRows[0]?.is_trusted === true || trustedCustomerRows[0]?.is_trusted === 't';
+    // Saved contacts and customers with a completed earlier order are trusted for
+    // auto-acceptance. A blocked number always remains a new order for the counter.
+    await ensureTrustedContactsTable();
+    const trustedCustomerRows = await sql`SELECT EXISTS (SELECT 1 FROM direct_orders WHERE customer_phone=${phone} AND status='completed') AS has_completed_order, COALESCE((SELECT blocked FROM trusted_contacts WHERE customer_phone=${phone}),FALSE) AS is_blocked, EXISTS (SELECT 1 FROM trusted_contacts WHERE customer_phone=${phone} AND blocked=FALSE) AS is_saved_contact`;
+    const trustedCustomer = trustedCustomerRows[0] || {};
+    const isBlockedCustomer =
+      trustedCustomer.is_blocked === true || trustedCustomer.is_blocked === 't';
+    const hasCompletedOrder =
+      trustedCustomer.has_completed_order === true || trustedCustomer.has_completed_order === 't';
+    const isSavedContact =
+      trustedCustomer.is_saved_contact === true || trustedCustomer.is_saved_contact === 't';
+    const isTrustedCustomer = !isBlockedCustomer && (hasCompletedOrder || isSavedContact);
     const initialStatus = isTrustedCustomer ? 'accepted' : 'new';
     const [{ orderDay, number: dailyOrderNumber }, { billYear, number: billNumber }] =
       await Promise.all([nextDailyOrderNumber(), nextAnnualBillNumber()]);
@@ -3148,6 +3175,9 @@ app.post('/api/direct-orders', async (req, res) => {
       loyaltyEarned: loyaltyPointsEarned,
       itemCount: savedItems.reduce((count, item) => count + Number(item.quantity || 0), 0),
     });
+    const suppliedName = String(customerName || '').trim().slice(0, 80);
+    if (suppliedName)
+      await sql`UPDATE trusted_contacts SET customer_name=${suppliedName},updated_at=NOW() WHERE customer_phone=${phone} AND customer_name=''`;
     // The order is already safely stored. Push delivery must never delay or block it.
     void notifyDirectOrder({
       id,
@@ -3788,7 +3818,7 @@ app.patch('/api/orders/:id', async (req, res) => {
       ready: ['completed', 'rejected', 'cancelled'],
     };
     const currentRows =
-      await sql`SELECT status FROM direct_orders WHERE id=${req.params.id} LIMIT 1`;
+      await sql`SELECT status,customer_phone,customer_name FROM direct_orders WHERE id=${req.params.id} LIMIT 1`;
     if (!currentRows.length) return res.status(404).json({ error: 'Order not found.' });
     const previous = String(currentRows[0].status || '');
     if (previous === status) return res.json({ ok: true, unchanged: true, status });
@@ -3818,6 +3848,11 @@ app.patch('/api/orders/:id', async (req, res) => {
       return res
         .status(409)
         .json({ error: 'This order changed on another device. Refresh and try again.' });
+    if (status === 'completed') {
+      await ensureTrustedContactsTable();
+      const customer = currentRows[0];
+      await sql`INSERT INTO trusted_contacts (customer_phone,customer_name) VALUES (${customer.customer_phone},${String(customer.customer_name || '').trim().slice(0, 80)}) ON CONFLICT (customer_phone) DO UPDATE SET customer_name=CASE WHEN trusted_contacts.customer_name='' AND EXCLUDED.customer_name<>'' THEN EXCLUDED.customer_name ELSE trusted_contacts.customer_name END, updated_at=NOW()`;
+    }
     await recordOrderEvent(req.params.id, 'status-changed', {
       from: previous,
       to: status,
@@ -3865,11 +3900,13 @@ app.post('/api/orders/:id/settle', async (req, res) => {
       if (existing.length) return res.json({ ok: true, duplicate: true });
     }
     const [rows] = await sql.transaction((tx) => [
-      tx`UPDATE direct_orders SET status='completed',settled_at=NOW(),settlement_type=${paymentType},settlement_amount=${amount},settlement_request_id=${requestId || null},updated_at=NOW() WHERE id=${req.params.id} AND mode='table' AND bill_printed_at IS NOT NULL AND status IN ('accepted','preparing','ready') RETURNING customer_phone,loyalty_points_earned`,
+      tx`UPDATE direct_orders SET status='completed',settled_at=NOW(),settlement_type=${paymentType},settlement_amount=${amount},settlement_request_id=${requestId || null},updated_at=NOW() WHERE id=${req.params.id} AND mode='table' AND bill_printed_at IS NOT NULL AND status IN ('accepted','preparing','ready') RETURNING customer_phone,customer_name,loyalty_points_earned`,
       tx`WITH awarded AS (UPDATE direct_orders SET loyalty_awarded_at=NOW() WHERE id=${req.params.id} AND status='completed' AND loyalty_awarded_at IS NULL RETURNING customer_phone,loyalty_points_earned) INSERT INTO loyalty_accounts (customer_phone,points,total_earned) SELECT customer_phone,loyalty_points_earned,loyalty_points_earned FROM awarded ON CONFLICT (customer_phone) DO UPDATE SET points=loyalty_accounts.points+EXCLUDED.points,total_earned=loyalty_accounts.total_earned+EXCLUDED.total_earned,updated_at=NOW()`,
     ]);
     if (!rows.length)
       return res.status(409).json({ error: 'This table is not waiting for settlement.' });
+    await ensureTrustedContactsTable();
+    await sql`INSERT INTO trusted_contacts (customer_phone,customer_name) VALUES (${rows[0].customer_phone},${String(rows[0].customer_name || '').trim().slice(0, 80)}) ON CONFLICT (customer_phone) DO UPDATE SET customer_name=CASE WHEN trusted_contacts.customer_name='' AND EXCLUDED.customer_name<>'' THEN EXCLUDED.customer_name ELSE trusted_contacts.customer_name END, updated_at=NOW()`;
     await recordOrderEvent(req.params.id, 'settled', { paymentType, amount, requestId });
     res.json({ ok: true });
   } catch (error) {
@@ -4743,6 +4780,110 @@ app.get('/api/content', async (req, res) => {
       details: { stack: error.stack },
     });
     res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/admin/trusted-contacts', async (req, res) => {
+  try {
+    await Promise.all([ensureTrustedContactsTable(), ensureDirectOrdersTable()]);
+    const contacts = await sql`SELECT c.customer_phone,c.customer_name,c.blocked,c.created_at,c.updated_at,last_order.items AS last_items,last_order.total AS last_total,last_order.created_at AS last_order_at,last_order.status AS last_order_status FROM trusted_contacts c LEFT JOIN LATERAL (SELECT items,total,created_at,status FROM direct_orders WHERE customer_phone=c.customer_phone AND status NOT IN ('cancelled','rejected') ORDER BY created_at DESC LIMIT 1) last_order ON TRUE ORDER BY c.blocked,c.customer_name NULLS LAST,c.updated_at DESC LIMIT 1000`;
+    res.set('Cache-Control', 'no-store');
+    res.json({ contacts });
+  } catch (error) {
+    res.status(500).json({ error: 'Unable to load verified contacts.' });
+  }
+});
+
+app.post('/api/admin/trusted-contacts', async (req, res) => {
+  try {
+    await ensureTrustedContactsTable();
+    const rawContacts = Array.isArray(req.body?.contacts) ? req.body.contacts : [req.body || {}];
+    const contacts = rawContacts
+      .slice(0, 1000)
+      .map((contact) => ({
+        phone: String(contact.phone || contact.customerPhone || '').replace(/\D/g, ''),
+        name: String(contact.name || contact.customerName || '').trim().slice(0, 80),
+      }))
+      .filter((contact) => contact.phone.length >= 7 && contact.phone.length <= 16);
+    if (!contacts.length)
+      return res.status(400).json({ error: 'Add at least one valid mobile number.' });
+    for (const contact of contacts)
+      await sql`INSERT INTO trusted_contacts (customer_phone,customer_name) VALUES (${contact.phone},${contact.name}) ON CONFLICT (customer_phone) DO UPDATE SET customer_name=CASE WHEN EXCLUDED.customer_name='' THEN trusted_contacts.customer_name ELSE EXCLUDED.customer_name END, blocked=FALSE, updated_at=NOW()`;
+    res.status(201).json({ ok: true, added: contacts.length });
+  } catch (error) {
+    res.status(500).json({ error: 'Unable to save verified contacts.' });
+  }
+});
+
+app.get('/api/admin/trusted-contacts/template', async (req, res) => {
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet('Trusted Contacts');
+  sheet.columns = [
+    { header: 'Name (Optional)', key: 'name', width: 28 },
+    { header: 'Mobile Number', key: 'phone', width: 20 },
+  ];
+  sheet.getRow(1).font = { bold: true };
+  sheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FDE68A' } };
+  sheet.addRow({ name: 'Example Customer', phone: '9876543210' });
+  sheet.getCell('A3').value = 'Leave the name blank if you do not have it.';
+  sheet.mergeCells('A3:B3');
+  res.set({
+    'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'Content-Disposition': 'attachment; filename="red-lantern-trusted-contacts-template.xlsx"',
+  });
+  await workbook.xlsx.write(res);
+  res.end();
+});
+
+app.post('/api/admin/trusted-contacts/import', trustedContactUpload.single('contactsFile'), async (req, res) => {
+  try {
+    if (!req.file?.buffer) return res.status(400).json({ error: 'Choose an Excel contacts file first.' });
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(req.file.buffer);
+    const sheet = workbook.worksheets[0];
+    if (!sheet) return res.status(400).json({ error: 'The Excel file has no worksheet.' });
+    const headers = {};
+    sheet.getRow(1).eachCell((cell, column) => {
+      headers[String(cell.text || '').trim().toLowerCase().replace(/[^a-z]/g, '')] = column;
+    });
+    const phoneColumn = headers.mobilenumber || headers.mobile || headers.phone || headers.phonenumber;
+    const nameColumn = headers.name || headers.customername;
+    if (!phoneColumn)
+      return res.status(400).json({ error: 'Use a “Mobile Number” column in the first row.' });
+    const contacts = [];
+    sheet.eachRow((row, rowNumber) => {
+      if (rowNumber === 1 || contacts.length >= 1000) return;
+      const phone = String(row.getCell(phoneColumn).text || '').replace(/\D/g, '');
+      if (phone.length >= 7 && phone.length <= 16)
+        contacts.push({
+          phone,
+          name: nameColumn ? String(row.getCell(nameColumn).text || '').trim().slice(0, 80) : '',
+        });
+    });
+    if (!contacts.length)
+      return res.status(400).json({ error: 'No valid mobile numbers were found in the file.' });
+    await ensureTrustedContactsTable();
+    for (const contact of contacts)
+      await sql`INSERT INTO trusted_contacts (customer_phone,customer_name) VALUES (${contact.phone},${contact.name}) ON CONFLICT (customer_phone) DO UPDATE SET customer_name=CASE WHEN EXCLUDED.customer_name='' THEN trusted_contacts.customer_name ELSE EXCLUDED.customer_name END, blocked=FALSE, updated_at=NOW()`;
+    res.status(201).json({ ok: true, added: contacts.length });
+  } catch (error) {
+    res.status(400).json({ error: error.message || 'Unable to import this contacts file.' });
+  }
+});
+
+app.patch('/api/admin/trusted-contacts/:phone', async (req, res) => {
+  try {
+    await ensureTrustedContactsTable();
+    const phone = String(req.params.phone || '').replace(/\D/g, '');
+    if (phone.length < 7 || phone.length > 16)
+      return res.status(400).json({ error: 'Invalid mobile number.' });
+    const name = String(req.body?.name || '').trim().slice(0, 80);
+    const blocked = req.body?.blocked === true;
+    const saved = await sql`UPDATE trusted_contacts SET customer_name=${name},blocked=${blocked},updated_at=NOW() WHERE customer_phone=${phone} RETURNING customer_phone`;
+    if (!saved.length) return res.status(404).json({ error: 'Contact not found.' });
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Unable to update this contact.' });
   }
 });
 
