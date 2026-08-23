@@ -186,7 +186,7 @@
 }
 .order-search-field {
   display: flex;
-  flex: 1;
+  flex: 0 1 620px;
   align-items: center;
   min-width: 0;
 }
@@ -667,6 +667,9 @@
   }
   .history-date-wrap {
     flex: 1;
+  }
+  .order-search-field {
+    flex: 1 1 260px;
   }
   #order-search-status {
     display: none;

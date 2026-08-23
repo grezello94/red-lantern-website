@@ -2650,7 +2650,13 @@ function setupTrustedContacts() {
   const upload = document.getElementById('trusted-contact-upload-button');
   const list = document.getElementById('trusted-contact-list');
   const status = document.getElementById('trusted-contact-status');
-  if (!input || !save || !file || !upload || !list || !status) return;
+  const search = document.getElementById('trusted-contact-search');
+  const searchButton = document.getElementById('trusted-contact-search-button');
+  const count = document.getElementById('trusted-contact-count');
+  const pagination = document.getElementById('trusted-contact-pagination');
+  if (!input || !save || !file || !upload || !list || !status || !search || !searchButton || !count || !pagination)
+    return;
+  let page = 1;
   const esc = (value) =>
     String(value ?? '').replace(
       /[&<>"']/g,
@@ -2669,18 +2675,27 @@ function setupTrustedContacts() {
   };
   const load = async () => {
     try {
-      const response = await fetch('/api/admin/trusted-contacts', { cache: 'no-store' });
+      const response = await fetch(
+        `/api/admin/trusted-contacts?search=${encodeURIComponent(search.value)}&page=${page}&limit=50`,
+        { cache: 'no-store' }
+      );
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Unable to load verified contacts.');
       list.innerHTML = data.contacts.length
         ? data.contacts
             .map(
               (contact) =>
-                `<tr data-trusted-phone="${esc(contact.customer_phone)}"><td><input data-trusted-name value="${esc(contact.customer_name || '')}" placeholder="Optional name"><br><small>${esc(contact.customer_phone)}</small></td><td><span class="insight-pill">${contact.blocked ? 'Blocked — counter approval' : 'Enabled — auto-accept'}</span></td><td>${esc(purchase(contact))}${contact.last_order_at ? `<br><small>${esc(new Date(contact.last_order_at).toLocaleDateString('en-IN'))}</small>` : ''}</td><td><button type="button" class="btn-save" data-trusted-save>${contact.blocked ? 'Unblock' : 'Save name'}</button>${contact.blocked ? '' : '<button type="button" class="btn-delete" data-trusted-block>Block</button>'}</td></tr>`
+                `<article class="trusted-contact-strip" data-trusted-phone="${esc(contact.customer_phone)}"><div><input class="trusted-contact-name" data-trusted-name value="${esc(contact.customer_name || '')}" placeholder="Optional name"><span class="trusted-contact-phone">${esc(contact.customer_phone)}</span></div><div><span class="trusted-contact-status${contact.blocked ? ' is-blocked' : ''}">${contact.blocked ? 'Counter approval required' : 'Auto-accept enabled'}</span></div><div><div class="trusted-contact-history">${esc(purchase(contact))}</div>${contact.last_order_at ? `<span class="trusted-contact-date">${esc(new Date(contact.last_order_at).toLocaleDateString('en-IN'))}</span>` : ''}</div><div class="trusted-contact-actions"><button type="button" class="btn-save" data-trusted-save>${contact.blocked ? 'Unblock' : 'Save name'}</button>${contact.blocked ? '' : '<button type="button" class="btn-delete" data-trusted-block>Block</button>'}</div></article>`
             )
             .join('')
-        : '<tr><td colspan="4">No verified contacts yet. Add contacts above, or complete an order to add that customer automatically.</td></tr>';
-      setStatus(`${data.contacts.length} verified contact${data.contacts.length === 1 ? '' : 's'} saved.`);
+        : '<div class="trusted-contact-list-empty">No contacts match this search.</div>';
+      const first = data.total ? (data.page - 1) * data.limit + 1 : 0;
+      const last = Math.min(data.page * data.limit, data.total);
+      count.textContent = data.total
+        ? `Showing ${first}–${last} of ${data.total.toLocaleString('en-IN')} trusted contacts`
+        : 'No trusted contacts yet.';
+      pagination.innerHTML = `<button type="button" data-trusted-page="previous" ${data.page <= 1 ? 'disabled' : ''}>Previous</button><span>Page ${data.page} of ${Math.max(1, Math.ceil(data.total / data.limit))}</span><button type="button" data-trusted-page="next" ${last >= data.total ? 'disabled' : ''}>Next</button>`;
+      setStatus('');
     } catch (error) {
       setStatus(error.message || 'Unable to load verified contacts.', true);
     }
@@ -2757,6 +2772,29 @@ function setupTrustedContacts() {
     } catch (error) {
       setStatus(error.message || 'Unable to update this contact.', true);
     }
+  });
+  let searchTimer;
+  search.addEventListener('input', () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      page = 1;
+      load();
+    }, 250);
+  });
+  searchButton.addEventListener('click', () => {
+    page = 1;
+    load();
+  });
+  search.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    searchButton.click();
+  });
+  pagination.addEventListener('click', (event) => {
+    const direction = event.target.closest('[data-trusted-page]')?.dataset.trustedPage;
+    if (!direction) return;
+    page = direction === 'next' ? page + 1 : Math.max(1, page - 1);
+    load();
   });
   document.querySelector('[data-target="tab-trusted-contacts"]')?.addEventListener('click', load);
   load();

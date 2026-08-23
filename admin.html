@@ -2709,6 +2709,246 @@
       .insight-table tbody tr:hover {
         background: #fafcff;
       }
+      .trusted-contact-methods {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(280px, 0.72fr);
+        gap: 16px;
+        margin: 20px 0;
+      }
+      .trusted-contact-overview {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+        margin: 18px 0 22px;
+      }
+      .trusted-contact-step {
+        display: flex;
+        gap: 10px;
+        align-items: flex-start;
+        padding: 12px;
+        border: 1px solid #e6ebf2;
+        border-radius: 10px;
+        background: #f8fafc;
+      }
+      .trusted-contact-step b {
+        display: grid;
+        width: 24px;
+        height: 24px;
+        flex: 0 0 24px;
+        place-items: center;
+        border-radius: 50%;
+        background: #d92632;
+        color: #fff;
+        font-size: 12px;
+      }
+      .trusted-contact-step strong,
+      .trusted-contact-step span {
+        display: block;
+      }
+      .trusted-contact-step strong {
+        color: #26344a;
+        font-size: 12px;
+      }
+      .trusted-contact-step span {
+        margin-top: 2px;
+        color: #718096;
+        font-size: 11px;
+        line-height: 1.4;
+      }
+      .trusted-contact-method {
+        padding: 18px;
+        border: 1px solid #e3e8f0;
+        border-radius: 12px;
+        background: #fbfcfe;
+      }
+      .trusted-contact-method h3 {
+        margin: 0 0 4px;
+        color: #1f2b41;
+        font-size: 15px;
+      }
+      .trusted-contact-method p {
+        margin: 0 0 14px;
+        color: #718096;
+        font-size: 12px;
+      }
+      .trusted-contact-method textarea,
+      .trusted-contact-method input[type='file'] {
+        width: 100%;
+        margin-bottom: 12px;
+        border: 1px solid #d8e0eb;
+        border-radius: 8px;
+        background: #fff;
+        font: 600 13px Manrope, sans-serif;
+      }
+      .trusted-contact-method textarea {
+        min-height: 112px;
+        padding: 11px;
+        resize: vertical;
+      }
+      .trusted-contact-method input[type='file'] {
+        padding: 9px;
+      }
+      .trusted-contact-method .btn-save {
+        width: auto;
+        min-width: 178px;
+        padding: 10px 15px;
+      }
+      .trusted-contact-table {
+        min-width: 760px;
+      }
+      .trusted-contact-table th:last-child,
+      .trusted-contact-table td:last-child {
+        width: 188px;
+      }
+      .trusted-contact-name {
+        display: block;
+        width: 100%;
+        max-width: 220px;
+        padding: 8px 9px;
+        border: 1px solid #d8e0eb;
+        border-radius: 7px;
+        color: #26344a;
+        font: 600 13px Manrope, sans-serif;
+      }
+      .trusted-contact-phone,
+      .trusted-contact-date {
+        display: block;
+        margin-top: 5px;
+        color: #718096;
+        font-size: 11px;
+        font-weight: 700;
+      }
+      .trusted-contact-status {
+        display: inline-flex;
+        padding: 5px 8px;
+        border-radius: 999px;
+        background: #e8f7ee;
+        color: #167244;
+        font-size: 11px;
+        font-weight: 800;
+      }
+      .trusted-contact-status.is-blocked {
+        background: #fff0f0;
+        color: #b4232c;
+      }
+      .trusted-contact-history {
+        max-width: 500px;
+        color: #3b4960;
+        line-height: 1.5;
+      }
+      .trusted-contact-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .trusted-contact-actions button {
+        width: auto;
+        margin: 0;
+        padding: 8px 10px;
+        border-radius: 7px;
+        font-size: 12px;
+        white-space: nowrap;
+      }
+      .trusted-contact-actions .btn-save {
+        min-width: 86px;
+      }
+      .trusted-contact-actions .btn-delete {
+        border: 1px solid #f0bdc2;
+        background: #fff;
+        color: #b4232c;
+      }
+      .trusted-contact-directory-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        margin: 22px 0 10px;
+      }
+      .trusted-contact-directory-toolbar h3 {
+        margin: 0;
+        color: #26344a;
+        font-size: 15px;
+      }
+      .trusted-contact-directory-toolbar p {
+        margin: 3px 0 0;
+        color: #718096;
+        font-size: 12px;
+      }
+      .trusted-contact-search {
+        width: min(100%, 300px);
+        padding: 10px 12px;
+        border: 1px solid #d8e0eb;
+        border-radius: 8px;
+        color: #26344a;
+        font: 600 13px Manrope, sans-serif;
+      }
+      .trusted-contact-search-group {
+        display: flex;
+        gap: 8px;
+      }
+      .trusted-contact-search-button {
+        padding: 9px 14px;
+        border: 0;
+        border-radius: 8px;
+        background: #26344a;
+        color: #fff;
+        font: 800 12px Manrope, sans-serif;
+      }
+      .trusted-contact-list {
+        overflow: hidden;
+        border: 1px solid #e5eaf1;
+        border-radius: 10px;
+      }
+      .trusted-contact-list-head,
+      .trusted-contact-strip {
+        display: grid;
+        grid-template-columns: minmax(210px, 0.8fr) minmax(150px, 0.45fr) minmax(320px, 1.65fr) auto;
+        gap: 16px;
+        align-items: center;
+      }
+      .trusted-contact-list-head {
+        padding: 10px 14px;
+        background: #f5f7fa;
+        color: #5f6d82;
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+      }
+      .trusted-contact-strip {
+        min-height: 76px;
+        padding: 10px 14px;
+        border-top: 1px solid #edf0f4;
+        background: #fff;
+      }
+      .trusted-contact-strip:hover {
+        background: #fafcff;
+      }
+      .trusted-contact-list-empty {
+        padding: 22px;
+        color: #718096;
+        font-size: 13px;
+        text-align: center;
+      }
+      .trusted-contact-pagination {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 9px;
+        margin-top: 12px;
+      }
+      .trusted-contact-pagination button {
+        padding: 7px 10px;
+        border: 1px solid #d8e0eb;
+        border-radius: 7px;
+        background: #fff;
+        color: #344158;
+        font: 700 12px Manrope, sans-serif;
+      }
+      .trusted-contact-pagination button:disabled {
+        cursor: not-allowed;
+        opacity: 0.45;
+      }
       .insight-order-link {
         padding: 0;
         border: 0;
@@ -2975,6 +3215,26 @@
         .insight-toolbar {
           flex-direction: column;
           align-items: stretch;
+        }
+        .trusted-contact-methods {
+          grid-template-columns: 1fr;
+        }
+        .trusted-contact-overview {
+          grid-template-columns: 1fr;
+        }
+        .trusted-contact-directory-toolbar {
+          align-items: stretch;
+          flex-direction: column;
+        }
+        .trusted-contact-search {
+          width: 100%;
+        }
+        .trusted-contact-list-head {
+          display: none;
+        }
+        .trusted-contact-strip {
+          grid-template-columns: 1fr;
+          gap: 8px;
         }
         .bill-customer {
           grid-template-columns: 1fr;
@@ -4621,25 +4881,41 @@ Availability may vary. Please ask our team about today’s specials.</textarea>
         <div class="header">
           <div>
             <h1>Trusted Contacts</h1>
-            <p>Manage the customers whose QR orders can go directly to the kitchen.</p>
+            <p>Manage known customers whose QR orders can go directly to the kitchen.</p>
           </div>
         </div>
         <div class="card insight-card">
-          <h2>Trusted contacts</h2>
-          <p class="help-text">These numbers are auto-accepted for QR orders. Add one contact per line as <code>Name, mobile number</code>, or enter only the mobile number. Blocking a contact restores counter approval even if they have ordered before.</p>
-          <p class="help-text"><a href="/api/admin/trusted-contacts/template">Download the Excel template</a> — the name column is optional.</p>
-          <div class="insight-toolbar">
-            <label class="form-group" style="flex:1"><span>Add or import contacts</span><textarea id="trusted-contact-import" rows="4" placeholder="Asha, 9876543210&#10;9876543211"></textarea></label>
-            <div class="form-group" style="align-self:end"><button type="button" id="trusted-contact-import-button" class="btn-save">Save trusted contacts</button></div>
+          <h2>Customer approval list</h2>
+          <p class="help-text">Trusted numbers are accepted automatically. New numbers still wait for counter approval, and you can block any contact whenever you need to review their next order.</p>
+          <div class="trusted-contact-overview" aria-label="How trusted contacts work">
+            <div class="trusted-contact-step"><b>1</b><div><strong>Add trusted numbers</strong><span>Paste a short list or import the Excel template.</span></div></div>
+            <div class="trusted-contact-step"><b>2</b><div><strong>QR order is accepted</strong><span>Trusted numbers bypass counter approval and release the KOT.</span></div></div>
+            <div class="trusted-contact-step"><b>3</b><div><strong>Stay in control</strong><span>Use Block to make the next order require counter approval.</span></div></div>
           </div>
-          <div class="insight-toolbar">
-            <label class="form-group" style="flex:1"><span>Upload completed Excel template</span><input id="trusted-contact-file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"></label>
-            <div class="form-group" style="align-self:end"><button type="button" id="trusted-contact-upload-button" class="btn-save">Upload Excel contacts</button></div>
+          <div class="trusted-contact-methods">
+            <section class="trusted-contact-method">
+              <h3>Add contacts manually</h3>
+              <p>One contact per line: <code>Name, mobile number</code>. The name is optional.</p>
+              <textarea id="trusted-contact-import" rows="4" placeholder="Asha, 9876543210&#10;9876543211"></textarea>
+              <button type="button" id="trusted-contact-import-button" class="btn-save">Save contacts</button>
+            </section>
+            <section class="trusted-contact-method">
+              <h3>Import from Excel</h3>
+              <p><a href="/api/admin/trusted-contacts/template">Download the Excel template</a>, fill it in, then upload the completed <code>.xlsx</code> file.</p>
+              <input id="trusted-contact-file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+              <button type="button" id="trusted-contact-upload-button" class="btn-save">Upload Excel file</button>
+            </section>
           </div>
           <div id="trusted-contact-status" class="growth-ai-status"></div>
-          <div class="insight-table-wrap">
-            <table class="insight-table"><thead><tr><th>Contact</th><th>Auto-accept</th><th>Last purchase</th><th></th></tr></thead><tbody id="trusted-contact-list"></tbody></table>
+          <div class="trusted-contact-directory-toolbar">
+            <div><h3>Trusted contact directory</h3><p id="trusted-contact-count">Loading contacts…</p></div>
+            <div class="trusted-contact-search-group"><input id="trusted-contact-search" class="trusted-contact-search" type="search" placeholder="Search name or mobile number"><button id="trusted-contact-search-button" class="trusted-contact-search-button" type="button">Search</button></div>
           </div>
+          <div class="trusted-contact-list">
+            <div class="trusted-contact-list-head"><span>Contact</span><span>Order handling</span><span>Last purchase</span><span>Actions</span></div>
+            <div id="trusted-contact-list"></div>
+          </div>
+          <div id="trusted-contact-pagination" class="trusted-contact-pagination"></div>
         </div>
       </div>
 
@@ -5459,21 +5735,26 @@ Watch competitors ranking for Colva Beach, seafood, Goan food, Chinese food, fam
     <script>
       const navItems = document.querySelectorAll('.nav-item');
       const tabContents = document.querySelectorAll('.tab-content');
-
+      const activateAdminTab = (targetId, { updateUrl = false } = {}) => {
+        const tab = document.getElementById(targetId);
+        const nav = [...navItems].find((item) => item.getAttribute('data-target') === targetId);
+        if (!tab || !nav) return false;
+        navItems.forEach((item) => item.classList.remove('active'));
+        tabContents.forEach((item) => item.classList.remove('active'));
+        nav.classList.add('active');
+        tab.classList.add('active');
+        if (updateUrl) history.replaceState(null, '', `#${targetId}`);
+        return true;
+      };
       navItems.forEach((item) => {
-        item.addEventListener('click', () => {
-          // Remove active class from all tabs and buttons
-          navItems.forEach((nav) => nav.classList.remove('active'));
-          tabContents.forEach((tab) => tab.classList.remove('active'));
-
-          // Add active class to clicked item
-          item.classList.add('active');
-
-          // Show corresponding tab
-          const targetId = item.getAttribute('data-target');
-          document.getElementById(targetId).classList.add('active');
-        });
+        item.addEventListener('click', () => activateAdminTab(item.getAttribute('data-target'), { updateUrl: true }));
       });
+      const restoreAdminTab = () => {
+        const targetId = window.location.hash.slice(1);
+        if (targetId) activateAdminTab(targetId);
+      };
+      window.addEventListener('hashchange', restoreAdminTab);
+      restoreAdminTab();
       let captainAccounts = [],
         captainAreas = [],
         captainActivity = [],

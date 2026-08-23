@@ -4786,9 +4786,20 @@ app.get('/api/content', async (req, res) => {
 app.get('/api/admin/trusted-contacts', async (req, res) => {
   try {
     await Promise.all([ensureTrustedContactsTable(), ensureDirectOrdersTable()]);
-    const contacts = await sql`SELECT c.customer_phone,c.customer_name,c.blocked,c.created_at,c.updated_at,last_order.items AS last_items,last_order.total AS last_total,last_order.created_at AS last_order_at,last_order.status AS last_order_status FROM trusted_contacts c LEFT JOIN LATERAL (SELECT items,total,created_at,status FROM direct_orders WHERE customer_phone=c.customer_phone AND status NOT IN ('cancelled','rejected') ORDER BY created_at DESC LIMIT 1) last_order ON TRUE ORDER BY c.blocked,c.customer_name NULLS LAST,c.updated_at DESC LIMIT 1000`;
+    const search = String(req.query.search || '').trim().slice(0, 80);
+    const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(100, Math.max(20, Number.parseInt(req.query.limit, 10) || 50));
+    const offset = (page - 1) * limit;
+    const like = `%${search}%`;
+    const select = `SELECT c.customer_phone,c.customer_name,c.blocked,c.created_at,c.updated_at,last_order.items AS last_items,last_order.total AS last_total,last_order.created_at AS last_order_at,last_order.status AS last_order_status FROM trusted_contacts c LEFT JOIN LATERAL (SELECT items,total,created_at,status FROM direct_orders WHERE customer_phone=c.customer_phone AND status NOT IN ('cancelled','rejected') ORDER BY created_at DESC LIMIT 1) last_order ON TRUE`;
+    const contacts = search
+      ? await sql(`${select} WHERE c.customer_phone LIKE $1 OR c.customer_name ILIKE $1 ORDER BY c.blocked,c.customer_name NULLS LAST,c.updated_at DESC LIMIT $2 OFFSET $3`, [like, limit, offset])
+      : await sql(`${select} ORDER BY c.blocked,c.customer_name NULLS LAST,c.updated_at DESC LIMIT $1 OFFSET $2`, [limit, offset]);
+    const countRows = search
+      ? await sql`SELECT COUNT(*)::int AS count FROM trusted_contacts WHERE customer_phone LIKE ${like} OR customer_name ILIKE ${like}`
+      : await sql`SELECT COUNT(*)::int AS count FROM trusted_contacts`;
     res.set('Cache-Control', 'no-store');
-    res.json({ contacts });
+    res.json({ contacts, page, limit, total: Number(countRows[0]?.count || 0) });
   } catch (error) {
     res.status(500).json({ error: 'Unable to load verified contacts.' });
   }
