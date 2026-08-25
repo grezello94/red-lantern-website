@@ -778,6 +778,9 @@ async function ensureDirectOrdersTable() {
       await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS settled_at TIMESTAMPTZ`;
       await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS settlement_type TEXT`;
       await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS settlement_amount NUMERIC`;
+      await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS payment_received NUMERIC`;
+      await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS change_due NUMERIC NOT NULL DEFAULT 0`;
+      await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS tip_amount NUMERIC NOT NULL DEFAULT 0`;
       await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS settlement_request_id TEXT`;
       await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS service_state TEXT NOT NULL DEFAULT 'active'`;
       await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS service_requested_at TIMESTAMPTZ`;
@@ -3599,7 +3602,7 @@ app.get('/api/orders', async (req, res) => {
       : '';
     const operatingStatus = await getOrdersOperatingStatus();
     const select =
-      "SELECT o.*, (SELECT COUNT(*) FROM direct_orders h WHERE h.customer_phone=o.customer_phone) AS customer_order_count, (SELECT MAX(h.created_at) FROM direct_orders h WHERE h.customer_phone=o.customer_phone AND h.id<>o.id) AS customer_last_order_at, COALESCE((SELECT e.details->>'captainId' FROM order_events e WHERE e.order_id=o.id AND e.event_type='created' ORDER BY e.created_at ASC LIMIT 1),'') AS captain_id FROM direct_orders o";
+      "SELECT o.*, (SELECT COUNT(*) FROM direct_orders h WHERE h.customer_phone=o.customer_phone) AS customer_order_count, (SELECT MAX(h.created_at) FROM direct_orders h WHERE h.customer_phone=o.customer_phone AND h.id<>o.id) AS customer_last_order_at, COALESCE((SELECT e.details->>'captainId' FROM order_events e WHERE e.order_id=o.id AND e.event_type='created' ORDER BY e.created_at ASC LIMIT 1),'') AS captain_id, COALESCE((SELECT string_agg(DISTINCT NULLIF(TRIM(e.details->>'captainName'), ''), ', ') FROM order_events e WHERE e.order_id=o.id AND e.event_type IN ('created','captain-items-added')),'') AS captain_names FROM direct_orders o";
     res.set({
       'Cache-Control': 'no-store',
       'X-Orders-Day': today,
@@ -3927,7 +3930,8 @@ app.post('/api/orders/:id/settle', async (req, res) => {
     )
       ? String(req.body.paymentType)
       : '';
-    const amount = Math.max(0, Number(req.body?.amount) || 0);
+    const requestedAmount = Math.max(0, Number(req.body?.amount) || 0);
+    const suppliedReceived = Number(req.body?.paymentReceived);
     const requestId = String(req.get('X-Settlement-Id') || req.body?.requestId || '')
       .trim()
       .slice(0, 100);
@@ -3937,18 +3941,52 @@ app.post('/api/orders/:id/settle', async (req, res) => {
         await sql`SELECT id FROM direct_orders WHERE id=${req.params.id} AND settlement_request_id=${requestId} LIMIT 1`;
       if (existing.length) return res.json({ ok: true, duplicate: true });
     }
+    const orderRows =
+      await sql`SELECT total FROM direct_orders WHERE id=${req.params.id} AND status IN ('accepted','preparing','ready') LIMIT 1`;
+    if (!orderRows.length)
+      return res.status(409).json({ error: 'This order is not waiting for payment.' });
+    const total = Math.max(0, Number(orderRows[0].total) || 0);
+    const paymentReceived = Number.isFinite(suppliedReceived)
+      ? Math.max(0, suppliedReceived)
+      : requestedAmount || total;
+    if (['cash', 'upi', 'card', 'other'].includes(paymentType) && paymentReceived < total)
+      return res.status(400).json({ error: 'Payment received cannot be less than the order total.' });
+    const changeDue = paymentType === 'cash' ? Math.max(0, paymentReceived - total) : 0;
+    const tipAmount = paymentType === 'upi' ? Math.max(0, paymentReceived - total) : 0;
     const [rows] = await sql.transaction((tx) => [
-      tx`UPDATE direct_orders SET status='completed',settled_at=NOW(),settlement_type=${paymentType},settlement_amount=${amount},settlement_request_id=${requestId || null},updated_at=NOW() WHERE id=${req.params.id} AND mode='table' AND bill_printed_at IS NOT NULL AND status IN ('accepted','preparing','ready') RETURNING customer_phone,customer_name,loyalty_points_earned`,
+      tx`UPDATE direct_orders SET status='completed',settled_at=NOW(),settlement_type=${paymentType},settlement_amount=${total},payment_received=${paymentReceived},change_due=${changeDue},tip_amount=${tipAmount},settlement_request_id=${requestId || null},updated_at=NOW() WHERE id=${req.params.id} AND status IN ('accepted','preparing','ready') RETURNING customer_phone,customer_name,loyalty_points_earned`,
       tx`WITH awarded AS (UPDATE direct_orders SET loyalty_awarded_at=NOW() WHERE id=${req.params.id} AND status='completed' AND loyalty_awarded_at IS NULL RETURNING customer_phone,loyalty_points_earned) INSERT INTO loyalty_accounts (customer_phone,points,total_earned) SELECT customer_phone,loyalty_points_earned,loyalty_points_earned FROM awarded ON CONFLICT (customer_phone) DO UPDATE SET points=loyalty_accounts.points+EXCLUDED.points,total_earned=loyalty_accounts.total_earned+EXCLUDED.total_earned,updated_at=NOW()`,
     ]);
     if (!rows.length)
       return res.status(409).json({ error: 'This table is not waiting for settlement.' });
     await ensureTrustedContactsTable();
     await sql`INSERT INTO trusted_contacts (customer_phone,customer_name) VALUES (${rows[0].customer_phone},${String(rows[0].customer_name || '').trim().slice(0, 80)}) ON CONFLICT (customer_phone) DO UPDATE SET customer_name=CASE WHEN trusted_contacts.customer_name='' AND EXCLUDED.customer_name<>'' THEN EXCLUDED.customer_name ELSE trusted_contacts.customer_name END, updated_at=NOW()`;
-    await recordOrderEvent(req.params.id, 'settled', { paymentType, amount, requestId });
-    res.json({ ok: true });
+    await recordOrderEvent(req.params.id, 'settled', {
+      paymentType,
+      amount: total,
+      paymentReceived,
+      changeDue,
+      tipAmount,
+      requestId,
+    });
+    res.json({ ok: true, total, paymentReceived, changeDue, tipAmount });
   } catch (error) {
-    res.status(500).json({ error: 'Unable to settle this table.' });
+    res.status(500).json({ error: 'Unable to save this payment.' });
+  }
+});
+
+app.get('/api/register/summary', async (req, res) => {
+  try {
+    await ensureDirectOrdersTable();
+    const day = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.date || ''))
+      ? String(req.query.date)
+      : kolkataOrderDay();
+    const orders =
+      await sql`SELECT daily_order_number,mode,table_area,table_number,customer_name,customer_phone,total,settlement_type,settlement_amount,payment_received,change_due,tip_amount,settled_at,created_at FROM direct_orders WHERE order_day=${day}::date AND status='completed' ORDER BY COALESCE(settled_at,created_at),daily_order_number`;
+    res.set('Cache-Control', 'no-store');
+    res.json({ day, orders });
+  } catch (error) {
+    res.status(500).json({ error: 'Unable to prepare the register summary.' });
   }
 });
 app.get('/api/orders/availability', async (req, res) => {

@@ -2501,6 +2501,7 @@ function setupCustomerInsights() {
   const date = document.getElementById('insight-date');
   const search = document.getElementById('insight-search');
   const refresh = document.getElementById('refresh-customer-insights');
+  const printSummary = document.getElementById('print-register-summary');
   const stats = document.getElementById('customer-insight-stats');
   const rows = document.getElementById('customer-insight-orders');
   const leaderboard = document.getElementById('customer-insight-leaderboard');
@@ -2585,6 +2586,24 @@ function setupCustomerInsights() {
     dialog.showModal();
     dialog.querySelector('.bill-close').addEventListener('click', () => dialog.close());
   };
+  const printPaymentSummary = async () => {
+    const response = await fetch(
+      `/api/register/summary?date=${encodeURIComponent(date.value)}`,
+      { cache: 'no-store' }
+    );
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || 'Unable to prepare the payment summary.');
+    const payments = Array.isArray(data.orders) ? data.orders : [];
+    const paymentName = (type) =>
+      ({ cash: 'Cash', upi: 'UPI / GPay', card: 'Card', other: 'Other', due: 'Due' }[type] ||
+        'Not recorded');
+    const sales = payments.reduce((sum, order) => sum + Number(order.total || 0), 0);
+    const tips = payments.reduce((sum, order) => sum + Number(order.tip_amount || 0), 0);
+    const popup = window.open('', 'red-lantern-payment-summary', 'popup=yes,width=1000,height=720');
+    if (!popup) throw new Error('Allow pop-ups to print the payment summary.');
+    popup.document.write(`<!doctype html><title>Payment summary</title><style>body{font:12px Arial;padding:22px;color:#111}h1,p{margin:0 0 7px}table{width:100%;border-collapse:collapse;margin-top:18px}th,td{padding:8px;text-align:left;border-bottom:1px solid #ddd}th{font-size:10px;text-transform:uppercase;background:#f3f3f3}.right{text-align:right}.total{margin-top:18px;font-size:14px;font-weight:bold}</style><h1>Red Lantern Restaurant — Payment Summary</h1><p>Date: ${esc(data.day || date.value || '')}</p><table><thead><tr><th>Bill</th><th>Type</th><th>Table / Parcel</th><th>Customer</th><th>Payment</th><th class=right>Bill total</th><th class=right>Received</th><th class=right>Change</th><th class=right>Tip</th></tr></thead><tbody>${payments.map((order) => `<tr><td>#${esc(order.daily_order_number)}</td><td>${order.mode === 'table' ? 'Dine-in' : 'Parcel'}</td><td>${esc(order.mode === 'table' ? `Table ${String(order.table_number || '').padStart(2, '0')}` : (order.customer_phone || 'Walk-in'))}</td><td>${esc(order.customer_name || 'Walk-in customer')}</td><td>${esc(paymentName(order.settlement_type))}</td><td class=right>${money(order.total)}</td><td class=right>${money(order.payment_received ?? order.settlement_amount ?? order.total)}</td><td class=right>${money(order.change_due)}</td><td class=right>${money(order.tip_amount)}</td></tr>`).join('') || '<tr><td colspan=9>No completed payments for this date.</td></tr>'}</tbody></table><p class=total>Sales: ${money(sales)} &nbsp; | &nbsp; Tips: ${money(tips)}</p><script>onload=()=>print()<\/script>`);
+    popup.document.close();
+  };
   const load = async () => {
     try {
       status.style.color = '';
@@ -2663,6 +2682,17 @@ function setupCustomerInsights() {
     if (button) showBill(ordersById.get(button.dataset.insightOrder));
   });
   refresh?.addEventListener('click', load);
+  printSummary?.addEventListener('click', async () => {
+    printSummary.disabled = true;
+    try {
+      await printPaymentSummary();
+    } catch (error) {
+      status.textContent = error.message || 'Unable to print the payment summary.';
+      status.style.color = '#b91c1c';
+    } finally {
+      printSummary.disabled = false;
+    }
+  });
   date.addEventListener('change', load);
   let timer;
   search.addEventListener('input', () => {

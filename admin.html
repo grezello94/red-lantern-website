@@ -3341,6 +3341,13 @@
         font-size: 20px;
       }
       @media (max-width: 760px) {
+        .header-actions {
+          width: 100%;
+          justify-content: stretch;
+        }
+        .header-actions .btn-refresh {
+          flex: 1;
+        }
         .insight-stats,
         .customer-leaderboard {
           grid-template-columns: 1fr 1fr;
@@ -3741,6 +3748,12 @@
         border-color: #d9a6aa;
         color: var(--admin-brand);
         background: #fff7f7;
+      }
+      .header-actions {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 9px;
       }
       .card {
         margin-bottom: 22px;
@@ -4963,9 +4976,14 @@ Availability may vary. Please ask our team about today’s specials.</textarea>
             <h1>Customer &amp; Order Insights</h1>
             <p>Review direct-order history, loyalty points, and customer balances in one place.</p>
           </div>
-          <button type="button" id="refresh-customer-insights" class="btn-refresh">
-            Refresh data
-          </button>
+          <div class="header-actions">
+            <button type="button" id="print-register-summary" class="btn-refresh">
+              Print payment summary
+            </button>
+            <button type="button" id="refresh-customer-insights" class="btn-refresh">
+              Refresh data
+            </button>
+          </div>
         </div>
         <div id="customer-insight-stats" class="insight-stats">
           <div class="insight-stat"><span>Loading order information…</span></div>
@@ -6390,6 +6408,6 @@ Watch competitors ranking for Colva Beach, seafood, Goan food, Chinese food, fam
         });
       }
     </script>
-    <script src="admin-cms.js?v=20260825-26" defer></script>
+    <script src="admin-cms.js?v=20260826-27" defer></script>
   </body>
 </html>
