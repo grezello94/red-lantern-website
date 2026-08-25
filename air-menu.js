@@ -797,7 +797,7 @@ async function loadMenu() {
     if (menu.closed) {
       document.querySelector('.menu-tools').hidden = true;
       document.getElementById('menu-content').innerHTML =
-        `<section class="restaurant-closed"><span class="closed-icon" aria-hidden="true">◷</span><p class="eyebrow">Restaurant status</p><h2>${escapeHtml(menu.message || 'The restaurant is currently closed.')}</h2><p>${escapeHtml(menu.reopensAt || 'Please check back soon for our reopening time.')}</p></section>`;
+        `<section class="restaurant-closed" role="status"><div class="closed-brand"><img src="images/red-lantern-logo-600.webp" alt="Red Lantern Restaurant"><span>Red Lantern Restaurant</span></div><span class="closed-icon" aria-hidden="true">◷</span><p class="eyebrow">Temporary closure</p><h2>We are currently closed</h2><p class="closed-message">${escapeHtml(menu.message || 'Our team is taking a short break. We look forward to serving you again soon.')}</p><div class="closed-date-grid"><div><span>Closed on</span><strong>${escapeHtml(menu.closedAt || 'Today')}</strong></div><div><span>Reopens</span><strong>${escapeHtml(menu.reopensAt || 'Please check back soon')}</strong></div></div><p class="closed-thanks">Thank you for your understanding.</p></section>`;
       document.getElementById('menu-note').textContent = '';
       return;
     }

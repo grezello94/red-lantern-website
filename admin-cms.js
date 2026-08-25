@@ -2,6 +2,33 @@ const setField = (name, value) => {
   const field = document.querySelector(`[name="${name}"]`);
   if (field && value !== undefined) field.value = value;
 };
+const applyProximityLock = (locked) => {
+  document.querySelectorAll('.proximity-coordinate').forEach((field) => {
+    field.readOnly = locked;
+    field.classList.toggle('is-locked', locked);
+  });
+};
+document.querySelector('[name="airProximityLocked"]')?.addEventListener('change', async (event) => {
+  const lock = event.target;
+  const locked = lock.checked;
+  applyProximityLock(locked);
+  lock.disabled = true;
+  try {
+    const response = await fetch('/api/admin/air-menu/proximity-lock', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ locked }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Unable to save the coordinate lock.');
+  } catch (error) {
+    lock.checked = !locked;
+    applyProximityLock(!locked);
+    alert(error.message || 'Unable to save the coordinate lock.');
+  } finally {
+    lock.disabled = false;
+  }
+});
 
 const setStatus = (form, message, isError = false) => {
   let status = form.querySelector('.save-status');
@@ -862,6 +889,9 @@ function fillAirMenu(menu = {}) {
   setField('airTableQrDisabled', JSON.stringify(menu.tableQrDisabled || {}));
   setField('airProximityLatitude', menu.proximity?.latitude ?? '');
   setField('airProximityLongitude', menu.proximity?.longitude ?? '');
+  const proximityLock = document.querySelector('[name="airProximityLocked"]');
+  if (proximityLock) proximityLock.checked = menu.proximity?.locked === true;
+  applyProximityLock(menu.proximity?.locked === true);
   setField('airTableProximityRadius', menu.proximity?.tableRadius ?? 0);
   setField('airCardProximityRadius', menu.proximity?.cardRadius ?? 0);
   setField('airLoyaltySpend', menu.loyalty?.spend || 10);
@@ -2657,6 +2687,7 @@ function setupTrustedContacts() {
   if (!input || !save || !file || !upload || !list || !status || !search || !searchButton || !count || !pagination)
     return;
   let page = 1;
+  let contactsByPhone = new Map();
   const esc = (value) =>
     String(value ?? '').replace(
       /[&<>"']/g,
@@ -2681,11 +2712,12 @@ function setupTrustedContacts() {
       );
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Unable to load verified contacts.');
+      contactsByPhone = new Map(data.contacts.map((contact) => [String(contact.customer_phone), contact]));
       list.innerHTML = data.contacts.length
         ? data.contacts
             .map(
               (contact) =>
-                `<article class="trusted-contact-strip" data-trusted-phone="${esc(contact.customer_phone)}"><div><input class="trusted-contact-name" data-trusted-name value="${esc(contact.customer_name || '')}" placeholder="Optional name"><span class="trusted-contact-phone">${esc(contact.customer_phone)}</span></div><div><span class="trusted-contact-status${contact.blocked ? ' is-blocked' : ''}">${contact.blocked ? 'Counter approval required' : 'Auto-accept enabled'}</span></div><div><div class="trusted-contact-history">${esc(purchase(contact))}</div>${contact.last_order_at ? `<span class="trusted-contact-date">${esc(new Date(contact.last_order_at).toLocaleDateString('en-IN'))}</span>` : ''}</div><div class="trusted-contact-actions"><button type="button" class="btn-save" data-trusted-save>${contact.blocked ? 'Unblock' : 'Save name'}</button>${contact.blocked ? '' : '<button type="button" class="btn-delete" data-trusted-block>Block</button>'}</div></article>`
+                `<article class="trusted-contact-strip" data-trusted-phone="${esc(contact.customer_phone)}"><div><input class="trusted-contact-name" data-trusted-name value="${esc(contact.customer_name || '')}" placeholder="Add a name"><span class="trusted-contact-phone">${esc(contact.customer_phone)}</span></div><div><span class="trusted-contact-status${contact.blocked ? ' is-blocked' : ''}">${contact.blocked ? 'Counter approval required' : 'Auto-accept enabled'}</span></div><div><span class="trusted-contact-history-label">Latest order</span><div class="trusted-contact-history" title="${esc(purchase(contact))}">${esc(purchase(contact))}</div>${contact.last_order_at ? `<span class="trusted-contact-date">${esc(new Date(contact.last_order_at).toLocaleDateString('en-IN'))}</span>` : ''}</div><div class="trusted-contact-actions">${Array.isArray(contact.last_items) && contact.last_items.length ? '<button type="button" class="trusted-contact-view" data-trusted-view>View order</button>' : ''}<button type="button" class="trusted-contact-save" data-trusted-save>${contact.blocked ? 'Unblock' : 'Save name'}</button>${contact.blocked ? '' : '<button type="button" class="trusted-contact-block" data-trusted-block>Block</button>'}</div></article>`
             )
             .join('')
         : '<div class="trusted-contact-list-empty">No contacts match this search.</div>';
@@ -2711,6 +2743,25 @@ function setupTrustedContacts() {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'Unable to update this contact.');
     await load();
+  };
+  const viewOrder = (contact) => {
+    const items = Array.isArray(contact?.last_items) ? contact.last_items : [];
+    if (!items.length) return;
+    let dialog = document.getElementById('trusted-contact-order-dialog');
+    if (!dialog) {
+      dialog = document.createElement('dialog');
+      dialog.id = 'trusted-contact-order-dialog';
+      dialog.className = 'trusted-contact-order-dialog';
+      document.body.appendChild(dialog);
+    }
+    const placed = contact.last_order_at
+      ? new Date(contact.last_order_at).toLocaleDateString('en-IN', {
+          dateStyle: 'medium',
+        })
+      : 'Previous order';
+    dialog.innerHTML = `<header><div><h3>Latest order</h3><p>${esc(contact.customer_name || contact.customer_phone)} · ${esc(placed)}</p></div><button type="button" class="trusted-contact-order-close" aria-label="Close">×</button></header><div class="trusted-contact-order-items">${items.map((item) => `<div class="trusted-contact-order-item"><span>${esc(`${item.name || 'Item'}${item.portion ? ` (${item.portion})` : ''}${item.style ? ` · ${item.style}` : ''}`)}</span><b>${Number(item.quantity || 0)}×</b></div>`).join('')}</div>`;
+    dialog.querySelector('.trusted-contact-order-close').addEventListener('click', () => dialog.close());
+    dialog.showModal();
   };
   save.addEventListener('click', async () => {
     const contacts = input.value
@@ -2767,7 +2818,8 @@ function setupTrustedContacts() {
     const row = event.target.closest('[data-trusted-phone]');
     if (!row) return;
     try {
-      if (event.target.closest('[data-trusted-save]')) await update(row, false);
+      if (event.target.closest('[data-trusted-view]')) viewOrder(contactsByPhone.get(row.dataset.trustedPhone));
+      else if (event.target.closest('[data-trusted-save]')) await update(row, false);
       else if (event.target.closest('[data-trusted-block]')) await update(row, true);
     } catch (error) {
       setStatus(error.message || 'Unable to update this contact.', true);

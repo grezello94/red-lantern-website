@@ -2803,8 +2803,8 @@
       .trusted-contact-name {
         display: block;
         width: 100%;
-        max-width: 220px;
-        padding: 8px 9px;
+        max-width: 240px;
+        padding: 8px 10px;
         border: 1px solid #d8e0eb;
         border-radius: 7px;
         color: #26344a;
@@ -2818,23 +2818,50 @@
         font-size: 11px;
         font-weight: 700;
       }
+      .trusted-contact-phone::before {
+        content: 'Mobile · ';
+        color: #9aa7b8;
+        font-weight: 700;
+      }
       .trusted-contact-status {
         display: inline-flex;
-        padding: 5px 8px;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 9px;
         border-radius: 999px;
         background: #e8f7ee;
         color: #167244;
         font-size: 11px;
         font-weight: 800;
       }
+      .trusted-contact-status::before {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: currentColor;
+        content: '';
+      }
       .trusted-contact-status.is-blocked {
         background: #fff0f0;
         color: #b4232c;
       }
       .trusted-contact-history {
-        max-width: 500px;
+        display: block;
+        overflow: hidden;
+        max-width: 680px;
         color: #3b4960;
         line-height: 1.5;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .trusted-contact-history-label {
+        display: block;
+        margin-bottom: 3px;
+        color: #91a0b4;
+        font-size: 10px;
+        font-weight: 900;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
       }
       .trusted-contact-actions {
         display: flex;
@@ -2849,13 +2876,116 @@
         font-size: 12px;
         white-space: nowrap;
       }
-      .trusted-contact-actions .btn-save {
-        min-width: 86px;
+      .trusted-contact-save {
+        min-width: 92px;
+        border: 1px solid #263d68;
+        background: #263d68;
+        color: #fff;
       }
-      .trusted-contact-actions .btn-delete {
+      .trusted-contact-block {
         border: 1px solid #f0bdc2;
         background: #fff;
         color: #b4232c;
+      }
+      .trusted-contact-save:hover {
+        background: #1c2e50;
+      }
+      .trusted-contact-block:hover {
+        background: #fff4f4;
+      }
+      .trusted-contact-view {
+        border: 1px solid #cfdbea;
+        background: #fff;
+        color: #315487;
+      }
+      .trusted-contact-view:hover {
+        border-color: #8fa7c7;
+        background: #f1f6fd;
+      }
+      .trusted-contact-order-dialog {
+        width: min(520px, calc(100vw - 32px));
+        border: 0;
+        border-radius: 16px;
+        padding: 0;
+        color: #26344a;
+        box-shadow: 0 24px 70px rgba(19, 31, 52, 0.28);
+      }
+      .trusted-contact-order-dialog::backdrop {
+        background: rgba(20, 30, 48, 0.45);
+      }
+      .trusted-contact-order-dialog header {
+        display: flex;
+        align-items: start;
+        justify-content: space-between;
+        gap: 14px;
+        padding: 20px 22px 15px;
+        border-bottom: 1px solid #e8edf3;
+      }
+      .trusted-contact-order-dialog h3,
+      .trusted-contact-order-dialog p {
+        margin: 0;
+      }
+      .trusted-contact-order-dialog h3 {
+        font-size: 18px;
+      }
+      .trusted-contact-order-dialog p {
+        margin-top: 4px;
+        color: #718096;
+        font-size: 12px;
+      }
+      .trusted-contact-order-close {
+        display: grid;
+        width: 30px;
+        height: 30px;
+        place-items: center;
+        border: 0;
+        border-radius: 50%;
+        color: #53647b;
+        background: #eef2f7;
+        font-size: 20px;
+      }
+      .trusted-contact-order-items {
+        display: grid;
+        gap: 8px;
+        padding: 16px 22px 22px;
+      }
+      .trusted-contact-order-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        padding: 10px 12px;
+        border: 1px solid #e5eaf1;
+        border-radius: 9px;
+        background: #fbfcfe;
+        font-size: 13px;
+      }
+      .trusted-contact-order-item b {
+        color: #bd3038;
+      }
+      .proximity-lock-control {
+        display: inline-flex;
+        align-items: center;
+        gap: 9px;
+        margin-top: 15px;
+        padding: 9px 12px;
+        border: 1px solid #cbdced;
+        border-radius: 9px;
+        color: #315487;
+        background: #fff;
+        font-size: 12px;
+        font-weight: 800;
+        cursor: pointer;
+      }
+      .proximity-lock-control input {
+        width: 16px;
+        height: 16px;
+        accent-color: #315487;
+      }
+      .proximity-coordinate.is-locked {
+        color: #5b6b80;
+        background: #f2f6fb;
+        cursor: not-allowed;
       }
       .trusted-contact-directory-toolbar {
         display: flex;
@@ -2902,7 +3032,7 @@
       .trusted-contact-list-head,
       .trusted-contact-strip {
         display: grid;
-        grid-template-columns: minmax(210px, 0.8fr) minmax(150px, 0.45fr) minmax(320px, 1.65fr) auto;
+        grid-template-columns: minmax(245px, 0.8fr) minmax(180px, 0.46fr) minmax(360px, 1.7fr) auto;
         gap: 16px;
         align-items: center;
       }
@@ -2916,13 +3046,16 @@
         text-transform: uppercase;
       }
       .trusted-contact-strip {
-        min-height: 76px;
-        padding: 10px 14px;
+        min-height: 84px;
+        padding: 12px 20px;
         border-top: 1px solid #edf0f4;
         background: #fff;
       }
       .trusted-contact-strip:hover {
         background: #fafcff;
+      }
+      .trusted-contact-strip > div {
+        min-width: 0;
       }
       .trusted-contact-list-empty {
         padding: 22px;
@@ -4436,7 +4569,7 @@ Availability may vary. Please ask our team about today’s specials.</textarea>
                 <input type="checkbox" name="airShowCardPrices" />
               </div>
             </div>
-            <section class="card loyalty-settings-card" style="margin:22px 0 0;background:#f5faff;border:1px solid #d5e6f5;"><div class="air-settings-heading"><div><span class="hours-kicker">QR proximity</span><h2>Location limits</h2><p>Set the restaurant pin once, then choose a different ordering radius for Table and Business Card QR codes. Enter 0 to leave a QR type unrestricted.</p></div></div><div class="form-grid"><div class="form-group"><label>Restaurant latitude</label><input type="number" name="airProximityLatitude" min="-90" max="90" step="any"></div><div class="form-group"><label>Restaurant longitude</label><input type="number" name="airProximityLongitude" min="-180" max="180" step="any"></div><div class="form-group"><label>Table QR radius (metres)</label><input type="number" name="airTableProximityRadius" min="0" max="100000" value="0"></div><div class="form-group"><label>Business Card QR radius (metres)</label><input type="number" name="airCardProximityRadius" min="0" max="100000" value="0"></div></div></section>
+            <section class="card loyalty-settings-card" style="margin:22px 0 0;background:#f5faff;border:1px solid #d5e6f5;"><div class="air-settings-heading"><div><span class="hours-kicker">QR proximity</span><h2>Location limits</h2><p>Set the restaurant pin once, then choose a different ordering radius for Table and Business Card QR codes. Enter 0 to leave a QR type unrestricted.</p><label class="proximity-lock-control"><input type="checkbox" name="airProximityLocked"><span>🔒 Lock restaurant coordinates</span></label></div></div><div class="form-grid"><div class="form-group"><label>Restaurant latitude</label><input class="proximity-coordinate" type="number" name="airProximityLatitude" min="-90" max="90" step="any"></div><div class="form-group"><label>Restaurant longitude</label><input class="proximity-coordinate" type="number" name="airProximityLongitude" min="-180" max="180" step="any"></div><div class="form-group"><label>Table QR radius (metres)</label><input type="number" name="airTableProximityRadius" min="0" max="100000" value="0"></div><div class="form-group"><label>Business Card QR radius (metres)</label><input type="number" name="airCardProximityRadius" min="0" max="100000" value="0"></div></div></section>
             <section
               class="card loyalty-settings-card"
               style="margin: 22px 0 0; background: #fffaf1; border: 1px solid #f1dcc0"
@@ -6257,6 +6390,6 @@ Watch competitors ranking for Colva Beach, seafood, Goan food, Chinese food, fam
         });
       }
     </script>
-    <script src="admin-cms.js?v=20260822-25" defer></script>
+    <script src="admin-cms.js?v=20260825-26" defer></script>
   </body>
 </html>

@@ -1138,7 +1138,7 @@ function normalizeAirMenu(body) {
     tableQrDisabled = {};
   }
   const isValidTime = (value) => /^([01]\d|2[0-3]):[0-5]\d$/.test(String(value || ''));
-  const proximity={ latitude:Number.isFinite(Number(body.airProximityLatitude))&&Number(body.airProximityLatitude)>=-90&&Number(body.airProximityLatitude)<=90?Number(body.airProximityLatitude):null, longitude:Number.isFinite(Number(body.airProximityLongitude))&&Number(body.airProximityLongitude)>=-180&&Number(body.airProximityLongitude)<=180?Number(body.airProximityLongitude):null, tableRadius:Math.max(0,Math.min(100000,Math.floor(Number(body.airTableProximityRadius)||0))), cardRadius:Math.max(0,Math.min(100000,Math.floor(Number(body.airCardProximityRadius)||0))) };
+  const proximity={ latitude:Number.isFinite(Number(body.airProximityLatitude))&&Number(body.airProximityLatitude)>=-90&&Number(body.airProximityLatitude)<=90?Number(body.airProximityLatitude):null, longitude:Number.isFinite(Number(body.airProximityLongitude))&&Number(body.airProximityLongitude)>=-180&&Number(body.airProximityLongitude)<=180?Number(body.airProximityLongitude):null, tableRadius:Math.max(0,Math.min(100000,Math.floor(Number(body.airTableProximityRadius)||0))), cardRadius:Math.max(0,Math.min(100000,Math.floor(Number(body.airCardProximityRadius)||0))), locked:body.airProximityLocked === 'on' };
   const scheduleWasSubmitted = [
     'airService1Open',
     'airService1Close',
@@ -1179,6 +1179,7 @@ function normalizeAirMenu(body) {
     },
     serviceWindows,
     restaurantClosed: body.airRestaurantClosed === 'on',
+    closedAt: '',
     reopensAt: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(String(body.airReopensAt || ''))
       ? String(body.airReopensAt)
       : '',
@@ -1771,6 +1772,22 @@ async function getAllContent(includeScheduled = false, includePrivate = false) {
     Object.keys(collections).map(async (section) => [section, await getSection(section)])
   );
   const content = Object.fromEntries(entries);
+  if (temporaryClosureExpired(content.airMenu)) {
+    content.airMenu = {
+      ...content.airMenu,
+      restaurantClosed: false,
+      closedAt: '',
+      reopensAt: '',
+      closureMessage: '',
+    };
+    await saveSection('airMenu', {
+      restaurantClosed: false,
+      closedAt: '',
+      reopensAt: '',
+      closureMessage: '',
+    });
+    clearPublicContentCache();
+  }
   if (!includeScheduled && content.blogs) content.blogs = filterScheduledBlogs(content.blogs);
   if (!includePrivate) delete content.airMenu;
   return content;
@@ -2047,11 +2064,20 @@ function formatIndiaTime(minutes) {
   return `${hour % 12 || 12}:${String(minute).padStart(2, '0')} ${suffix}`;
 }
 
-function restaurantStatus(menu, now = new Date()) {
-  const localReopen = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(String(menu.reopensAt || ''))
+function temporaryClosureReopenAt(menu = {}) {
+  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(String(menu.reopensAt || ''))
     ? new Date(`${menu.reopensAt}:00+05:30`)
     : null;
-  const closureMessage =
+}
+
+function temporaryClosureExpired(menu = {}, now = new Date()) {
+  const reopenAt = temporaryClosureReopenAt(menu);
+  return menu.restaurantClosed === true && reopenAt && reopenAt <= now;
+}
+
+function restaurantStatus(menu, now = new Date()) {
+  const localReopen = temporaryClosureReopenAt(menu);
+    const closureMessage =
     String(menu.closureMessage || '').trim() || 'The restaurant is currently closed.';
   if (menu.restaurantClosed === true && (!localReopen || localReopen > now)) {
     const reopen = localReopen
@@ -2064,6 +2090,12 @@ function restaurantStatus(menu, now = new Date()) {
     return {
       open: false,
       message: closureMessage,
+      closedAt: menu.closedAt
+        ? new Intl.DateTimeFormat('en-IN', {
+            timeZone: 'Asia/Kolkata',
+            dateStyle: 'medium',
+          }).format(new Date(menu.closedAt))
+        : '',
       reopensAt: reopen
         ? `We will reopen on ${reopen}.`
         : 'Please check back soon for our reopening time.',
@@ -2893,6 +2925,7 @@ app.get('/api/air-menu', async (req, res) => {
       pageSubtitle: menu.pageSubtitle || '',
       note: menu.note || '',
       message: operatingStatus.message,
+      closedAt: operatingStatus.closedAt,
       reopensAt: operatingStatus.reopensAt,
       tableLabel: tableQr ? `${tableQr.name} Table ${tableQr.number}` : '',
       tableArea: tableQr?.name || '',
@@ -4628,6 +4661,21 @@ app.post('/api/admin/air-menu/gravy-style', async (req, res) => {
   }
 });
 
+app.patch('/api/admin/air-menu/proximity-lock', async (req, res) => {
+  try {
+    const menu = await getSection('airMenu');
+    const locked = req.body?.locked === true;
+    const proximity = { ...(menu.proximity || {}), locked };
+    if (locked && (!Number.isFinite(Number(proximity.latitude)) || !Number.isFinite(Number(proximity.longitude))))
+      return res.status(400).json({ error: 'Save a valid restaurant latitude and longitude before locking them.' });
+    await saveSection('airMenu', { proximity });
+    clearPublicContentCache();
+    res.json({ ok: true, locked });
+  } catch (error) {
+    res.status(500).json({ error: 'Unable to save the coordinate lock.' });
+  }
+});
+
 app.get('/api/admin/qr/:mode', async (req, res) => {
   const mode = req.params.mode;
   if (!['table', 'card'].includes(mode)) return res.status(404).end();
@@ -5959,6 +6007,15 @@ Object.keys(collections).forEach((section) => {
       const normalized = normalizeSection(section, req.body, req.files || []);
       if (section === 'airMenu') {
         const existing = await getSection('airMenu');
+        normalized.closedAt = normalized.restaurantClosed
+          ? existing.restaurantClosed && existing.closedAt
+            ? existing.closedAt
+            : new Date().toISOString()
+          : '';
+        if (existing.proximity?.locked && req.body.airProximityLocked === 'on') {
+          normalized.proximity.latitude = existing.proximity.latitude;
+          normalized.proximity.longitude = existing.proximity.longitude;
+        }
         const existingItems = [...(existing.items || []), ...(existing.barItems || [])].filter(
           (item) => item?.name
         ).length;

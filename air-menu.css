@@ -881,37 +881,61 @@ input:focus-visible {
   text-align: center;
 }
 .restaurant-closed {
-  max-width: 620px;
-  margin: 52px auto;
-  padding: 34px 28px;
-  border: 1px solid #f0dbcf;
-  border-radius: 22px;
-  background: linear-gradient(145deg, #fffdfb, #fff5ef);
-  box-shadow: 0 16px 38px rgba(96, 44, 23, 0.1);
+  position: relative;
+  overflow: hidden;
+  max-width: 650px;
+  margin: 34px auto;
+  padding: clamp(30px, 7vw, 52px) clamp(22px, 7vw, 50px);
+  border: 1px solid #f1d7d1;
+  border-radius: 24px;
+  background: radial-gradient(circle at 50% 0, #fff8f4, #fff 66%);
+  box-shadow: 0 20px 48px rgba(96, 44, 23, 0.13);
   text-align: center;
 }
+.restaurant-closed::before {
+  position: absolute;
+  top: -70px;
+  left: 50%;
+  width: 180px;
+  height: 180px;
+  border-radius: 50%;
+  background: rgba(208, 39, 44, 0.06);
+  content: '';
+  transform: translateX(-50%);
+}
+.closed-brand { position: relative; z-index: 1; display: inline-flex; align-items: center; gap: 9px; margin-bottom: 20px; color: #592a2d; font-size: 11px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
+.closed-brand img { width: 42px; height: 42px; border-radius: 50%; object-fit: contain; background: #fff; box-shadow: 0 5px 14px rgba(66, 25, 27, .12); }
 .restaurant-closed .closed-icon {
+  position: relative;
+  z-index: 1;
   display: grid;
-  width: 58px;
-  height: 58px;
-  margin: 0 auto 15px;
+  width: 66px;
+  height: 66px;
+  margin: 0 auto 16px;
   place-items: center;
   border-radius: 50%;
-  color: #b63b2d;
-  background: #ffe8e2;
-  font-size: 30px;
+  color: #fff;
+  background: linear-gradient(145deg, #df363b, #a9161d);
+  box-shadow: 0 12px 25px rgba(180, 25, 31, .24);
+  font-size: 32px;
   font-weight: 800;
 }
 .restaurant-closed h2 {
+  position: relative;
   margin: 5px 0 10px;
-  color: var(--ink);
-  font-size: clamp(21px, 5vw, 28px);
+  color: #7f171b;
+  font-size: clamp(26px, 7vw, 38px);
+  font-weight: 900;
   line-height: 1.25;
 }
-.restaurant-closed p:last-child {
-  margin: 0;
-  color: var(--muted);
-  font-weight: 700;
+.restaurant-closed .closed-message { position: relative; max-width: 510px; margin: 0 auto; color: #5e4b4c; font-size: 15px; font-weight: 700; line-height: 1.6; }
+.closed-date-grid { position: relative; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 25px; text-align: left; }
+.closed-date-grid > div { padding: 13px 14px; border: 1px solid #f0ddd8; border-radius: 13px; background: #fff; }
+.closed-date-grid span,.closed-date-grid strong { display: block; }
+.closed-date-grid span { margin-bottom: 4px; color: #9b6e69; font-size: 10px; font-weight: 900; letter-spacing: .06em; text-transform: uppercase; }
+.closed-date-grid strong { color: #67282b; font-size: 13px; line-height: 1.4; }
+.closed-thanks { position: relative; margin: 21px 0 0; color: #8b7372; font-size: 12px; font-weight: 700; }
+@media (max-width: 420px) { .closed-date-grid { grid-template-columns: 1fr; } .restaurant-closed { margin: 20px auto; } }
   line-height: 1.6;
 }
 .proximity-restriction {
