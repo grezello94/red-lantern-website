@@ -492,6 +492,10 @@ async function requireOrdersConsole(req, res, next) {
   const protectedPath =
     req.path === '/orders' ||
     req.path === '/orders.html' ||
+    req.path === '/register' ||
+    req.path === '/register.html' ||
+    req.path === '/register.js' ||
+    req.path === '/register.css' ||
     req.path === '/orders.js' ||
     req.path === '/orders.css' ||
     req.path.startsWith('/api/orders');
@@ -604,6 +608,7 @@ const cleanPageRoutes = new Map([
   ['/contact', 'contact.html'],
   ['/blog', 'blog-post.html'],
   ['/orders', 'orders.html'],
+  ['/register', 'register.html'],
   ['/captain', 'captain.html'],
   ['/track-order', 'track-order.html'],
 ]);
@@ -637,7 +642,7 @@ app.use(
     setHeaders: (res, filePath) => {
       const publicPath = String(filePath).replace(/\\/g, '/');
       if (
-        /\/(?:orders|captain|track-order)(?:\.html|\.js|\.css|-fixes\.css|-logo\.css|-sw\.js|\.webmanifest)$/i.test(
+        /\/(?:orders|register|captain|track-order)(?:\.html|\.js|\.css|-fixes\.css|-logo\.css|-sw\.js|\.webmanifest)$/i.test(
           publicPath
         )
       ) {

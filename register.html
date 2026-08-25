@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="theme-color" content="#020617">
+    <title>Red Lantern Register</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/register.css?v=1">
+    <link rel="stylesheet" href="/register-polish.css?v=1">
+    <style>
+      .register-grid { height: calc(100vh - 72px); min-height: 0; }
+      .register-list { flex: 1; overscroll-behavior: contain; }
+      @media (max-width: 1100px) {
+        .register-grid { height: auto; min-height: calc(100vh - 72px); }
+        .register-panel { height: min(60vh, 520px); }
+      }
+      @media (max-width: 680px) {
+        .register-grid { min-height: calc(100vh - 64px); }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="register-topbar">
+      <a class="brand" href="/orders" aria-label="Back to orders"><span>R</span><div><b>Red Lantern Register</b><small>Counter Fast-Checkout Dashboard</small></div></a>
+      <div class="summary" aria-label="Register summary"><span>Tables: <b id="active-tables" class="amber">0 Active</b></span><span>Parcels: <b id="pending-parcels" class="sky">0 Pending</b></span></div>
+      <div class="live"><time id="clock"></time><span><i id="connection-dot"></i><b id="connection-label">Live</b></span></div>
+    </header>
+    <main class="register-grid">
+      <section class="register-panel tables-panel"><header><h1><i></i>Dine-In Tables</h1><b id="table-badge">0 Active</b></header><div id="tables-list" class="register-list" aria-live="polite"></div></section>
+      <section class="register-panel parcels-panel"><header><h1><i></i>Ongoing Parcels</h1><b id="parcel-badge">0 Pending</b></header><div id="parcels-list" class="register-list" aria-live="polite"></div></section>
+    </main>
+    <dialog id="bill-modal"><button class="modal-close" aria-label="Close">×</button><div id="bill-content"></div></dialog>
+    <template id="empty-template"><div class="empty-state">No active orders at the counter.</div></template>
+    <script src="/register.js?v=1"></script>
+  </body>
+</html>
