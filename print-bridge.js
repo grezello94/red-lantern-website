@@ -408,6 +408,11 @@ $doc.add_PrintPage({ param($sender, $event)
     $displayLine = $line; $style = [System.Drawing.FontStyle]::Regular; $size = $bodySize; $alignment = [System.Drawing.StringAlignment]::Center; $fontName = ''
     if ($line.StartsWith('__SECTIONSTART__')) { $sectionStarts[$line.Substring(16)] = $y; continue }
     if ($line.StartsWith('__SECTIONEND__')) { $parts = $line.Substring(14).Split('|', 2); if ($parts.Count -eq 2 -and $sectionStarts.ContainsKey($parts[0])) { $y = [Math]::Max($y, $sectionStarts[$parts[0]] + [Math]::Max(0, [int]$parts[1])) }; continue }
+    if ($line.StartsWith('__KOTRULE__')) {
+      $pen = New-Object System.Drawing.Pen([System.Drawing.Color]::Black, 3)
+      $g.DrawLine($pen, $event.MarginBounds.Left, $y + 3, $event.MarginBounds.Left + $width, $y + 3)
+      $pen.Dispose(); $y += 9; continue
+    }
     if ($line.StartsWith('__SEPARATOR__')) {
       $pen = New-Object System.Drawing.Pen([System.Drawing.Color]::Black, ${separatorThickness})
       $g.DrawLine($pen, $event.MarginBounds.Left, $y + 2, $event.MarginBounds.Left + $width, $y + 2)
@@ -577,44 +582,36 @@ function kotText(payload) {
   const order = payload.order || {};
   const settings = payload.settings || {};
   const items = Array.isArray(payload.items) ? payload.items : [];
-  const line = '-'.repeat(34);
-  const placed = order.createdAt
-    ? new Intl.DateTimeFormat('en-IN', {
-        timeZone: 'Asia/Kolkata',
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: false,
-      }).format(new Date(order.createdAt))
-    : '';
-  const guestLine = `Guest: ${order.customer || 'Guest'}${order.fulfillment ? ` · ${order.fulfillment}` : ''}${placed ? ` · ${placed}` : ''}${order.phone ? ` · ${order.phone}` : ''}`;
-  const quantityFirst = settings.quantityFirst !== false;
+  const tableLine = order.tableArea || order.tableNumber
+    ? `Table: ${order.tableArea || 'Dining'} · ${order.tableNumber || '—'}`
+    : order.fulfillment
+      ? `Order: ${order.fulfillment}`
+      : '';
+  const guestLine = `Guest: ${order.customer || 'Walk-in customer'}`;
   const labels = kotHighlightLabels(items);
   const rows = items.flatMap((item, index) =>
     [
-      `__KOTITEM__${settings.showItemSerial ? `${index + 1}. ` : ''}${quantityFirst ? `${Number(item.quantity || 0)}x ` : ''}${labels[index]}${quantityFirst ? '' : ` · ${Number(item.quantity || 0)}x`}`,
+      // KOTs always lead with quantity. This is the kitchen's agreed format,
+      // not a per-printer preference.
+      `__KOTITEM__${Number(item.quantity || 0)}x ${labels[index]}`,
       item.note ? `__KOTNOTE__↳ ${item.note}` : '',
     ].filter(Boolean)
   );
-  const sourceLine = order.fulfillment
-    ? `From: ${order.fulfillment}`
-    : `Order #${order.number || order.id || '—'}`;
   const savedFeed = Number(settings.kotBottomFeedLines);
   const bottomLines =
     (Number.isFinite(savedFeed) ? Math.max(0, Math.min(12, savedFeed)) : 3) +
     Math.max(0, Math.min(2, Number(settings.extraSpace) || 0)) * 2;
-  const meta = settings.kotDetailsCentered ? '__KOTCENTERMETA__' : '__KOTMETA__',
-    metaBold = settings.kotDetailsCentered ? '__KOTCENTERMETABOLD__' : '__KOTMETABOLD__';
   return [
     `__KOTTITLE__${String(payload.printerLabel || payload.printerName || 'Kitchen').trim()}`,
-    order.reprint ? `${metaBold}*** REPRINT ***` : '',
-    line,
-    `${metaBold}KOT #${order.kotNumber || '—'}`,
-    `${meta}${sourceLine}`,
-    settings.showCustomer !== false ? `${meta}${guestLine}` : '',
-    line,
+    '__KOTRULE__',
+    `__KOTMETABOLD__KOT # ${order.kotNumber || '—'}`,
+    tableLine ? `__KOTMETA__${tableLine}` : '',
+    `__KOTMETA__${guestLine}`,
+    order.reprint ? '__KOTMETABOLD__*** REPRINT ***' : '',
+    '__KOTRULE__',
     ...rows,
-    order.note && settings.showNotes !== false ? `${line}\n__KOTNOTE__Note: ${order.note}` : '',
-    line,
+    order.note && settings.showNotes !== false ? `__KOTNOTE__Note: ${order.note}` : '',
+    '__KOTRULE__',
     '\n'.repeat(bottomLines),
   ]
     .filter(Boolean)
@@ -856,6 +853,14 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && req.url === '/v1/restart') {
     reply(res, 202, { ok: true, message: 'Print Bridge is restarting.' }, origin);
     setTimeout(() => {
+      // The installed supervisor immediately replaces this child. Do not create
+      // a detached process here: detached replacements escape Task Scheduler
+      // and were the cause of later unrecovered bridge outages.
+      if (process.env.PRINT_BRIDGE_SUPERVISED === '1') {
+        server.close(() => process.exit(75));
+        setTimeout(() => process.exit(75), 1000).unref();
+        return;
+      }
       const child = spawn(process.execPath, [__filename], {
         cwd: __dirname,
         detached: true,

@@ -19,6 +19,8 @@ WizardStyle=modern
 
 [Files]
 Source: "..\..\print-bridge.js"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..\print-bridge-supervisor.js"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..\run-print-bridge-hidden.vbs"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\install-print-bridge-windows.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#NodeRuntime}"; DestDir: "{app}"; DestName: "node.exe"; Flags: ignoreversion
 

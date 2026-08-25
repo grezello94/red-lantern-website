@@ -14,6 +14,8 @@ mkdir -p "$stage_dir/windows/Red-Lantern-Print-Bridge" "$stage_dir/macos/Red-Lan
 for platform in windows macos; do
   target="$stage_dir/$platform/Red-Lantern-Print-Bridge"
   cp "$root_dir/print-bridge.js" "$target/print-bridge.js"
+  cp "$root_dir/print-bridge-supervisor.js" "$target/print-bridge-supervisor.js"
+  cp "$root_dir/run-print-bridge-hidden.vbs" "$target/run-print-bridge-hidden.vbs"
   cp "$root_dir/install-print-bridge-windows.ps1" "$target/install-print-bridge-windows.ps1"
   cp "$root_dir/install-print-bridge-macos.sh" "$target/install-print-bridge-macos.sh"
 done
