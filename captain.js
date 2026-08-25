@@ -113,6 +113,28 @@ const itemKey = (line) =>
   `${line.name}::${line.category}::${line.portion}::${line.style}::${line.note || ''}`;
 const captainHeaders = () =>
   state.captain?.token ? { 'X-Captain-Session': state.captain.token } : {};
+function captainPrintLocation() {
+  if (!navigator.geolocation)
+    return Promise.reject(new Error('Location is required to print a bill from Captain.'));
+  return new Promise((resolve, reject) => {
+    navigator.geolocation.getCurrentPosition(
+      (position) =>
+        resolve({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          accuracy: position.coords.accuracy,
+        }),
+      (error) => {
+        const message =
+          error.code === error.PERMISSION_DENIED
+            ? 'Allow location for Captain to print bills inside the restaurant.'
+            : 'Current location is required to print a bill from Captain.';
+        reject(new Error(message));
+      },
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 30000 }
+    );
+  });
+}
 const captainDay = () =>
   new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Kolkata',
@@ -2092,18 +2114,19 @@ captainTableActionSheet.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-captain-table-action]');
     button.disabled = true;
     try {
+      const proximity = await captainPrintLocation();
       const response = await fetch(
           `/api/captain/orders/${encodeURIComponent(captainHeldTable.order.id)}/service`,
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...captainHeaders() },
-            body: JSON.stringify({ serviceState: 'bill_requested' }),
+            body: JSON.stringify({ serviceState: 'bill_requested', proximity }),
           }
         ),
         data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Unable to request the bill.');
       captainTableActionSheet.close();
-      showCaptainToast('Bill print requested at the counter.', 'success');
+      showCaptainToast('Bill sent to the billing printer.', 'success');
     } catch (error) {
       showCaptainToast(error.message || 'Unable to request the bill.', 'error');
     } finally {

@@ -5339,6 +5339,36 @@ app.post('/api/captain/orders/:id/service', async (req, res) => {
     return res.status(400).json({ error: 'Choose a valid table service request.' });
   try {
     await Promise.all([ensureDirectOrdersTable(), ensureOrderEventsTable()]);
+    if (serviceState === 'bill_requested') {
+      const menu = await getSection('airMenu');
+      const restaurantLatitude = Number(menu.proximity?.latitude);
+      const restaurantLongitude = Number(menu.proximity?.longitude);
+      const requiredRadius = Math.max(0, Number(menu.proximity?.tableRadius) || 0);
+      if (
+        !requiredRadius ||
+        !Number.isFinite(restaurantLatitude) ||
+        !Number.isFinite(restaurantLongitude)
+      )
+        return res.status(409).json({
+          error:
+            'Captain bill printing needs the restaurant location and Table proximity radius saved in Air Menu settings.',
+        });
+      const latitude = Number(req.body?.proximity?.latitude);
+      const longitude = Number(req.body?.proximity?.longitude);
+      const accuracy = Number(req.body?.proximity?.accuracy);
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude))
+        return res.status(403).json({
+          error: 'Location permission is required to print a bill from Captain.',
+        });
+      const tolerance = Math.min(100, Math.max(0, Number.isFinite(accuracy) ? accuracy : 0));
+      if (
+        distanceInMetres(restaurantLatitude, restaurantLongitude, latitude, longitude) >
+        requiredRadius + tolerance
+      )
+        return res.status(403).json({
+          error: `You need to be within ${requiredRadius} m of the restaurant to print a bill.`,
+        });
+    }
     const owner =
       await sql`SELECT o.id FROM direct_orders o JOIN order_events e ON e.order_id=o.id AND e.event_type='created' AND e.details->>'captainId'=${captain.id} WHERE o.id=${req.params.id} AND o.mode='table' AND o.status IN ('accepted','preparing','ready') LIMIT 1`;
     if (!owner.length)
