@@ -150,6 +150,7 @@ let counterTable = null;
 let counterBillSplit = null;
 const offlineCounterOrdersKey = 'red-lantern-counter-orders';
 const deferredPrintsKey = 'red-lantern-deferred-prints';
+const ordersWorkspaceKey = 'red-lantern-orders-last-workspace';
 let counterSyncInProgress = false;
 let deferredPrintSyncInProgress = false;
 let bridgeLedgerPending = 0;
@@ -681,6 +682,21 @@ const closeOpenPanels = (except = null) => {
   const shortcutDialog = document.getElementById('shortcut-dialog');
   if (except !== 'shortcut' && shortcutDialog?.open) shortcutDialog.close();
 };
+function rememberOrdersWorkspace(area, tab = '') {
+  try {
+    localStorage.setItem(ordersWorkspaceKey, JSON.stringify({ area, tab }));
+  } catch (_) {}
+}
+function savedOrdersWorkspace() {
+  try {
+    const value = JSON.parse(localStorage.getItem(ordersWorkspaceKey) || 'null');
+    return value && ['tables', 'live', 'operations', 'availability'].includes(value.area)
+      ? value
+      : null;
+  } catch (_) {
+    return null;
+  }
+}
 const counterPrice = (item) => {
   const options = [
     ['', item.price],
@@ -3560,6 +3576,7 @@ document.getElementById('availability-toggle')?.addEventListener('click', async 
   availability.hidden = !isOpening;
   document.getElementById('availability-toggle').setAttribute('aria-expanded', String(isOpening));
   if (isOpening) {
+    rememberOrdersWorkspace('availability');
     try {
       await loadAvailability();
     } catch (error) {
@@ -3574,6 +3591,7 @@ liveOrdersToggle.addEventListener('click', () => {
   liveOrdersToggle.classList.toggle('is-open', isOpening);
   liveOrdersToggle.setAttribute('aria-expanded', String(isOpening));
   if (isOpening) {
+    rememberOrdersWorkspace('live');
     orderView = 'current';
     historyAll = false;
     document
@@ -4203,6 +4221,7 @@ operationsToggle.addEventListener('click', async () => {
   operationsToggle.classList.toggle('is-open', opening);
   operationsToggle.setAttribute('aria-expanded', String(opening));
   if (!opening) return;
+  rememberOrdersWorkspace('operations', operationsTab);
   const hasSnapshot =
     (operationsConfig.printers || []).length ||
     (operationsConfig.routes || []).length ||
@@ -4268,6 +4287,7 @@ document.getElementById('operations-content')?.addEventListener('click', async (
   const operationsNavigation = event.target.closest('[data-operations-tab]');
   if (operationsNavigation) {
     operationsTab = operationsNavigation.dataset.operationsTab || 'home';
+    rememberOrdersWorkspace('operations', operationsTab);
     assignmentPrinterId = '';
     assignmentMode = '';
     renderOperations();
@@ -4953,11 +4973,47 @@ if (cachedTableAreas.length) {
   tableViewPanel.hidden = false;
   renderTableView();
 }
+async function restoreLastOrdersWorkspace() {
+  const saved = savedOrdersWorkspace();
+  if (!saved || saved.area === 'tables') return;
+  if (saved.area === 'live') {
+    closeOpenPanels('live');
+    liveOrdersPanel.hidden = false;
+    liveOrdersToggle.classList.add('is-open');
+    liveOrdersToggle.setAttribute('aria-expanded', 'true');
+    return;
+  }
+  if (saved.area === 'availability') {
+    closeOpenPanels('availability');
+    availability.hidden = false;
+    availabilityButton?.setAttribute('aria-expanded', 'true');
+    try {
+      await loadAvailability();
+    } catch (_) {}
+    return;
+  }
+  if (saved.area !== 'operations') return;
+  const allowedTabs = new Set(['home', 'setup', 'tables', 'kots', 'kitchen-display', 'printers']);
+  operationsTab = allowedTabs.has(saved.tab) ? saved.tab : 'home';
+  closeOpenPanels('operations');
+  operationsPanel.hidden = false;
+  operationsToggle.classList.add('is-open');
+  operationsToggle.setAttribute('aria-expanded', 'true');
+  renderOperations();
+  try {
+    await loadOrders();
+    await loadOperations();
+  } catch (_) {}
+  if (!operationsPanel.hidden) renderOperations();
+  if (operationsTab === 'setup') void checkPrintBridgeSetup();
+  void discoverSystemPrinters();
+}
 // Detect the local workstation service on every app launch. This keeps the
 // Operations readiness state current without requiring staff to press Check again.
 void checkPrintBridgeSetup();
 loadOrders();
 showTableView();
+void restoreLastOrdersWorkspace();
 setInterval(loadOrders, 3000);
 // Cloud reconciliation is deliberately slower than the live table refresh:
 // it retries durable local work promptly without flooding the API or printers.
