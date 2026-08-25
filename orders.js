@@ -3575,6 +3575,7 @@ document.getElementById('availability-toggle')?.addEventListener('click', async 
   if (isOpening) closeOpenPanels('availability');
   availability.hidden = !isOpening;
   document.getElementById('availability-toggle').setAttribute('aria-expanded', String(isOpening));
+  if (!isOpening) rememberOrdersWorkspace('tables');
   if (isOpening) {
     rememberOrdersWorkspace('availability');
     try {
@@ -3590,6 +3591,7 @@ liveOrdersToggle.addEventListener('click', () => {
   liveOrdersPanel.hidden = !isOpening;
   liveOrdersToggle.classList.toggle('is-open', isOpening);
   liveOrdersToggle.setAttribute('aria-expanded', String(isOpening));
+  if (!isOpening) rememberOrdersWorkspace('tables');
   if (isOpening) {
     rememberOrdersWorkspace('live');
     orderView = 'current';
@@ -4220,7 +4222,10 @@ operationsToggle.addEventListener('click', async () => {
   operationsPanel.hidden = !opening;
   operationsToggle.classList.toggle('is-open', opening);
   operationsToggle.setAttribute('aria-expanded', String(opening));
-  if (!opening) return;
+  if (!opening) {
+    rememberOrdersWorkspace('tables');
+    return;
+  }
   rememberOrdersWorkspace('operations', operationsTab);
   const hasSnapshot =
     (operationsConfig.printers || []).length ||
@@ -4250,6 +4255,7 @@ document.getElementById('operations-close')?.addEventListener('click', async () 
   operationsPanel.hidden = true;
   operationsToggle.classList.remove('is-open');
   operationsToggle.setAttribute('aria-expanded', 'false');
+  rememberOrdersWorkspace('tables');
   await showTableView();
 });
 document.getElementById('operations-content')?.addEventListener('change', (event) => {
