@@ -1,7 +1,7 @@
-const CACHE = 'red-lantern-orders-v16';
+const CACHE = 'red-lantern-orders-v17';
 const ORDER_SHELL = [
   '/orders',
-  '/orders.js?v=21',
+  '/orders.js?v=22',
   '/orders.css?v=7',
   '/orders-logo.css?v=7',
   '/orders-fixes.css?v=10',

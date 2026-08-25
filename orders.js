@@ -1509,7 +1509,7 @@ const toPushKey = (value) => {
   return Uint8Array.from(raw, (character) => character.charCodeAt(0));
 };
 
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('/orders-sw.js?v=16');
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/orders-sw.js?v=17');
 document.getElementById('enable-notifications')?.addEventListener('click', async () => {
   closeOpenPanels();
   const button = document.getElementById('enable-notifications');
@@ -1639,8 +1639,12 @@ async function loadOrders() {
     root.classList.remove('is-stale');
     // This billing computer owns print dispatch. Retry all accepted live orders
     // after an outage or restart; stable bridge job IDs prevent duplicate tickets.
-    if (orderView === 'current')
+    if (orderView === 'current') {
       rows.filter((order) => order.status === 'accepted').forEach(autoPrintOrder);
+      rows.filter((order) => order.mode === 'table' && order.service_state === 'bill_requested').forEach(
+        autoPrintRequestedTableBill
+      );
+    }
     if (!tableViewPanel.hidden) renderTableView();
     const clearButton = document.getElementById('clear-order-search');
     const searchStatus = document.getElementById('order-search-status');
@@ -3260,6 +3264,81 @@ async function dispatchKot(orderId, printerId) {
 }
 
 const autoPrintInFlight = new Set();
+const requestedTableBillInFlight = new Set();
+async function autoPrintRequestedTableBill(order) {
+  if (
+    !order?.id ||
+    order.mode !== 'table' ||
+    order.service_state !== 'bill_requested' ||
+    !['accepted', 'preparing', 'ready'].includes(order.status) ||
+    requestedTableBillInFlight.has(order.id)
+  )
+    return;
+  requestedTableBillInFlight.add(order.id);
+  try {
+    const bridge = await fetch(`${printBridgeOrigin}/health`, { cache: 'no-store' }).catch(() => null);
+    if (!bridge?.ok) return;
+    const operationsResponse = await fetch('/api/orders/operations', { cache: 'no-store' });
+    const operations = await operationsResponse.json().catch(() => ({}));
+    if (!operationsResponse.ok)
+      throw new Error(operations.error || 'Printer configuration could not load.');
+    const billPrinter = (operations.config?.printers || []).find(
+      (printer) => printer.type === 'bill' && printer.deviceName
+    );
+    if (!billPrinter) throw new Error('No Bill printer is assigned in Operations.');
+    const claimResponse = await fetch(`/api/orders/${encodeURIComponent(order.id)}/bill-print/claim`, {
+      method: 'POST',
+    });
+    const claim = await claimResponse.json().catch(() => ({}));
+    if (!claimResponse.ok) throw new Error(claim.error || 'Unable to reserve this bill for printing.');
+    if (!claim.claimed) return;
+    try {
+      const receiptResponse = await fetch(`/api/orders/${encodeURIComponent(order.id)}/print`, {
+        cache: 'no-store',
+      });
+      const receipt = await receiptResponse.json().catch(() => ({}));
+      if (!receiptResponse.ok) throw new Error(receipt.error || 'Unable to prepare the receipt.');
+      const printed = await fetch(`${printBridgeOrigin}/v1/print-bill`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          printJobId: `captain-bill:${order.id}`,
+          printerName: billPrinter.deviceName,
+          order: receipt,
+          settings: billPrinter,
+        }),
+      });
+      const result = await printed.json().catch(() => ({}));
+      if (!printed.ok) throw new Error(result.error || 'Bill printer did not accept the job.');
+      await fetch(`/api/orders/${encodeURIComponent(order.id)}/bill-print/complete`, {
+        method: 'POST',
+      });
+      const marked = await fetch(`/api/orders/${encodeURIComponent(order.id)}/bill-printed`, {
+        method: 'POST',
+      });
+      if (!marked.ok) throw new Error('Bill printed, but the table could not be marked for settlement.');
+      await fetch(`/api/orders/${encodeURIComponent(order.id)}/service`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ serviceState: 'active' }),
+      });
+      await loadOrders();
+    } catch (error) {
+      await fetch(`/api/orders/${encodeURIComponent(order.id)}/bill-print/failed`, {
+        method: 'POST',
+      }).catch(() => {});
+      throw error;
+    }
+  } catch (error) {
+    reportOrdersDiagnostic({
+      level: 'warning',
+      message: `Captain bill request could not print: ${error.message || 'Unknown error'}`,
+      source: 'captain bill request',
+    });
+  } finally {
+    requestedTableBillInFlight.delete(order.id);
+  }
+}
 async function flushDeferredAutomaticPrints() {
   if (deferredPrintSyncInProgress || !navigator.onLine) return;
   const entries = deferredPrints();
