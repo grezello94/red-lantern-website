@@ -1584,7 +1584,10 @@ async function loadOrders() {
         );
     if (orderView === 'current') known = ids;
     const liveCount = document.getElementById('live-orders-count');
-    if (liveCount && orderView === 'current') liveCount.textContent = String(rows.length);
+    if (liveCount && orderView === 'current')
+      liveCount.textContent = String(
+        rows.filter((order) => !['completed', 'rejected', 'cancelled'].includes(order.status)).length
+      );
     firstLoad = false;
     const statusRows =
       orderStatusFilter === 'all'
@@ -3251,7 +3254,7 @@ async function flushDeferredAutomaticPrints() {
     if (!health?.ok) return;
     const remaining = [];
     for (const entry of entries) {
-      const result = await autoPrintOrder(entry);
+      const result = await autoPrintOrder(entry, { deferred: true });
       if (!result?.ok) {
         // Keep retrying only if the Bridge disappeared again. A reachable
         // Bridge that reports a printer/driver failure records that job for
@@ -3267,13 +3270,14 @@ async function flushDeferredAutomaticPrints() {
     deferredPrintSyncInProgress = false;
   }
 }
-async function autoPrintOrder(order) {
-  const canReleaseToKitchen = order?.mode === 'counter' || order?.status === 'accepted';
+async function autoPrintOrder(order, { deferred = false } = {}) {
+  const canReleaseToKitchen =
+    deferred || order?.mode === 'counter' || order?.status === 'accepted';
   if (
     !order?.id ||
     !canReleaseToKitchen ||
     autoPrintInFlight.has(order.id) ||
-    ['completed', 'rejected', 'cancelled'].includes(order.status)
+    (!deferred && ['completed', 'rejected', 'cancelled'].includes(order.status))
   )
     return { ok: false, reason: 'This order is not ready to print yet.' };
   autoPrintInFlight.add(order.id);
