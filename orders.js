@@ -1493,7 +1493,7 @@ const toPushKey = (value) => {
   return Uint8Array.from(raw, (character) => character.charCodeAt(0));
 };
 
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('/orders-sw.js?v=15');
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/orders-sw.js?v=16');
 document.getElementById('enable-notifications')?.addEventListener('click', async () => {
   closeOpenPanels();
   const button = document.getElementById('enable-notifications');
@@ -3277,7 +3277,8 @@ async function autoPrintOrder(order, { deferred = false } = {}) {
     !order?.id ||
     !canReleaseToKitchen ||
     autoPrintInFlight.has(order.id) ||
-    (!deferred && ['completed', 'rejected', 'cancelled'].includes(order.status))
+    ['rejected', 'cancelled'].includes(order.status) ||
+    (!deferred && order.status === 'completed')
   )
     return { ok: false, reason: 'This order is not ready to print yet.' };
   autoPrintInFlight.add(order.id);
