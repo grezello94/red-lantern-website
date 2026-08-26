@@ -367,7 +367,7 @@ async function printText(printerName, text, settings = {}) {
       // Never enlarge a saved printable width. Some 80 mm drivers expose only
       // 250 units of usable width; forcing 300 makes the right columns print
       // outside the paper and causes the clipping seen on the receipt.
-      const isKot = text.startsWith('__KOTTITLE__'),
+      const isKot = text.includes('__KOTITEM__'),
         configuredMainWidth = layout(settings.billingMainWidth, 160, 400, 309),
         // KOTs must use the selected paper form's complete printable width.
         // Billing layout controls are deliberately independent: a narrower
@@ -622,12 +622,10 @@ function kotText(payload) {
     (Number.isFinite(savedFeed) ? Math.max(0, Math.min(12, savedFeed)) : 3) +
     Math.max(0, Math.min(2, Number(settings.extraSpace) || 0)) * 2;
   return [
-    `__KOTTITLE__${String(payload.printerLabel || payload.printerName || 'Kitchen').trim()}`,
-    '__KOTRULE__',
+    order.reprint ? '__KOTCENTERMETABOLD__DUPLICATE / REPRINT' : '',
     `${boldMetaLine}KOT # ${order.kotNumber || '—'}`,
     tableLine ? `${metaLine}${tableLine}` : '',
     settings.showCustomer !== false ? `${metaLine}${guestLine}` : '',
-    order.reprint ? `${boldMetaLine}*** REPRINT ***` : '',
     '__KOTRULE__',
     '__KOTMETABOLD__Qty. Item',
     ...rows,

@@ -2338,7 +2338,7 @@ function renderPrinterManagement() {
         if (printer.type === 'kot') {
           const preview = document.createElement('aside');
           preview.className = 'receipt-live-preview';
-          preview.innerHTML = `<div><b>Live KOT preview</b><p>Click a ticket section to jump to its setting. Text, hierarchy, dividers and customer details update as you edit.</p></div><div class="receipt-preview-paper" data-kot-preview><div class="rp-center rp-name" data-kp-title data-preview-target="kotTitleFontSize">Kitchen printer</div><div class="rp-rule"></div><b data-kp-kot data-preview-target="kotMetaFontSize">KOT # 12</b><div data-kp-customer data-preview-target="showCustomer">Table: AC · 1<br>Guest: Walk-in customer</div><div class="rp-rule"></div><div data-kp-item data-preview-target="kotItemFontSize"></div><div data-kp-item data-preview-target="kotItemFontSize"></div><div class="rp-rule"></div><div class="rp-foot" data-kp-footer data-preview-target="kotBottomFeedLines"></div></div>`;
+          preview.innerHTML = `<div><b>Live KOT preview</b><p>Click a ticket section to jump to its setting. Text, hierarchy, dividers and customer details update as you edit.</p></div><div class="receipt-preview-paper" data-kot-preview><b data-kp-kot data-preview-target="kotMetaFontSize">KOT # 12</b><div data-kp-customer data-preview-target="showCustomer">Table: AC · 1<br>Guest: Walk-in customer</div><div class="rp-rule"></div><div data-kp-item data-preview-target="kotItemFontSize"></div><div data-kp-item data-preview-target="kotItemFontSize"></div><div class="rp-rule"></div><div class="rp-foot" data-kp-footer data-preview-target="kotBottomFeedLines"></div></div>`;
           typography.prepend(preview);
           const updateKotPreview = () => {
             const value = (key, fallback = 0) => {
@@ -2360,12 +2360,6 @@ function renderPrinterManagement() {
               '--receipt-font',
               typography.querySelector('#printer-edit-font-family')?.value || 'Arial'
             );
-            preview.querySelector('[data-kp-title]').style.fontSize =
-              `${pt(value('kotTitleFontSize', 15), 10, 22)}px`;
-            preview.querySelector('[data-kp-title]').style.fontWeight =
-              document.getElementById('printer-edit-header-bold')?.checked === false
-                ? '400'
-                : '800';
             preview.querySelector('[data-kp-kot]').style.fontSize =
               `${pt(value('kotMetaFontSize', 10), 8, 18)}px`;
             preview.querySelector('[data-kp-kot]').style.textAlign = centered ? 'center' : 'left';
@@ -2432,22 +2426,12 @@ function renderPrinterManagement() {
             .forEach((input) => input.addEventListener('input', updateKotFeed));
           document.getElementById('printer-edit-space')?.addEventListener('input', updateKotFeed);
           updateKotFeed();
-          const updateKotTitle = () => {
-            preview.querySelector('[data-kp-title]').textContent =
-              String(
-                document.getElementById('printer-edit-name')?.value || printer.name || 'Kitchen'
-              ).trim() || 'Kitchen';
-          };
-          document.getElementById('printer-edit-name')?.addEventListener('input', updateKotTitle);
-          updateKotTitle();
           preview.addEventListener(
             'click',
             (event) => {
               const target = event.target.closest('[data-preview-target]')?.dataset.previewTarget;
               const input =
-                target === 'header'
-                  ? document.getElementById('printer-edit-kotTitleFontSize')
-                  : target === 'footer'
+                target === 'footer'
                     ? document.getElementById('printer-edit-kotBottomFeedLines')
                     : event.target.closest('.rp-rule')
                       ? document.getElementById('printer-edit-separatorGap')
@@ -2484,6 +2468,7 @@ function renderPrinterManagement() {
             'printer-edit-show-name',
             'printer-edit-footer-bold',
             'printer-edit-kotHeaderFontSize',
+            'printer-edit-kotTitleFontSize',
             'printer-edit-kotFooterFontSize',
           ].forEach((id) => document.getElementById(id)?.closest('label')?.remove());
         }
