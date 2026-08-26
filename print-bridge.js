@@ -615,6 +615,7 @@ function kotText(payload) {
   const qrGuestLine = order.customerPhone
     ? `Guest: ${order.customer || 'Guest'} · ${order.customerPhone}`
     : guestLine;
+  const isRunningTable = order.mode === 'table' && Number(order.kotNumber) > 1;
   const metaLine = settings.kotDetailsCentered ? '__KOTCENTERMETA__' : '__KOTMETA__';
   const boldMetaLine = settings.kotDetailsCentered
     ? '__KOTCENTERMETABOLD__'
@@ -632,6 +633,7 @@ function kotText(payload) {
     (Number.isFinite(savedFeed) ? Math.max(0, Math.min(12, savedFeed)) : 3) +
     Math.max(0, Math.min(2, Number(settings.extraSpace) || 0)) * 2;
   return [
+    isRunningTable ? '__KOTCENTERMETABOLD__RUNNING TABLE' : '',
     order.reprint ? '__KOTCENTERMETABOLD__DUPLICATE / REPRINT' : '',
     `${boldMetaLine}KOT # ${order.kotNumber || '—'}`,
     tableLine ? `${metaLine}${tableLine}` : '',

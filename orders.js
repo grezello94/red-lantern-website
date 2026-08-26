@@ -3252,6 +3252,7 @@ async function dispatchKot(orderId, printerId) {
             source: data.order.order_source,
             captainName: data.order.captain_name,
             customerPhone: data.order.customer_phone,
+            mode: data.order.mode,
           },
         }),
       });
@@ -3436,6 +3437,7 @@ async function autoPrintOrder(order, { deferred = false } = {}) {
                     source: savedKot.order?.order_source,
                     captainName: savedKot.order?.captain_name,
                     customerPhone: savedKot.order?.customer_phone,
+                    mode: savedKot.order?.mode,
                   },
                 }),
               });
