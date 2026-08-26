@@ -605,6 +605,10 @@ function kotText(payload) {
       ? `Order: ${order.fulfillment}`
       : '';
   const guestLine = `Guest: ${order.customer || 'Walk-in customer'}`;
+  const metaLine = settings.kotDetailsCentered ? '__KOTCENTERMETA__' : '__KOTMETA__';
+  const boldMetaLine = settings.kotDetailsCentered
+    ? '__KOTCENTERMETABOLD__'
+    : '__KOTMETABOLD__';
   const labels = kotHighlightLabels(items);
   const rows = items.flatMap((item, index) =>
     [
@@ -620,10 +624,10 @@ function kotText(payload) {
   return [
     `__KOTTITLE__${String(payload.printerLabel || payload.printerName || 'Kitchen').trim()}`,
     '__KOTRULE__',
-    `__KOTMETABOLD__KOT # ${order.kotNumber || '—'}`,
-    tableLine ? `__KOTMETA__${tableLine}` : '',
-    `__KOTMETA__${guestLine}`,
-    order.reprint ? '__KOTMETABOLD__*** REPRINT ***' : '',
+    `${boldMetaLine}KOT # ${order.kotNumber || '—'}`,
+    tableLine ? `${metaLine}${tableLine}` : '',
+    settings.showCustomer !== false ? `${metaLine}${guestLine}` : '',
+    order.reprint ? `${boldMetaLine}*** REPRINT ***` : '',
     '__KOTRULE__',
     '__KOTMETABOLD__Qty. Item',
     ...rows,

@@ -2347,6 +2347,12 @@ function renderPrinterManagement() {
             };
             const pt = (points, min, max) => Math.max(min, Math.min(max, points)) * 1.333;
             const paper = preview.querySelector('[data-kot-preview]');
+            const paperWidth = Number(document.getElementById('printer-edit-paper')?.value) === 58
+              ? 58
+              : 80;
+            // Keep the browser mock-up proportional to the paper selection so
+            // staff can see the same wrapping difference before printing.
+            paper.style.width = `${Math.round((280 * paperWidth) / 80)}px`;
             const centered = !!document.getElementById('printer-edit-kot-details-centered')
               ?.checked;
             const showSerial = !!document.getElementById('printer-edit-show-serial')?.checked;
@@ -2387,6 +2393,7 @@ function renderPrinterManagement() {
             'printer-edit-customer',
             'printer-edit-show-serial',
             'printer-edit-kot-details-centered',
+            'printer-edit-paper',
           ].forEach((id) =>
             document.getElementById(id)?.addEventListener('input', updateKotPreview)
           );
@@ -4691,7 +4698,8 @@ document.getElementById('operations-content')?.addEventListener('click', async (
     printer.showCustomer = !!document.getElementById('printer-edit-customer')?.checked;
     // Kitchen tickets have one standard order: quantity always leads the item.
     printer.quantityFirst = true;
-    printer.showNotes = !!document.getElementById('printer-edit-notes')?.checked;
+    const notesControl = document.getElementById('printer-edit-notes');
+    printer.showNotes = notesControl ? !!notesControl.checked : printer.showNotes !== false;
     printer.extraSpace = Math.max(
       0,
       Math.min(2, Number(document.getElementById('printer-edit-space')?.value) || 0)
