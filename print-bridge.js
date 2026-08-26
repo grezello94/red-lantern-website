@@ -393,9 +393,10 @@ $lines = Get-Content -LiteralPath '${quote(file)}' -Encoding UTF8
 $doc = New-Object System.Drawing.Printing.PrintDocument
 $doc.PrinterSettings.PrinterName = '${quote(printerName)}'
 if (-not $doc.PrinterSettings.IsValid) { throw 'The selected Windows printer is no longer available.' }
-# 79 mm rolls are configured by Windows drivers as 80 mm. Reuse that driver
-# form (rather than forcing a page length) and keep a 72 mm printable column.
-$minWidth = if (${paperWidth} -eq 58) { 220 } else { 300 }
+# 79 mm rolls are configured by Windows drivers as 80 mm. Some Everycom
+# drivers report that 80 mm form as 283 hundredths of an inch (about 72 mm),
+# so include it rather than falling back to the driver's unrelated default.
+$minWidth = if (${paperWidth} -eq 58) { 220 } else { 270 }
 $maxWidth = if (${paperWidth} -eq 58) { 240 } else { 320 }
 $thermalPaper = @($doc.PrinterSettings.PaperSizes | Where-Object { $_.Width -ge $minWidth -and $_.Width -le $maxWidth } | Select-Object -First 1)
 if ($thermalPaper.Count) { $doc.DefaultPageSettings.PaperSize = $thermalPaper[0] }
