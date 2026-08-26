@@ -368,7 +368,10 @@ async function printText(printerName, text, settings = {}) {
       // 250 units of usable width; forcing 300 makes the right columns print
       // outside the paper and causes the clipping seen on the receipt.
       const configuredMainWidth = layout(settings.billingMainWidth, 160, 400, 309),
-        mainWidth = configuredMainWidth,
+        // KOTs must use the selected paper form's complete printable width.
+        // Billing layout controls are deliberately independent: a narrower
+        // bill table must never make kitchen tickets waste paper or wrap early.
+        mainWidth = text.startsWith('__KOTTITLE__') ? Number.MAX_SAFE_INTEGER : configuredMainWidth,
         leftMargin = layout(settings.billingOuterLeft, 0, 40, 0),
         rightMargin = layout(settings.billingOuterRight, 0, 40, 0),
         topMargin = layout(settings.billingOuterTop, 0, 40, 0),
