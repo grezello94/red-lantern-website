@@ -393,13 +393,17 @@ $lines = Get-Content -LiteralPath '${quote(file)}' -Encoding UTF8
 $doc = New-Object System.Drawing.Printing.PrintDocument
 $doc.PrinterSettings.PrinterName = '${quote(printerName)}'
 if (-not $doc.PrinterSettings.IsValid) { throw 'The selected Windows printer is no longer available.' }
-# 79 mm rolls are configured by Windows drivers as 80 mm. Some Everycom
-# drivers report that 80 mm form as 283 hundredths of an inch (about 72 mm),
-# so include it rather than falling back to the driver's unrelated default.
-$minWidth = if (${paperWidth} -eq 58) { 220 } else { 270 }
-$maxWidth = if (${paperWidth} -eq 58) { 240 } else { 320 }
-$thermalPaper = @($doc.PrinterSettings.PaperSizes | Where-Object { $_.Width -ge $minWidth -and $_.Width -le $maxWidth } | Select-Object -First 1)
-if ($thermalPaper.Count) { $doc.DefaultPageSettings.PaperSize = $thermalPaper[0] }
+# Windows drivers report paper sizes in hundredths of an inch. Select the form
+# closest to the width saved in Operations, rather than relying on a specific
+# driver's paper-name convention or a hard-coded list of thermal-paper forms.
+$requestedWidth = [int][Math]::Round(${paperWidth} / 25.4 * 100)
+$maximumDifference = [int][Math]::Round($requestedWidth * 0.2)
+$thermalPaper = @($doc.PrinterSettings.PaperSizes |
+  ForEach-Object { [pscustomobject]@{ Paper = $_; Difference = [Math]::Abs($_.Width - $requestedWidth) } } |
+  Where-Object { $_.Difference -le $maximumDifference } |
+  Sort-Object Difference |
+  Select-Object -First 1)
+if ($thermalPaper.Count) { $doc.DefaultPageSettings.PaperSize = $thermalPaper[0].Paper }
 $doc.DefaultPageSettings.Margins = New-Object System.Drawing.Printing.Margins(${leftMargin}, ${rightMargin}, ${topMargin}, ${bottomMargin})
 $doc.PrintController = New-Object System.Drawing.Printing.StandardPrintController
 $doc.add_PrintPage({ param($sender, $event)
