@@ -3249,6 +3249,9 @@ async function dispatchKot(orderId, printerId) {
             fulfillment: fulfillmentLabel(data.order),
             createdAt: data.order.created_at,
             note: data.order.special_request,
+            source: data.order.order_source,
+            captainName: data.order.captain_name,
+            customerPhone: data.order.customer_phone,
           },
         }),
       });
@@ -3430,6 +3433,9 @@ async function autoPrintOrder(order, { deferred = false } = {}) {
                     fulfillment: fulfillmentLabel(savedKot.order),
                     createdAt: savedKot.order?.created_at,
                     note: savedKot.order?.special_request,
+                    source: savedKot.order?.order_source,
+                    captainName: savedKot.order?.captain_name,
+                    customerPhone: savedKot.order?.customer_phone,
                   },
                 }),
               });

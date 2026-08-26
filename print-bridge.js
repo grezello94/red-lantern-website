@@ -605,6 +605,16 @@ function kotText(payload) {
       ? `Order: ${order.fulfillment}`
       : '';
   const guestLine = `Guest: ${order.customer || 'Walk-in customer'}`;
+  const source = String(order.source || '').toLowerCase();
+  const originLine =
+    source === 'captain' && order.captainName
+      ? `Captain / Waiter: ${order.captainName}`
+      : source === 'qr'
+        ? 'QR Code Order'
+        : 'Counter Order';
+  const qrGuestLine = order.customerPhone
+    ? `Guest: ${order.customer || 'Guest'} · ${order.customerPhone}`
+    : guestLine;
   const metaLine = settings.kotDetailsCentered ? '__KOTCENTERMETA__' : '__KOTMETA__';
   const boldMetaLine = settings.kotDetailsCentered
     ? '__KOTCENTERMETABOLD__'
@@ -625,7 +635,8 @@ function kotText(payload) {
     order.reprint ? '__KOTCENTERMETABOLD__DUPLICATE / REPRINT' : '',
     `${boldMetaLine}KOT # ${order.kotNumber || '—'}`,
     tableLine ? `${metaLine}${tableLine}` : '',
-    settings.showCustomer !== false ? `${metaLine}${guestLine}` : '',
+    `${metaLine}${originLine}`,
+    settings.showCustomer !== false ? `${metaLine}${source === 'qr' ? qrGuestLine : guestLine}` : '',
     '__KOTRULE__',
     '__KOTMETABOLD__Qty. Item',
     ...rows,

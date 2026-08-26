@@ -4068,10 +4068,14 @@ app.post('/api/orders/:id/kots', async (req, res) => {
     await ensureDirectOrdersTable();
     await ensureOperationsConfigTable();
     await ensureKotsTable();
+    await ensureOrderEventsTable();
     await ensureKotStationStatusTable();
     await ensureKotRoundStatusTable();
     const [orderRows, configRows, previous] = await Promise.all([
-      sql`SELECT id, mode, daily_order_number, customer_name, customer_phone, fulfillment_type, table_area, table_number, special_request, items, created_at FROM direct_orders WHERE id=${req.params.id} LIMIT 1`,
+      sql`SELECT o.id, o.mode, o.daily_order_number, o.customer_name, o.customer_phone, o.fulfillment_type, o.table_area, o.table_number, o.special_request, o.items, o.created_at,
+        COALESCE((SELECT e.details->>'source' FROM order_events e WHERE e.order_id=o.id AND e.event_type='created' ORDER BY e.created_at ASC LIMIT 1), CASE WHEN o.mode='table' THEN 'counter' ELSE o.mode END) AS order_source,
+        COALESCE((SELECT e.details->>'captainName' FROM order_events e WHERE e.order_id=o.id AND e.event_type='created' ORDER BY e.created_at ASC LIMIT 1), '') AS captain_name
+        FROM direct_orders o WHERE o.id=${req.params.id} LIMIT 1`,
       sql`SELECT config FROM order_operations_config WHERE config_key='default' LIMIT 1`,
       sql`SELECT tickets FROM order_kots WHERE order_id=${req.params.id}`,
     ]);
