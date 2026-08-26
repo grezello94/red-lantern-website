@@ -3219,7 +3219,10 @@ async function dispatchKot(orderId, printerId) {
   });
   const data = await created.json();
   if (!created.ok) {
-    if (data.latestKot && confirm(`No new items. Reprint KOT #${data.latestKot.kot_number}?`)) {
+    // The Reprint KOT action is already an explicit staff instruction. When
+    // there are no new items, reuse the latest ticket immediately instead of
+    // interrupting service with a browser confirmation dialog.
+    if (data.latestKot) {
       data.kotNumber = data.latestKot.kot_number;
       data.tickets = data.latestKot.tickets;
       data.order = data.order;
