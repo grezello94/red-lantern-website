@@ -367,11 +367,12 @@ async function printText(printerName, text, settings = {}) {
       // Never enlarge a saved printable width. Some 80 mm drivers expose only
       // 250 units of usable width; forcing 300 makes the right columns print
       // outside the paper and causes the clipping seen on the receipt.
-      const configuredMainWidth = layout(settings.billingMainWidth, 160, 400, 309),
+      const isKot = text.startsWith('__KOTTITLE__'),
+        configuredMainWidth = layout(settings.billingMainWidth, 160, 400, 309),
         // KOTs must use the selected paper form's complete printable width.
         // Billing layout controls are deliberately independent: a narrower
         // bill table must never make kitchen tickets waste paper or wrap early.
-        mainWidth = text.startsWith('__KOTTITLE__') ? Number.MAX_SAFE_INTEGER : configuredMainWidth,
+        mainWidth = isKot ? Number.MAX_SAFE_INTEGER : configuredMainWidth,
         leftMargin = layout(settings.billingOuterLeft, 0, 40, 0),
         rightMargin = layout(settings.billingOuterRight, 0, 40, 0),
         topMargin = layout(settings.billingOuterTop, 0, 40, 0),
@@ -410,7 +411,7 @@ if ($thermalPaper.Count) { $doc.DefaultPageSettings.PaperSize = $thermalPaper[0]
 $doc.DefaultPageSettings.Margins = New-Object System.Drawing.Printing.Margins(${leftMargin}, ${rightMargin}, ${topMargin}, ${bottomMargin})
 $doc.PrintController = New-Object System.Drawing.Printing.StandardPrintController
 $doc.add_PrintPage({ param($sender, $event)
-  $g = $event.Graphics; $width = [Math]::Max(120, [Math]::Min($event.MarginBounds.Width, ${mainWidth}) - 8); $y = $event.MarginBounds.Top
+  $g = $event.Graphics; $safeHorizontalInset = if (${isKot ? '$true' : '$false'}) { [Math]::Ceiling($event.MarginBounds.Width * 0.04) } else { 0 }; $contentLeft = $event.MarginBounds.Left + $safeHorizontalInset; $width = [Math]::Max(120, [Math]::Min($event.MarginBounds.Width - ($safeHorizontalInset * 2), ${mainWidth}) - 8); $y = $event.MarginBounds.Top
   $bodySize = ${bodyFontSize}; $sectionStarts = @{}
   foreach ($line in $lines) {
     $displayLine = $line; $style = [System.Drawing.FontStyle]::Regular; $size = $bodySize; $alignment = [System.Drawing.StringAlignment]::Center; $fontName = ''
@@ -418,12 +419,12 @@ $doc.add_PrintPage({ param($sender, $event)
     if ($line.StartsWith('__SECTIONEND__')) { $parts = $line.Substring(14).Split('|', 2); if ($parts.Count -eq 2 -and $sectionStarts.ContainsKey($parts[0])) { $y = [Math]::Max($y, $sectionStarts[$parts[0]] + [Math]::Max(0, [int]$parts[1])) }; continue }
     if ($line.StartsWith('__KOTRULE__')) {
       $pen = New-Object System.Drawing.Pen([System.Drawing.Color]::Black, 3)
-      $g.DrawLine($pen, $event.MarginBounds.Left, $y + 3, $event.MarginBounds.Left + $width, $y + 3)
+      $g.DrawLine($pen, $contentLeft, $y + 3, $contentLeft + $width, $y + 3)
       $pen.Dispose(); $y += 9; continue
     }
     if ($line.StartsWith('__SEPARATOR__')) {
       $pen = New-Object System.Drawing.Pen([System.Drawing.Color]::Black, ${separatorThickness})
-      $g.DrawLine($pen, $event.MarginBounds.Left, $y + 2, $event.MarginBounds.Left + $width, $y + 2)
+      $g.DrawLine($pen, $contentLeft, $y + 2, $contentLeft + $width, $y + 2)
       $pen.Dispose(); $y += 4 + ${separatorGap}; continue
     }
     if ($line.StartsWith('__KOTITEM__')) {
@@ -433,7 +434,7 @@ $doc.add_PrintPage({ param($sender, $event)
       $plainItem = $line.Substring(11).Replace('[[', '').Replace(']]', '')
       $font = New-Object System.Drawing.Font('${fontFamily}', ${kotItemFontSize}, [System.Drawing.FontStyle]::Bold)
       $format = New-Object System.Drawing.StringFormat; $format.Alignment = [System.Drawing.StringAlignment]::Near; $format.Trimming = [System.Drawing.StringTrimming]::Word
-      $bounds = New-Object System.Drawing.RectangleF([single]$event.MarginBounds.Left, [single]$y, [single]$width, 400)
+      $bounds = New-Object System.Drawing.RectangleF([single]$contentLeft, [single]$y, [single]$width, 400)
       $height = $g.MeasureString($plainItem, $font, $width, $format).Height
       $g.DrawString($plainItem, $font, [System.Drawing.Brushes]::Black, $bounds, $format)
       $y += [Math]::Ceiling($height) + ${itemGap}; $font.Dispose(); $format.Dispose(); continue
@@ -447,7 +448,7 @@ $doc.add_PrintPage({ param($sender, $event)
       $serialWidth = [Math]::Floor(${layout(settings.serialColumnWidth, 0, 40, 10)}); $columnGap = 4; $qtyWidth = [Math]::Max(28, [Math]::Floor(${layout(settings.quantityColumnWidth, 8, 60, 20)})); $priceWidth = [Math]::Max(46, [Math]::Floor(${layout(settings.priceColumnWidth, 15, 100, 40)})); $amountWidth = [Math]::Max(60, [Math]::Floor(${layout(settings.amountColumnWidth, 15, 120, 55)})); $itemMinWidth = [Math]::Floor(${layout(settings.itemNameMinWidth, 50, 220, 110)}); $maxColumns = [Math]::Max(40, $width - $itemMinWidth); $columnTotal = $qtyWidth + $priceWidth + $amountWidth + ($columnGap * 2)
       if ($columnTotal -gt $maxColumns) { $scale = $maxColumns / $columnTotal; $qtyWidth = [Math]::Max(25, [Math]::Floor($qtyWidth * $scale)); $priceWidth = [Math]::Max(40, [Math]::Floor($priceWidth * $scale)); $amountWidth = [Math]::Max(52, $maxColumns - $qtyWidth - $priceWidth - ($columnGap * 2)) }
       $labelWidth = [Math]::Max(50, $width - $qtyWidth - $priceWidth - $amountWidth - ($columnGap * 2))
-      $left = $event.MarginBounds.Left
+      $left = $contentLeft
       $near = New-Object System.Drawing.StringFormat; $near.Alignment = [System.Drawing.StringAlignment]::Near
       $right = New-Object System.Drawing.StringFormat; $right.Alignment = [System.Drawing.StringAlignment]::Far
       $label = if ($cells.Count -gt 0) { $cells[0] } else { '' }; $serial = ''
@@ -473,7 +474,7 @@ $doc.add_PrintPage({ param($sender, $event)
       $style = if ($isHead) { [System.Drawing.FontStyle]::Bold } else { [System.Drawing.FontStyle]::Regular }
       $font = New-Object System.Drawing.Font('Consolas', [Math]::Min(${itemFontSize}, 9), $style)
       $qtyWidth = 23; $priceWidth = 47; $amountWidth = 52; $labelWidth = [Math]::Max(68, $width - $qtyWidth - $priceWidth - $amountWidth)
-      $left = $event.MarginBounds.Left; $near = New-Object System.Drawing.StringFormat; $near.Alignment = [System.Drawing.StringAlignment]::Near; $right = New-Object System.Drawing.StringFormat; $right.Alignment = [System.Drawing.StringAlignment]::Far
+      $left = $contentLeft; $near = New-Object System.Drawing.StringFormat; $near.Alignment = [System.Drawing.StringAlignment]::Near; $right = New-Object System.Drawing.StringFormat; $right.Alignment = [System.Drawing.StringAlignment]::Far
       $label = if ($cells.Count -gt 0) { $cells[0] } else { '' }; $qty = if ($cells.Count -gt 1) { $cells[1] } else { '' }; $price = if ($cells.Count -gt 2) { $cells[2] } else { '' }; $amount = if ($cells.Count -gt 3) { $cells[3] } else { '' }
       $rowHeight = [Math]::Max($g.MeasureString($label, $font, $labelWidth, $near).Height, $g.MeasureString('Ag', $font).Height)
       $g.DrawString($label, $font, [System.Drawing.Brushes]::Black, (New-Object System.Drawing.RectangleF($left, $y, $labelWidth, $rowHeight + 3)), $near)
@@ -483,7 +484,7 @@ $doc.add_PrintPage({ param($sender, $event)
       $y += [Math]::Ceiling($rowHeight) + $(if ($isHead) { 5 } else { 4 }); $font.Dispose(); $near.Dispose(); $right.Dispose(); continue
     }
     if ($line.StartsWith('__COMPACTTOTAL__')) {
-      $cells = $line.Substring(16).Split('|'); $font = New-Object System.Drawing.Font('Consolas', [Math]::Min(${totalFontSize}, 10), [System.Drawing.FontStyle]::Bold); $left = $event.MarginBounds.Left
+      $cells = $line.Substring(16).Split('|'); $font = New-Object System.Drawing.Font('Consolas', [Math]::Min(${totalFontSize}, 10), [System.Drawing.FontStyle]::Bold); $left = $contentLeft
       $near = New-Object System.Drawing.StringFormat; $near.Alignment = [System.Drawing.StringAlignment]::Near; $right = New-Object System.Drawing.StringFormat; $right.Alignment = [System.Drawing.StringAlignment]::Far; $height = $g.MeasureString('Ag', $font).Height
       $g.DrawString($(if ($cells.Count -gt 0) { $cells[0] } else { '' }), $font, [System.Drawing.Brushes]::Black, (New-Object System.Drawing.RectangleF($left, $y, $width * .7, $height + 3)), $near)
       $g.DrawString($(if ($cells.Count -gt 1) { $cells[1] } else { '' }), $font, [System.Drawing.Brushes]::Black, (New-Object System.Drawing.RectangleF($left + ($width * .7), $y, $width * .3, $height + 3)), $right)
@@ -492,7 +493,7 @@ $doc.add_PrintPage({ param($sender, $event)
     if ($line.StartsWith('__SUMMARY__') -or $line.StartsWith('__TOTAL__')) {
       $cells = $line.Substring($(if ($line.StartsWith('__SUMMARY__')) { 11 } else { 9 })).Split('|')
       $isTotal = $line.StartsWith('__TOTAL__'); $style = if ($isTotal) { [System.Drawing.FontStyle]::Bold } else { [System.Drawing.FontStyle]::Regular }; $size = if ($isTotal) { ${totalFontSize} } else { ${dateBillFontSize} }
-      $font = New-Object System.Drawing.Font('${fontFamily}', $size, $style); $left = $event.MarginBounds.Left
+      $font = New-Object System.Drawing.Font('${fontFamily}', $size, $style); $left = $contentLeft
       # The subtotal spans the full printable width. Grand Total may be inset
       # per printer, using its saved Grand total content width setting.
       if ($isTotal -and ${paperWidth} -eq 80) { $rowWidth = [Math]::Min($width, ${grandTotalWidth}); $left += [Math]::Max(0, ($width - $rowWidth) / 2) } else { $rowWidth = $width }
@@ -539,7 +540,7 @@ $doc.add_PrintPage({ param($sender, $event)
     $font = New-Object System.Drawing.Font($fontName, $size, $style)
     $format = New-Object System.Drawing.StringFormat; $format.Alignment = $alignment
     if ($line -match '^\\d+x ') { $format.Alignment = [System.Drawing.StringAlignment]::Near }
-    $bounds = New-Object System.Drawing.RectangleF($event.MarginBounds.Left, $y, $width, 200)
+    $bounds = New-Object System.Drawing.RectangleF($contentLeft, $y, $width, 200)
     $height = $g.MeasureString($displayLine, $font, $width, $format).Height
     $g.DrawString($displayLine, $font, [System.Drawing.Brushes]::Black, $bounds, $format)
     $extra = if ($line.StartsWith('__TABLE__') -or $line.StartsWith('__KOTITEM__')) { ${itemGap} } elseif ($line.StartsWith('__SEPARATOR__')) { ${separatorGap} } elseif ($line.StartsWith('__META__') -or $line.StartsWith('__MONO__')) { 0 } else { 1 }; $y += [Math]::Max([Math]::Ceiling($height), ${itemMinHeight}) + $extra; $font.Dispose(); $format.Dispose()
