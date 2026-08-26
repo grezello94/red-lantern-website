@@ -434,10 +434,21 @@ $doc.add_PrintPage({ param($sender, $event)
       $plainItem = $line.Substring(11).Replace('[[', '').Replace(']]', '')
       $font = New-Object System.Drawing.Font('${fontFamily}', ${kotItemFontSize}, [System.Drawing.FontStyle]::Bold)
       $format = New-Object System.Drawing.StringFormat; $format.Alignment = [System.Drawing.StringAlignment]::Near; $format.Trimming = [System.Drawing.StringTrimming]::Word
-      $bounds = New-Object System.Drawing.RectangleF([single]$contentLeft, [single]$y, [single]$width, 400)
-      $height = $g.MeasureString($plainItem, $font, $width, $format).Height
-      $g.DrawString($plainItem, $font, [System.Drawing.Brushes]::Black, $bounds, $format)
+      $parts = $plainItem.Split('|', 2); $qty = if ($parts.Count -gt 1) { $parts[0] } else { '' }; $label = if ($parts.Count -gt 1) { $parts[1] } else { $plainItem }
+      $qtyWidth = [Math]::Max(28, $g.MeasureString('Qty.', $font).Width + 5); $itemLeft = $contentLeft + $qtyWidth; $itemWidth = [Math]::Max(80, $width - $qtyWidth)
+      if ($qty) { $g.DrawString($qty, $font, [System.Drawing.Brushes]::Black, [single]$contentLeft, [single]$y) }
+      $bounds = New-Object System.Drawing.RectangleF([single]$itemLeft, [single]$y, [single]$itemWidth, 400)
+      $height = $g.MeasureString($label, $font, $itemWidth, $format).Height
+      $g.DrawString($label, $font, [System.Drawing.Brushes]::Black, $bounds, $format)
       $y += [Math]::Ceiling($height) + ${itemGap}; $font.Dispose(); $format.Dispose(); continue
+    }
+    if ($line.StartsWith('__KOTMODIFIER__')) {
+      $modifier = $line.Substring(15); $font = New-Object System.Drawing.Font('${fontFamily}', [Math]::Max(8, ${kotItemFontSize} - 1), [System.Drawing.FontStyle]::Bold)
+      $modifierLeft = $contentLeft + [Math]::Max(28, $g.MeasureString('Qty.', $font).Width + 5); $modifierWidth = [Math]::Max(80, $width - ($modifierLeft - $contentLeft))
+      $format = New-Object System.Drawing.StringFormat; $format.Alignment = [System.Drawing.StringAlignment]::Near; $format.Trimming = [System.Drawing.StringTrimming]::Word
+      $bounds = New-Object System.Drawing.RectangleF([single]$modifierLeft, [single]$y, [single]$modifierWidth, 400); $height = $g.MeasureString($modifier, $font, $modifierWidth, $format).Height
+      $g.DrawString($modifier, $font, [System.Drawing.Brushes]::Black, $bounds, $format)
+      $y += [Math]::Ceiling($height) + 1; $font.Dispose(); $format.Dispose(); continue
     }
     if ($line.StartsWith('__ITEMHEAD__') -or $line.StartsWith('__ITEM__')) {
       $cells = $line.Substring($(if ($line.StartsWith('__ITEMHEAD__')) { 12 } else { 8 })).Split('|')
@@ -561,10 +572,7 @@ function kotHighlightLabels(items) {
     String(value || '')
       .toLowerCase()
       .match(/[a-z]+/g) || [];
-  const labels = items.map(
-    (item) =>
-      `${item.name || 'Item'}${item.portion ? ` (${item.portion})` : ''}${item.style ? ` ${item.style}` : ''}`
-  );
+  const labels = items.map((item) => item.name || 'Item');
   const sets = labels.map((label) => new Set(words(label)));
   return labels.map((label, index) => {
     if (labels.length < 2) return label;
@@ -600,9 +608,8 @@ function kotText(payload) {
   const labels = kotHighlightLabels(items);
   const rows = items.flatMap((item, index) =>
     [
-      // KOTs always lead with quantity. This is the kitchen's agreed format,
-      // not a per-printer preference.
-      `__KOTITEM__${Number(item.quantity || 0)}x ${labels[index]}`,
+      `__KOTITEM__${Number(item.quantity || 0)}|${labels[index]}`,
+      [item.portion ? `(${item.portion})` : '', item.style || ''].filter(Boolean).join(' ') ? `__KOTMODIFIER__${[item.portion ? `(${item.portion})` : '', item.style || ''].filter(Boolean).join(' ')}` : '',
       item.note ? `__KOTNOTE__↳ ${item.note}` : '',
     ].filter(Boolean)
   );
@@ -618,6 +625,7 @@ function kotText(payload) {
     `__KOTMETA__${guestLine}`,
     order.reprint ? '__KOTMETABOLD__*** REPRINT ***' : '',
     '__KOTRULE__',
+    '__KOTMETABOLD__Qty. Item',
     ...rows,
     order.note && settings.showNotes !== false ? `__KOTNOTE__Note: ${order.note}` : '',
     '__KOTRULE__',
