@@ -50,6 +50,15 @@ describe('Smart KDS Phase 12 mandatory simulations', () => {
     expect(batches[0].allocations.map((entry) => entry.taskKey)).toContain('old-soup');
   });
 
+  test('a single eligible rice dish proceeds at its safe-start time instead of waiting for a batch', () => {
+    const rice = task('single-rice', {
+      itemName: 'Chicken Fried Rice', course: 'main', stationId: 'wok', latestSafeStartAt: now,
+      profile: { batchable: true, batchGroupId: 'food::rice::chicken fried rice', maxBatchSize: 10, optimalBatchSize: 10 },
+    });
+    expect(buildBatches({ now, recommendations: [rice] })).toEqual([]);
+    expect(require('./smart-kds-scheduler').scheduleKitchen({ now, tasks: [rice] })[0]).toMatchObject({ taskKey: 'single-rice', action: 'start-now' });
+  });
+
   test('8. old long-prep work cannot starve behind later quick work', () => {
     const result = simulateKitchen({ startAt: now, durationMinutes: 20, stations: [{ station_id: 'wok', enabled: true, max_concurrent_tasks: 1 }], tasks: [task('old:sizzler', { latestSafeStartAt: now, prepWindowMinutes: 15, profile: { longPrepItem: true } }), task('new:quick', { orderNumber: 2, orderedAt: '2026-08-27T19:05:00.000Z', latestSafeStartAt: '2026-08-27T19:15:00.000Z' })] });
     expect(result.events.find((event) => event.type === 'started').taskKey).toBe('old:sizzler');

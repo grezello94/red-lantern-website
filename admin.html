@@ -4001,6 +4001,14 @@
         }
       }
       .smart-kds-phase-banner { display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; margin-bottom: 20px; border: 1px solid #bfdbfe; border-radius: 12px; background: #eff6ff; color: #1e3a5f; }
+      #tab-smart-kds .card { border: 1px solid #dbe5f1; box-shadow: 0 12px 30px rgba(30, 55, 85, .06); }
+      #tab-smart-kds h2 { letter-spacing: -.025em; }
+      #tab-smart-kds .help-text { max-width: 900px; line-height: 1.55; }
+      .smart-kds-setting-group { min-height: 218px; padding: 18px; border-color: #dbe5f1; background: linear-gradient(145deg,#fff,#f8fbff); }
+      .smart-kds-setting-group legend { padding: 0 6px; color: #17365d; font-weight: 900; }
+      .smart-kds-setting-group p { min-height: 36px; color: #64748b; line-height: 1.4; }
+      .smart-kds-setting-group .form-group { padding: 8px 0; border-top: 1px solid #edf2f7; }
+      .smart-kds-setting-group input { font-size: 1rem; font-weight: 850; color: #17365d; }
       .smart-kds-admin-nav { position: sticky; top: 10px; z-index: 3; display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; padding: 10px; border: 1px solid #dbe5f1; border-radius: 12px; background: rgba(255,255,255,.94); backdrop-filter: blur(10px); }
       .smart-kds-admin-nav a, .smart-kds-admin-nav button { padding: 8px 10px; border: 0; border-radius: 8px; color: #334155; background: #f1f5f9; font-size: .82rem; font-weight: 800; text-decoration: none; cursor: pointer; }
       .smart-kds-admin-nav a:hover, .smart-kds-admin-nav button:hover { color: #fff; background: #b91c1c; }
@@ -4019,8 +4027,13 @@
       .smart-kds-profile-toolbar { justify-content: flex-start; margin: 16px 0; }
       .smart-kds-profile-toolbar .form-group { min-width: 220px; margin: 0; }
       .smart-kds-profile-list { display: grid; gap: 10px; }
+      .smart-kds-profile-guide { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 16px 0; padding: 14px; border: 1px solid #bfdbfe; border-radius: 14px; background: #eff6ff; }
+      .smart-kds-profile-guide b { display: block; color: #17365d; font-size: .9rem; }
+      .smart-kds-profile-guide span { display: block; margin-top: 3px; color: #526b87; font-size: .82rem; line-height: 1.4; }
       .smart-kds-profile { border: 1px solid #e2e8f0; border-radius: 14px; background: #fff; overflow: hidden; }
       .smart-kds-profile > summary { display: grid; grid-template-columns: minmax(220px, 1fr) 140px 160px 120px; gap: 16px; align-items: center; padding: 14px 16px; cursor: pointer; list-style: none; }
+      .smart-kds-profile > summary:hover { background: #f8fbff; }
+      .smart-kds-profile[open] { border-color: #93c5fd; box-shadow: 0 10px 24px rgba(37,99,235,.08); }
       .smart-kds-profile > summary::-webkit-details-marker { display: none; }
       .smart-kds-profile > summary::after { content: 'Edit'; color: #b91c1c; font-weight: 800; text-align: right; }
       .smart-kds-profile-meta { color: #64748b; font-size: .88rem; }
@@ -4030,6 +4043,7 @@
       .smart-kds-profile-checks { display: flex; flex-wrap: wrap; gap: 12px 20px; margin-top: 8px; }
       .smart-kds-profile-checks label { display: inline-flex; align-items: center; gap: 7px; color: #475569; font-weight: 700; }
       .smart-kds-profile-save { margin-top: 16px; display: flex; justify-content: flex-end; }
+      @media (max-width: 900px) { .smart-kds-profile-guide, .smart-kds-grid { grid-template-columns: 1fr; } .smart-kds-setting-group { min-height: 0; } .smart-kds-profile > summary { grid-template-columns: 1fr 1fr; } }
       .smart-kds-timing-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 16px 0; }
       .smart-kds-metrics-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 18px 0; }
       .smart-kds-metrics-grid h3 { margin: 0 0 10px; font-size: .95rem; color: #334155; }
@@ -5360,6 +5374,11 @@ Availability may vary. Please ask our team about today’s specials.</textarea>
           <div class="smart-kds-profile-toolbar">
             <label class="form-group"><span>Find dish</span><input id="smart-kds-profile-search" type="search" placeholder="Dish or category"></label>
             <label class="form-group"><span>Menu category</span><select id="smart-kds-profile-course-filter"><option value="">All menu categories</option></select></label>
+          </div>
+          <div class="smart-kds-profile-guide" aria-label="How to set up a dish">
+            <div><b>1. Set the cooking plan</b><span>Choose the course, kitchen station, and realistic preparation time.</span></div>
+            <div><b>2. Enable batches only when safe</b><span>Turn on batching only for dishes your chefs can cook together; set the exact portion limit.</span></div>
+            <div><b>3. Keep table courses fresh</b><span>Use “Requires previous course” or “Can pre-prep” to control when a dish may begin.</span></div>
           </div>
           <div id="smart-kds-profile-status" class="growth-ai-status" aria-live="polite"></div>
           <div id="smart-kds-profile-list" class="smart-kds-profile-list">Loading production profiles…</div>

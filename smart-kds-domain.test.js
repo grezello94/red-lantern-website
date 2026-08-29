@@ -124,11 +124,11 @@ describe('Smart KDS Phase 1 configuration', () => {
     const target = calculateTargetServeAt({
       orderedAt: '2026-08-27T12:00:00.000Z', mode: 'table', course: 'starter', presentCourses: ['soup', 'starter'], config,
     });
-    expect(target.toISOString()).toBe('2026-08-27T12:21:00.000Z');
+    expect(target.toISOString()).toBe('2026-08-27T12:18:00.000Z');
     expect(calculateProductionTiming({
       orderedAt: '2026-08-27T12:00:00.000Z', mode: 'table', course: 'starter', presentCourses: ['soup', 'starter'],
       profile: { prepTimeEstimate: 12, platingTime: 2, handoffBuffer: 2 }, config, now: '2026-08-27T12:05:00.000Z',
-    })).toMatchObject({ latestSafeStartAt: '2026-08-27T12:05:00.000Z', state: 'start-now', reason: 'Latest safe start time reached' });
+    })).toMatchObject({ latestSafeStartAt: '2026-08-27T12:02:00.000Z', state: 'start-now', reason: 'Latest safe start time reached' });
   });
 
   test('uses the parcel target rather than dine-in course pacing', () => {
@@ -160,7 +160,7 @@ describe('Smart KDS Phase 1 configuration', () => {
       orderedAt: '2026-08-27T12:00:00.000Z', mode: 'table', course: 'starter', presentCourses: ['starter'],
       profile: { prepTimeEstimate: 8, platingTime: 0, handoffBuffer: 0 }, config, now: '2026-08-27T12:00:00.000Z',
     });
-    expect(overridden.targetServeAt).toBe('2026-08-27T12:18:00.000Z');
+    expect(overridden.targetServeAt).toBe('2026-08-27T12:15:00.000Z');
     expect(profileDefault.targetServeAt).toBe('2026-08-27T12:28:00.000Z');
   });
 
@@ -356,6 +356,33 @@ describe('Smart KDS Phase 1 configuration', () => {
     expect(paced.nextExpectedCourse).toBe('soup');
     expect(paced.tasks.map((task) => task.pacingState)).toEqual(['current-course', 'hold-for-course', 'pre-prep']);
     expect(paced.tasks[2]).toMatchObject({ pacingReason: 'Long-prep item should begin before the prior course finishes' });
+  });
+
+  test('keeps batching configuration-driven instead of guessing from menu names', () => {
+    const config = defaultSmartKdsConfig();
+    expect(defaultMenuProductionProfile({ menuType: 'food', category: 'RICE & NOODLES', name: 'Chicken Fried Rice' }, config)).toMatchObject({ batchable: false });
+    expect(normalizeMenuProductionProfile({ batchable: true, batchGroupId: 'FRIED_RICE_BASE', maxBatchSize: 10, optimalBatchSize: 8 }, { menuType: 'food', category: 'RICE & NOODLES', name: 'Chicken Fried Rice' }, config)).toMatchObject({ batchable: true, batchGroupId: 'FRIED_RICE_BASE', maxBatchSize: 10, optimalBatchSize: 8 });
+  });
+
+  test('keeps soup first while releasing mains in time to follow it', () => {
+    const config = defaultSmartKdsConfig();
+    const soupAndMain = (now) => buildCoursePacing({
+      now,
+      config,
+      order: {
+        mode: 'table',
+        tasks: [
+          { taskKey: 'soup', itemName: 'Chicken Clear Soup', course: 'soup', targetServeAt: '2026-08-27T12:12:00.000Z', prepWindowMinutes: 8, profile: {} },
+          { taskKey: 'main', itemName: 'Chicken Fried Rice', course: 'main', targetServeAt: '2026-08-27T12:31:00.000Z', prepWindowMinutes: 20, profile: {} },
+        ],
+      },
+    });
+    const atOrder = soupAndMain('2026-08-27T12:00:00.000Z');
+    const nearSoupService = soupAndMain('2026-08-27T12:11:00.000Z');
+    expect(atOrder.nextExpectedCourse).toBe('soup');
+    expect(atOrder.tasks.map((task) => task.pacingState)).toEqual(['current-course', 'hold-for-course']);
+    expect(nearSoupService.tasks.map((task) => task.pacingState)).toEqual(['current-course', 'pre-prep']);
+    expect(calculateTargetServeAt({ orderedAt: '2026-08-27T12:00:00.000Z', mode: 'table', course: 'starter', presentCourses: ['starter'], config }).toISOString()).toBe('2026-08-27T12:15:00.000Z');
   });
 
   test('synchronizes serve-together items around one ready window', () => {

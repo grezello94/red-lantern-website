@@ -30,7 +30,9 @@ function defaultSmartKdsConfig() {
     courseDefaults: {
       drink: { targetMin: 8, targetMax: 12, spacingAfterMin: 0 },
       soup: { targetMin: 12, targetMax: 16, spacingAfterMin: 3 },
-      starter: { targetMin: 18, targetMax: 25, spacingAfterMin: 5 },
+      // Starters are the first served course whenever the table has no soup.
+      // Keep their default promise inside the restaurant's 15–25 minute window.
+      starter: { targetMin: 15, targetMax: 25, spacingAfterMin: 5 },
       main: { targetMin: 28, targetMax: 38, spacingAfterMin: 0 },
       side: { targetMin: 24, targetMax: 34, spacingAfterMin: 0 },
       dessert: { targetMin: 10, targetMax: 15, spacingAfterMin: 0 },
@@ -85,6 +87,8 @@ function defaultMenuProductionProfile(item = {}, schedulingConfig = {}) {
     platingTime: clampInteger(schedulingConfig.timing?.platingMinutes, 2, 0, 60),
     handoffBuffer: clampInteger(schedulingConfig.timing?.handoffBufferMinutes, 2, 0, 60),
     targetAdjustmentMinutes: 0,
+    // Batching is deliberately opt-in. Compatibility and capacity must be
+    // approved in the menu production profile, never guessed from a name.
     batchable: false,
     batchGroupId: '',
     maxBatchSize: clampInteger(schedulingConfig.batching?.defaultMaxBatchSize, 8, 1, 100),

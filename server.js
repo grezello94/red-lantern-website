@@ -1,4 +1,5 @@
 const express = require('express');
+const dns = require('dns');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -40,7 +41,27 @@ if (fs.existsSync(envPath)) {
 }
 
 const multer = require('multer');
-const { neon } = require('@neondatabase/serverless');
+const { neon, neonConfig } = require('@neondatabase/serverless');
+const { Agent, fetch: undiciFetch } = require('undici');
+
+// The standard Neon data endpoint resolves to IPv6-only on some local DNS
+// setups, even though the database host has usable IPv4 records. The auth
+// endpoint accepts the connection-string header too and resolves correctly.
+neonConfig.fetchEndpoint = (host) => `https://apiauth-${host}/sql`;
+const neonIpv4Fallbacks = ['13.251.17.193', '18.138.49.39', '3.0.167.45'];
+let neonIpv4Cursor = 0;
+const neonIpv4Agent = new Agent({
+  connect: {
+    lookup(hostname, options, callback) {
+      dns.resolve4(hostname, (error, addresses) => {
+        const address = addresses?.[0] || neonIpv4Fallbacks[neonIpv4Cursor++ % neonIpv4Fallbacks.length];
+        if (options?.all) return callback(null, [{ address, family: 4 }]);
+        callback(null, address, 4);
+      });
+    },
+  },
+});
+neonConfig.fetchFunction = (url, options) => undiciFetch(url, { ...options, dispatcher: neonIpv4Agent });
 
 function cleanEnvUrl(name) {
   if (!process.env[name]) return '';
@@ -6417,6 +6438,7 @@ app.get('/api/orders/smart-kds/recommendations', async (req, res) => {
       message: 'Smart KDS recommendations are staff-controlled. No KOT fires automatically.',
     });
   } catch (error) {
+    console.error('Smart KDS recommendations failed:', error);
     res.status(500).json({ error: 'Unable to load Smart KDS recommendations.' });
   }
 });
