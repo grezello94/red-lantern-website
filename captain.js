@@ -110,7 +110,9 @@ function showCaptainToast(message, type = 'success') {
   }, 4200);
 }
 const itemKey = (line) =>
-  `${line.name}::${line.category}::${line.portion}::${line.style}::${line.note || ''}`;
+  `${line.menuType || 'food'}::${line.name}::${line.category}::${line.portion}::${line.style}::${line.note || ''}::${line.courseOverride || ''}`;
+const courseOptions = (defaultCourse = '', selected = '') =>
+  `<option value="">Default${defaultCourse ? ` (${esc(defaultCourse)})` : ''}</option>${['drink', 'soup', 'starter', 'main', 'side', 'dessert', 'other'].map((course) => `<option value="${course}" ${selected === course ? 'selected' : ''}>${course[0].toUpperCase() + course.slice(1)}</option>`).join('')}`;
 const captainHeaders = () =>
   state.captain?.token ? { 'X-Captain-Session': state.captain.token } : {};
 function captainPrintLocation() {
@@ -245,6 +247,7 @@ function draftFields() {
   return {
     customerName: $('#customer-name')?.value || '',
     customerPhone: $('#customer-phone')?.value || '',
+    courseMode: $('#course-mode')?.value || 'normal_coursing',
     specialRequest: $('#special-request')?.value || '',
   };
 }
@@ -303,6 +306,7 @@ function restoreDraft() {
   state.cart = cart;
   $('#customer-name').value = draft.fields?.customerName || '';
   $('#customer-phone').value = draft.fields?.customerPhone || '';
+  $('#course-mode').value = draft.fields?.courseMode || 'normal_coursing';
   $('#special-request').value = draft.fields?.specialRequest || '';
   notice.hidden = false;
   notice.textContent = `Restored unsent draft from ${new Date(draft.savedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}.`;
@@ -1215,7 +1219,7 @@ function renderCart() {
       ? state.cart
           .map(
             (line, index) =>
-              `<article class="cart-line"><span><b>${esc(line.name)}${line.portion ? ` · ${esc(line.portion)}` : ''}${line.style ? ` · ${esc(line.style)}` : ''}</b>${line.note ? `<small class="cart-note">↳ ${esc(line.note)}</small>` : ''}<small>${money(line.price)} each${line.style ? ' + ₹10 preparation' : ''}</small><button type="button" class="cart-note-button" data-cart-note="${index}">${line.note ? 'Edit note' : 'Add note'}</button></span><div class="quantity"><button type="button" data-cart-change="-1" data-cart-index="${index}" aria-label="Remove one">−</button><b>${line.quantity}</b><button type="button" data-cart-change="1" data-cart-index="${index}" aria-label="Add one">+</button></div><b>${money(line.quantity * (line.price + (line.style ? 10 : 0)))}</b></article>`
+              `<article class="cart-line"><span><b>${esc(line.name)}${line.portion ? ` · ${esc(line.portion)}` : ''}${line.style ? ` · ${esc(line.style)}` : ''}</b>${line.note ? `<small class="cart-note">↳ ${esc(line.note)}</small>` : ''}<small>${money(line.price)} each${line.style ? ' + ₹10 preparation' : ''}</small><label class="cart-course">Course <select data-cart-course="${index}">${courseOptions(line.defaultCourse || '', line.courseOverride || '')}</select></label><button type="button" class="cart-note-button" data-cart-note="${index}">${line.note ? 'Edit note' : 'Add note'}</button></span><div class="quantity"><button type="button" data-cart-change="-1" data-cart-index="${index}" aria-label="Remove one">−</button><b>${line.quantity}</b><button type="button" data-cart-change="1" data-cart-index="${index}" aria-label="Add one">+</button></div><b>${money(line.quantity * (line.price + (line.style ? 10 : 0)))}</b></article>`
           )
           .join('')
       : '<p class="cart-empty">No items yet. Add dishes from the menu.</p>';
@@ -1276,6 +1280,7 @@ function openChoice(item) {
   style.hidden = !item.gravyStyleAvailable;
   style.querySelector('input[value=""]').checked = true;
   $('#choice-note').value = '';
+  $('#choice-course').innerHTML = courseOptions(item.defaultCourse || '');
   $('#choice-sheet').showModal();
 }
 function addChoice() {
@@ -1283,8 +1288,9 @@ function addChoice() {
   if (!choice) return;
   const style = $('input[name="captain-style"]:checked')?.value || '',
     note = $('#choice-note').value.trim(),
+    courseOverride = $('#choice-course').value || '',
     [portion, price] = choice.option,
-    key = itemKey({ name: choice.item.name, category: choice.item.category, portion, style, note }),
+    key = itemKey({ menuType: choice.item.menuType, name: choice.item.name, category: choice.item.category, portion, style, note, courseOverride }),
     existing = state.cart.find((line) => line.key === key);
   if (existing) existing.quantity = Math.min(20, existing.quantity + 1);
   else
@@ -1292,9 +1298,12 @@ function addChoice() {
       key,
       name: choice.item.name,
       category: choice.item.category,
+      menuType: choice.item.menuType,
       portion,
       style,
       note,
+      defaultCourse: choice.item.defaultCourse || '',
+      courseOverride,
       price,
       quantity: 1,
     });
@@ -1307,7 +1316,7 @@ function addChoice() {
 function addSimpleItem(item) {
   const [portion, price] = priceOptions(item)[0] || [];
   if (!portion || !price) return;
-  const key = itemKey({ name: item.name, category: item.category, portion, style: '' }),
+  const key = itemKey({ menuType: item.menuType, name: item.name, category: item.category, portion, style: '', courseOverride: '' }),
     existing = state.cart.find((line) => line.key === key);
   if (existing) existing.quantity = Math.min(20, existing.quantity + 1);
   else
@@ -1315,8 +1324,11 @@ function addSimpleItem(item) {
       key,
       name: item.name,
       category: item.category,
+      menuType: item.menuType,
       portion,
       style: '',
+      defaultCourse: item.defaultCourse || '',
+      courseOverride: '',
       price,
       quantity: 1,
     });
@@ -1734,8 +1746,31 @@ function changeCartQuantity(event) {
   if (line.quantity <= 0) state.cart.splice(Number(button.dataset.cartIndex), 1);
   renderCart();
 }
+function changeCartCourse(event) {
+  const select = event.target.closest('[data-cart-course]');
+  if (!select) return;
+  const index = Number(select.dataset.cartCourse);
+  const line = state.cart[index];
+  if (!line) return;
+  line.courseOverride = select.value || '';
+  line.key = itemKey(line);
+  const duplicateIndex = state.cart.findIndex(
+    (candidate, candidateIndex) => candidateIndex !== index && candidate.key === line.key
+  );
+  if (duplicateIndex >= 0) {
+    state.cart[duplicateIndex].quantity = Math.min(
+      20,
+      Number(state.cart[duplicateIndex].quantity || 0) + Number(line.quantity || 0)
+    );
+    state.cart.splice(index, 1);
+  }
+  renderCart();
+  renderMenu();
+}
 $('#cart-list').addEventListener('click', changeCartQuantity);
 $('#order-dock-list').addEventListener('click', changeCartQuantity);
+$('#cart-list').addEventListener('change', changeCartCourse);
+$('#order-dock-list').addEventListener('change', changeCartCourse);
 document.querySelectorAll('[data-open-review]').forEach((button) =>
   button.addEventListener('click', () => {
     if (state.cart.length) setScreen('review');
@@ -1823,6 +1858,7 @@ $('#place-order').addEventListener('click', async () => {
       tableOrderId: state.table.orderId || '',
       customerName: $('#customer-name').value.trim(),
       customerPhone: $('#customer-phone').value.trim(),
+      courseMode: $('#course-mode').value || 'normal_coursing',
       specialRequest: $('#special-request').value.trim(),
       items: state.cart.map(({ key, ...item }) => item),
     };
@@ -1852,7 +1888,7 @@ $('#place-order').addEventListener('click', async () => {
     renderCart();
   }
 });
-['customer-name', 'customer-phone', 'special-request'].forEach((id) =>
+['customer-name', 'customer-phone', 'course-mode', 'special-request'].forEach((id) =>
   $(`#${id}`).addEventListener('input', saveDraft)
 );
 function clock() {

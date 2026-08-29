@@ -272,6 +272,8 @@
                 maxlength="16"
                 autocomplete="tel"
                 placeholder="Mobile number" /></label
+            ><label
+              >Serving preference<select id="course-mode"><option value="normal_coursing">Serve course by course</option><option value="serve_together">Serve everything together</option><option value="as_ready">Serve items as ready</option><option value="manual_fire">Manual fire</option></select></label
             ><label class="wide"
               >Kitchen note<textarea
                 id="special-request"
@@ -330,6 +332,9 @@
       <label class="item-note"
         >Kitchen note
         <input id="choice-note" maxlength="80" placeholder="e.g. less spicy, no onion" /></label
+      ><label class="item-note"
+        >Kitchen course
+        <select id="choice-course"></select></label
       ><button type="button" id="choice-add" class="send-button">Add item</button>
     </dialog>
     <dialog id="line-note-sheet" class="line-note-sheet" aria-labelledby="line-note-title">

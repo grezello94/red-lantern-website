@@ -1,0 +1,15 @@
+.batch-card {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 13px 15px;
+  border: 1px solid #f0c15b;
+  border-radius: 12px;
+  background: #fffaf0;
+}
+.batch-card b { display: block; color: #5f4100; }
+.batch-card small { display: block; margin-top: 4px; color: #936a19; }
+.batch-card button { border: 0; background: #d97706; color: #fff; }
+@media (max-width: 650px) { .batch-card { align-items: stretch; flex-direction: column; } }

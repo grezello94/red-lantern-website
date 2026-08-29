@@ -2882,6 +2882,775 @@ function setupTrustedContacts() {
   load();
 }
 
+function setupSmartKds() {
+  const form = document.getElementById('smart-kds-config-form');
+  const status = document.getElementById('smart-kds-status');
+  const courseBody = document.getElementById('smart-kds-course-defaults');
+  const stationsRoot = document.getElementById('smart-kds-stations');
+  const saveStations = document.getElementById('smart-kds-save-stations');
+  if (!form || !status || !courseBody || !stationsRoot || !saveStations) return;
+  const panelButtons = [...document.querySelectorAll('[data-smart-kds-panel-target]')];
+  const panels = [...document.querySelectorAll('[data-smart-kds-panel]')];
+  const selectPanel = (name, { persist = true } = {}) => {
+    const selected = panelButtons.some((button) => button.dataset.smartKdsPanelTarget === name)
+      ? name
+      : 'setup';
+    panels.forEach((panel) => { panel.hidden = panel.dataset.smartKdsPanel !== selected; });
+    panelButtons.forEach((button) => {
+      button.setAttribute('aria-current', button.dataset.smartKdsPanelTarget === selected ? 'page' : 'false');
+    });
+    document.dispatchEvent(new CustomEvent('smart-kds-panel-change', { detail: selected }));
+    if (persist) {
+      try { localStorage.setItem('redLanternSmartKdsAdminPanel', selected); } catch (_) { /* optional preference */ }
+    }
+  };
+  if (panelButtons.length && panels.length) {
+    let savedPanel = 'setup';
+    try { savedPanel = localStorage.getItem('redLanternSmartKdsAdminPanel') || 'setup'; } catch (_) { /* optional preference */ }
+    selectPanel(savedPanel, { persist: false });
+    panelButtons.forEach((button) => button.addEventListener('click', () => selectPanel(button.dataset.smartKdsPanelTarget)));
+  }
+  const ids = {
+    displayMode: 'smart-kds-display-mode',
+    schedulingMode: 'smart-kds-scheduling-mode',
+    platingMinutes: 'smart-kds-plating',
+    handoffBufferMinutes: 'smart-kds-handoff',
+    courseReadyToleranceMinutes: 'smart-kds-tolerance',
+    parcelDefaultTargetMinutes: 'smart-kds-parcel',
+    defaultWindowSeconds: 'smart-kds-batch-window',
+    defaultMaxBatchSize: 'smart-kds-batch-max',
+    starvationAfterMinutes: 'smart-kds-starvation',
+    firstFoodAfterMinutes: 'smart-kds-first-food-risk',
+    serviceGapAfterMinutes: 'smart-kds-service-gap-risk',
+    watchMinutes: 'smart-kds-watch-window',
+    startSoonMinutes: 'smart-kds-start-soon',
+    criticalOverdueMinutes: 'smart-kds-critical-overdue',
+  };
+  const esc = (value) =>
+    String(value ?? '').replace(
+      /[&<>"']/g,
+      (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' })[char]
+    );
+  const title = (value) => String(value || '').replace(/^./, (letter) => letter.toUpperCase());
+  const setStatus = (message = '', error = false) => {
+    status.textContent = message;
+    status.style.color = error ? '#b91c1c' : '';
+    status.hidden = !error && /^Smart KDS is staff-controlled\.?$/i.test(String(message).trim());
+  };
+  const numberValue = (id) => Number(document.getElementById(id)?.value || 0);
+  const renderCourses = (config) => {
+    const courses = Array.isArray(config.courseOrder) ? config.courseOrder : [];
+    courseBody.innerHTML = courses
+      .map((course) => {
+        const value = config.courseDefaults?.[course] || {};
+        return `<article class="smart-kds-course-target" data-smart-kds-course="${esc(course)}"><div class="smart-kds-course-name"><label class="smart-kds-course-sequence"><span>Order</span><input type="number" min="1" max="${courses.length}" data-course-sequence value="${courses.indexOf(course) + 1}"></label><div><strong>${esc(title(course))} timing</strong><small>Service pattern ${courses.indexOf(course) + 1} of ${courses.length} · not a menu category</small></div></div><label class="smart-kds-course-value"><span>Target from order</span><div><input type="number" min="1" max="240" data-target-min value="${esc(value.targetMin)}"><small>min</small></div></label><label class="smart-kds-course-value"><span>Latest acceptable</span><div><input type="number" min="1" max="300" data-target-max value="${esc(value.targetMax)}"><small>min</small></div></label><label class="smart-kds-course-value"><span>Wait before next course</span><div><input type="number" min="0" max="120" data-spacing value="${esc(value.spacingAfterMin)}"><small>min</small></div></label></article>`;
+      })
+      .join('');
+  };
+  const renderStations = (stations) => {
+    stationsRoot.innerHTML = stations.length
+      ? stations
+          .map(
+            (station) =>
+              `<article class="smart-kds-station" data-smart-kds-station="${esc(station.station_id)}" data-station-printer="${esc(station.printer_id || '')}"><div><strong>${esc(station.station_name)}</strong><small>Linked KOT printer: ${esc(station.printer_id || 'Not linked')}</small></div><label>Capacity <input type="number" min="1" max="50" data-station-capacity value="${esc(station.max_concurrent_tasks || 1)}"></label><label><input type="checkbox" data-station-enabled ${station.enabled !== false ? 'checked' : ''}> Available</label><small>Stored for future Smart KDS planning</small></article>`
+          )
+          .join('')
+      : '<p class="help-text">No KOT printers are configured yet. Add a KOT printer in operations first, then return here.</p>';
+  };
+  const fill = (data) => {
+    const config = data.config || {};
+    document.getElementById(ids.displayMode).value = config.displayMode || 'normal';
+    document.getElementById(ids.schedulingMode).value = config.mode || 'shadow';
+    document.getElementById(ids.platingMinutes).value = config.timing?.platingMinutes ?? '';
+    document.getElementById(ids.handoffBufferMinutes).value = config.timing?.handoffBufferMinutes ?? '';
+    document.getElementById(ids.courseReadyToleranceMinutes).value = config.timing?.courseReadyToleranceMinutes ?? '';
+    document.getElementById(ids.parcelDefaultTargetMinutes).value = config.timing?.parcelDefaultTargetMinutes ?? '';
+    document.getElementById(ids.defaultWindowSeconds).value = config.batching?.defaultWindowSeconds ?? '';
+    document.getElementById(ids.defaultMaxBatchSize).value = config.batching?.defaultMaxBatchSize ?? '';
+    document.getElementById(ids.starvationAfterMinutes).value = config.fairness?.starvationAfterMinutes ?? '';
+    document.getElementById(ids.firstFoodAfterMinutes).value = config.serviceRisk?.firstFoodAfterMinutes ?? '';
+    document.getElementById(ids.serviceGapAfterMinutes).value = config.serviceRisk?.serviceGapAfterMinutes ?? '';
+    document.getElementById(ids.watchMinutes).value = config.riskThresholds?.watchMinutes ?? '';
+    document.getElementById(ids.startSoonMinutes).value = config.riskThresholds?.startSoonMinutes ?? '';
+    document.getElementById(ids.criticalOverdueMinutes).value = config.riskThresholds?.criticalOverdueMinutes ?? '';
+    renderCourses(config);
+    renderStations(Array.isArray(data.stations) ? data.stations : []);
+  };
+  const load = async () => {
+    try {
+      const response = await fetch('/api/admin/smart-kds/config', { cache: 'no-store' });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to load Smart KDS settings.');
+      fill(data);
+      setStatus(data.message || 'Smart KDS is staff-controlled.');
+    } catch (error) {
+      setStatus(error.message || 'Unable to load Smart KDS settings.', true);
+    }
+  };
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const courseDefaults = {};
+    const courseOrder = [...courseBody.querySelectorAll('[data-smart-kds-course]')]
+      .map((row, index) => ({ course: row.dataset.smartKdsCourse, sequence: Number(row.querySelector('[data-course-sequence]')?.value || index + 1), index }))
+      .sort((left, right) => left.sequence - right.sequence || left.index - right.index)
+      .map((entry) => entry.course);
+    courseBody.querySelectorAll('[data-smart-kds-course]').forEach((row) => {
+      const course = row.dataset.smartKdsCourse;
+      courseDefaults[course] = {
+        targetMin: Number(row.querySelector('[data-target-min]')?.value || 0),
+        targetMax: Number(row.querySelector('[data-target-max]')?.value || 0),
+        spacingAfterMin: Number(row.querySelector('[data-spacing]')?.value || 0),
+      };
+    });
+    const submit = form.querySelector('button[type="submit"]');
+    try {
+      submit.disabled = true;
+      const response = await fetch('/api/admin/smart-kds/config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ config: { displayMode: document.getElementById(ids.displayMode)?.value || 'normal', mode: document.getElementById(ids.schedulingMode)?.value || 'shadow', courseOrder, courseDefaults, timing: {
+          platingMinutes: numberValue(ids.platingMinutes), handoffBufferMinutes: numberValue(ids.handoffBufferMinutes),
+          courseReadyToleranceMinutes: numberValue(ids.courseReadyToleranceMinutes), parcelDefaultTargetMinutes: numberValue(ids.parcelDefaultTargetMinutes),
+        }, batching: { defaultWindowSeconds: numberValue(ids.defaultWindowSeconds), defaultMaxBatchSize: numberValue(ids.defaultMaxBatchSize) }, fairness: { starvationAfterMinutes: numberValue(ids.starvationAfterMinutes) }, serviceRisk: { firstFoodAfterMinutes: numberValue(ids.firstFoodAfterMinutes), serviceGapAfterMinutes: numberValue(ids.serviceGapAfterMinutes) }, riskThresholds: { watchMinutes: numberValue(ids.watchMinutes), startSoonMinutes: numberValue(ids.startSoonMinutes), criticalOverdueMinutes: numberValue(ids.criticalOverdueMinutes) } } }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to save Smart KDS settings.');
+      renderCourses(data.config);
+      setStatus('Smart KDS settings saved. Kitchen staff still choose every action.');
+    } catch (error) {
+      setStatus(error.message || 'Unable to save Smart KDS settings.', true);
+    } finally {
+      submit.disabled = false;
+    }
+  });
+  saveStations.addEventListener('click', async () => {
+    const stations = [...stationsRoot.querySelectorAll('[data-smart-kds-station]')].map((row) => ({
+      station_id: row.dataset.smartKdsStation,
+      station_name: row.querySelector('strong')?.textContent || row.dataset.smartKdsStation,
+      printer_id: row.dataset.stationPrinter || '',
+      max_concurrent_tasks: Number(row.querySelector('[data-station-capacity]')?.value || 1),
+      enabled: !!row.querySelector('[data-station-enabled]')?.checked,
+    }));
+    try {
+      saveStations.disabled = true;
+      const response = await fetch('/api/admin/smart-kds/stations', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stations }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to save kitchen stations.');
+      renderStations(data.stations || []);
+      setStatus('Kitchen station settings saved. They will not change today’s KOT routing.');
+    } catch (error) {
+      setStatus(error.message || 'Unable to save kitchen stations.', true);
+    } finally {
+      saveStations.disabled = false;
+    }
+  });
+  document.querySelector('[data-target="tab-smart-kds"]')?.addEventListener('click', load);
+  load();
+}
+
+function setupSmartKdsProfiles() {
+  const root = document.getElementById('smart-kds-profile-list');
+  const status = document.getElementById('smart-kds-profile-status');
+  const search = document.getElementById('smart-kds-profile-search');
+  const courseFilter = document.getElementById('smart-kds-profile-course-filter');
+  const count = document.getElementById('smart-kds-profile-count');
+  const more = document.getElementById('smart-kds-load-more-profiles');
+  if (!root || !status || !search || !courseFilter || !count || !more) return;
+  const courses = ['drink', 'soup', 'starter', 'main', 'side', 'dessert', 'other'];
+  const pageSize = 40;
+  let items = [];
+  let stations = [];
+  let coverage = null;
+  let page = 1;
+  let loading = false;
+  const esc = (value) =>
+    String(value ?? '').replace(
+      /[&<>"']/g,
+      (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' })[char]
+    );
+  const setStatus = (message = '', isError = false) => {
+    status.textContent = message;
+    status.style.color = isError ? '#b91c1c' : '';
+  };
+  const menuCategoryKey = (item) => `${String(item?.menuType || 'food').toLowerCase()}::${String(item?.category || 'Menu').trim() || 'Menu'}`;
+  const renderMenuCategoryFilter = () => {
+    const selected = courseFilter.value;
+    const categories = [...new Map(items.map((item) => [menuCategoryKey(item), `${item.category || 'Menu'}${item.menuType === 'bar' ? ' · Bar menu' : ''}`])).entries()]
+      .sort((left, right) => left[1].localeCompare(right[1]));
+    courseFilter.innerHTML = `<option value="">All menu categories</option>${categories.map(([value, label]) => `<option value="${esc(value)}">${esc(label)}</option>`).join('')}`;
+    courseFilter.value = categories.some(([value]) => value === selected) ? selected : '';
+  };
+  const filtered = () => {
+    const query = search.value.trim().toLowerCase();
+    const category = courseFilter.value;
+    return items.filter(
+      (item) =>
+        (!query || `${item.name} ${item.category}`.toLowerCase().includes(query)) &&
+        (!category || menuCategoryKey(item) === category)
+    );
+  };
+  const optionList = (value, list) =>
+    list.map((option) => `<option value="${esc(option.value)}" ${String(value) === String(option.value) ? 'selected' : ''}>${esc(option.label)}</option>`).join('');
+  const input = (field, value, { min, max, label } = {}) =>
+    `<label class="form-group"><span>${esc(label || field)}</span><input data-profile-field="${esc(field)}" type="number" ${min !== undefined ? `min="${min}"` : ''} ${max !== undefined ? `max="${max}"` : ''} value="${esc(value)}"></label>`;
+  const check = (field, value, label) =>
+    `<label><input data-profile-field="${esc(field)}" type="checkbox" ${value ? 'checked' : ''}> ${esc(label)}</label>`;
+  const showLoading = () => {
+    count.textContent = 'Loading menu…';
+    status.textContent = '';
+    root.innerHTML = Array.from({ length: 5 }, () => '<div class="smart-kds-profile-skeleton" aria-hidden="true"><span></span><span></span><span></span></div>').join('');
+  };
+  const render = () => {
+    const rows = filtered();
+    const visible = rows.slice(0, page * pageSize);
+    const stationNote = Number(coverage?.stationUnassigned || 0)
+      ? ` · ${Number(coverage.stationUnassigned).toLocaleString('en-IN')} need station`
+      : ' · stations assigned';
+    count.textContent = `${rows.length.toLocaleString('en-IN')} of ${items.length.toLocaleString('en-IN')} Air Menu dishes${stationNote}`;
+    more.hidden = visible.length >= rows.length;
+    more.textContent = `Show ${Math.min(pageSize, rows.length - visible.length)} more dishes`;
+    root.innerHTML = visible.length
+      ? visible
+          .map((item) => {
+            const profile = item.profile || {};
+            const stationOptions = [{ value: '', label: 'Assign later' }, ...stations.map((station) => ({ value: station.station_id, label: station.station_name }))];
+            return `<details class="smart-kds-profile" data-profile-key="${esc(item.itemKey)}"><summary><div><strong>${esc(item.name)}</strong><div class="smart-kds-profile-meta">Air Menu category: ${esc(item.category)} · ${esc(item.menuType === 'bar' ? 'Bar menu' : 'Food menu')}</div></div><span class="smart-kds-profile-course">${esc(item.category || 'Menu')}</span><span class="smart-kds-profile-meta">${esc(stations.find((station) => station.station_id === profile.stationId)?.station_name || 'Station not assigned')}</span><span class="smart-kds-profile-meta">${esc(profile.prepTimeEstimate || '—')} min prep</span></summary><div class="smart-kds-profile-fields"><div class="form-grid"><label class="form-group"><span>Serving timing pattern</span><select data-profile-field="course">${optionList(profile.course, courses.map((course) => ({ value: course, label: course[0].toUpperCase() + course.slice(1) })))}</select><small class="help-text">This controls service timing only. The Air Menu category above remains the kitchen category.</small></label><label class="form-group"><span>Kitchen station</span><select data-profile-field="stationId">${optionList(profile.stationId || '', stationOptions)}</select></label>${input('prepTimeEstimate', profile.prepTimeEstimate, { min: 1, max: 240, label: 'Prep estimate (minutes)' })}${input('minPrepTime', profile.minPrepTime, { min: 1, max: 240, label: 'Minimum prep (minutes)' })}${input('maxPrepTime', profile.maxPrepTime, { min: 1, max: 300, label: 'Maximum prep (minutes)' })}${input('platingTime', profile.platingTime, { min: 0, max: 60, label: 'Plating (minutes)' })}${input('handoffBuffer', profile.handoffBuffer, { min: 0, max: 60, label: 'Handoff buffer (minutes)' })}${input('targetAdjustmentMinutes', profile.targetAdjustmentMinutes, { min: -60, max: 60, label: 'Dish target adjustment (minutes)' })}${input('parallelCapacityCost', profile.parallelCapacityCost, { min: 1, max: 50, label: 'Station capacity cost' })}</div><div class="smart-kds-profile-checks">${check('batchable', profile.batchable, 'Can be batched')}${check('longPrepItem', profile.longPrepItem, 'Long-prep item')}${check('requiresPreviousCourse', profile.requiresPreviousCourse, 'Requires previous course')}${check('canPrePrep', profile.canPrePrep, 'Can pre-prep')}${check('canHoldAfterCooking', profile.canHoldAfterCooking, 'Can hold after cooking')}</div><div class="form-grid"><label class="form-group"><span>Batch group ID</span><input data-profile-field="batchGroupId" type="text" maxlength="120" value="${esc(profile.batchGroupId || '')}" placeholder="Example: MANCHOW_SOUP"></label>${input('maxBatchSize', profile.maxBatchSize, { min: 1, max: 100, label: 'Maximum batch size' })}${input('optimalBatchSize', profile.optimalBatchSize, { min: 1, max: 100, label: 'Optimal batch size' })}${input('batchWindowSeconds', profile.batchWindowSeconds, { min: 0, max: 3600, label: 'Batch window (seconds)' })}${input('maxHoldTime', profile.maxHoldTime, { min: 0, max: 240, label: 'Maximum hold (minutes)' })}${input('priorityModifier', profile.priorityModifier, { min: -100, max: 100, label: 'Priority modifier' })}</div><div class="smart-kds-profile-save"><button type="button" class="btn-save" data-save-profile>Save ${esc(item.name)} profile</button></div></div></details>`;
+          })
+          .join('')
+      : '<p class="help-text">No menu dishes match this filter.</p>';
+  };
+  const load = async () => {
+    if (loading) return;
+    loading = true;
+    showLoading();
+    try {
+      const response = await fetch('/api/admin/smart-kds/menu-profiles', { cache: 'no-store' });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to load menu production profiles.');
+      items = Array.isArray(data.items) ? data.items : [];
+      stations = Array.isArray(data.stations) ? data.stations : [];
+      coverage = data.coverage && typeof data.coverage === 'object' ? data.coverage : null;
+      renderMenuCategoryFilter();
+      page = 1;
+      render();
+      const missing = Number(coverage?.missing || 0);
+      const duplicates = Number(coverage?.duplicateMenuKeys || 0);
+      setStatus(
+        missing
+          ? `${missing} menu profile${missing === 1 ? '' : 's'} could not be saved. Refresh and try again.`
+          : duplicates
+            ? `${data.message || 'Profiles are ready.'} ${duplicates} duplicate menu key${duplicates === 1 ? '' : 's'} share one profile; rename duplicate dishes to manage them separately.`
+            : data.message || 'Every current menu item has a saved production profile.',
+        missing > 0
+      );
+    } catch (error) {
+      root.innerHTML = '<div class="smart-kds-profile-empty"><strong>Could not load production profiles</strong><span>Check the connection, then try again.</span><button type="button" data-retry-profiles>Try again</button></div>';
+      count.textContent = 'Unable to load menu';
+      setStatus(error.message || 'Unable to load menu production profiles.', true);
+    } finally {
+      loading = false;
+    }
+  };
+  const save = async (card) => {
+    const item = items.find((entry) => entry.itemKey === card.dataset.profileKey);
+    if (!item) return;
+    const profile = { itemKey: item.itemKey };
+    card.querySelectorAll('[data-profile-field]').forEach((field) => {
+      const key = field.dataset.profileField;
+      profile[key] = field.type === 'checkbox' ? field.checked : field.type === 'number' ? Number(field.value) : field.value;
+    });
+    const button = card.querySelector('[data-save-profile]');
+    try {
+      button.disabled = true;
+      const response = await fetch('/api/admin/smart-kds/menu-profiles', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ profiles: [profile] }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to save this production profile.');
+      const saved = data.saved?.[0]?.profile;
+      if (saved) item.profile = saved;
+      render();
+      setStatus(`${item.name} production profile saved. KOT flow is still unchanged.`);
+    } catch (error) {
+      setStatus(error.message || 'Unable to save this production profile.', true);
+    } finally {
+      button.disabled = false;
+    }
+  };
+  let timer;
+  search.addEventListener('input', () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => { page = 1; render(); }, 180);
+  });
+  courseFilter.addEventListener('change', () => { page = 1; render(); });
+  more.addEventListener('click', () => { page += 1; render(); });
+  root.addEventListener('click', (event) => {
+    if (event.target.closest('[data-retry-profiles]')) return load();
+    const button = event.target.closest('[data-save-profile]');
+    if (button) save(button.closest('[data-profile-key]'));
+  });
+  document.querySelector('[data-target="tab-smart-kds"]')?.addEventListener('click', load);
+  document.addEventListener('smart-kds-panel-change', (event) => {
+    if (event.detail === 'profiles' && !items.length) load();
+  });
+  if (document.querySelector('[data-smart-kds-panel-target="profiles"]')?.getAttribute('aria-current') === 'page') load();
+}
+
+function setupSmartKdsTiming() {
+  const refresh = document.getElementById('smart-kds-refresh-timing');
+  const status = document.getElementById('smart-kds-timing-status');
+  const summary = document.getElementById('smart-kds-timing-summary');
+  const ordersRoot = document.getElementById('smart-kds-timing-orders');
+  if (!refresh || !status || !summary || !ordersRoot) return;
+  const esc = (value) =>
+    String(value ?? '').replace(
+      /[&<>"']/g,
+      (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' })[char]
+    );
+  const format = (value) =>
+    value
+      ? new Intl.DateTimeFormat('en-IN', { hour: 'numeric', minute: '2-digit', day: '2-digit', month: 'short' }).format(new Date(value))
+      : '—';
+  const setStatus = (message = '', error = false) => {
+    status.textContent = message;
+    status.style.color = error ? '#b91c1c' : '';
+  };
+  const orderLabel = (order) => {
+    if (order.mode === 'table') return `${order.tableArea || 'Table'} · ${order.tableNumber || '—'}`;
+    return order.fulfillmentType === 'delivery' ? 'Delivery order' : 'Parcel / takeaway';
+  };
+  const render = (data) => {
+    const totals = data.summary || {};
+    summary.innerHTML = [
+      ['safe', 'Safe'], ['watch', 'Watch'], ['start-soon', 'Start soon'], ['start-now', 'Start now'],
+      ['at-risk', 'At risk'], ['overdue', 'Overdue'], ['critical', 'Critical'],
+    ].map(([key, label]) => `<div class="smart-kds-timing-stat"><b>${Number(totals[key] || 0)}</b><span>${label}</span></div>`).join('');
+    ordersRoot.innerHTML = data.orders?.length
+      ? data.orders.map((order) => `<article class="smart-kds-timing-order"><header><div><h3>#${esc(String(order.orderNumber || '—').padStart(2, '0'))} · ${esc(orderLabel(order))}</h3><p>${esc(order.customerName)} · Ordered ${esc(format(order.orderedAt))} · ${esc(order.status)}</p></div><span class="insight-pill">${order.tasks.length} item${order.tasks.length === 1 ? '' : 's'}</span></header>${order.tasks.map((task) => `<div class="smart-kds-timing-task"><div><strong>${esc(`${task.quantity}× ${task.itemName}`)}</strong><small>${esc(`${task.course} · ${task.stationId || 'Station not assigned'} · ${task.prepWindowMinutes} min total prep window`)}</small></div><div><span class="smart-kds-timing-state ${esc(task.state)}">${esc(task.state.replace('-', ' '))}</span><small>${esc(task.reason)}</small></div><div><strong>Target serve</strong><small>${esc(format(task.targetServeAt))}</small></div><div><strong>Latest safe start</strong><small>${esc(format(task.latestSafeStartAt))}</small></div><div><strong>Maximum serve</strong><small>${esc(format(task.latestAcceptableServeAt))}</small></div></div>`).join('')}</article>`).join('')
+      : '<p class="help-text">There are no accepted, preparing, or ready orders to calculate right now.</p>';
+  };
+  const load = async () => {
+    try {
+      refresh.disabled = true;
+      setStatus('Calculating timing shadow…');
+      const response = await fetch('/api/admin/smart-kds/timing-preview', { cache: 'no-store' });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to calculate timing preview.');
+      render(data);
+      setStatus(`${data.message} Calculated ${Number(data.summary?.tasks || 0)} item${Number(data.summary?.tasks || 0) === 1 ? '' : 's'} at ${format(data.generatedAt)}.`);
+    } catch (error) {
+      setStatus(error.message || 'Unable to calculate timing preview.', true);
+    } finally {
+      refresh.disabled = false;
+    }
+  };
+  refresh.addEventListener('click', load);
+  document.querySelector('[data-target="tab-smart-kds"]')?.addEventListener('click', load);
+}
+
+function setupSmartKdsScheduler() {
+  const refresh = document.getElementById('smart-kds-refresh-scheduler');
+  const status = document.getElementById('smart-kds-scheduler-status');
+  const summary = document.getElementById('smart-kds-scheduler-summary');
+  const list = document.getElementById('smart-kds-scheduler-list');
+  if (!refresh || !status || !summary || !list) return;
+  const esc = (value) =>
+    String(value ?? '').replace(
+      /[&<>"']/g,
+      (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' })[char]
+    );
+  const format = (value) =>
+    value ? new Intl.DateTimeFormat('en-IN', { hour: 'numeric', minute: '2-digit' }).format(new Date(value)) : '—';
+  const setStatus = (message = '', error = false) => {
+    status.textContent = message;
+    status.style.color = error ? '#b91c1c' : '';
+  };
+  const orderLabel = (task) =>
+    task.mode === 'table'
+      ? `${task.tableArea || 'Table'} · ${task.tableNumber || '—'}`
+      : task.fulfillmentType === 'delivery'
+        ? 'Delivery order'
+        : 'Parcel / takeaway';
+  const render = (data) => {
+    const totals = data.summary || {};
+    summary.innerHTML = [
+      ['start-now', 'Start now'], ['prepare-next', 'Prepare next'], ['monitor', 'Monitor'], ['tasks', 'Active items'],
+    ].map(([key, label]) => `<div class="smart-kds-timing-stat"><b>${Number(totals[key] || 0)}</b><span>${label}</span></div>`).join('');
+    list.innerHTML = data.recommendations?.length
+      ? data.recommendations.map((task) => `<article class="smart-kds-priority-card"><span class="smart-kds-priority-rank">${Number(task.rank)}</span><div><strong>${esc(`${task.quantity}× ${task.itemName}`)}</strong><p>#${esc(String(task.orderNumber || '—').padStart(2, '0'))} · ${esc(orderLabel(task))} · ${esc(task.stationId || 'Station not assigned')}</p></div><div><span class="smart-kds-timing-state ${esc(task.action)}">${esc(task.action.replace('-', ' '))}</span><p>Safe start: ${esc(format(task.latestSafeStartAt))}</p></div><div class="smart-kds-priority-reasons">${(task.reasons || []).map((reason) => `<span>${esc(reason)}</span>`).join('')}</div></article>`).join('')
+      : '<p class="help-text">There are no active items to rank right now.</p>';
+  };
+  const load = async () => {
+    try {
+      refresh.disabled = true;
+      setStatus('Calculating deterministic priorities…');
+      const response = await fetch('/api/admin/smart-kds/scheduler-preview', { cache: 'no-store' });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to calculate priorities.');
+      render(data);
+      setStatus(`${data.message} ${Number(data.summary?.tasks || 0)} active item${Number(data.summary?.tasks || 0) === 1 ? '' : 's'} ranked.`);
+    } catch (error) {
+      setStatus(error.message || 'Unable to calculate priorities.', true);
+    } finally {
+      refresh.disabled = false;
+    }
+  };
+  refresh.addEventListener('click', load);
+  document.querySelector('[data-target="tab-smart-kds"]')?.addEventListener('click', load);
+}
+
+function setupSmartKdsBatching() {
+  const refresh = document.getElementById('smart-kds-refresh-batches');
+  const status = document.getElementById('smart-kds-batch-status');
+  const summary = document.getElementById('smart-kds-batch-summary');
+  const list = document.getElementById('smart-kds-batch-list');
+  if (!refresh || !status || !summary || !list) return;
+  const esc = (value) =>
+    String(value ?? '').replace(
+      /[&<>"']/g,
+      (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' })[char]
+    );
+  const format = (value) =>
+    value ? new Intl.DateTimeFormat('en-IN', { hour: 'numeric', minute: '2-digit' }).format(new Date(value)) : '—';
+  const setStatus = (message = '', error = false) => {
+    status.textContent = message;
+    status.style.color = error ? '#b91c1c' : '';
+  };
+  const render = (data) => {
+    const totals = data.summary || {};
+    summary.innerHTML = [
+      ['fire-batch', 'Close / fire batches'], ['wait-for-batch', 'Waiting safely'], ['batches', 'Compatible batches'], ['allocatedItems', 'Allocated portions'],
+    ].map(([key, label]) => `<div class="smart-kds-timing-stat"><b>${Number(totals[key] || 0)}</b><span>${label}</span></div>`).join('');
+    list.innerHTML = data.batches?.length
+      ? data.batches.map((batch) => `<article class="smart-kds-batch-card"><div><h3>${esc(batch.batchGroupId)} · ${Number(batch.totalQuantity)} portions</h3><p>${esc(batch.stationId)} · maximum ${Number(batch.maxBatchSize)} · safe start ${esc(format(batch.latestSafeStartAt))}</p></div><div><span class="smart-kds-timing-state ${esc(batch.action)}">${esc(batch.action.replace('-', ' '))}</span><p>${esc(batch.reason)}</p></div><div class="smart-kds-batch-allocations">${batch.allocations.map((allocation) => `<span>#${esc(String(allocation.orderNumber || '—').padStart(2, '0'))} · ${esc(`${allocation.quantity}× ${allocation.itemName}`)}</span>`).join('')}</div></article>`).join('')
+      : '<p class="help-text">No compatible, batchable active items need a batch recommendation right now.</p>';
+  };
+  const load = async () => {
+    try {
+      refresh.disabled = true;
+      setStatus('Calculating compatible batches…');
+      const response = await fetch('/api/admin/smart-kds/batch-preview', { cache: 'no-store' });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to calculate batches.');
+      render(data);
+      setStatus(`${data.message} ${Number(data.summary?.batches || 0)} compatible batch${Number(data.summary?.batches || 0) === 1 ? '' : 'es'} found.`);
+    } catch (error) {
+      setStatus(error.message || 'Unable to calculate batches.', true);
+    } finally {
+      refresh.disabled = false;
+    }
+  };
+  refresh.addEventListener('click', load);
+  document.querySelector('[data-target="tab-smart-kds"]')?.addEventListener('click', load);
+}
+
+function setupSmartKdsCapacity() {
+  const refresh = document.getElementById('smart-kds-refresh-capacity');
+  const status = document.getElementById('smart-kds-capacity-status');
+  const summary = document.getElementById('smart-kds-capacity-summary');
+  const list = document.getElementById('smart-kds-capacity-list');
+  if (!refresh || !status || !summary || !list) return;
+  const esc = (value) =>
+    String(value ?? '').replace(
+      /[&<>"']/g,
+      (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' })[char]
+    );
+  const setStatus = (message = '', error = false) => {
+    status.textContent = message;
+    status.style.color = error ? '#b91c1c' : '';
+  };
+  const workRow = (work) => `<div class="smart-kds-capacity-work-row"><div><strong>${esc(work.label)}</strong><small>Priority #${Number(work.rank || 0)} · ${Number(work.capacityCost || 0)} capacity · ${esc(work.capacityReason)}</small></div><span class="smart-kds-timing-state ${esc(work.capacityState)}">${esc(work.capacityState.replace('-', ' '))}</span></div>`;
+  const render = (data) => {
+    const totals = data.summary || {};
+    summary.innerHTML = [
+      ['allocated', 'Allocated now'], ['capacityWait', 'Waiting for capacity'], ['unassigned', 'No station assigned'], ['overCapacity', 'Already over capacity'], ['stations', 'Stations reviewed'],
+    ].map(([key, label]) => `<div class="smart-kds-timing-stat"><b>${Number(totals[key] || 0)}</b><span>${label}</span></div>`).join('');
+    const plans = data.stationPlans || [];
+    const stations = plans.map((station) => {
+      const total = Number(station.totalCapacity || 0);
+      const used = Number(station.usedCapacity || 0);
+      const percent = total ? Math.min(100, Math.round((used / total) * 100)) : 0;
+      const allocations = station.allocations || [];
+      const overloaded = Number(station.overCapacity || 0) > 0;
+      const detail = !station.enabled ? 'Station marked unavailable' : overloaded ? `${used} of ${total} capacity in use · already ${Number(station.overCapacity)} over limit` : `${used} of ${total} capacity allocated · ${Number(station.remainingCapacity || 0)} free`;
+      return `<article class="smart-kds-capacity-card"><div class="smart-kds-capacity-head"><div><h3>${esc(station.stationName)}</h3><p>${detail}</p></div><span class="smart-kds-timing-state ${!station.enabled ? 'unassigned' : overloaded || used >= total ? 'capacity-wait' : 'allocated'}">${!station.enabled ? 'unavailable' : overloaded ? 'over capacity' : 'available'}</span></div><div class="smart-kds-capacity-meter"><b class="${used >= total && total ? 'full' : ''}" style="width:${percent}%"></b></div><div class="smart-kds-capacity-work">${allocations.length ? allocations.map(workRow).join('') : '<p class="help-text">No active work assigned to this station.</p>'}</div></article>`;
+    }).join('');
+    const unassigned = data.unassigned?.length
+      ? `<article class="smart-kds-capacity-card"><div class="smart-kds-capacity-head"><div><h3>Needs station assignment</h3><p>These items cannot receive capacity until their production profile is assigned to a kitchen station.</p></div><span class="smart-kds-timing-state unassigned">review</span></div><div class="smart-kds-capacity-work">${data.unassigned.map(workRow).join('')}</div></article>`
+      : '';
+    list.innerHTML = `${stations}${unassigned}` || '<p class="help-text">There are no active items that require station capacity right now.</p>';
+  };
+  const load = async () => {
+    try {
+      refresh.disabled = true;
+      setStatus('Allocating station capacity…');
+      const response = await fetch('/api/admin/smart-kds/capacity-preview', { cache: 'no-store' });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to calculate station capacity.');
+      render(data);
+      setStatus(`${data.message} ${Number(data.summary?.allocated || 0)} work item${Number(data.summary?.allocated || 0) === 1 ? '' : 's'} can start with available capacity.`);
+    } catch (error) {
+      setStatus(error.message || 'Unable to calculate station capacity.', true);
+    } finally {
+      refresh.disabled = false;
+    }
+  };
+  refresh.addEventListener('click', load);
+  document.querySelector('[data-target="tab-smart-kds"]')?.addEventListener('click', load);
+}
+
+function setupSmartKdsPacing() {
+  const refresh = document.getElementById('smart-kds-refresh-pacing');
+  const status = document.getElementById('smart-kds-pacing-status');
+  const summary = document.getElementById('smart-kds-pacing-summary');
+  const list = document.getElementById('smart-kds-pacing-list');
+  if (!refresh || !status || !summary || !list) return;
+  const esc = (value) =>
+    String(value ?? '').replace(
+      /[&<>"']/g,
+      (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' })[char]
+    );
+  const format = (value) =>
+    value ? new Intl.DateTimeFormat('en-IN', { hour: 'numeric', minute: '2-digit' }).format(new Date(value)) : '—';
+  const title = (value) => String(value || '').replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
+  const setStatus = (message = '', error = false) => {
+    status.textContent = message;
+    status.style.color = error ? '#b91c1c' : '';
+  };
+  const orderLabel = (order) =>
+    order.mode === 'table'
+      ? `${order.tableArea || 'Table'} · ${order.tableNumber || '—'}`
+      : order.fulfillmentType === 'delivery' ? 'Delivery order' : 'Parcel / takeaway';
+  const renderTask = (task) => `<div class="smart-kds-pacing-task"><div><strong>${esc(`${task.quantity}× ${task.itemName}`)}</strong><small>${esc(task.stationId || 'Station not assigned')} · start ${esc(format(task.plannedStartAt))}</small></div><div><span class="smart-kds-timing-state ${esc(task.pacingState)}">${esc(title(task.pacingState))}</span><small>${esc(task.pacingReason)}</small></div><div><strong>Ready window</strong><small>${esc(format(task.readyWindowStartAt))} – ${esc(format(task.readyWindowEndAt))}</small></div></div>`;
+  const render = (data) => {
+    const totals = data.summary || {};
+    summary.innerHTML = [
+      ['currentCourse', 'Next-course items'], ['prePrep', 'Safe pre-prep'], ['holdForCourse', 'Course holds'], ['synchronized', 'Synchronized items'],
+    ].map(([key, label]) => `<div class="smart-kds-timing-stat"><b>${Number(totals[key] || 0)}</b><span>${label}</span></div>`).join('');
+    list.innerHTML = data.orders?.length
+      ? data.orders.map((order) => `<article class="smart-kds-pacing-order"><header><div><h3>#${esc(String(order.orderNumber || '—').padStart(2, '0'))} · ${esc(orderLabel(order))}</h3><p>${esc(order.customerName || 'Walk-in customer')} · ${esc(title(order.courseMode))}${order.nextExpectedCourse ? ` · next: ${esc(title(order.nextExpectedCourse))}` : ''}</p></div><span class="insight-pill">±${Number(order.toleranceMinutes || 0)} min ready window</span></header>${(order.courses || []).map((course) => `<section class="smart-kds-pacing-course"><div class="smart-kds-pacing-course-head"><div><strong>${esc(title(course.course))}</strong><small> · course ${Number(course.sequence)}</small></div><div><small>Target ${esc(format(course.targetServeAt))}</small><span class="smart-kds-timing-state ${esc(course.state === 'next' ? 'current-course' : course.state === 'together' ? 'sync-watch' : 'hold-for-course')}">${esc(title(course.state))}</span></div></div>${course.tasks.map(renderTask).join('')}</section>`).join('')}</article>`).join('')
+      : '<p class="help-text">There are no accepted, preparing, or ready orders to pace right now.</p>';
+  };
+  const load = async () => {
+    try {
+      refresh.disabled = true;
+      setStatus('Calculating course pacing…');
+      const response = await fetch('/api/admin/smart-kds/pacing-preview', { cache: 'no-store' });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to calculate course pacing.');
+      render(data);
+      setStatus(`${data.message} ${Number(data.summary?.orders || 0)} active order${Number(data.summary?.orders || 0) === 1 ? '' : 's'} reviewed.`);
+    } catch (error) {
+      setStatus(error.message || 'Unable to calculate course pacing.', true);
+    } finally {
+      refresh.disabled = false;
+    }
+  };
+  refresh.addEventListener('click', load);
+  document.querySelector('[data-target="tab-smart-kds"]')?.addEventListener('click', load);
+}
+
+function setupSmartKdsTimingOverrides() {
+  const category = document.getElementById('smart-kds-category-override');
+  const categoryValue = document.getElementById('smart-kds-category-adjustment');
+  const station = document.getElementById('smart-kds-station-override');
+  const stationTargetValue = document.getElementById('smart-kds-station-target-adjustment');
+  const stationValue = document.getElementById('smart-kds-station-adjustment');
+  const save = document.getElementById('smart-kds-save-timing-overrides');
+  const status = document.getElementById('smart-kds-timing-overrides-status');
+  if (!category || !categoryValue || !station || !stationTargetValue || !stationValue || !save || !status) return;
+  let config = null;
+  const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' })[char]);
+  const setStatus = (message, error = false) => { status.textContent = message || ''; status.style.color = error ? '#b91c1c' : ''; };
+  const refreshInputs = () => {
+    categoryValue.value = Number(config?.timing?.categoryTargetAdjustments?.[category.value] || 0);
+    stationTargetValue.value = Number(config?.timing?.stationTargetAdjustments?.[station.value] || 0);
+    stationValue.value = Number(config?.timing?.stationHandoffAdjustments?.[station.value] || 0);
+  };
+  const load = async () => {
+    try {
+      const [configResponse, profilesResponse] = await Promise.all([fetch('/api/admin/smart-kds/config', { cache: 'no-store' }), fetch('/api/admin/smart-kds/menu-profiles', { cache: 'no-store' })]);
+      const [configData, profilesData] = await Promise.all([configResponse.json(), profilesResponse.json()]);
+      if (!configResponse.ok || !profilesResponse.ok) throw new Error(configData.error || profilesData.error || 'Unable to load timing adjustments.');
+      config = configData.config;
+      const categories = [...new Set((profilesData.items || []).map((item) => `${item.menuType}::${item.category}`))].sort();
+      category.innerHTML = categories.map((key) => `<option value="${esc(key)}">${esc(key.replace('::', ' · '))}</option>`).join('') || '<option value="">No menu categories</option>';
+      station.innerHTML = (profilesData.stations || []).map((item) => `<option value="${esc(item.station_id)}">${esc(item.station_name)}</option>`).join('') || '<option value="">No stations</option>';
+      refreshInputs();
+    } catch (error) { setStatus(error.message || 'Unable to load timing adjustments.', true); }
+  };
+  category.addEventListener('change', refreshInputs);
+  station.addEventListener('change', refreshInputs);
+  save.addEventListener('click', async () => {
+    if (!config) return;
+    try {
+      save.disabled = true;
+      config.timing = config.timing || {};
+      config.timing.categoryTargetAdjustments = config.timing.categoryTargetAdjustments || {};
+      config.timing.stationTargetAdjustments = config.timing.stationTargetAdjustments || {};
+      config.timing.stationHandoffAdjustments = config.timing.stationHandoffAdjustments || {};
+      if (category.value) config.timing.categoryTargetAdjustments[category.value] = Number(categoryValue.value || 0);
+      if (station.value) config.timing.stationTargetAdjustments[station.value] = Number(stationTargetValue.value || 0);
+      if (station.value) config.timing.stationHandoffAdjustments[station.value] = Number(stationValue.value || 0);
+      const response = await fetch('/api/admin/smart-kds/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to save timing adjustments.');
+      config = data.config;
+      refreshInputs();
+      setStatus('Category and station timing adjustments saved.');
+    } catch (error) { setStatus(error.message || 'Unable to save timing adjustments.', true); } finally { save.disabled = false; }
+  });
+  document.querySelector('[data-target="tab-smart-kds"]')?.addEventListener('click', load);
+}
+
+function setupSmartKdsFairness() {
+  const refresh = document.getElementById('smart-kds-refresh-fairness');
+  const status = document.getElementById('smart-kds-fairness-status');
+  const summary = document.getElementById('smart-kds-fairness-summary');
+  const list = document.getElementById('smart-kds-fairness-list');
+  if (!refresh || !status || !summary || !list) return;
+  const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' })[char]);
+  const setStatus = (message = '', error = false) => { status.textContent = message; status.style.color = error ? '#b91c1c' : ''; };
+  const render = (data) => {
+    const totals = data.summary || {};
+    summary.innerHTML = [['protected', 'Fairness protected'], ['longestWaitMinutes', 'Longest wait (min)'], ['thresholdMinutes', 'Threshold (min)'], ['tasks', 'Active items']].map(([key, label]) => `<div class="smart-kds-timing-stat"><b>${Number(totals[key] || 0)}</b><span>${label}</span></div>`).join('');
+    list.innerHTML = data.recommendations?.length
+      ? data.recommendations.map((task) => `<article class="smart-kds-fairness-card"><span class="smart-kds-priority-rank">${Number(task.fairnessRank || task.rank)}</span><div><strong>${esc(`${task.quantity}× ${task.itemName}`)}</strong><p>#${esc(String(task.orderNumber || '—').padStart(2, '0'))} · waited ${Number(task.waitedMinutes || 0)} min · original priority #${Number(task.originalRank || task.rank || 0)}</p></div><div><span class="smart-kds-timing-state ${task.protectedByFairness ? 'fairness-protected' : esc(task.action)}">${task.protectedByFairness ? 'fairness protected' : esc(task.action.replace('-', ' '))}</span><p>${esc(task.fairnessReason)}</p></div></article>`).join('')
+      : '<p class="help-text">There are no active items to evaluate for fairness right now.</p>';
+  };
+  const load = async () => {
+    try {
+      refresh.disabled = true;
+      setStatus('Applying deterministic fairness rules…');
+      const response = await fetch('/api/admin/smart-kds/fairness-preview', { cache: 'no-store' });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to calculate fairness.');
+      render(data);
+      setStatus(`${data.message} ${Number(data.summary?.protected || 0)} item${Number(data.summary?.protected || 0) === 1 ? '' : 's'} protected.`);
+    } catch (error) { setStatus(error.message || 'Unable to calculate fairness.', true); } finally { refresh.disabled = false; }
+  };
+  refresh.addEventListener('click', load);
+  document.querySelector('[data-target="tab-smart-kds"]')?.addEventListener('click', load);
+}
+
+function setupSmartKdsRecommendations() {
+  const refresh = document.getElementById('smart-kds-refresh-recommendations');
+  const status = document.getElementById('smart-kds-recommendations-status');
+  const summary = document.getElementById('smart-kds-recommendations-summary');
+  const list = document.getElementById('smart-kds-recommendations-list');
+  if (!refresh || !status || !summary || !list) return;
+  const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' })[char]);
+  const setStatus = (message = '', error = false) => { status.textContent = message; status.style.color = error ? '#b91c1c' : ''; };
+  const load = async () => {
+    try {
+      refresh.disabled = true; setStatus('Combining Smart KDS constraints…');
+      const response = await fetch('/api/admin/smart-kds/recommendations-preview', { cache: 'no-store' });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to calculate final recommendations.');
+      const totals = data.summary || {};
+      summary.innerHTML = [['startNow', 'Start now'], ['serviceRisk', 'Service-risk boost'], ['waitingCapacity', 'Waiting capacity'], ['needsStation', 'Needs station']].map(([key, label]) => `<div class="smart-kds-timing-stat"><b>${Number(totals[key] || 0)}</b><span>${label}</span></div>`).join('');
+      list.innerHTML = data.recommendations?.length ? data.recommendations.map((task) => `<article class="smart-kds-fairness-card"><span class="smart-kds-priority-rank">${Number(task.finalRank || 0)}</span><div><strong>${esc(`${task.quantity}× ${task.itemName}`)}</strong><p>#${esc(String(task.orderNumber || '—').padStart(2, '0'))} · ${esc(task.stationId || 'Station not assigned')} · ${esc(task.pacingState || 'eligible')}</p></div><div><span class="smart-kds-timing-state ${esc(task.action)}">${esc(task.action.replace('-', ' '))}</span><p>${esc(task.finalReason)}</p></div></article>`).join('') : '<p class="help-text">There are no currently eligible items to recommend.</p>';
+      setStatus(data.message);
+    } catch (error) { setStatus(error.message || 'Unable to calculate final recommendations.', true); } finally { refresh.disabled = false; }
+  };
+  refresh.addEventListener('click', load);
+  document.querySelector('[data-target="tab-smart-kds"]')?.addEventListener('click', load);
+}
+
+function setupSmartKdsServiceRisk() {
+  const refresh = document.getElementById('smart-kds-refresh-service-risk');
+  const status = document.getElementById('smart-kds-service-risk-status');
+  const summary = document.getElementById('smart-kds-service-risk-summary');
+  const list = document.getElementById('smart-kds-service-risk-list');
+  if (!refresh || !status || !summary || !list) return;
+  const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' })[char]);
+  const setStatus = (message = '', error = false) => { status.textContent = message; status.style.color = error ? '#b91c1c' : ''; };
+  const load = async () => {
+    try {
+      refresh.disabled = true; setStatus('Reviewing table service risk…');
+      const response = await fetch('/api/admin/smart-kds/service-risk-preview', { cache: 'no-store' });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to calculate table service risk.');
+      const totals = data.summary || {};
+      summary.innerHTML = [['firstFoodRisk', 'First-food risk'], ['serviceGapRisk', 'Service-gap risk'], ['critical', 'Critical tables'], ['completedService', 'Service complete'], ['tables', 'Tables reviewed']].map(([key, label]) => `<div class="smart-kds-timing-stat"><b>${Number(totals[key] || 0)}</b><span>${label}</span></div>`).join('');
+      list.innerHTML = data.risks?.length ? data.risks.map((risk) => `<article class="smart-kds-fairness-card"><span class="smart-kds-priority-rank">${esc(String(risk.tableNumber || '—'))}</span><div><strong>${esc(risk.tableArea || 'Table')} · ${esc(risk.customerName || 'Walk-in customer')}</strong><p>#${esc(String(risk.orderNumber || '—').padStart(2, '0'))} · ${risk.hasPendingFood ? (risk.hasEverReceivedFood ? `last food ${Number(risk.minutesSinceLastFood)} min ago` : `no food after ${Number(risk.ageMinutes)} min`) : 'all ordered courses served'}</p></div><div><span class="smart-kds-timing-state ${esc(risk.riskType)}">${esc(risk.riskType.replace(/-/g, ' '))}</span><p>${esc(risk.reason)}</p></div></article>`).join('') : '<p class="help-text">There are no active dine-in tables to review right now.</p>';
+      setStatus(data.message);
+    } catch (error) { setStatus(error.message || 'Unable to calculate table service risk.', true); } finally { refresh.disabled = false; }
+  };
+  refresh.addEventListener('click', load);
+  document.querySelector('[data-target="tab-smart-kds"]')?.addEventListener('click', load);
+}
+
+function setupSmartKdsMetrics() {
+  const refresh = document.getElementById('smart-kds-refresh-metrics');
+  const days = document.getElementById('smart-kds-metrics-days');
+  const status = document.getElementById('smart-kds-metrics-status');
+  const summary = document.getElementById('smart-kds-metrics-summary');
+  const courses = document.getElementById('smart-kds-metrics-courses');
+  const stations = document.getElementById('smart-kds-metrics-stations');
+  const audit = document.getElementById('smart-kds-metrics-audit');
+  const auditSearch = document.getElementById('smart-kds-metrics-audit-search');
+  if (!refresh || !days || !status || !summary || !courses || !stations || !audit || !auditSearch) return;
+  const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' })[char]);
+  const number = (value, suffix = '') => value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value)) ? `${Number(value).toLocaleString('en-IN', { maximumFractionDigits: 1 })}${suffix}` : '—';
+  const mins = (value) => number(value, ' min');
+  const format = (value) => value ? new Intl.DateTimeFormat('en-IN', { day: '2-digit', month: 'short', hour: 'numeric', minute: '2-digit' }).format(new Date(value)) : '—';
+  const setStatus = (message = '', error = false) => { status.textContent = message; status.style.color = error ? '#b91c1c' : ''; };
+  const renderRow = (title, detail, value) => `<article class="smart-kds-metrics-row"><div><strong>${esc(title)}</strong><small>${esc(detail)}</small></div><b>${esc(value)}</b></article>`;
+  let auditEntries = [];
+  const renderAudit = () => {
+    const query = auditSearch.value.trim().toLowerCase();
+    const entries = auditEntries.filter((entry) => !query || `${entry.taskId || ''} ${entry.orderId || ''} ${entry.action || ''} ${entry.actor || ''} ${(entry.reasonCodes || []).join(' ')} ${JSON.stringify(entry.details || {})}`.toLowerCase().includes(query));
+    audit.innerHTML = entries.length ? entries.map((entry) => {
+      const codes = Array.isArray(entry.reasonCodes) && entry.reasonCodes.length ? entry.reasonCodes.join(', ') : '';
+      const details = entry.details?.reason || entry.details?.stationId || entry.details?.capacityState || codes || 'Saved kitchen record';
+      const label = entry.type === 'decision' ? `Decision · ${entry.action}` : entry.type === 'order-event' ? `Order record · ${entry.action}` : entry.action;
+      return `<article class="smart-kds-audit-row"><small>${esc(format(entry.at))}</small><strong>${esc(label)}</strong><span>${esc(entry.actor || (entry.rank ? `Priority #${entry.rank}` : 'Scheduler'))}</span><small>${esc(`${entry.taskId || entry.orderId || '—'} · ${details}`)}</small></article>`;
+    }).join('') : `<p class="help-text">${query ? 'No saved audit records match this search.' : 'No Smart KDS decisions or staff actions were recorded in this period yet.'}</p>`;
+  };
+  const render = (data) => {
+    const total = data.summary || {};
+    summary.innerHTML = [
+      ['Average first food', mins(total.averageFirstFoodMinutes)], ['Order SLA', number(total.orderSlaPercent, '%')], ['Completed orders measured', number(total.ordersMeasured)],
+      ['Late courses', number(total.lateCourses)], ['Ready → served', mins(total.averageReadyToServedMinutes)],
+      ['Prep estimate error', mins(total.averagePrepEstimateErrorMinutes)],
+      ['Service gap', mins(total.averageServiceGapMinutes)], ['Table service gaps', number(total.tableServiceGaps)], ['Batch efficiency', number(total.batchEfficiencyPercent, '%')],
+      ['Average batch size', number(total.averageBatchSize)], ['Refires', number(total.refires)],
+      ['Cancellations', number(total.cancellations)], ['Manual overrides', number(total.manualOverrides)], ['Staff actions', number(total.staffActions)],
+    ].map(([label, value]) => `<div class="smart-kds-timing-stat"><b>${esc(value)}</b><span>${esc(label)}</span></div>`).join('');
+    courses.innerHTML = data.courses?.length ? data.courses.map((course) => renderRow(
+      `${String(course.course || 'other').replace(/^./, (letter) => letter.toUpperCase())} course`,
+      `${number(course.served)} served · ${number(course.late)} late · average ${mins(course.averageServiceMinutes)}`,
+      number(course.slaPercent, '%')
+    )).join('') : '<p class="help-text">No served course records in this period yet.</p>';
+    stations.innerHTML = data.stations?.length ? data.stations.map((station) => renderRow(
+      station.stationName,
+      `${number(station.tasks)} tasks · queue ${mins(station.averageQueueMinutes)} · prep error ${mins(station.prepEstimateErrorMinutes)}`,
+      `${number(station.utilizationPercent, '%')} used`
+    )).join('') : '<p class="help-text">No kitchen task records in this period yet.</p>';
+    auditEntries = Array.isArray(data.audit) ? data.audit : [];
+    renderAudit();
+  };
+  const load = async () => {
+    try {
+      refresh.disabled = true;
+      setStatus('Calculating saved kitchen performance…');
+      const response = await fetch(`/api/admin/smart-kds/metrics?days=${encodeURIComponent(days.value)}`, { cache: 'no-store' });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to load Smart KDS metrics.');
+      render(data);
+      setStatus(`${data.message} Reporting period: last ${Number(data.rangeDays)} days.`);
+    } catch (error) { setStatus(error.message || 'Unable to load Smart KDS metrics.', true); }
+    finally { refresh.disabled = false; }
+  };
+  refresh.addEventListener('click', load);
+  days.addEventListener('change', load);
+  auditSearch.addEventListener('input', renderAudit);
+  document.querySelector('[data-target="tab-smart-kds"]')?.addEventListener('click', load);
+}
+
 fetch('/api/admin/content')
   .then((response) => (response.ok ? response.json() : {}))
   .then((content) => {
@@ -2909,6 +3678,18 @@ setupAirMenuEditor();
 setupAirBarMenuEditor();
 setupCustomerInsights();
 setupTrustedContacts();
+setupSmartKds();
+setupSmartKdsProfiles();
+setupSmartKdsTiming();
+setupSmartKdsScheduler();
+setupSmartKdsBatching();
+setupSmartKdsCapacity();
+setupSmartKdsPacing();
+setupSmartKdsTimingOverrides();
+setupSmartKdsFairness();
+setupSmartKdsRecommendations();
+setupSmartKdsServiceRisk();
+setupSmartKdsMetrics();
 
 document.querySelectorAll('.logout-btn:not(#clear-logs)').forEach((button) => {
   button.addEventListener('click', () => {

@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="theme-color" content="#ffffff">
+    <title>Red Lantern Kitchen Display</title>
+    <link rel="stylesheet" href="/kds.css?v=2">
+  </head>
+  <body>
+    <header class="kds-topbar">
+      <a href="/orders" class="kds-brand"><span>RL</span><div><b>Red Lantern</b><small>Kitchen Display System</small></div></a>
+      <div class="kds-live"><i></i><b id="kds-live-count">0 live KOTs</b><time id="kds-clock"></time></div>
+      <div class="kds-topbar-actions"><a href="/smart-kds">Smart KDS</a><button type="button" id="kds-fullscreen">Fullscreen</button></div>
+    </header>
+    <main>
+      <section class="kds-controls"><div><span class="eyebrow">Kitchen stations</span><h1>Live KOT display</h1><p>Orders refresh automatically. Select a station to focus that kitchen screen.</p></div><div id="kds-stations" class="kds-stations"></div></section>
+      <p id="kds-status" class="kds-status" role="status">Loading kitchen tickets…</p>
+      <section id="kds-grid" class="kds-grid" aria-live="polite"></section>
+    </main>
+    <script src="/kds.js?v=1"></script>
+  </body>
+</html>

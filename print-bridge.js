@@ -633,8 +633,8 @@ function kotText(payload) {
     (Number.isFinite(savedFeed) ? Math.max(0, Math.min(12, savedFeed)) : 3) +
     Math.max(0, Math.min(2, Number(settings.extraSpace) || 0)) * 2;
   return [
+    order.reprint ? '__KOTCENTERMETABOLD__DUPLICATE COPY' : '',
     isRunningTable ? '__KOTCENTERMETABOLD__RUNNING TABLE' : '',
-    order.reprint ? '__KOTCENTERMETABOLD__DUPLICATE / REPRINT' : '',
     `${boldMetaLine}KOT # ${order.kotNumber || '—'}`,
     tableLine ? `${metaLine}${tableLine}` : '',
     `${metaLine}${originLine}`,

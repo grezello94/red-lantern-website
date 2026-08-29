@@ -8,7 +8,7 @@
   },
   "scripts": {
     "minify:css": "cleancss -o style.min.css style.css",
-    "check": "node --check server.js && node --check admin-cms.js && node --check air-menu.js && node --check captain.js && node --check captain-sw.js && node --check orders.js && node --check print-bridge.js && node --check orders-sw.js",
+    "check": "node --check server.js && node --check smart-kds-domain.js && node --check smart-kds-timing.js && node --check smart-kds-scheduler.js && node --check smart-kds-batching.js && node --check smart-kds-capacity.js && node --check smart-kds-pacing.js && node --check smart-kds-fairness.js && node --check smart-kds-unified.js && node --check smart-kds-service-risk.js && node --check smart-kds-simulation.js && node --check smart-kds-workflow.js && node --check smart-kds-reasons.js && node --check smart-kds-metrics.js && node --check smart-kds.js && node --check smart-kds-controls.js && node --check admin-cms.js && node --check air-menu.js && node --check captain.js && node --check captain-sw.js && node --check orders.js && node --check print-bridge.js && node --check orders-sw.js",
     "bundle:print-bridge": "bash scripts/build-print-bridge-bundles.sh",
     "package:bridge:macos": "bash scripts/package-print-bridge-macos.sh",
     "package:bridge:windows": "powershell -ExecutionPolicy Bypass -File scripts/package-print-bridge-windows.ps1",
@@ -18,6 +18,8 @@
     "print-bridge": "node print-bridge.js",
     "test": "npm run test:unit && npm run build && node scripts/test-print-bridge.js",
     "test:unit": "jest --runInBand",
+    "test:smart-kds": "jest --runInBand smart-kds-domain.test.js smart-kds-phase12.test.js",
+    "simulate:smart-kds": "node scripts/run-smart-kds-simulation.js",
     "lint": "eslint . --ext .js",
     "format": "prettier --write \"**/*.{js,css,html,json}\"",
     "typecheck": "tsc --noEmit",

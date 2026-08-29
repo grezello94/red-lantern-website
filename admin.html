@@ -4000,6 +4000,232 @@
           grid-template-columns: 1fr 1fr;
         }
       }
+      .smart-kds-phase-banner { display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; margin-bottom: 20px; border: 1px solid #bfdbfe; border-radius: 12px; background: #eff6ff; color: #1e3a5f; }
+      .smart-kds-admin-nav { position: sticky; top: 10px; z-index: 3; display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; padding: 10px; border: 1px solid #dbe5f1; border-radius: 12px; background: rgba(255,255,255,.94); backdrop-filter: blur(10px); }
+      .smart-kds-admin-nav a, .smart-kds-admin-nav button { padding: 8px 10px; border: 0; border-radius: 8px; color: #334155; background: #f1f5f9; font-size: .82rem; font-weight: 800; text-decoration: none; cursor: pointer; }
+      .smart-kds-admin-nav a:hover, .smart-kds-admin-nav button:hover { color: #fff; background: #b91c1c; }
+      .smart-kds-admin-section { scroll-margin-top: 66px; }
+      .smart-kds-phase-banner strong { color: #1d4ed8; white-space: nowrap; }
+      .smart-kds-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .smart-kds-course-wrap { overflow-x: auto; border: 1px solid #e5e7eb; border-radius: 12px; }
+      .smart-kds-course-table { min-width: 790px; margin: 0; }
+      .smart-kds-course-table input { width: 100%; min-width: 90px; }
+      .smart-kds-stations { display: grid; gap: 10px; }
+      .smart-kds-station { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(140px, .7fr) 140px 110px; align-items: center; gap: 16px; padding: 14px 16px; border: 1px solid #e5e7eb; border-radius: 12px; background: #fff; }
+      .smart-kds-station small { color: #64748b; display: block; margin-top: 3px; }
+      .smart-kds-station label { display: flex; align-items: center; gap: 8px; font-weight: 700; color: #475569; }
+      .smart-kds-actions { display: flex; justify-content: flex-end; margin-top: 18px; }
+      .smart-kds-profile-title, .smart-kds-profile-toolbar { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; }
+      .smart-kds-profile-toolbar { justify-content: flex-start; margin: 16px 0; }
+      .smart-kds-profile-toolbar .form-group { min-width: 220px; margin: 0; }
+      .smart-kds-profile-list { display: grid; gap: 10px; }
+      .smart-kds-profile { border: 1px solid #e2e8f0; border-radius: 14px; background: #fff; overflow: hidden; }
+      .smart-kds-profile > summary { display: grid; grid-template-columns: minmax(220px, 1fr) 140px 160px 120px; gap: 16px; align-items: center; padding: 14px 16px; cursor: pointer; list-style: none; }
+      .smart-kds-profile > summary::-webkit-details-marker { display: none; }
+      .smart-kds-profile > summary::after { content: 'Edit'; color: #b91c1c; font-weight: 800; text-align: right; }
+      .smart-kds-profile-meta { color: #64748b; font-size: .88rem; }
+      .smart-kds-profile-course { display: inline-flex; width: max-content; padding: 5px 9px; border-radius: 999px; background: #ecfdf5; color: #047857; font-weight: 800; text-transform: capitalize; }
+      .smart-kds-profile-fields { padding: 18px 16px; border-top: 1px solid #e2e8f0; background: #f8fafc; }
+      .smart-kds-profile-fields .form-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+      .smart-kds-profile-checks { display: flex; flex-wrap: wrap; gap: 12px 20px; margin-top: 8px; }
+      .smart-kds-profile-checks label { display: inline-flex; align-items: center; gap: 7px; color: #475569; font-weight: 700; }
+      .smart-kds-profile-save { margin-top: 16px; display: flex; justify-content: flex-end; }
+      .smart-kds-timing-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 16px 0; }
+      .smart-kds-metrics-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 18px 0; }
+      .smart-kds-metrics-grid h3 { margin: 0 0 10px; font-size: .95rem; color: #334155; }
+      .smart-kds-metrics-list, .smart-kds-metrics-audit { display: grid; gap: 8px; }
+      .smart-kds-metrics-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 12px; border: 1px solid #e2e8f0; border-radius: 10px; background: #f8fafc; }
+      .smart-kds-metrics-row strong, .smart-kds-metrics-row small { display: block; }
+      .smart-kds-metrics-row small { margin-top: 3px; color: #64748b; }
+      .smart-kds-metrics-row b { color: #1e293b; white-space: nowrap; }
+      .smart-kds-metrics-audit { max-height: 420px; overflow: auto; padding-right: 4px; }
+      .smart-kds-audit-row { display: grid; grid-template-columns: 112px minmax(120px, .8fr) minmax(130px, 1.1fr) minmax(0, 2fr); gap: 12px; align-items: start; padding: 10px 12px; border-bottom: 1px solid #eef2f7; font-size: .86rem; }
+      .smart-kds-audit-row:last-child { border-bottom: 0; }
+      .smart-kds-audit-row small { color: #64748b; }
+      .smart-kds-timing-stat { padding: 12px 14px; border: 1px solid #e2e8f0; border-radius: 12px; background: #f8fafc; }
+      .smart-kds-timing-stat b { display: block; font-size: 1.3rem; color: #1e293b; }
+      .smart-kds-timing-stat span { color: #64748b; font-size: .82rem; font-weight: 700; }
+      .smart-kds-timing-orders { display: grid; gap: 10px; }
+      .smart-kds-timing-order { border: 1px solid #e2e8f0; border-radius: 14px; overflow: hidden; background: #fff; }
+      .smart-kds-timing-order > header { display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 14px 16px; border-bottom: 1px solid #e2e8f0; }
+      .smart-kds-timing-order h3 { margin: 0; font-size: 1rem; }
+      .smart-kds-timing-order header p { margin: 3px 0 0; color: #64748b; font-size: .88rem; }
+      .smart-kds-timing-task { display: grid; grid-template-columns: minmax(180px, 1fr) 120px repeat(3, minmax(130px, 1fr)); gap: 12px; align-items: center; padding: 12px 16px; border-bottom: 1px solid #f1f5f9; }
+      .smart-kds-timing-task:last-child { border-bottom: 0; }
+      .smart-kds-timing-task small { display: block; color: #64748b; margin-top: 2px; }
+      .smart-kds-timing-state { display: inline-flex; width: max-content; padding: 5px 9px; border-radius: 999px; font-size: .82rem; font-weight: 800; text-transform: uppercase; }
+      .smart-kds-timing-state.on-track { color: #166534; background: #dcfce7; }
+      .smart-kds-timing-state.safe { color: #166534; background: #dcfce7; }
+      .smart-kds-timing-state.watch { color: #1d4ed8; background: #dbeafe; }
+      .smart-kds-timing-state.monitor { color: #166534; background: #dcfce7; }
+      .smart-kds-timing-state.prepare-next { color: #92400e; background: #fef3c7; }
+      .smart-kds-timing-state.start-soon { color: #92400e; background: #fef3c7; }
+      .smart-kds-timing-state.start-now { color: #b91c1c; background: #fee2e2; }
+      .smart-kds-timing-state.at-risk { color: #b45309; background: #ffedd5; }
+      .smart-kds-timing-state.fire-batch { color: #b91c1c; background: #fee2e2; }
+      .smart-kds-timing-state.wait-for-batch { color: #92400e; background: #fef3c7; }
+      .smart-kds-timing-state.overdue { color: #fff; background: #991b1b; }
+      .smart-kds-timing-state.critical { color: #fff; background: #450a0a; }
+      .smart-kds-scheduler-list { display: grid; gap: 10px; }
+      .smart-kds-priority-card { display: grid; grid-template-columns: 54px minmax(220px, 1fr) 150px minmax(220px, 1fr); gap: 14px; align-items: center; padding: 14px 16px; border: 1px solid #e2e8f0; border-radius: 14px; background: #fff; }
+      .smart-kds-priority-rank { display: grid; width: 42px; height: 42px; place-items: center; border-radius: 50%; background: #172554; color: #fff; font-size: 1rem; font-weight: 900; }
+      .smart-kds-priority-card p { margin: 3px 0 0; color: #64748b; font-size: .86rem; }
+      .smart-kds-priority-reasons { display: flex; flex-wrap: wrap; gap: 5px; }
+      .smart-kds-priority-reasons span { padding: 4px 7px; border-radius: 7px; background: #f1f5f9; color: #475569; font-size: .76rem; font-weight: 700; }
+      .smart-kds-batch-list { display: grid; gap: 10px; }
+      .smart-kds-batch-card { display: grid; grid-template-columns: minmax(200px, 1fr) 160px minmax(260px, 1.5fr); gap: 14px; align-items: center; padding: 15px 16px; border: 1px solid #e2e8f0; border-radius: 14px; background: #fff; }
+      .smart-kds-batch-card h3 { margin: 0; font-size: 1rem; }
+      .smart-kds-batch-card p { margin: 4px 0 0; color: #64748b; font-size: .86rem; }
+      .smart-kds-batch-allocations { display: flex; flex-wrap: wrap; gap: 6px; }
+      .smart-kds-batch-allocations span { padding: 5px 8px; border-radius: 7px; background: #f1f5f9; color: #334155; font-size: .8rem; font-weight: 700; }
+      .smart-kds-capacity-list { display: grid; gap: 12px; }
+      .smart-kds-capacity-card { padding: 15px 16px; border: 1px solid #e2e8f0; border-radius: 14px; background: #fff; }
+      .smart-kds-capacity-head { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
+      .smart-kds-capacity-card h3 { margin: 0; font-size: 1rem; }
+      .smart-kds-capacity-card p { margin: 4px 0 0; color: #64748b; font-size: .86rem; }
+      .smart-kds-capacity-meter { height: 8px; margin: 12px 0; overflow: hidden; border-radius: 999px; background: #e2e8f0; }
+      .smart-kds-capacity-meter b { display: block; height: 100%; border-radius: inherit; background: #16a34a; }
+      .smart-kds-capacity-meter b.full { background: #dc2626; }
+      .smart-kds-capacity-work { display: grid; gap: 8px; }
+      .smart-kds-capacity-work-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 10px; border-radius: 9px; background: #f8fafc; }
+      .smart-kds-capacity-work-row strong { font-size: .88rem; }
+      .smart-kds-capacity-work-row small { display: block; margin-top: 2px; color: #64748b; }
+      .smart-kds-timing-state.allocated { color: #166534; background: #dcfce7; }
+      .smart-kds-timing-state.capacity-wait { color: #92400e; background: #fef3c7; }
+      .smart-kds-timing-state.unassigned { color: #475569; background: #e2e8f0; }
+      .smart-kds-pacing-list { display: grid; gap: 12px; }
+      .smart-kds-pacing-order { overflow: hidden; border: 1px solid #e2e8f0; border-radius: 14px; background: #fff; }
+      .smart-kds-pacing-order > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 14px 16px; border-bottom: 1px solid #eef2f7; background: #f8fafc; }
+      .smart-kds-pacing-order h3 { margin: 0; font-size: 1rem; }
+      .smart-kds-pacing-order p { margin: 4px 0 0; color: #64748b; font-size: .86rem; }
+      .smart-kds-pacing-course { padding: 14px 16px; border-bottom: 1px solid #eef2f7; }
+      .smart-kds-pacing-course:last-child { border-bottom: 0; }
+      .smart-kds-pacing-course-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+      .smart-kds-pacing-course-head strong { text-transform: capitalize; }
+      .smart-kds-pacing-course-head small { color: #64748b; font-weight: 700; }
+      .smart-kds-pacing-task { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(160px, .7fr) minmax(180px, .8fr); gap: 12px; align-items: center; margin-top: 10px; padding: 10px 12px; border-radius: 10px; background: #f8fafc; }
+      .smart-kds-pacing-task small { display: block; margin-top: 3px; color: #64748b; }
+      .smart-kds-timing-state.current-course, .smart-kds-timing-state.sync-start { color: #166534; background: #dcfce7; }
+      .smart-kds-timing-state.pre-prep, .smart-kds-timing-state.sync-watch { color: #92400e; background: #fef3c7; }
+      .smart-kds-timing-state.hold-for-course, .smart-kds-timing-state.manual-hold { color: #475569; background: #e2e8f0; }
+      .smart-kds-timing-state.as-ready { color: #1d4ed8; background: #dbeafe; }
+      .smart-kds-timing-state.served { color: #475569; background: #e2e8f0; }
+      .smart-kds-fairness-list { display: grid; gap: 10px; }
+      .smart-kds-fairness-card { display: grid; grid-template-columns: 54px minmax(220px, 1fr) minmax(180px, .8fr); gap: 14px; align-items: center; padding: 14px 16px; border: 1px solid #e2e8f0; border-radius: 14px; background: #fff; }
+      .smart-kds-fairness-card p { margin: 3px 0 0; color: #64748b; font-size: .86rem; }
+      .smart-kds-timing-state.fairness-protected { color: #7e22ce; background: #f3e8ff; }
+      .smart-kds-timing-state.wait-capacity { color: #92400e; background: #fef3c7; }
+      .smart-kds-timing-state.assign-station { color: #475569; background: #e2e8f0; }
+      .smart-kds-timing-state.first-food-risk, .smart-kds-timing-state.critical { color: #fff; background: #991b1b; }
+      .smart-kds-timing-state.service-gap-risk, .smart-kds-timing-state.watch { color: #92400e; background: #fef3c7; }
+      .smart-kds-timing-state.service-risk { color: #fff; background: #991b1b; }
+      #tab-smart-kds { padding-bottom: 42px; }
+      #tab-smart-kds > .header { display: flex; align-items: flex-end; min-height: 164px; padding: 32px 36px; border: 1px solid #e4eaf2; border-radius: 24px; background: radial-gradient(circle at 100% 0%, #fff0f1 0, transparent 34%), linear-gradient(135deg, #fff 0%, #fbfcff 100%); box-shadow: 0 14px 32px rgba(31, 48, 76, .06); }
+      #tab-smart-kds > .header h1 { margin: 0; color: #1e2d44; font-size: clamp(2rem, 3vw, 2.85rem); letter-spacing: -.055em; }
+      #tab-smart-kds > .header p { max-width: 680px; margin: 8px 0 0; color: #667991; font-size: 1rem; }
+      .smart-kds-admin-nav { top: 14px; gap: 6px; margin: 18px 0; padding: 8px; border-color: #dfe7f0; border-radius: 14px; box-shadow: 0 8px 20px rgba(30, 48, 74, .07); }
+      .smart-kds-header-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+      .smart-kds-header-actions a { min-height: 40px; padding: 10px 13px; border: 1px solid #c9d7e5; border-radius: 10px; color: #354961; background: #fff; font-size: .8rem; font-weight: 850; text-decoration: none; }
+      .smart-kds-header-actions a:first-child { border-color: #c82834; color: #fff; background: #c82834; box-shadow: 0 8px 16px rgba(200, 40, 52, .18); }
+      .smart-kds-admin-nav a, .smart-kds-admin-nav button { display: inline-flex; align-items: center; gap: 7px; padding: 9px 11px; color: #42546b; background: transparent; }
+      .smart-kds-admin-nav a span, .smart-kds-admin-nav button span { display: grid; width: 20px; height: 20px; place-items: center; border-radius: 50%; color: #8a9ab0; background: #edf2f7; font-size: .65rem; font-weight: 900; }
+      .smart-kds-admin-nav a:hover, .smart-kds-admin-nav button:hover { color: #9e1f2b; background: #fff1f2; }
+      .smart-kds-admin-nav a:hover span, .smart-kds-admin-nav button:hover span, .smart-kds-admin-nav button[aria-current="page"] span { color: #fff; background: #c82834; }
+      .smart-kds-admin-nav button[aria-current="page"] { color: #9e1f2b; background: #fff1f2; box-shadow: inset 0 0 0 1px #f7cdd1; }
+      .smart-kds-panel[hidden] { display: none !important; }
+      .smart-kds-panel:not([hidden]) { animation: smart-kds-panel-in .18s ease-out; }
+      @keyframes smart-kds-panel-in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+      #tab-smart-kds .card.insight-card { border: 1px solid #e1e8f1; border-radius: 20px; box-shadow: 0 10px 28px rgba(31, 48, 76, .05); }
+      .smart-kds-phase-banner { align-items: center; gap: 14px; padding: 16px 18px; margin-bottom: 24px; border-color: #f4cbd0; background: linear-gradient(100deg, #fff6f7, #fffdfd); color: #52657c; }
+      .smart-kds-phase-banner > div { display: grid; gap: 3px; }
+      .smart-kds-phase-banner strong { color: #a61f2b; font-size: .95rem; }
+      .smart-kds-safety-icon { display: grid; flex: 0 0 auto; width: 32px; height: 32px; place-items: center; border-radius: 10px; color: #fff; background: #c82834; font-weight: 950; }
+      .smart-kds-section-heading { display: flex; justify-content: space-between; gap: 16px; margin: 4px 0 14px; }
+      .smart-kds-section-heading-spaced { margin-top: 30px; }
+      .smart-kds-section-heading > div > span { color: #c82834; font-size: .72rem; font-weight: 900; letter-spacing: .1em; text-transform: uppercase; }
+      .smart-kds-section-heading h2 { margin: 4px 0 3px; color: #25364f; font-size: 1.2rem; letter-spacing: -.025em; }
+      .smart-kds-section-heading .help-text { margin: 0; }
+      #smart-kds-config-form > .smart-kds-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+      #smart-kds-config-form > .smart-kds-grid .form-group { min-height: 112px; padding: 16px; border: 1px solid #e0e8f1; border-radius: 14px; background: #fbfcfe; }
+      #smart-kds-config-form > .smart-kds-grid .form-group span { color: #52657b; font-size: .76rem; font-weight: 900; letter-spacing: .055em; text-transform: uppercase; }
+      #smart-kds-config-form > .smart-kds-grid select { margin-top: 9px; background: #fff; }
+      .smart-kds-setting-groups { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+      .smart-kds-setting-group { min-width: 0; margin: 0; padding: 16px; border: 1px solid #e0e8f1; border-radius: 15px; background: #fbfcfe; }
+      .smart-kds-setting-group legend { padding: 0; color: #26374f; font-size: .94rem; font-weight: 900; }
+      .smart-kds-setting-group > p { min-height: 0; margin: 5px 0 13px; color: #718198; font-size: .78rem; line-height: 1.35; }
+      .smart-kds-setting-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; }
+      .smart-kds-setting-fields .form-group { display: grid; grid-template-columns: minmax(0, 1fr) 72px; align-items: center; gap: 8px; min-width: 0; margin: 0; padding: 8px 0; border-bottom: 1px solid #edf1f5; }
+      .smart-kds-setting-fields .form-group:nth-last-child(-n+2) { border-bottom: 0; }
+      .smart-kds-setting-fields .form-group span { color: #465a73; font-size: .82rem; font-weight: 750; line-height: 1.2; }
+      .smart-kds-setting-fields .form-group em { display: block; margin-top: 2px; color: #92a0b3; font-size: .7rem; font-style: normal; font-weight: 650; }
+      .smart-kds-setting-fields input { min-width: 0; height: 40px; padding: 7px 9px; text-align: center; font-weight: 850; }
+      .smart-kds-course-wrap { border-color: #e0e8f1; box-shadow: inset 0 1px 0 #fff; }
+      .smart-kds-course-table thead { background: #f5f7fa; }
+      .smart-kds-course-targets { display: grid; gap: 8px; }
+      .smart-kds-course-target { display: grid; grid-template-columns: 210px repeat(3, minmax(145px, 1fr)); align-items: center; gap: 14px; padding: 12px 14px; border: 1px solid #e0e8f1; border-radius: 14px; background: #fff; transition: border-color .16s ease, box-shadow .16s ease; }
+      .smart-kds-course-target:hover { border-color: #bdcad9; box-shadow: 0 5px 14px rgba(33, 53, 79, .06); }
+      .smart-kds-course-name { display: flex; align-items: center; gap: 10px; }
+      .smart-kds-course-name strong, .smart-kds-course-name small { display: block; }
+      .smart-kds-course-name strong { color: #27384f; font-size: .96rem; }
+      .smart-kds-course-name small { margin-top: 2px; color: #8796aa; font-size: .73rem; }
+      .smart-kds-course-sequence { display: grid; width: 46px; gap: 3px; color: #8a99aa; font-size: .62rem; font-weight: 900; letter-spacing: .07em; text-align: center; text-transform: uppercase; }
+      .smart-kds-course-sequence input { width: 46px; min-width: 0; height: 34px; padding: 4px; border-color: #d3dde8; border-radius: 8px; color: #c82834; font-weight: 900; text-align: center; }
+      .smart-kds-course-value { display: grid; gap: 5px; color: #73839a; font-size: .7rem; font-weight: 900; letter-spacing: .045em; text-transform: uppercase; }
+      .smart-kds-course-value > div { display: flex; align-items: center; gap: 7px; }
+      .smart-kds-course-value input { width: 92px; min-width: 0; height: 38px; padding: 6px 9px; border-color: #d3dde8; border-radius: 8px; color: #2d405b; font-size: .95rem; font-weight: 850; text-align: center; }
+      .smart-kds-course-value small { color: #7d8da2; font-size: .75rem; letter-spacing: 0; text-transform: lowercase; }
+      .smart-kds-actions { position: static; margin-top: 20px; padding: 0; }
+      .smart-kds-actions .btn-save { min-height: 46px; padding-inline: 20px; border-radius: 11px; box-shadow: 0 10px 18px rgba(185, 28, 28, .17); }
+      .smart-kds-adjustments-card { background: linear-gradient(135deg, #fff, #fbfdff) !important; }
+      .smart-kds-adjustments-card > .form-grid { margin-top: 18px; }
+      .smart-kds-panel > h2, .smart-kds-panel > .smart-kds-profile-title h2 { margin-bottom: 7px; }
+      .smart-kds-panel > .help-text { max-width: 760px; margin-bottom: 18px; }
+      #smart-kds-stations-card { background: linear-gradient(135deg, #fff, #fbfcfe) !important; }
+      .smart-kds-stations { gap: 9px; }
+      .smart-kds-station { grid-template-columns: minmax(220px, 1fr) 150px auto; gap: 12px; padding: 14px; border-color: #e0e8f1; border-radius: 14px; box-shadow: 0 3px 9px rgba(35, 54, 79, .04); }
+      .smart-kds-station > div strong { color: #2a3b53; font-size: .95rem; }
+      .smart-kds-station label { min-height: 40px; padding: 7px 9px; border: 1px solid #e2e9f1; border-radius: 9px; background: #f8fafc; font-size: .78rem; }
+      .smart-kds-station label input[type="number"] { width: 58px; min-width: 0; height: 30px; padding: 4px; text-align: center; }
+      .smart-kds-station > small { grid-column: 1 / -1; margin: -4px 0 0; color: #8695a9; font-size: .73rem; }
+      #smart-kds-profiles-card { background: #fff !important; }
+      .smart-kds-profile-title { align-items: flex-start; padding-bottom: 14px; border-bottom: 1px solid #edf1f5; }
+      .smart-kds-profile-toolbar { align-items: end; padding: 12px; border: 1px solid #e2e9f1; border-radius: 13px; background: #f8fafc; }
+      .smart-kds-profile-toolbar .form-group { display: grid; min-width: min(260px, 100%); gap: 6px; }
+      .smart-kds-profile-toolbar .form-group > span { color: #61738b; font-size: .72rem; font-weight: 900; letter-spacing: .06em; text-transform: uppercase; }
+      .smart-kds-profile-toolbar .form-group input[type="search"], .smart-kds-profile-toolbar .form-group select { width: 100%; min-width: 0; height: 42px; padding: 8px 11px; border: 1px solid #cedae7; border-radius: 9px; color: #2d405b; background: #fff; font: inherit; font-weight: 700; }
+      .smart-kds-profile-toolbar .form-group input[type="search"]::placeholder { color: #9aa7b7; font-weight: 550; }
+      .smart-kds-profile-list { gap: 8px; }
+      .smart-kds-profile { border-color: #e0e8f1; box-shadow: 0 3px 10px rgba(37, 57, 83, .035); }
+      .smart-kds-profile > summary { min-height: 64px; }
+      .smart-kds-profile-skeleton { display: grid; grid-template-columns: minmax(180px, 1fr) 120px 150px 100px; gap: 14px; align-items: center; min-height: 68px; padding: 14px 16px; border: 1px solid #e2e9f1; border-radius: 14px; background: #fff; overflow: hidden; }
+      .smart-kds-profile-skeleton span { display: block; height: 15px; border-radius: 999px; background: linear-gradient(90deg, #edf2f7 20%, #f8fafc 40%, #edf2f7 60%); background-size: 200% 100%; animation: smart-kds-shimmer 1.25s infinite linear; }
+      .smart-kds-profile-skeleton span:first-child { height: 19px; max-width: 48%; }
+      .smart-kds-profile-empty { display: grid; justify-items: start; gap: 6px; padding: 28px; border: 1px dashed #c4d1de; border-radius: 14px; color: #667991; background: #fbfcfe; }
+      .smart-kds-profile-empty strong { color: #344861; font-size: .96rem; }
+      .smart-kds-profile-empty button { min-height: 38px; margin-top: 6px; padding: 7px 11px; border: 1px solid #c9d6e4; border-radius: 8px; color: #405873; background: #fff; font-weight: 800; cursor: pointer; }
+      @keyframes smart-kds-shimmer { to { background-position: -200% 0; } }
+      .smart-kds-planning-grid { gap: 14px; }
+      .smart-kds-planning-card { border-radius: 16px !important; box-shadow: 0 5px 15px rgba(31, 48, 76, .045) !important; }
+      .smart-kds-planning-card .smart-kds-profile-title { margin-bottom: 12px; padding-bottom: 11px; }
+      .smart-kds-planning-card .smart-kds-profile-title .help-text { margin-bottom: 0; }
+      .smart-kds-timing-stat { min-height: 76px; padding: 12px; border-color: #e0e8f1; background: #fbfcfe; }
+      .smart-kds-metrics-grid > section { padding: 14px; border: 1px solid #e0e8f1; border-radius: 14px; background: #fbfcfe; }
+      .smart-kds-metrics-grid h3 { color: #344861; }
+      .smart-kds-metrics-audit { padding: 8px; border: 1px solid #e0e8f1; border-radius: 12px; background: #fbfcfe; }
+      .smart-kds-planning-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin: 18px 0; }
+      .smart-kds-planning-card { min-width: 0; margin: 0 !important; }
+      .smart-kds-planning-card.smart-kds-planning-primary { grid-column: 1 / -1; }
+      .smart-kds-planning-card .smart-kds-profile-title { align-items: flex-start; }
+      .smart-kds-planning-card .smart-kds-profile-title h2 { color: #26374f; font-size: 1.08rem; }
+      .smart-kds-planning-card .btn-refresh { flex: 0 0 auto; min-height: 40px; border-radius: 9px; }
+      .smart-kds-timing-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .smart-kds-planning-primary .smart-kds-timing-summary { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+      @media (max-width: 1120px) { .smart-kds-setting-groups { grid-template-columns: 1fr 1fr; } .smart-kds-setting-group:last-child { grid-column: 1 / -1; } }
+      @media (max-width: 900px) { .smart-kds-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .smart-kds-station { grid-template-columns: 1fr 1fr; } }
+      @media (max-width: 900px) { .smart-kds-profile > summary { grid-template-columns: 1fr 1fr; } .smart-kds-profile-skeleton { grid-template-columns: 1fr 1fr; } .smart-kds-profile-fields .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .smart-kds-timing-summary, .smart-kds-metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .smart-kds-timing-task, .smart-kds-pacing-task { grid-template-columns: 1fr 1fr; } .smart-kds-priority-card { grid-template-columns: 54px 1fr 1fr; } .smart-kds-priority-reasons { grid-column: 2 / -1; } .smart-kds-batch-card { grid-template-columns: 1fr 1fr; } .smart-kds-batch-allocations { grid-column: 1 / -1; } }
+      @media (max-width: 900px) { .smart-kds-course-target { grid-template-columns: 180px repeat(3, minmax(120px, 1fr)); gap: 10px; } }
+      @media (max-width: 760px) { #tab-smart-kds > .header { min-height: 0; padding: 24px 20px; border-radius: 18px; } .smart-kds-setting-groups, .smart-kds-planning-grid, .smart-kds-setting-fields { grid-template-columns: 1fr; } .smart-kds-setting-fields .form-group, .smart-kds-setting-fields .form-group:nth-last-child(-n+2) { border-bottom: 1px solid #edf1f5; } .smart-kds-setting-fields .form-group:last-child { border-bottom: 0; } .smart-kds-setting-group:last-child, .smart-kds-planning-card.smart-kds-planning-primary { grid-column: auto; } .smart-kds-planning-primary .smart-kds-timing-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); } .smart-kds-course-target { grid-template-columns: 1fr 1fr; } .smart-kds-course-name { grid-column: 1 / -1; } .smart-kds-station { grid-template-columns: 1fr 1fr; } }
+      @media (max-width: 560px) { .smart-kds-phase-banner, .smart-kds-profile-title, .smart-kds-profile-toolbar, .smart-kds-capacity-head, .smart-kds-capacity-work-row, .smart-kds-pacing-order > header, .smart-kds-pacing-course-head { flex-direction: column; align-items: stretch; } #tab-smart-kds > .header { align-items: stretch; } .smart-kds-header-actions { justify-content: stretch; } .smart-kds-header-actions a { flex: 1; text-align: center; } #smart-kds-config-form > .smart-kds-grid, .smart-kds-grid, .smart-kds-station, .smart-kds-profile > summary, .smart-kds-profile-skeleton, .smart-kds-profile-fields .form-grid, .smart-kds-timing-summary, .smart-kds-metrics-grid, .smart-kds-timing-task, .smart-kds-pacing-task, .smart-kds-priority-card, .smart-kds-fairness-card, .smart-kds-batch-card, .smart-kds-course-target { grid-template-columns: 1fr; } .smart-kds-course-name { grid-column: auto; } .smart-kds-audit-row { grid-template-columns: 1fr; gap: 3px; } .smart-kds-priority-reasons, .smart-kds-batch-allocations { grid-column: auto; } .smart-kds-actions .btn-save { width: 100%; } .smart-kds-admin-nav { position: static; overflow-x: auto; flex-wrap: nowrap; } .smart-kds-admin-nav a, .smart-kds-admin-nav button { white-space: nowrap; } }
     </style>
   </head>
   <body>
@@ -4017,6 +4243,7 @@
         <div class="nav-category pos">Restaurant POS</div>
         <div class="nav-item" data-target="tab-customer-insights">Customer &amp; Orders</div>
         <div class="nav-item" data-target="tab-captain-app">Captain App</div>
+        <div class="nav-item" data-target="tab-smart-kds">Smart KDS</div>
         <div class="nav-item" data-target="tab-air-menu">Air Menu & QR Ordering</div>
         <div class="nav-item" data-target="tab-trusted-contacts">Trusted Contacts</div>
 
@@ -5067,6 +5294,135 @@ Availability may vary. Please ask our team about today’s specials.</textarea>
             <div id="trusted-contact-list"></div>
           </div>
           <div id="trusted-contact-pagination" class="trusted-contact-pagination"></div>
+        </div>
+      </div>
+
+      <div id="tab-smart-kds" class="tab-content">
+        <div class="header">
+          <div>
+            <h1>Smart KDS</h1>
+            <p>Configure the deterministic, staff-controlled kitchen scheduling foundation.</p>
+          </div>
+          <div class="smart-kds-header-actions"><a href="/smart-kds" target="_blank" rel="noopener">Open Smart KDS board</a><a href="/kds" target="_blank" rel="noopener">Normal KDS</a></div>
+        </div>
+        <nav class="smart-kds-admin-nav" aria-label="Smart KDS workspaces"><button type="button" aria-current="page" data-smart-kds-panel-target="setup"><span>01</span> Setup</button><button type="button" aria-current="false" data-smart-kds-panel-target="stations"><span>02</span> Stations</button><button type="button" aria-current="false" data-smart-kds-panel-target="profiles"><span>03</span> Dish profiles</button><button type="button" aria-current="false" data-smart-kds-panel-target="planning"><span>04</span> Live planning</button><button type="button" aria-current="false" data-smart-kds-panel-target="reports"><span>05</span> Reports</button></nav>
+        <div id="smart-kds-setup" class="card insight-card smart-kds-admin-section smart-kds-panel" data-smart-kds-panel="setup">
+          <div class="smart-kds-phase-banner">
+            <span class="smart-kds-safety-icon">✓</span><div><strong>Staff-controlled kitchen planning</strong>
+            <span>Smart KDS recommends the safest next action. Your team always decides when food starts; Normal KDS and KOT printing stay available.</span></div>
+          </div>
+          <div id="smart-kds-status" class="growth-ai-status" aria-live="polite"></div>
+          <form id="smart-kds-config-form">
+            <div class="smart-kds-section-heading"><div><span>Kitchen display</span><h2>Choose how your kitchen starts each shift</h2><p class="help-text">These two controls choose the default screen and whether staff can use Smart KDS actions.</p></div></div>
+            <div class="form-grid smart-kds-grid">
+              <label class="form-group"><span>Default KDS view</span><select id="smart-kds-display-mode"><option value="normal">Normal KDS</option><option value="smart">Smart KDS action board</option></select></label>
+              <label class="form-group"><span>Scheduling mode</span><select id="smart-kds-scheduling-mode"><option value="shadow">Shadow recommendations only</option><option value="manual">Manual staff-controlled actions</option></select></label>
+            </div>
+            <div class="smart-kds-section-heading smart-kds-section-heading-spaced"><div><span>Planning defaults</span><h2>Set the kitchen’s timing and safety rules</h2><p class="help-text">These defaults guide recommendations only. They never start or print food by themselves.</p></div></div>
+            <div class="smart-kds-setting-groups">
+              <fieldset class="smart-kds-setting-group"><legend>Service timing</legend><p>How long food takes from prep to handoff.</p><div class="smart-kds-setting-fields">
+                <label class="form-group"><span>Plating time <em>minutes</em></span><input id="smart-kds-plating" type="number" min="0" max="60"></label>
+                <label class="form-group"><span>Handoff buffer <em>minutes</em></span><input id="smart-kds-handoff" type="number" min="0" max="60"></label>
+                <label class="form-group"><span>Ready tolerance <em>minutes</em></span><input id="smart-kds-tolerance" type="number" min="0" max="60"></label>
+                <label class="form-group"><span>Parcel target <em>minutes</em></span><input id="smart-kds-parcel" type="number" min="1" max="240"></label>
+              </div></fieldset>
+              <fieldset class="smart-kds-setting-group"><legend>Batching &amp; fairness</legend><p>Safe grouping rules and the longest allowed wait.</p><div class="smart-kds-setting-fields">
+                <label class="form-group"><span>Batch window <em>seconds</em></span><input id="smart-kds-batch-window" type="number" min="0" max="3600"></label>
+                <label class="form-group"><span>Maximum batch size <em>portions</em></span><input id="smart-kds-batch-max" type="number" min="1" max="100"></label>
+                <label class="form-group"><span>Fairness alert after <em>minutes</em></span><input id="smart-kds-starvation" type="number" min="1" max="240"></label>
+              </div></fieldset>
+              <fieldset class="smart-kds-setting-group"><legend>Guest service alerts</legend><p>When Smart KDS should bring delayed service to attention.</p><div class="smart-kds-setting-fields">
+                <label class="form-group"><span>Watch window <em>minutes</em></span><input id="smart-kds-watch-window" type="number" min="1" max="120"></label>
+                <label class="form-group"><span>Start soon <em>minutes</em></span><input id="smart-kds-start-soon" type="number" min="0" max="120"></label>
+                <label class="form-group"><span>Critical after overdue <em>minutes</em></span><input id="smart-kds-critical-overdue" type="number" min="1" max="240"></label>
+                <label class="form-group"><span>First food risk <em>minutes</em></span><input id="smart-kds-first-food-risk" type="number" min="1" max="240"></label>
+                <label class="form-group"><span>Service gap risk <em>minutes</em></span><input id="smart-kds-service-gap-risk" type="number" min="1" max="240"></label>
+              </div></fieldset>
+            </div>
+            <div class="smart-kds-section-heading smart-kds-section-heading-spaced"><div><span>Serving timing rules</span><h2>Set the expected service timing</h2><p class="help-text">These are timing patterns, not extra menu categories. Smart KDS always uses the existing Air Menu category on every dish.</p></div></div>
+            <div id="smart-kds-course-defaults" class="smart-kds-course-targets" aria-label="Default course targets"></div>
+            <div class="smart-kds-actions"><button type="submit" class="btn-save">Save Smart KDS settings</button></div>
+          </form>
+        </div>
+        <div id="smart-kds-stations-card" class="card insight-card smart-kds-admin-section smart-kds-panel" data-smart-kds-panel="stations" hidden>
+          <h2>Kitchen stations</h2>
+          <p class="help-text">Stations are imported from your KOT printers. Capacity controls Smart KDS recommendations and never changes printer routing.</p>
+          <div id="smart-kds-stations" class="smart-kds-stations">Loading kitchen stations…</div>
+          <div class="smart-kds-actions"><button type="button" id="smart-kds-save-stations" class="btn-save">Save station settings</button></div>
+        </div>
+        <div id="smart-kds-adjustments-card" class="card insight-card smart-kds-admin-section smart-kds-adjustments-card smart-kds-panel" data-smart-kds-panel="profiles" hidden>
+          <div class="smart-kds-profile-title"><div><h2>Category &amp; station timing adjustments</h2><p class="help-text">Optional adjustments are added to the saved dish profile. Dish-level profile values remain the base plan.</p></div><button type="button" id="smart-kds-save-timing-overrides" class="btn-save">Save timing adjustments</button></div>
+          <div class="form-grid smart-kds-grid"><label class="form-group"><span>Menu category</span><select id="smart-kds-category-override"></select></label><label class="form-group"><span>Category target adjustment (minutes)</span><input id="smart-kds-category-adjustment" type="number" min="-60" max="60" value="0"></label><label class="form-group"><span>Station target adjustment (minutes)</span><input id="smart-kds-station-target-adjustment" type="number" min="-60" max="60" value="0"></label><label class="form-group"><span>Station handoff adjustment (minutes)</span><input id="smart-kds-station-adjustment" type="number" min="-60" max="60" value="0"></label></div>
+          <label class="form-group"><span>Kitchen station</span><select id="smart-kds-station-override"></select></label><div id="smart-kds-timing-overrides-status" class="growth-ai-status" aria-live="polite"></div>
+        </div>
+        <div id="smart-kds-profiles-card" class="card insight-card smart-kds-admin-section smart-kds-panel" data-smart-kds-panel="profiles" hidden>
+          <div class="smart-kds-profile-title"><div><h2>Menu production profiles</h2><p class="help-text">Every active Air Menu dish keeps its own menu category and an editable production profile. Smart KDS never creates a replacement category.</p></div><span id="smart-kds-profile-count" class="insight-pill">Loading menu…</span></div>
+          <div class="smart-kds-profile-toolbar">
+            <label class="form-group"><span>Find dish</span><input id="smart-kds-profile-search" type="search" placeholder="Dish or category"></label>
+            <label class="form-group"><span>Menu category</span><select id="smart-kds-profile-course-filter"><option value="">All menu categories</option></select></label>
+          </div>
+          <div id="smart-kds-profile-status" class="growth-ai-status" aria-live="polite"></div>
+          <div id="smart-kds-profile-list" class="smart-kds-profile-list">Loading production profiles…</div>
+          <div class="smart-kds-actions"><button type="button" id="smart-kds-load-more-profiles" class="btn-refresh" hidden>Show more dishes</button></div>
+        </div>
+        <section id="smart-kds-live-planning" class="smart-kds-planning-grid smart-kds-panel" data-smart-kds-panel="planning" hidden>
+        <div id="smart-kds-timing-card" class="card insight-card smart-kds-admin-section smart-kds-planning-card smart-kds-planning-primary">
+          <div class="smart-kds-profile-title"><div><h2>Timing shadow</h2><p class="help-text">A read-only calculation for currently active accepted/preparing/ready orders. It uses the saved course targets and production profiles.</p></div><button type="button" id="smart-kds-refresh-timing" class="btn-refresh">Refresh timing</button></div>
+          <div id="smart-kds-timing-status" class="growth-ai-status" aria-live="polite"></div>
+          <div id="smart-kds-timing-summary" class="smart-kds-timing-summary"></div>
+          <div id="smart-kds-timing-orders" class="smart-kds-timing-orders">Open Smart KDS to calculate active-order timing.</div>
+        </div>
+        <div class="card insight-card smart-kds-admin-section smart-kds-planning-card">
+          <div class="smart-kds-profile-title"><div><h2>Priority scheduler shadow</h2><p class="help-text">A deterministic recommendation list. It ranks the earliest safe-start deadline first, then dish priority, order age, and a stable order number tie-breaker.</p></div><button type="button" id="smart-kds-refresh-scheduler" class="btn-refresh">Refresh priorities</button></div>
+          <div id="smart-kds-scheduler-status" class="growth-ai-status" aria-live="polite"></div>
+          <div id="smart-kds-scheduler-summary" class="smart-kds-timing-summary"></div>
+          <div id="smart-kds-scheduler-list" class="smart-kds-scheduler-list">Open Smart KDS to calculate priority recommendations.</div>
+        </div>
+        <div class="card insight-card smart-kds-admin-section smart-kds-planning-card">
+          <div class="smart-kds-profile-title"><div><h2>Batching shadow</h2><p class="help-text">Only compatible batchable dishes are grouped. A batch waits only while it remains safe, and each production task stays whole so live kitchen state is never ambiguous.</p></div><button type="button" id="smart-kds-refresh-batches" class="btn-refresh">Refresh batches</button></div>
+          <div id="smart-kds-batch-status" class="growth-ai-status" aria-live="polite"></div>
+          <div id="smart-kds-batch-summary" class="smart-kds-timing-summary"></div>
+          <div id="smart-kds-batch-list" class="smart-kds-batch-list">Open Smart KDS to calculate compatible batches.</div>
+        </div>
+        <div class="card insight-card smart-kds-admin-section smart-kds-planning-card">
+          <div class="smart-kds-profile-title"><div><h2>Station capacity shadow</h2><p class="help-text">The most urgent work gets available station capacity first. Safe batches count as one allocation; work waiting for a batch is not allocated until its batch should fire.</p></div><button type="button" id="smart-kds-refresh-capacity" class="btn-refresh">Refresh capacity</button></div>
+          <div id="smart-kds-capacity-status" class="growth-ai-status" aria-live="polite"></div>
+          <div id="smart-kds-capacity-summary" class="smart-kds-timing-summary"></div>
+          <div id="smart-kds-capacity-list" class="smart-kds-capacity-list">Open Smart KDS to calculate station capacity.</div>
+        </div>
+        <div class="card insight-card smart-kds-admin-section smart-kds-planning-card">
+          <div class="smart-kds-profile-title"><div><h2>Course pacing &amp; synchronization shadow</h2><p class="help-text">Shows the next expected course for each table, holds dishes that must wait, and gives long-prep dishes a safe early start. Serve-together orders use the saved ready tolerance to finish together.</p></div><button type="button" id="smart-kds-refresh-pacing" class="btn-refresh">Refresh pacing</button></div>
+          <div id="smart-kds-pacing-status" class="growth-ai-status" aria-live="polite"></div>
+          <div id="smart-kds-pacing-summary" class="smart-kds-timing-summary"></div>
+          <div id="smart-kds-pacing-list" class="smart-kds-pacing-list">Open Smart KDS to calculate course pacing.</div>
+        </div>
+        <div class="card insight-card smart-kds-admin-section smart-kds-planning-card">
+          <div class="smart-kds-profile-title"><div><h2>Fairness &amp; anti-starvation shadow</h2><p class="help-text">An eligible item that waits beyond the configured fairness threshold is protected from being repeatedly overtaken. Urgent safe-start deadlines always remain first.</p></div><button type="button" id="smart-kds-refresh-fairness" class="btn-refresh">Refresh fairness</button></div>
+          <div id="smart-kds-fairness-status" class="growth-ai-status" aria-live="polite"></div>
+          <div id="smart-kds-fairness-summary" class="smart-kds-timing-summary"></div>
+          <div id="smart-kds-fairness-list" class="smart-kds-fairness-list">Open Smart KDS to calculate fairness protection.</div>
+        </div>
+        <div class="card insight-card smart-kds-planning-card smart-kds-planning-primary">
+          <div class="smart-kds-profile-title"><div><h2>Final Smart KDS recommendations</h2><p class="help-text">One deterministic, read-only view that applies course eligibility, urgency, fairness, and station capacity together.</p></div><button type="button" id="smart-kds-refresh-recommendations" class="btn-refresh">Refresh recommendations</button></div>
+          <div id="smart-kds-recommendations-status" class="growth-ai-status" aria-live="polite"></div>
+          <div id="smart-kds-recommendations-summary" class="smart-kds-timing-summary"></div>
+          <div id="smart-kds-recommendations-list" class="smart-kds-fairness-list">Open Smart KDS to calculate final recommendations.</div>
+        </div>
+        <div class="card insight-card smart-kds-planning-card smart-kds-planning-primary">
+          <div class="smart-kds-profile-title"><div><h2>Table service-risk shadow</h2><p class="help-text">Highlights tables that have not received first food in time or have waited too long since their most recently served course.</p></div><button type="button" id="smart-kds-refresh-service-risk" class="btn-refresh">Refresh service risk</button></div>
+          <div id="smart-kds-service-risk-status" class="growth-ai-status" aria-live="polite"></div>
+          <div id="smart-kds-service-risk-summary" class="smart-kds-timing-summary"></div>
+          <div id="smart-kds-service-risk-list" class="smart-kds-fairness-list">Open Smart KDS to calculate table service risk.</div>
+        </div>
+        </section>
+        <div id="smart-kds-audit-card" class="card insight-card smart-kds-admin-section smart-kds-panel" data-smart-kds-panel="reports" hidden>
+          <div class="smart-kds-profile-title"><div><h2>Phase 13 · Kitchen performance &amp; audit</h2><p class="help-text">Measures are calculated from the saved kitchen records. Use them to improve configuration—not to change the deterministic live scheduler automatically.</p></div><div class="smart-kds-profile-toolbar"><label class="form-group"><span>Reporting period</span><select id="smart-kds-metrics-days"><option value="7">Last 7 days</option><option value="30" selected>Last 30 days</option><option value="90">Last 90 days</option></select></label><button type="button" id="smart-kds-refresh-metrics" class="btn-refresh">Refresh metrics</button></div></div>
+          <div id="smart-kds-metrics-status" class="growth-ai-status" aria-live="polite"></div>
+          <div id="smart-kds-metrics-summary" class="smart-kds-timing-summary"></div>
+          <div class="smart-kds-metrics-grid"><section><h3>Course service &amp; SLA</h3><div id="smart-kds-metrics-courses" class="smart-kds-metrics-list"></div></section><section><h3>Station performance</h3><div id="smart-kds-metrics-stations" class="smart-kds-metrics-list"></div></section></div>
+          <h3>Recent scheduler and kitchen action audit</h3>
+          <div class="smart-kds-profile-toolbar"><label class="form-group"><span>Find task, order, action, staff member, or reason</span><input id="smart-kds-metrics-audit-search" type="search" placeholder="Search saved audit records"></label></div>
+          <div id="smart-kds-metrics-audit" class="smart-kds-metrics-audit"></div>
         </div>
       </div>
 
@@ -6408,6 +6764,6 @@ Watch competitors ranking for Colva Beach, seafood, Goan food, Chinese food, fam
         });
       }
     </script>
-    <script src="admin-cms.js?v=20260826-27" defer></script>
+    <script src="admin-cms.js?v=20260829-32" defer></script>
   </body>
 </html>

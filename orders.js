@@ -583,7 +583,7 @@ const counterPanel = document.createElement('section');
 counterPanel.id = 'counter-order-panel';
 counterPanel.hidden = true;
 counterPanel.innerHTML =
-  '<div class="counter-order-head"><div><span class="eyebrow">Counter order</span><h2>Takeaway</h2><p>Build a walk-in or phone order, then send it directly to the kitchen.</p></div><button type="button" id="counter-order-close" class="new-order-button">New Order</button></div><div class="counter-order-layout"><div class="counter-menu"><label class="counter-search"><span aria-hidden="true">⌕</span><input id="counter-menu-search" type="search" placeholder="Search menu items"></label><div id="counter-categories" class="counter-categories"></div><div id="counter-menu-items" class="counter-menu-items"></div></div><aside class="counter-cart"><div class="counter-cart-head"><h3>Current order</h3><div><button type="button" id="view-table-kot" hidden>View KOT</button><button type="button" id="counter-clear" class="counter-clear">Clear</button></div></div><div id="counter-cart-items" class="counter-cart-items"></div><div class="counter-customer"><label>Customer name <input id="counter-customer-name" maxlength="80" placeholder="Walk-in customer"></label><label>Mobile number <input id="counter-customer-phone" inputmode="tel" maxlength="16" placeholder="Optional for walk-ins"></label><label>Kitchen note <textarea id="counter-special-request" maxlength="240" placeholder="e.g. less spicy"></textarea></label></div><div class="counter-total"><span>Total</span><b id="counter-total">₹0</b></div><button type="button" id="counter-place-order" class="counter-place-order">Place takeaway order</button><p id="counter-order-status" class="counter-order-status" aria-live="polite"></p></aside></div><dialog id="counter-choice-dialog" class="counter-choice-dialog"><button type="button" class="dialog-close" data-counter-choice-close aria-label="Close">×</button><div id="counter-choice-content"></div></dialog>';
+  '<div class="counter-order-head"><div><span class="eyebrow">Counter order</span><h2>Takeaway</h2><p>Build a walk-in or phone order, then send it directly to the kitchen.</p></div><button type="button" id="counter-order-close" class="new-order-button">New Order</button></div><div class="counter-order-layout"><div class="counter-menu"><label class="counter-search"><span aria-hidden="true">⌕</span><input id="counter-menu-search" type="search" placeholder="Search menu items"></label><div id="counter-categories" class="counter-categories"></div><div id="counter-menu-items" class="counter-menu-items"></div></div><aside class="counter-cart"><div class="counter-cart-head"><h3>Current order</h3><div><button type="button" id="view-table-kot" hidden>View KOT</button><button type="button" id="counter-clear" class="counter-clear">Clear</button></div></div><div id="counter-cart-items" class="counter-cart-items"></div><div class="counter-customer"><label>Customer name <input id="counter-customer-name" maxlength="80" placeholder="Walk-in customer"></label><label>Mobile number <input id="counter-customer-phone" inputmode="tel" maxlength="16" placeholder="Optional for walk-ins"></label><label>Serving preference <select id="counter-course-mode"><option value="normal_coursing">Serve course by course</option><option value="serve_together">Serve everything together</option><option value="as_ready">Serve items as ready</option><option value="manual_fire">Manual fire</option></select></label><label>Kitchen note <textarea id="counter-special-request" maxlength="240" placeholder="e.g. less spicy"></textarea></label></div><div class="counter-total"><span>Total</span><b id="counter-total">₹0</b></div><button type="button" id="counter-place-order" class="counter-place-order">Place takeaway order</button><p id="counter-order-status" class="counter-order-status" aria-live="polite"></p></aside></div><dialog id="counter-choice-dialog" class="counter-choice-dialog"><button type="button" class="dialog-close" data-counter-choice-close aria-label="Close">×</button><div id="counter-choice-content"></div></dialog>';
 availability.before(counterPanel);
 const counterPanelCloseButton = document.getElementById('counter-order-close');
 if (counterPanelCloseButton) counterPanelCloseButton.remove();
@@ -723,12 +723,14 @@ const counterPortionOptions = (item) =>
     ['90 ml', '90 ml', item.price90ml],
     ['180 ml', '180 ml', item.price180ml],
   ].filter(([, , price]) => Number(String(price || '').replace(/[^0-9.]/g, '')) > 0);
+const smartKdsCourseOptions = (defaultCourse = '', selected = '') =>
+  `<option value="">Default${defaultCourse ? ` (${esc(defaultCourse)})` : ''}</option>${['drink', 'soup', 'starter', 'main', 'side', 'dessert', 'other'].map((course) => `<option value="${course}" ${selected === course ? 'selected' : ''}>${course[0].toUpperCase() + course.slice(1)}</option>`).join('')}`;
 function openCounterChoice(item) {
   counterChoiceItem = item;
   const options = counterPortionOptions(item);
   const dialog = document.getElementById('counter-choice-dialog');
   document.getElementById('counter-choice-content').innerHTML =
-    `<span class="eyebrow">Add to parcel</span><h2>${esc(item.name)}</h2><p>${esc(item.category || 'Menu')}</p><div class="counter-choice-options">${options.map(([value, label, price], index) => `<label><input type="radio" name="counter-portion" value="${esc(value)}" data-counter-choice-price="${Number(String(price).replace(/[^0-9.]/g, ''))}" ${index === 0 ? 'checked' : ''}><span>${esc(label)} <b>${counterMoney(String(price).replace(/[^0-9.]/g, ''))}</b></span></label>`).join('')}</div>${item.gravyStyleAvailable ? '<fieldset class="counter-style-options"><legend>Preparation style</legend><label><input type="radio" name="counter-style" value="" checked> Regular</label><label><input type="radio" name="counter-style" value="Gravy"> Gravy <b>+₹10</b></label><label><input type="radio" name="counter-style" value="Semi-gravy"> Semi-gravy <b>+₹10</b></label></fieldset>' : ''}<button type="button" id="counter-choice-add" class="counter-place-order">Add to order</button>`;
+    `<span class="eyebrow">Add to parcel</span><h2>${esc(item.name)}</h2><p>${esc(item.category || 'Menu')}</p><div class="counter-choice-options">${options.map(([value, label, price], index) => `<label><input type="radio" name="counter-portion" value="${esc(value)}" data-counter-choice-price="${Number(String(price).replace(/[^0-9.]/g, ''))}" ${index === 0 ? 'checked' : ''}><span>${esc(label)} <b>${counterMoney(String(price).replace(/[^0-9.]/g, ''))}</b></span></label>`).join('')}</div>${item.gravyStyleAvailable ? '<fieldset class="counter-style-options"><legend>Preparation style</legend><label><input type="radio" name="counter-style" value="" checked> Regular</label><label><input type="radio" name="counter-style" value="Gravy"> Gravy <b>+₹10</b></label><label><input type="radio" name="counter-style" value="Semi-gravy"> Semi-gravy <b>+₹10</b></label></fieldset>' : ''}<label class="counter-course-choice">Kitchen course <select id="counter-choice-course">${smartKdsCourseOptions(item.defaultCourse || '')}</select></label><button type="button" id="counter-choice-add" class="counter-place-order">Add to order</button>`;
   if (typeof dialog.showModal === 'function') dialog.showModal();
 }
 const counterMoney = (value) => `₹${Math.round(Number(value) || 0)}`;
@@ -795,7 +797,7 @@ function renderCounterOrder() {
   const items = counterCart
     .map((line, index) => {
       const unit = line.price + (line.style ? 10 : 0);
-      return `<div class="counter-cart-line"><div><b>${esc(line.name)}</b><small>${esc(line.portion || 'Regular')}${line.style ? ` · ${esc(line.style)}` : ''} · ${counterMoney(unit)} each</small></div><div class="counter-quantity"><button type="button" data-counter-qty="${index}" data-counter-change="-1">−</button><b>${line.quantity}</b><button type="button" data-counter-qty="${index}" data-counter-change="1">+</button></div><strong>${counterMoney(unit * line.quantity)}</strong></div>`;
+      return `<div class="counter-cart-line"><div><b>${esc(line.name)}</b><small>${esc(line.portion || 'Regular')}${line.style ? ` · ${esc(line.style)}` : ''} · ${counterMoney(unit)} each</small><label class="counter-line-course">Course <select data-counter-course="${index}">${smartKdsCourseOptions(line.defaultCourse || '', line.courseOverride || '')}</select></label></div><div class="counter-quantity"><button type="button" data-counter-qty="${index}" data-counter-change="-1">−</button><b>${line.quantity}</b><button type="button" data-counter-qty="${index}" data-counter-change="1">+</button></div><strong>${counterMoney(unit * line.quantity)}</strong></div>`;
     })
     .join('');
   document.getElementById('counter-cart-items').innerHTML =
@@ -1350,6 +1352,9 @@ document.head.appendChild(counterChoiceStyles);
 const counterLayoutRefinements = document.createElement('style');
 counterLayoutRefinements.textContent = `.counter-menu-items{align-items:start;grid-auto-rows:150px}.counter-menu-item{height:150px;min-height:0}.counter-category-group{display:block;padding:13px 14px 7px;color:#9a2635;background:#f8fafc;font-size:10px;font-weight:900;letter-spacing:.09em;text-transform:uppercase}.counter-category-group~.counter-category{min-height:54px}.counter-cart{height:auto;min-height:0;align-self:start}.counter-cart-items{display:block;height:clamp(190px,28vh,260px);min-height:0;flex:0 0 auto;overflow-y:auto;margin:14px 0}.counter-cart-line{min-height:0;height:72px;padding:10px 0}.counter-customer{flex:0 0 auto;margin-top:0}.counter-customer textarea{resize:none}.counter-total,.counter-place-order,.counter-order-status{flex:0 0 auto}@media(max-width:800px){.counter-menu-items{grid-auto-rows:130px}.counter-menu-item{height:130px}.counter-category-group{display:none}.counter-cart-items{height:220px;max-height:45vh}}`;
 document.head.appendChild(counterLayoutRefinements);
+const counterSmartKdsCourseStyles = document.createElement('style');
+counterSmartKdsCourseStyles.textContent = `.counter-course-choice,.counter-line-course{display:flex;align-items:center;gap:7px;margin:12px 0;color:#5d6d84;font-size:11px;font-weight:900}.counter-course-choice select,.counter-line-course select{min-height:30px;padding:5px 7px;border:1px solid #d4deea;border-radius:7px;color:#26344e;background:#fff;font:700 11px Manrope,sans-serif}.counter-line-course{margin:7px 0 0;font-size:9px;text-transform:uppercase}.counter-cart-line{height:auto!important;min-height:72px}@media(max-width:800px){.counter-cart-line{min-height:84px}}`;
+document.head.appendChild(counterSmartKdsCourseStyles);
 const operationsRoutingStyles = document.createElement('style');
 operationsRoutingStyles.textContent = `.operations-section{padding:20px;border:1px solid #e2e9f1;border-radius:15px;background:linear-gradient(145deg,#fff,#fbfcfe)}.operations-section+.operations-section{margin-top:16px}.operations-section-head{display:flex;align-items:start;justify-content:space-between;gap:16px}.operations-section-head h3{margin:3px 0 5px;color:#1f2e47;font-size:18px}.operations-section-head p{max-width:660px;margin:0;color:#6a7890;font-size:12px;line-height:1.5}.operations-count{padding:7px 9px;border-radius:999px;color:#36547d;background:#edf3fb;font-size:10px;font-weight:900;white-space:nowrap}.operations-printer-form,.operations-route-form{display:grid;gap:10px;align-items:end;margin:18px 0}.operations-printer-form{grid-template-columns:minmax(180px,1.2fr) minmax(130px,.55fr) minmax(180px,.9fr) 90px auto}.operations-route-form{grid-template-columns:minmax(180px,.8fr) minmax(320px,1.4fr) auto}.operations-printer-form label,.operations-route-form label{display:grid;gap:5px;color:#55657b;font-size:10px;font-weight:900;letter-spacing:.05em;text-transform:uppercase}.operations-printer-form input,.operations-printer-form select,.operations-route-form select{width:100%;min-height:42px;padding:10px 11px;border:1px solid #d5dfeb;border-radius:9px;color:#23334e;background:#fff;font:700 12px Manrope,sans-serif}.operations-printer-form input:focus,.operations-printer-form select:focus,.operations-route-form select:focus,.category-search:focus{outline:0;border-color:#2e67b1;box-shadow:0 0 0 3px rgba(46,103,177,.12)}.operations-printer-form button,.operations-route-form button{min-height:42px;padding:10px 13px;background:#263d68;font-size:11px;white-space:nowrap}.operations-printer-form button span{font-size:16px}.printer-grid{grid-template-columns:repeat(auto-fill,minmax(255px,1fr))}.operation-printer{min-height:146px;border-color:#dfe7f0;box-shadow:0 4px 12px rgba(30,51,83,.05)}.operation-printer-head{display:grid;grid-template-columns:38px minmax(0,1fr) auto;gap:10px}.printer-card-icon{display:grid;width:38px;height:38px;place-items:center;border-radius:10px;color:#087348;background:#e8f7ef;font-size:22px;font-weight:900}.printer-card-icon.bill{color:#315487;background:#eaf1ff}.operation-printer p{line-height:1.4}.printer-endpoint{margin:9px 0!important;padding:7px 9px;border-radius:8px;color:#56708f!important;background:#f2f6fb;font:800 10px ui-monospace,SFMono-Regular,Menlo,monospace!important}.printer-endpoint.is-pending{color:#9a6c20!important;background:#fff8e9}.routing-section{background:linear-gradient(145deg,#fffdf8,#fff)}.category-picker{border:1px solid #d5dfeb;border-radius:10px;background:#fff;padding:9px}.category-picker-top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}.category-picker-top b{color:#23334e;font-size:12px}.category-picker-top span{color:#64748b;font-size:10px;font-weight:800}.category-search{width:100%;min-height:37px;border:1px solid #d5dfeb;border-radius:8px;padding:8px 10px;font:700 12px Manrope,sans-serif}.category-checklist{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:7px;max-height:190px;overflow:auto;margin-top:9px;padding-right:2px}.category-choice{display:flex!important;align-items:center;gap:8px;padding:8px 9px;border:1px solid #e2e9f1;border-radius:8px;color:#33445f!important;background:#fbfcfe;font-size:11px!important;letter-spacing:0!important;text-transform:none!important;cursor:pointer}.category-choice:hover{border-color:#a9bdd8;background:#f1f6fd}.category-choice input{width:16px;height:16px;accent-color:#1e8b59}.category-choice.is-hidden{display:none!important}.route-row{display:grid;grid-template-columns:28px minmax(0,1fr) auto}.route-icon{display:grid;width:26px;height:26px;place-items:center;border-radius:7px;color:#087348;background:#e8f7ef;font-size:16px}.route-row span{display:block;margin-top:3px}.operations-save-bar{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:16px;padding:13px 15px;border:1px solid #cce8d8;border-radius:12px;background:#f3fbf6;color:#527260;font-size:12px;font-weight:700}.operations-save{margin:0!important;padding:10px 14px;white-space:nowrap}@media(max-width:900px){.operations-printer-form{grid-template-columns:1fr 1fr}.operations-printer-form button{width:100%}}@media(max-width:760px){.operations-printer-form,.operations-route-form{grid-template-columns:1fr}.operations-printer-form button,.operations-route-form button{width:100%}.operations-section{padding:16px}.operations-section-head{align-items:flex-start}.category-checklist{grid-template-columns:1fr}.operations-save-bar{align-items:stretch;flex-direction:column}.operations-save{width:100%}}`;
 document.head.appendChild(operationsRoutingStyles);
@@ -4019,16 +4024,21 @@ document.getElementById('counter-menu-items')?.addEventListener('click', (event)
     (line) =>
       line.name === item.name &&
       line.category === item.category &&
+      line.menuType === item.menuType &&
       line.portion === portion &&
-      !line.style
+      !line.style &&
+      !line.courseOverride
   );
   if (existing) existing.quantity += 1;
   else
     counterCart.push({
       name: item.name,
       category: item.category,
+      menuType: item.menuType,
       portion,
       style: '',
+      defaultCourse: item.defaultCourse || '',
+      courseOverride: '',
       price,
       quantity: 1,
     });
@@ -4045,20 +4055,26 @@ document.getElementById('counter-choice-dialog')?.addEventListener('click', (eve
   const portion = portionInput?.value || '',
     price = Number(portionInput?.dataset.counterChoicePrice || 0);
   const style = document.querySelector('input[name="counter-style"]:checked')?.value || '';
+  const courseOverride = document.getElementById('counter-choice-course')?.value || '';
   const existing = counterCart.find(
     (line) =>
       line.name === counterChoiceItem.name &&
       line.category === counterChoiceItem.category &&
+      line.menuType === counterChoiceItem.menuType &&
       line.portion === portion &&
-      line.style === style
+      line.style === style &&
+      String(line.courseOverride || '') === courseOverride
   );
   if (existing) existing.quantity += 1;
   else
     counterCart.push({
       name: counterChoiceItem.name,
       category: counterChoiceItem.category,
+      menuType: counterChoiceItem.menuType,
       portion,
       style,
+      defaultCourse: counterChoiceItem.defaultCourse || '',
+      courseOverride,
       price,
       quantity: 1,
     });
@@ -4074,6 +4090,15 @@ document.getElementById('counter-cart-items')?.addEventListener('click', (event)
   if (!line) return;
   line.quantity += Number(button.dataset.counterChange);
   if (line.quantity <= 0) counterCart.splice(index, 1);
+  counterBillSplit = null;
+  renderCounterOrder();
+});
+document.getElementById('counter-cart-items')?.addEventListener('change', (event) => {
+  const select = event.target.closest('[data-counter-course]');
+  if (!select) return;
+  const line = counterCart[Number(select.dataset.counterCourse)];
+  if (!line) return;
+  line.courseOverride = select.value || '';
   counterBillSplit = null;
   renderCounterOrder();
 });
@@ -4097,6 +4122,7 @@ async function submitDineInAction(action) {
     customerName: document.getElementById('counter-customer-name').value.trim(),
     customerPhone: document.getElementById('counter-customer-phone').value.trim(),
     specialRequest: document.getElementById('counter-special-request').value.trim(),
+    courseMode: document.getElementById('counter-course-mode')?.value || 'normal_coursing',
     loyaltyPoints: Math.floor(Number(document.getElementById('counter-wallet-redeem')?.value || 0)),
     tableArea: counterTable.area,
     tableNumber: counterTable.number,
@@ -4203,6 +4229,7 @@ document.getElementById('counter-place-order')?.addEventListener('click', async 
     customerName: document.getElementById('counter-customer-name').value.trim(),
     customerPhone: document.getElementById('counter-customer-phone').value.trim(),
     specialRequest: document.getElementById('counter-special-request').value.trim(),
+    courseMode: document.getElementById('counter-course-mode')?.value || 'normal_coursing',
     loyaltyPoints: Math.floor(Number(document.getElementById('counter-wallet-redeem')?.value || 0)),
     tableArea: counterTable?.area || '',
     tableNumber: counterTable?.number || '',

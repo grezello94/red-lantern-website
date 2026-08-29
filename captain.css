@@ -375,6 +375,27 @@ body {
 .cart-line small {
   display: block;
 }
+.cart-course {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 8px;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+.cart-course select,
+.item-note select {
+  min-height: 30px;
+  padding: 4px 7px;
+  border: 1px solid #dbe3ed;
+  border-radius: 7px;
+  color: #334155;
+  background: #fff;
+  font: inherit;
+  text-transform: none;
+}
 .cart-line b {
   font-size: 14px;
 }
