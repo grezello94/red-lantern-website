@@ -21,6 +21,27 @@
 .chef-callout { margin: 11px 0 9px; padding: 10px; border-left: 3px solid #1688b7; border-radius: 0 8px 8px 0; background: #f1faff; }
 .chef-callout b { display: block; margin-top: 3px; color: #24465f; font-size: 12px; line-height: 1.4; }
 .target-time { margin: 7px 0 0; color: #167296; font-size: 11px; }
+.card-grid { grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); }
+.card .reason, .card .deadline, .card .meta, .card .reason-codes, .card .actions .secondary, .card .actions .override { display: none; }
+.card .actions { margin-top: 14px; }
+.card .actions .primary { flex: 1 1 100%; min-height: 56px; font-size: 16px; }
+.kitchen-toolbar { display: flex; align-items: end; gap: 10px; }
+.kitchen-toolbar label, .manager-category { display: grid; gap: 5px; color: #60748d; font-size: 10px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
+.kitchen-toolbar select, .manager-category select { min-width: 235px; min-height: 44px; padding: 8px 10px; border: 1px solid #cbd8e6; border-radius: 9px; color: #26364e; background: #fff; font: inherit; font-weight: 750; letter-spacing: 0; text-transform: none; }
+.card header { align-items: center; padding: 17px 19px; }
+.card header b { display: block; margin-top: 3px; font-size: 21px; }
+.card-category { color: #1688b7 !important; font-size: 10px !important; font-weight: 900; letter-spacing: .09em; text-transform: uppercase; }
+.ready-by { display: grid; flex: 0 0 auto; gap: 3px; min-width: 122px; padding: 9px 11px; border-radius: 9px; color: #075d83; background: #dff5fd; text-align: right; }
+.ready-by small { color: #39718a !important; font-size: 9px !important; font-weight: 900; letter-spacing: .08em; }
+.ready-by b { margin: 0 !important; color: #075d83 !important; font-size: 13px !important; }
+.card .body { padding: 16px 19px 18px; }
+.task-command { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 14px; border-radius: 10px; color: #23445a; background: #f0faff; }
+.task-command span { color: #0877a6; font-size: 10px; font-weight: 900; letter-spacing: .09em; text-transform: uppercase; }
+.task-command b { font-size: 15px; }
+.manager-details { margin-top: 18px; border-top: 1px solid #dce5ef; color: #60748d; }
+.manager-details > summary { padding: 15px 2px; cursor: pointer; font-size: 12px; font-weight: 800; }
+.manager-details-body { padding-bottom: 6px; }
+.manager-only { display: none !important; }
 .display-controls > div { margin-right: auto; }
 @media (max-width: 1050px) {
   .display-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -59,6 +80,12 @@
 .action-section.risk > header h2 { color: #b4232e; }
 .action-section.hold > header h2 { color: #7a5710; }
 @media (max-width: 700px) {
+  .card-grid { grid-template-columns: 1fr; }
+  .kitchen-toolbar { align-items: stretch; width: 100%; }
+  .kitchen-toolbar label { flex: 1; }
+  .kitchen-toolbar select { width: 100%; min-width: 0; }
+  .card header, .task-command { align-items: stretch; flex-direction: column; }
+  .ready-by { width: 100%; text-align: left; }
   .kitchen-briefing { padding: 16px; }
   .briefing-heading { display: grid; }
   .briefing-heading > b { justify-self: start; }

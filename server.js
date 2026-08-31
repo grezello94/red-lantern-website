@@ -4396,10 +4396,11 @@ app.post('/api/orders/counter', async (req, res) => {
     const resolvedCourseMode = isDineIn && ['normal_coursing', 'serve_together', 'as_ready', 'manual_fire'].includes(requestedCourseMode)
       ? requestedCourseMode
       : isDineIn ? 'normal_coursing' : 'as_ready';
-    const dineInAction =
-      isDineIn && ['save', 'hold'].includes(String(action)) ? String(action) : 'submit';
+    // Counter and table orders can both be deliberately saved or held before
+    // the kitchen is notified. Other actions create an accepted order.
+    const stagedAction = ['save', 'hold'].includes(String(action)) ? String(action) : 'submit';
     const initialStatus =
-      dineInAction === 'hold' ? 'held' : dineInAction === 'save' ? 'saved' : 'accepted';
+      stagedAction === 'hold' ? 'held' : stagedAction === 'save' ? 'saved' : 'accepted';
     const phone = suppliedPhone || `walkin-${id}`,
       total = subtotal - requestedLoyaltyPoints * loyalty.pointValue,
       earned = loyalty.enabled
@@ -4859,7 +4860,7 @@ app.post('/api/orders/:id/bill-printed', async (req, res) => {
   try {
     await ensureDirectOrdersTable();
     const rows =
-      await sql`UPDATE direct_orders SET bill_printed_at=COALESCE(bill_printed_at,NOW()),updated_at=NOW() WHERE id=${req.params.id} AND mode='table' AND status IN ('accepted','preparing','ready') RETURNING id,bill_printed_at`;
+      await sql`UPDATE direct_orders SET bill_printed_at=COALESCE(bill_printed_at,NOW()),updated_at=NOW() WHERE id=${req.params.id} AND status IN ('accepted','preparing','ready') RETURNING id,bill_printed_at`;
     if (!rows.length)
       return res
         .status(409)

@@ -11,25 +11,37 @@
     <link rel="manifest" href="/orders.webmanifest?v=7" />
     <link rel="stylesheet" href="orders.css?v=7" />
     <link rel="stylesheet" href="orders-logo.css?v=7" />
-    <link rel="stylesheet" href="orders-fixes.css?v=10" />
+    <link rel="stylesheet" href="orders-fixes.css?v=16" />
   </head>
   <body>
-    <header>
-      <div class="brand">
-        <img src="/images/red-lantern-logo-600.webp" alt="Red Lantern Restaurant" />
-        <div>
-          <span>Red Lantern Restaurant</span>
-          <h1>Direct Orders</h1>
-        </div>
+    <nav class="orders-rail" aria-label="Orders workspace">
+      <div class="orders-rail-branding" aria-label="Direct Orders">
+        <span class="orders-rail-mark" aria-hidden="true">RL</span>
+        <span><strong>Direct Orders</strong><small>Table &amp; counter service</small></span>
       </div>
-      <div class="header-actions">
-        <button id="install-shortcut" class="install-shortcut">Install shortcut</button
-        ><button id="availability-toggle" class="availability-toggle" aria-expanded="false">
-          <span aria-hidden="true">☷</span> Menu availability</button
-        ><button id="enable-notifications">Enable alerts</button
-        ><button onclick="location.reload()">Refresh</button>
+      <div class="orders-rail-main">
+      <button type="button" class="orders-rail-button is-active" data-orders-rail="tables">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></svg><span>Tables</span>
+      </button>
+      <button type="button" id="live-orders-toggle" class="orders-rail-button live-orders-toggle" data-orders-rail="live" aria-expanded="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2V3Z"/><path d="M9 8h6M9 12h6"/></svg><span>Live orders</span><b id="live-orders-count" class="orders-rail-count">0</b>
+      </button>
+      <button type="button" id="availability-toggle" class="orders-rail-button availability-toggle" data-orders-rail="availability" aria-expanded="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 3v8M7 3v8M4 7h3M5.5 11v10M14 3v8M14 3c3 1 4.5 3.8 4.5 8H14M14 11v10"/></svg><span>Menu availability</span>
+      </button>
+      <button type="button" class="orders-rail-button" data-orders-rail="counter">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/><circle cx="12" cy="12" r="9"/></svg><span>New takeaway</span>
+      </button>
+      <button type="button" id="operations-toggle" class="orders-rail-button operations-toggle" data-orders-rail="operations" aria-expanded="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.12 2.12-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.04 1.56V20.3h-3v-.08A1.7 1.7 0 0 0 10.66 18.66a1.7 1.7 0 0 0-1.88.34l-.06.06L6.6 16.94l.06-.06A1.7 1.7 0 0 0 7 15a1.7 1.7 0 0 0-1.56-1.04H5.3v-3h.14A1.7 1.7 0 0 0 7 9.92a1.7 1.7 0 0 0-.34-1.88L6.6 7.98 8.72 5.86l.06.06a1.7 1.7 0 0 0 1.88.34 1.7 1.7 0 0 0 1.04-1.56V4.62h3v.08a1.7 1.7 0 0 0 1.04 1.56 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.12 2.12-.06.06A1.7 1.7 0 0 0 19.4 9.92a1.7 1.7 0 0 0 1.56 1.04h.14v3h-.14A1.7 1.7 0 0 0 19.4 15Z"/></svg><span>Operations</span>
+      </button>
       </div>
-    </header>
+      <div class="orders-rail-utils" aria-label="Device utilities">
+        <button id="install-shortcut" class="install-shortcut">Install shortcut</button>
+        <button id="enable-notifications">Enable alerts</button>
+        <button type="button" onclick="location.reload()">Refresh</button>
+      </div>
+    </nav>
     <section class="fulfillment-actions" aria-label="Filter orders by fulfillment type">
       <span>Order type</span
       ><button
@@ -113,6 +125,6 @@
     </dialog>
     <script src="/client-config.js"></script>
     <script src="/src/orders/browser-bridge.js"></script>
-    <script src="orders.js?v=22"></script>
+    <script src="orders.js?v=34"></script>
   </body>
 </html>

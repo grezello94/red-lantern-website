@@ -1403,3 +1403,389 @@ main {
     sans-serif;
   cursor: pointer;
 }
+
+/* Orders workspace shell: the rail keeps primary destinations visible without
+   taking focus away from live table work. */
+.orders-rail {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 10px 12px 0;
+  overflow-x: auto;
+  padding: 6px;
+  border: 1px solid #e1e7ef;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 5px 15px rgba(34, 51, 79, 0.06);
+}
+.orders-rail-button {
+  display: inline-flex;
+  height: 38px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
+  padding: 0 12px;
+  border-radius: 8px;
+  color: #617189;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1;
+  text-decoration: none;
+}
+.orders-rail-button svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.orders-rail-main {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 3px;
+}
+.orders-rail-utils {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 5px;
+  margin-left: auto;
+  padding-left: 7px;
+  border-left: 1px solid #e7ecf2;
+}
+.orders-rail-utils button {
+  min-height: 38px;
+  padding: 0 11px;
+  border-radius: 8px;
+  font-size: 11px;
+}
+@media print {
+  .orders-rail {
+    display: none !important;
+  }
+}
+
+@media (min-width: 1100px) {
+  body {
+    padding-left: 94px !important;
+  }
+  .orders-rail {
+    position: fixed;
+    z-index: 40;
+    top: 10px;
+    bottom: 10px;
+    left: 10px;
+    display: flex;
+    width: 68px;
+    flex-direction: column;
+    align-items: center;
+    padding: 14px 8px;
+    border: 1px solid #dfe6ef;
+    border-radius: 15px;
+    background: rgba(255, 255, 255, 0.96);
+    box-shadow: 0 12px 30px rgba(34, 51, 79, 0.1);
+    backdrop-filter: blur(12px);
+  }
+  .orders-rail-brand,
+  .orders-rail-button {
+    display: grid;
+    width: 46px;
+    height: 46px;
+    place-items: center;
+    padding: 0;
+    border: 0;
+    border-radius: 13px;
+    color: #91a1b8;
+    background: transparent;
+    box-shadow: none;
+  }
+  .orders-rail-brand {
+    margin-bottom: 24px;
+    color: #fff;
+    background: linear-gradient(145deg, #e3274b, #a90d39);
+    box-shadow: 0 8px 16px rgba(190, 24, 69, 0.25);
+    font-size: 21px;
+    font-weight: 900;
+    letter-spacing: -0.06em;
+  }
+  .orders-rail-brand:hover,
+  .orders-rail-brand:focus-visible {
+    transform: none;
+  }
+  .orders-rail-main {
+    display: grid;
+    gap: 12px;
+  }
+  .orders-rail-button svg {
+    width: 24px;
+    height: 24px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .orders-rail-button:hover,
+  .orders-rail-button:focus-visible,
+  .orders-rail-button.is-active {
+    color: #d22342;
+    background: #fff0f2;
+    box-shadow: none;
+    transform: none;
+  }
+  .orders-rail-button.is-active {
+    position: relative;
+  }
+  .orders-rail-button.is-active::before {
+    position: absolute;
+    left: -8px;
+    width: 3px;
+    height: 24px;
+    border-radius: 0 4px 4px 0;
+    background: #d22342;
+    content: '';
+  }
+  .orders-rail-settings {
+    margin-top: auto;
+  }
+  header {
+    min-height: 82px !important;
+    padding: 15px 24px !important;
+  }
+  .brand {
+    gap: 13px !important;
+  }
+  .header-actions {
+    gap: 7px;
+  }
+  .header-actions button,
+  .live-orders-toggle {
+    min-height: 40px;
+    padding-inline: 12px;
+  }
+}
+
+@media (max-width: 1320px) and (min-width: 1100px) {
+  .header-actions button,
+  .live-orders-toggle {
+    padding-inline: 9px;
+    font-size: 11px;
+  }
+}
+
+/* Keep workspace navigation at the top: tables need the full page width. */
+@media (min-width: 760px) {
+  .orders-rail {
+    position: relative;
+    z-index: 1;
+    top: auto;
+    right: auto;
+    bottom: auto;
+    left: auto;
+    display: flex;
+    width: auto;
+    max-width: 1920px;
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 5px;
+    margin: 14px auto 0;
+    padding: 6px;
+    border: 1px solid #e1e7ef;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.96);
+    box-shadow: 0 5px 15px rgba(34, 51, 79, 0.06);
+    backdrop-filter: none;
+  }
+  .orders-rail-main,
+  .orders-rail-brand {
+    display: contents;
+  }
+  .orders-rail-button,
+  .orders-rail-settings {
+    display: inline-flex;
+    width: auto;
+    height: 38px;
+    align-items: center;
+    gap: 7px;
+    margin: 0;
+    padding: 0 12px;
+    border-radius: 8px;
+    color: #617189;
+    background: transparent;
+    font-size: 12px;
+    font-weight: 850;
+    line-height: 1;
+    text-decoration: none;
+  }
+  .orders-rail-button svg {
+    width: 18px;
+    height: 18px;
+  }
+  .orders-rail-count {
+    display: grid;
+    min-width: 18px;
+    height: 18px;
+    place-items: center;
+    padding: 0 4px;
+    border-radius: 999px;
+    color: #fff;
+    background: #d22342;
+    font-size: 10px;
+    line-height: 1;
+  }
+  .orders-rail-button:hover,
+  .orders-rail-button:focus-visible,
+  .orders-rail-button.is-active {
+    color: #c91f3c;
+    background: #fff0f2;
+  }
+  .orders-rail-button.is-active::before {
+    display: none;
+  }
+  .orders-rail .live-orders-toggle,
+  .orders-rail .operations-toggle,
+  .orders-rail .availability-toggle {
+    color: #617189 !important;
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+  .orders-rail .live-orders-toggle:hover,
+  .orders-rail .live-orders-toggle.is-open,
+  .orders-rail .operations-toggle:hover,
+  .orders-rail .operations-toggle.is-open,
+  .orders-rail .availability-toggle:hover,
+  .orders-rail .orders-rail-button.is-active {
+    color: #c91f3c !important;
+    background: #fff0f2 !important;
+  }
+  .orders-rail .availability-toggle span,
+  .orders-rail .operations-toggle span {
+    margin: 0;
+    font-size: inherit;
+    line-height: inherit;
+  }
+  .orders-rail .orders-rail-count,
+  .orders-rail .live-orders-toggle.is-open .orders-rail-count {
+    color: #fff !important;
+    background: #d22342 !important;
+  }
+}
+
+@media (min-width: 1100px) {
+  body {
+    padding-left: 10px !important;
+  }
+}
+
+/* Final orders app bar: clear groups, no oversized banner. */
+.orders-rail-branding {
+  display: none;
+}
+@media (min-width: 760px) {
+  .orders-rail {
+    min-height: 64px;
+    gap: 15px;
+    padding: 8px 10px;
+  }
+  .orders-rail-branding {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 9px;
+    padding-right: 15px;
+    border-right: 1px solid #e6ebf2;
+  }
+  .orders-rail-branding > span:last-child {
+    display: grid;
+    gap: 2px;
+  }
+  .orders-rail-branding strong {
+    color: #21334e;
+    font-size: 13px;
+    letter-spacing: -0.02em;
+  }
+  .orders-rail-branding small {
+    color: #8291a5;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .orders-rail-mark {
+    display: grid;
+    width: 34px;
+    height: 34px;
+    place-items: center;
+    border-radius: 10px;
+    color: #fff;
+    background: linear-gradient(145deg, #df2949, #ae1736);
+    box-shadow: 0 5px 12px rgba(190, 24, 69, 0.2);
+    font-size: 15px;
+    font-weight: 900;
+    letter-spacing: -0.06em;
+  }
+  .orders-rail-main {
+    display: flex !important;
+    align-items: center;
+    gap: 3px;
+    padding: 4px;
+    border: 1px solid #edf0f4;
+    border-radius: 10px;
+    background: #f8fafc;
+  }
+  .orders-rail-main .orders-rail-button {
+    height: 36px;
+    padding-inline: 10px;
+  }
+  .orders-rail-utils {
+    align-items: center;
+    margin-left: auto;
+    padding-left: 12px;
+  }
+  .orders-rail-utils button {
+    color: #52657f;
+    border: 1px solid #e1e7ef;
+    background: #fff;
+    box-shadow: none;
+    font-weight: 850;
+  }
+  .orders-rail-utils .install-shortcut {
+    color: #265ca7 !important;
+    background: #f5f8ff !important;
+  }
+  .orders-rail-utils #enable-notifications {
+    color: #af2637 !important;
+    background: #fff4f4 !important;
+  }
+  .orders-rail-utils button[onclick] {
+    color: #53667f !important;
+    background: #f6f8fb !important;
+  }
+  .orders-rail-utils button:hover {
+    border-color: #c8d3e1;
+    filter: none;
+    transform: none;
+  }
+}
+@media (max-width: 1080px) and (min-width: 760px) {
+  .orders-rail-branding small,
+  .orders-rail-utils .install-shortcut {
+    display: none;
+  }
+  .orders-rail {
+    gap: 8px;
+  }
+}
+@media (max-width: 759px) {
+  .orders-rail-utils {
+    margin-left: 3px;
+  }
+  .orders-rail-utils .install-shortcut {
+    display: none;
+  }
+}

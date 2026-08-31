@@ -12,7 +12,10 @@ let loadInFlight = false;
 let reloadRequested = false;
 let updateCheckInFlight = false;
 let selectedStation = localStorage.getItem('redLanternSmartKdsStation') || 'all';
-let selectedCategory = localStorage.getItem('redLanternSmartKdsMenuCategory') || 'all';
+// Kitchen staff should always see the complete priority list. Category is
+// retained as a manager-only diagnostic control, never as a remembered filter
+// that could accidentally hide urgent work at the start of a shift.
+let selectedCategory = 'all';
 
 function operator() {
   const input = $('#operator');
@@ -72,6 +75,24 @@ function taskInstruction(task, state) {
   if (task.action === 'assign-station') return `Assign a kitchen station before preparing ${dish} for ${location}.`;
   return `Review ${dish} for ${location}${target ? ` · target ready ${target}` : ''}.`;
 }
+function kitchenActionLabel(task, state) {
+  if (state === 'ready' || state === 'expo') return 'Send out now';
+  if (state === 'fired' || state === 'preparing') return 'Cooking now';
+  if (task.action === 'service-risk') return 'Make first';
+  if (task.action === 'wait-capacity' || task.action === 'hold-for-course') return 'Wait';
+  if (task.action === 'assign-station') return 'Assign station';
+  if (task.baseAction === 'prepare-next' || task.action === 'prepare-next') return 'Make next';
+  return 'Make now';
+}
+function kitchenCommand(task, state) {
+  if (state === 'ready' || state === 'expo') return 'Take this dish to expo now';
+  if (state === 'fired' || state === 'preparing') return 'Keep cooking this dish';
+  if (task.action === 'wait-capacity') return 'Wait until the station is free';
+  if (task.action === 'hold-for-course' || task.capacityState === 'hold-for-course') return 'Wait for the earlier course';
+  if (task.action === 'assign-station') return 'Choose a kitchen station first';
+  if (task.baseAction === 'prepare-next' || task.action === 'prepare-next') return 'Prepare this dish next';
+  return 'Start this dish now';
+}
 function taskAction(task, state) {
   if (['ordered', 'eligible', 'scheduled'].includes(state) && task.capacityState === 'allocated') return ['start', 'Start preparation'];
   if (state === 'fired') return ['start', 'Start preparation'];
@@ -102,17 +123,11 @@ function taskCard(task, state) {
     ? `<button class="primary ${esc(primary[0])}" data-action="${esc(primary[0])}" data-task="${esc(task.taskKey)}" data-order="${esc(task.orderId)}" data-station="${esc(task.stationId)}">${esc(primary[1])}</button>`
     : `<button disabled>${esc(unavailable)}</button>`;
   const table = taskLocation(task);
-  const deadline = timeUntil(task.latestSafeStartAt);
-  const instruction = taskInstruction(task, state);
   const target = kitchenTime(task.targetServeAt);
-  const codes = (task.reasonCodes || []).slice(0, 3).map((code) => `<small class="reason-code">${esc(title(code))}</small>`).join('');
+  const actionLabel = kitchenActionLabel(task, state);
   return `<article class="card" data-task-card data-task="${esc(task.taskKey)}" data-order="${esc(task.orderId)}">
-    <header><div><b>${esc(`${task.quantity}× ${task.itemName}`)}</b><small>${esc(table)} · #${esc(String(task.orderNumber || '—').padStart(2, '0'))}</small></div><span class="station">${esc(stationLabel(task.stationId))}</span></header>
-    <div class="body"><span class="tag ${esc(task.action)}">${esc(title(task.action))}</span><div class="chef-callout"><small>CHEF INSTRUCTION</small><b>${esc(instruction)}</b></div><p class="reason">${esc(task.finalReason || task.priorityReason || 'Kitchen action required')}</p>
-      ${deadline ? `<p class="deadline">${esc(deadline)}</p>` : ''}
-      ${target ? `<p class="target-time">Target ready: <b>${esc(target)}</b></p>` : ''}
-      <div class="meta">Menu category: ${esc(menuCategory(task))} · ${esc(title(task.pacingState || 'eligible'))} · ${esc(title(state))}</div>
-      <div class="reason-codes">${codes}</div>
+    <header><div><small class="card-category">${esc(menuCategory(task))}</small><b>${esc(`${task.quantity}× ${task.itemName}`)}</b><small>${esc(`${table} · Order #${String(task.orderNumber || '—').padStart(2, '0')}`)}</small></div>${target ? `<span class="ready-by"><small>READY BY</small><b>${esc(target)}</b></span>` : `<span class="station">${esc(stationLabel(task.stationId))}</span>`}</header>
+    <div class="body"><div class="task-command"><span>${esc(actionLabel)}</span><b>${esc(kitchenCommand(task, state))}</b></div>
       <div class="actions">${control}<button class="secondary" type="button" data-timeline-order="${esc(task.orderId)}">View timeline</button></div>
     </div>
   </article>`;
@@ -130,15 +145,15 @@ function renderKitchenBriefing(tasks, states) {
     root.innerHTML = `<div class="briefing-heading"><div><span>CHEF BRIEFING</span><h2>No current cooking instruction</h2><p>There is no live work to call to the kitchen for this display.</p></div></div>`;
     return;
   }
-  root.innerHTML = `<div class="briefing-heading"><div><span>CHEF BRIEFING · LIVE PLAN</span><h2>What to tell the kitchen right now</h2><p>These are ranked using the live Air Menu category, order time, dish preparation time, table service risk, and available station capacity.</p></div><b>${commands.length} priority call${commands.length === 1 ? '' : 's'}</b></div><ol class="briefing-list">${commands.map(({ task, state }, index) => `<li><span>${index + 1}</span><div><small>${esc(`${menuCategory(task)} · ${title(task.action)}`)}</small><b>${esc(taskInstruction(task, state))}</b><p>${esc(task.finalReason || task.priorityReason || 'Live kitchen recommendation')}</p></div></li>`).join('')}</ol>`;
+  root.innerHTML = `<div class="briefing-heading"><div><span>KITCHEN CALLS</span><h2>Make these dishes first</h2><p>Follow the list from 1 onwards. Update each dish when it is ready.</p></div><b>${commands.length} to make</b></div><ol class="briefing-list">${commands.map(({ task, state }, index) => `<li><span>${index + 1}</span><div><small>${esc(`${menuCategory(task)} · ${kitchenActionLabel(task, state)}`)}</small><b>${esc(taskInstruction(task, state))}</b><p>${esc(taskLocation(task))}</p></div></li>`).join('')}</ol>`;
 }
 function groupSection(group, tasks, states) {
   const labels = {
-    now: ['🔥 Start now', 'Current work that can be started now, after the capacity check.'],
-    risk: ['🚨 Table service risk', 'Tables needing immediate attention because guest service may be delayed.'],
-    next: ['🟡 Prepare next', 'Upcoming work that should be prepared soon.'],
-    hold: ['⏸ Capacity / upcoming', 'Work waiting for station space or a safe start time.'],
-    ready: ['✅ Ready / expo', 'Food ready for pickup, expo, or service.'],
+    now: ['🔥 Make now', 'Start these dishes first.'],
+    risk: ['🚨 Make first', 'These tables need food first.'],
+    next: ['🟡 Make next', 'Prepare these after the work above.'],
+    hold: ['⏸ Waiting', 'Do not start these yet.'],
+    ready: ['✅ Ready to send', 'Take this food to expo or the table.'],
   };
   const [heading, description] = labels[group];
   if (!tasks.length) return '';
@@ -305,7 +320,6 @@ $('#station-filter').addEventListener('change', (event) => {
 });
 $('#category-filter').addEventListener('change', (event) => {
   selectedCategory = event.target.value || 'all';
-  localStorage.setItem('redLanternSmartKdsMenuCategory', selectedCategory);
   render();
 });
 $('#operator').addEventListener('change', () => operator());

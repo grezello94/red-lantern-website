@@ -26,6 +26,8 @@ let historyAll = false;
 let orderStatusFilter = 'all';
 let fulfillmentFilter = '';
 let operationsConfig = { printers: [], routes: [] };
+let tableViewAreaFilter = 'all';
+let tableViewSearch = '';
 const tableAllocationCacheKey = 'red-lantern-table-allocation';
 function readCachedTableAreas() {
   try {
@@ -169,7 +171,7 @@ connectivity.id = 'orders-connectivity';
 connectivity.setAttribute('role', 'status');
 connectivity.setAttribute('aria-live', 'polite');
 connectivity.setAttribute('aria-atomic', 'true');
-document.querySelector('header')?.after(connectivity);
+document.querySelector('.orders-rail')?.after(connectivity);
 function counterRequestId() {
   return `counter-${Date.now()}-${crypto.getRandomValues(new Uint32Array(1))[0].toString(36)}`;
 }
@@ -566,13 +568,7 @@ const actionIcon = (name) => {
   };
   return `<svg class="header-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || ''}</svg>`;
 };
-const liveOrdersToggle = document.createElement('button');
-liveOrdersToggle.type = 'button';
-liveOrdersToggle.id = 'live-orders-toggle';
-liveOrdersToggle.className = 'live-orders-toggle';
-liveOrdersToggle.setAttribute('aria-expanded', 'false');
-liveOrdersToggle.innerHTML = `${actionIcon('receipt')}<span>Live orders</span><b id="live-orders-count">0</b>`;
-document.querySelector('.header-actions')?.prepend(liveOrdersToggle);
+const liveOrdersToggle = document.getElementById('live-orders-toggle');
 const operationsPanel = document.createElement('section');
 operationsPanel.id = 'operations-panel';
 operationsPanel.hidden = true;
@@ -586,7 +582,10 @@ counterPanel.innerHTML =
   '<div class="counter-order-head"><div><span class="eyebrow">Counter order</span><h2>Takeaway</h2><p>Build a walk-in or phone order, then send it directly to the kitchen.</p></div><button type="button" id="counter-order-close" class="new-order-button">New Order</button></div><div class="counter-order-layout"><div class="counter-menu"><label class="counter-search"><span aria-hidden="true">⌕</span><input id="counter-menu-search" type="search" placeholder="Search menu items"></label><div id="counter-categories" class="counter-categories"></div><div id="counter-menu-items" class="counter-menu-items"></div></div><aside class="counter-cart"><div class="counter-cart-head"><h3>Current order</h3><div><button type="button" id="view-table-kot" hidden>View KOT</button><button type="button" id="counter-clear" class="counter-clear">Clear</button></div></div><div id="counter-cart-items" class="counter-cart-items"></div><div class="counter-customer"><label>Customer name <input id="counter-customer-name" maxlength="80" placeholder="Walk-in customer"></label><label>Mobile number <input id="counter-customer-phone" inputmode="tel" maxlength="16" placeholder="Optional for walk-ins"></label><label>Serving preference <select id="counter-course-mode"><option value="normal_coursing">Serve course by course</option><option value="serve_together">Serve everything together</option><option value="as_ready">Serve items as ready</option><option value="manual_fire">Manual fire</option></select></label><label>Kitchen note <textarea id="counter-special-request" maxlength="240" placeholder="e.g. less spicy"></textarea></label></div><div class="counter-total"><span>Total</span><b id="counter-total">₹0</b></div><button type="button" id="counter-place-order" class="counter-place-order">Place takeaway order</button><p id="counter-order-status" class="counter-order-status" aria-live="polite"></p></aside></div><dialog id="counter-choice-dialog" class="counter-choice-dialog"><button type="button" class="dialog-close" data-counter-choice-close aria-label="Close">×</button><div id="counter-choice-content"></div></dialog>';
 availability.before(counterPanel);
 const counterPanelCloseButton = document.getElementById('counter-order-close');
-if (counterPanelCloseButton) counterPanelCloseButton.remove();
+if (counterPanelCloseButton) {
+  counterPanelCloseButton.className = 'counter-back';
+  counterPanelCloseButton.textContent = '← Table view';
+}
 const dineInActions = document.createElement('div');
 dineInActions.id = 'dine-in-actions';
 dineInActions.hidden = true;
@@ -601,7 +600,7 @@ document.body.appendChild(splitBillDialog);
 const tableViewPanel = document.createElement('section');
 tableViewPanel.id = 'table-view-panel';
 tableViewPanel.innerHTML =
-  '<div class="table-view-head"><div><span class="eyebrow">Dine-in</span><h2>Table view</h2><p>Select an available table to start a dine-in order.</p></div></div><div id="table-view-content" class="table-view-content"><div class="table-view-empty">Loading allocated tables…</div></div>';
+  '<div class="table-view-head"><div><span class="eyebrow">Dine-in</span><h2>Dine-in management</h2><p>Select a table to start or continue its order.</p></div><div class="table-view-head-note"><b id="table-view-active-count">0</b><span>active tables</span></div></div><div id="table-view-content" class="table-view-content"><div class="table-view-empty">Loading allocated tables…</div></div>';
 availability.before(tableViewPanel);
 let moveKotItemsMode = false;
 const moveTableDialog = document.createElement('dialog');
@@ -649,15 +648,7 @@ async function refreshCounterLiveStatus() {
     counterLiveStatusLoading = false;
   }
 }
-const operationsToggle = document.createElement('button');
-operationsToggle.type = 'button';
-operationsToggle.id = 'operations-toggle';
-operationsToggle.className = 'operations-toggle';
-operationsToggle.setAttribute('aria-expanded', 'false');
-operationsToggle.innerHTML = `${actionIcon('operations')}<span>Operations</span>`;
-document
-  .querySelector('.header-actions')
-  ?.insertBefore(operationsToggle, document.getElementById('availability-toggle'));
+const operationsToggle = document.getElementById('operations-toggle');
 const installButton = document.getElementById('install-shortcut');
 const availabilityButton = document.getElementById('availability-toggle');
 const alertsButton = document.getElementById('enable-notifications');
@@ -677,11 +668,19 @@ const closeOpenPanels = (except = null) => {
     availability.hidden = true;
     availabilityButton?.setAttribute('aria-expanded', 'false');
   }
-  if (except !== 'counter') counterPanel.hidden = true;
+  if (except !== 'counter') {
+    counterPanel.hidden = true;
+    document.body.classList.remove('is-counter-workspace');
+  }
   if (except !== 'tables') tableViewPanel.hidden = true;
   const shortcutDialog = document.getElementById('shortcut-dialog');
   if (except !== 'shortcut' && shortcutDialog?.open) shortcutDialog.close();
 };
+function setOrdersRailActive(workspace) {
+  document.querySelectorAll('[data-orders-rail]').forEach((item) => {
+    item.classList.toggle('is-active', item.dataset.ordersRail === workspace);
+  });
+}
 function rememberOrdersWorkspace(area, tab = '') {
   try {
     localStorage.setItem(ordersWorkspaceKey, JSON.stringify({ area, tab }));
@@ -690,7 +689,7 @@ function rememberOrdersWorkspace(area, tab = '') {
 function savedOrdersWorkspace() {
   try {
     const value = JSON.parse(localStorage.getItem(ordersWorkspaceKey) || 'null');
-    return value && ['tables', 'live', 'operations', 'availability'].includes(value.area)
+    return value && ['tables', 'counter', 'live', 'operations', 'availability'].includes(value.area)
       ? value
       : null;
   } catch (_) {
@@ -725,12 +724,23 @@ const counterPortionOptions = (item) =>
   ].filter(([, , price]) => Number(String(price || '').replace(/[^0-9.]/g, '')) > 0);
 const smartKdsCourseOptions = (defaultCourse = '', selected = '') =>
   `<option value="">Default${defaultCourse ? ` (${esc(defaultCourse)})` : ''}</option>${['drink', 'soup', 'starter', 'main', 'side', 'dessert', 'other'].map((course) => `<option value="${course}" ${selected === course ? 'selected' : ''}>${course[0].toUpperCase() + course.slice(1)}</option>`).join('')}`;
+function updateCounterChoiceTotal() {
+  const selectedPortion = document.querySelector('input[name="counter-portion"]:checked');
+  const addButton = document.getElementById('counter-choice-add');
+  const addPrice = document.getElementById('counter-choice-add-price');
+  if (!selectedPortion || !addButton || !addPrice) return;
+  const style = document.querySelector('input[name="counter-style"]:checked')?.value || '';
+  const total = Number(selectedPortion.dataset.counterChoicePrice || 0) + (style ? 10 : 0);
+  addPrice.textContent = counterMoney(total);
+  addButton.setAttribute('aria-label', `Add to order for ${counterMoney(total)}`);
+}
 function openCounterChoice(item) {
   counterChoiceItem = item;
   const options = counterPortionOptions(item);
   const dialog = document.getElementById('counter-choice-dialog');
   document.getElementById('counter-choice-content').innerHTML =
-    `<span class="eyebrow">Add to parcel</span><h2>${esc(item.name)}</h2><p>${esc(item.category || 'Menu')}</p><div class="counter-choice-options">${options.map(([value, label, price], index) => `<label><input type="radio" name="counter-portion" value="${esc(value)}" data-counter-choice-price="${Number(String(price).replace(/[^0-9.]/g, ''))}" ${index === 0 ? 'checked' : ''}><span>${esc(label)} <b>${counterMoney(String(price).replace(/[^0-9.]/g, ''))}</b></span></label>`).join('')}</div>${item.gravyStyleAvailable ? '<fieldset class="counter-style-options"><legend>Preparation style</legend><label><input type="radio" name="counter-style" value="" checked> Regular</label><label><input type="radio" name="counter-style" value="Gravy"> Gravy <b>+₹10</b></label><label><input type="radio" name="counter-style" value="Semi-gravy"> Semi-gravy <b>+₹10</b></label></fieldset>' : ''}<label class="counter-course-choice">Kitchen course <select id="counter-choice-course">${smartKdsCourseOptions(item.defaultCourse || '')}</select></label><button type="button" id="counter-choice-add" class="counter-place-order">Add to order</button>`;
+    `<div class="counter-choice-title"><span>${esc(item.category || 'Menu')}</span><h2>${esc(item.name)}</h2></div><section class="counter-portion-section" aria-label="Select portion"><div class="counter-choice-section-head"><h3>Select portion</h3><small>Required</small></div><div class="counter-choice-options">${options.map(([value, label, price], index) => `<label><input type="radio" name="counter-portion" value="${esc(value)}" data-counter-choice-price="${Number(String(price).replace(/[^0-9.]/g, ''))}" ${index === 0 ? 'checked' : ''}><span><i aria-hidden="true"></i><strong>${esc(label)}</strong><b>${counterMoney(String(price).replace(/[^0-9.]/g, ''))}</b></span></label>`).join('')}</div></section>${item.gravyStyleAvailable ? '<fieldset class="counter-style-options"><legend>Preparation style</legend><label><input type="radio" name="counter-style" value="" checked> Regular</label><label><input type="radio" name="counter-style" value="Gravy"> Gravy <b>+₹10</b></label><label><input type="radio" name="counter-style" value="Semi-gravy"> Semi-gravy <b>+₹10</b></label></fieldset>' : ''}<label class="counter-course-choice"><span>Kitchen course</span><select id="counter-choice-course">${smartKdsCourseOptions(item.defaultCourse || '')}</select></label><button type="button" id="counter-choice-add" class="counter-place-order"><span><i aria-hidden="true">+</i>Add to order</span><b id="counter-choice-add-price"></b></button>`;
+  updateCounterChoiceTotal();
   if (typeof dialog.showModal === 'function') dialog.showModal();
 }
 const counterMoney = (value) => `₹${Math.round(Number(value) || 0)}`;
@@ -781,7 +791,7 @@ function renderCounterOrder() {
   const categoryButton = (category, label = category) =>
     `<button type="button" class="counter-category ${counterCategory === category ? 'is-active' : ''}" data-counter-category="${esc(category)}">${esc(label)}</button>`;
   document.getElementById('counter-categories').innerHTML =
-    `${categoryButton('all', 'All items')}<span class="counter-category-group">Food menu</span>${foodCategories.map((category) => categoryButton(category)).join('')}<span class="counter-category-group">Alcohol & bar</span>${barCategories.map((category) => categoryButton(category)).join('')}`;
+    `${categoryButton('all', `All items · ${counterMenu.length}`)}<span class="counter-category-group">Food menu</span>${foodCategories.map((category) => categoryButton(category)).join('')}<span class="counter-category-group">Alcohol & bar</span>${barCategories.map((category) => categoryButton(category)).join('')}`;
   const visible = counterMenu.filter(
     (item) =>
       (counterCategory === 'all' || (item.category || 'Menu') === counterCategory) &&
@@ -802,6 +812,11 @@ function renderCounterOrder() {
     .join('');
   document.getElementById('counter-cart-items').innerHTML =
     items || '<p class="counter-empty">Choose items from the menu to start an order.</p>';
+  const cartHeading = document.querySelector('#counter-order-panel .counter-cart-head h3');
+  if (cartHeading) {
+    const itemCount = counterCart.reduce((count, line) => count + Number(line.quantity || 0), 0);
+    cartHeading.textContent = `Current order${itemCount ? ` · ${itemCount} item${itemCount === 1 ? '' : 's'}` : ''}`;
+  }
   const subtotal = counterCart.reduce(
     (sum, line) => sum + (line.price + (line.style ? 10 : 0)) * line.quantity,
     0
@@ -814,6 +829,12 @@ function renderCounterOrder() {
       ? Math.min(counterLoyaltyPoints, subtotal, Math.max(0, requestedPoints))
       : 0;
   document.getElementById('counter-total').textContent = counterMoney(subtotal - usablePoints);
+  const placeOrderButton = document.getElementById('counter-place-order');
+  if (placeOrderButton) {
+    const hasItems = counterCart.length > 0;
+    placeOrderButton.disabled = !hasItems;
+    placeOrderButton.title = hasItems ? '' : 'Add an item before placing the order.';
+  }
   const note = document.getElementById('counter-wallet-note');
   if (note) note.textContent = usablePoints ? `₹${usablePoints} wallet discount applied.` : '';
 }
@@ -861,10 +882,15 @@ async function loadCounterLoyalty() {
   renderCounterOrder();
 }
 async function openCounterOrder(table = null) {
+  // Remember only the workspace, never unfinished cart or customer data.
+  // A refresh can safely reopen Takeaway without risking a duplicate order.
+  rememberOrdersWorkspace(table ? 'tables' : 'counter');
+  setOrdersRailActive(table ? 'tables' : 'counter');
   counterTable = table;
   const isDineIn = !!table;
   const title = document.querySelector('#counter-order-panel .counter-order-head h2');
   const subtitle = document.querySelector('#counter-order-panel .counter-order-head p');
+  const eyebrow = document.querySelector('#counter-order-panel .counter-order-head .eyebrow');
   const placeButton = document.getElementById('counter-place-order');
   if (title)
     title.textContent = isDineIn
@@ -874,6 +900,7 @@ async function openCounterOrder(table = null) {
     subtitle.textContent = isDineIn
       ? 'Build a dine-in order, then send its KOT directly to the kitchen.'
       : 'Build a walk-in or phone order, then send it directly to the kitchen.';
+  if (eyebrow) eyebrow.textContent = isDineIn ? 'Dine-in order' : 'Takeaway order';
   if (placeButton)
     placeButton.textContent = isDineIn
       ? `Place order · Table ${String(table.number).padStart(2, '0')}`
@@ -883,15 +910,18 @@ async function openCounterOrder(table = null) {
     viewKotButton.hidden = !table?.orderId;
     viewKotButton.dataset.orderId = table?.orderId || '';
   }
-  if (dineInActions) dineInActions.hidden = !isDineIn;
+  if (dineInActions) dineInActions.hidden = false;
   if (placeButton) placeButton.hidden = isDineIn;
   const opening = counterPanel.hidden;
   if (!opening) {
     counterPanel.hidden = true;
+    document.body.classList.remove('is-counter-workspace');
     return;
   }
   closeOpenPanels('counter');
   counterPanel.hidden = false;
+  document.body.classList.add('is-counter-workspace');
+  window.scrollTo(0, 0);
   document.getElementById('counter-menu-items').innerHTML =
     '<p class="counter-empty">Loading menu…</p>';
   try {
@@ -1065,11 +1095,10 @@ function renderTableView() {
     return;
   }
   const legend = [
-    ['blank', 'Blank table'],
-    ['running', 'Running table'],
-    ['printed', 'Printed Table'],
-    ['paid', 'Paid Table'],
-    ['kot', 'Running KOT Table'],
+    ['blank', 'Available'],
+    ['running', 'Seated'],
+    ['kot', 'KOT active'],
+    ['printed', 'Bill ready'],
   ];
   const tableOrders = [...orderRecords.values()].filter(
     (order) => order.mode === 'table' && order.table_area && order.table_number
@@ -1093,36 +1122,58 @@ function renderTableView() {
         ? `${elapsedMinutes} min ago`
         : `${Math.floor(elapsedMinutes / 60)}h ${elapsedMinutes % 60}m ago`;
     if (order.status === 'completed') return { state: 'paid', label: 'Paid · available', order };
-    if (order.bill_printed_at) return { state: 'printed', label: 'Bill printed · settle', order };
+    if (order.bill_printed_at) return { state: 'printed', label: 'Bill ready', order };
     if (['saved', 'held'].includes(order.status))
       return { state: 'running', label: elapsedLabel, order };
     if (['accepted', 'preparing', 'ready'].includes(order.status)) {
       const kots = operationKotHistory.get(order.id);
       return {
         state: Array.isArray(kots) && kots.length ? 'kot' : 'running',
-        label: elapsedLabel,
+        label: Array.isArray(kots) && kots.length ? 'KOT active' : elapsedLabel,
         order,
       };
     }
     return { state: 'running', label: String(order.status || 'Running'), order };
   };
-  content.innerHTML = `<div class="table-view-legend" aria-label="Table status legend"><button type="button" class="table-move-toggle${moveKotItemsMode ? ' is-active' : ''}" data-toggle-move-kot aria-pressed="${moveKotItemsMode}"><i></i>Move KOT / Items</button>${legend.map(([state, label]) => `<span><i class="is-${state}"></i>${label}</span>`).join('')}</div>${areas
+  const activeTables = tableOrders.filter((order) => !['completed', 'cancelled', 'rejected'].includes(String(order.status))).length;
+  const activeCount = document.getElementById('table-view-active-count');
+  if (activeCount) activeCount.textContent = String(activeTables);
+  const query = String(tableViewSearch || '').trim().toLowerCase();
+  const visibleAreas = tableViewAreaFilter === 'all'
+    ? areas
+    : areas.filter((area) => String(area.name) === String(tableViewAreaFilter));
+  const matchesSearch = (area, number, table) => {
+    if (!query) return true;
+    const order = table.order || {};
+    const haystack = [area, number, order.customer_name, order.customer_phone, ...(Array.isArray(order.items) ? order.items.map((item) => item.name) : [])]
+      .join(' ')
+      .toLowerCase();
+    return haystack.includes(query);
+  };
+  const zoneTabs = `<div class="table-floor-toolbar"><div class="table-zone-tabs" role="tablist" aria-label="Dining areas"><button type="button" class="${tableViewAreaFilter === 'all' ? 'is-active' : ''}" data-table-area-filter="all" aria-pressed="${tableViewAreaFilter === 'all'}">All areas</button>${areas.map((area) => `<button type="button" class="${tableViewAreaFilter === area.name ? 'is-active' : ''}" data-table-area-filter="${esc(area.name)}" aria-pressed="${tableViewAreaFilter === area.name}">${esc(area.name)}</button>`).join('')}</div><label class="table-search"><span aria-hidden="true">⌕</span><input id="table-view-search" type="search" autocomplete="off" placeholder="Search table or guest" value="${esc(tableViewSearch)}"></label></div>`;
+  content.innerHTML = `${zoneTabs}<div class="table-view-legend" aria-label="Table status legend"><button type="button" class="table-move-toggle${moveKotItemsMode ? ' is-active' : ''}" data-toggle-move-kot aria-pressed="${moveKotItemsMode}"><i></i>Move KOT / Items</button>${legend.map(([state, label]) => `<span><i class="is-${state}"></i>${label}</span>`).join('')}</div>${visibleAreas
     .map((area) => {
       const tables = Array.from(
         { length: Number(area.to) - Number(area.from) + 1 },
         (_, index) => Number(area.from) + index
-      );
-      return `<section class="table-area"><div class="table-area-head"><h3>${esc(area.name)}</h3><span>${tables.length} table${tables.length === 1 ? '' : 's'}</span></div><div class="table-grid">${tables
-        .map((number) => {
-          const table = tableState(area.name, number),
+      ).map((number) => ({ number, table: tableState(area.name, number) }))
+        .filter(({ number, table }) => matchesSearch(area.name, number, table));
+      if (!tables.length) return '';
+      const totalTables = Number(area.to) - Number(area.from) + 1;
+      return `<section class="table-area"><div class="table-area-head"><h3>${esc(area.name)}</h3><span>${totalTables} table${totalTables === 1 ? '' : 's'}</span></div><div class="table-grid">${tables
+        .map(({ number, table }) => {
+          const tableNumber = number,
             active = table.state !== 'blank' && table.state !== 'paid',
             movable = active && moveKotItemsMode,
             settling = table.state === 'printed' && !moveKotItemsMode;
-          return `<button type="button" class="table-tile is-${table.state}${movable ? ' is-move-target' : ''}" data-dine-table-area="${esc(area.name)}" data-dine-table-number="${number}"${movable ? ` data-move-table-order="${esc(table.order.id)}"` : ''}${settling ? ` data-settle-table-order="${esc(table.order.id)}"` : ''} title="${esc(movable ? 'Move KOT / Items' : settling ? 'Settle & Save' : table.label)}"><span>Table</span><b>${String(number).padStart(2, '0')}</b><small>${esc(movable ? 'Select to move' : settling ? 'Settle & Save' : table.label)}</small></button>`;
+          const guest = table.order?.customer_name || 'Walk-in customer';
+          const amount = Number(table.order?.total || 0);
+          const status = movable ? 'Select to move' : settling ? 'Settle & save' : table.label;
+          return `<button type="button" class="table-tile is-${table.state}${movable ? ' is-move-target' : ''}" data-dine-table-area="${esc(area.name)}" data-dine-table-number="${tableNumber}"${movable ? ` data-move-table-order="${esc(table.order.id)}"` : ''}${settling ? ` data-settle-table-order="${esc(table.order.id)}"` : ''} title="${esc(status)}"><div class="table-tile-top"><div><span>Table</span><b>${String(tableNumber).padStart(2, '0')}</b></div>${table.state !== 'blank' && table.state !== 'paid' ? `<em>${esc(status)}</em>` : ''}</div>${table.order && table.state !== 'paid' ? `<div class="table-tile-info"><small>${esc(guest)}</small><strong>${counterMoney(amount)}</strong></div>` : `<small>${esc(table.state === 'paid' ? 'Paid · available' : 'Available')}</small>`}</button>`;
         })
         .join('')}</div></section>`;
     })
-    .join('')}`;
+    .join('') || '<div class="table-view-empty">No table or guest matches this search.</div>'}`;
   if (!moveKotItemsMode)
     content.querySelectorAll('.table-tile').forEach((tile) => {
       const table = tableState(tile.dataset.dineTableArea, Number(tile.dataset.dineTableNumber));
@@ -1145,6 +1196,7 @@ function renderTableView() {
     );
 }
 async function showTableView() {
+  setOrdersRailActive('tables');
   tableViewPanel.hidden = false;
   if (Array.isArray(operationsConfig.tableAreas) && operationsConfig.tableAreas.length)
     renderTableView();
@@ -1340,6 +1392,20 @@ document.head.appendChild(tableTileIconStyles);
 const tableTileActionLayoutStyles = document.createElement('style');
 tableTileActionLayoutStyles.textContent = `.table-tile-wrap{display:grid;gap:7px}.table-tile-actions{position:static;justify-content:center}.table-tile-wrap .table-tile{min-height:106px}`;
 document.head.appendChild(tableTileActionLayoutStyles);
+const tableViewReferenceStyles = document.createElement('style');
+tableViewReferenceStyles.textContent = `
+#table-view-panel{margin:22px 28px 0;padding:28px;border:1px solid #dfe7f0;border-radius:20px;background:#f6f8fc;box-shadow:0 12px 30px rgba(32,53,82,.06)}
+.table-view-head{display:flex;align-items:end;justify-content:space-between;gap:18px}.table-view-head .eyebrow{color:#d32b38}.table-view-head h2{margin:4px 0;color:#182a45;font-size:27px;letter-spacing:-.04em}.table-view-head p{margin:0;color:#677991;font-weight:650}.table-view-head-note{display:grid;min-width:98px;padding:10px 13px;border:1px solid #d9e4ef;border-radius:13px;color:#71829a;background:#fff;text-align:center}.table-view-head-note b{color:#16375a;font-size:21px;line-height:1}.table-view-head-note span{margin-top:4px;font-size:10px;font-weight:900;letter-spacing:.05em;text-transform:uppercase}
+.table-floor-toolbar{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:16px}.table-zone-tabs{display:flex;max-width:100%;gap:4px;overflow:auto;padding:4px;border:1px solid #dce5ef;border-radius:999px;background:#fff;box-shadow:0 2px 6px rgba(30,54,84,.04)}.table-zone-tabs button{flex:0 0 auto;min-height:36px;padding:7px 15px;border:0;border-radius:999px;color:#5a6b82;background:transparent;font-size:12px;font-weight:900}.table-zone-tabs button:hover{transform:none;filter:none;color:#1d304b;background:#eef3f8}.table-zone-tabs button.is-active{color:#fff;background:#1f304a;box-shadow:0 3px 8px rgba(25,44,69,.22)}
+.table-search{display:flex;align-items:center;gap:8px;min-width:245px;padding:0 12px;border:1px solid #dce5ef;border-radius:999px;color:#8a9bb1;background:#fff}.table-search span{font-size:21px;line-height:1}.table-search input{width:100%;height:40px;border:0;outline:0;color:#23364f;background:transparent;font:700 12px Manrope,sans-serif}.table-search input::placeholder{color:#9aa9bd}
+.table-view-legend{justify-content:flex-end;margin:0 0 20px;padding:0;color:#667990}.table-view-legend span{gap:7px}.table-view-legend .is-running{background:#12b981}.table-view-legend .is-printed{background:#7b61c9}.table-view-legend .is-paid{background:#f4b860}.table-view-legend .is-kot{background:#f59e0b}.table-move-toggle{margin-right:auto;border:1px solid #dce5ef;color:#50627a;background:#fff;box-shadow:0 2px 6px rgba(30,54,84,.04)}
+.table-area{padding:0;border:0;background:transparent}.table-area+.table-area{margin-top:30px}.table-area-head{align-items:center;margin:0 0 14px}.table-area-head h3{color:#1d2d47;font-size:20px;letter-spacing:-.025em}.table-area-head h3:after{content:'';display:inline-block;width:clamp(80px,18vw,230px);height:1px;margin-left:14px;vertical-align:middle;background:#d8e2ee}.table-area-head span{color:#667a96;font-size:12px;font-weight:850}.table-grid{grid-template-columns:repeat(auto-fill,minmax(172px,1fr));gap:14px}
+.table-tile-wrap{position:relative;display:block;min-width:0;min-height:154px}.table-tile-wrap .table-tile{height:100%;min-height:154px}.table-tile{display:flex;min-height:154px;padding:16px;border:1px solid #dce5ef;border-radius:16px;color:#21344e;background:#fff;text-align:left;box-shadow:0 5px 12px rgba(31,52,84,.08);transition:transform .16s,box-shadow .16s,border-color .16s}.table-tile:hover{transform:translateY(-2px);filter:none;border-color:#aebfd2;box-shadow:0 11px 21px rgba(31,52,84,.13)}.table-tile.is-blank{align-items:center;justify-content:center;border:2px dashed #ccd9e8;color:#9aabc0;background:transparent;text-align:center;box-shadow:none}.table-tile.is-blank:hover{border-color:#d32b38;background:#fff}.table-tile.is-blank .table-tile-top{display:block}.table-tile.is-blank .table-tile-top b{margin:6px 0 0;color:#c6d3e4;font-size:38px}.table-tile.is-blank>small{margin-top:7px;color:#8e9eb3;font-size:11px}.table-tile.is-running{border-left:5px solid #12b981;background:#fff}.table-tile.is-kot{border-left:5px solid #f4ac12;background:#fff}.table-tile.is-printed{border-left:5px solid #7b61c9;background:#fff}.table-tile.is-paid{align-items:center;justify-content:center;border:2px dashed #d7dfeb;color:#92a2b8;background:#f9fbfd;text-align:center;box-shadow:none}
+.table-tile-top{display:flex;width:100%;justify-content:space-between;gap:9px}.table-tile-top span{color:#8798ad;font-size:10px;font-weight:900;letter-spacing:.1em;text-transform:uppercase}.table-tile-top b{margin:3px 0 0;color:#182a45;font-size:30px;line-height:1}.table-tile-top em{padding:6px 8px;border-radius:7px;color:#087a50;background:#eafaf3;font-size:10px;font-style:normal;font-weight:900;white-space:nowrap}.table-tile.is-kot .table-tile-top em{color:#a65d00;background:#fff6df}.table-tile.is-printed .table-tile-top em{color:#5e469e;background:#f0ecff}.table-tile-info{align-self:flex-end;width:100%;padding-bottom:25px}.table-tile-info small,.table-tile-info strong{display:block}.table-tile-info small{overflow:hidden;color:#687a92;font-size:11px;font-weight:750;text-overflow:ellipsis;white-space:nowrap}.table-tile-info strong{margin-top:4px;color:#087c50;font-size:18px}.table-tile.is-kot .table-tile-info strong{color:#243650}
+.table-tile-actions{position:absolute;right:10px;bottom:10px;display:flex;gap:5px}.table-tile-action{width:29px;height:29px;border-color:#dbe5ef;border-radius:8px;color:#526780;background:#fff;box-shadow:0 2px 7px rgba(31,52,84,.12)}.table-tile-action:hover,.table-tile-action:focus-visible{color:#fff;background:#263d68}
+@media(max-width:780px){#table-view-panel{margin:14px 16px 0;padding:18px}.table-view-head{align-items:start}.table-view-head h2{font-size:23px}.table-floor-toolbar{align-items:stretch;flex-direction:column}.table-search{min-width:0}.table-view-legend{justify-content:flex-start}.table-move-toggle{margin-right:0}.table-grid{grid-template-columns:repeat(auto-fill,minmax(142px,1fr));gap:10px}.table-tile,.table-tile-wrap,.table-tile-wrap .table-tile{min-height:142px}.table-area-head h3:after{width:45px}.table-tile-top b{font-size:27px}}
+`;
+document.head.appendChild(tableViewReferenceStyles);
 const settleTableStyles = document.createElement('style');
 settleTableStyles.textContent = `#settle-table-dialog{width:min(620px,calc(100vw - 28px));padding:26px;border:0;border-radius:16px;color:#263b57;box-shadow:0 24px 70px #14213d55}#settle-table-dialog::backdrop{background:#14213d8a}#settle-table-dialog h2{margin:0}#settle-table-dialog>p{color:#68798f}#settle-table-dialog fieldset{display:flex;flex-wrap:wrap;gap:13px;margin:20px 0;padding:14px;border:1px solid #dbe4ee;border-radius:10px}#settle-table-dialog legend{font-weight:900}#settle-table-dialog label{display:grid;gap:7px;font-weight:800}#settle-table-dialog input[type=number]{padding:11px;border:1px solid #cfdbe8;border-radius:8px;font:700 14px Manrope,sans-serif}#settle-table-dialog>div:last-child{display:flex;justify-content:flex-end;gap:10px;margin-top:22px}#settle-table-dialog button{padding:11px 16px;border-radius:8px;font-weight:900}.settle-confirm{color:#fff;background:#c92a36}.settle-cancel{background:#f2f6fa}.settle-close{position:absolute;top:14px;right:16px;font-size:23px}`;
 document.head.appendChild(settleTableStyles);
@@ -1347,7 +1413,9 @@ const viewKotStyles = document.createElement('style');
 viewKotStyles.textContent = `#view-table-kot{margin-right:9px;color:#2563c9;background:#eef5ff;text-decoration:underline}#view-kot-dialog{width:min(620px,calc(100vw - 28px));max-height:80vh;padding:24px;border:0;border-radius:15px;color:#253b59;box-shadow:0 24px 70px #14213d55}#view-kot-dialog::backdrop{background:#14213d8a}#view-kot-dialog h2{margin:0 0 18px}.view-kot-close{position:absolute;right:15px;top:12px;font-size:23px}.view-kot-ticket{margin:12px 0;border:1px solid #dce5ef;border-radius:10px;overflow:hidden}.view-kot-ticket h3{margin:0;padding:11px 13px;background:#edf2f7;font-size:15px}.view-kot-ticket h3 small{float:right;color:#68798f}.view-kot-ticket div{display:flex;align-items:center;gap:8px;padding:10px 13px;border-top:1px solid #edf1f5}.view-kot-ticket span{margin-left:auto;font-weight:800}.view-kot-edit,.view-kot-delete{margin-left:8px;padding:5px 8px;border-radius:6px;font-size:10px;font-weight:900}.view-kot-edit{color:#1f5da8;background:#eef5ff}.view-kot-delete{color:#b4232b;background:#fff0f1}`;
 document.head.appendChild(viewKotStyles);
 const counterChoiceStyles = document.createElement('style');
-counterChoiceStyles.textContent = `.counter-choice-dialog{width:min(430px,calc(100vw - 32px));padding:24px;border:0;border-radius:16px;color:#26344e;box-shadow:0 20px 60px rgba(14,29,55,.25)}.counter-choice-dialog::backdrop{background:rgba(21,34,58,.46)}.counter-choice-dialog h2{margin:4px 30px 3px 0;font-size:21px}.counter-choice-dialog p{margin:0;color:#718097;font-size:12px}.counter-choice-options{display:grid;gap:8px;margin:18px 0}.counter-choice-options label{cursor:pointer}.counter-choice-options input{position:absolute;opacity:0}.counter-choice-options span{display:flex;justify-content:space-between;padding:12px;border:1px solid #d9e3ef;border-radius:9px;font-size:13px;font-weight:800}.counter-choice-options input:checked+span{border-color:#263d68;color:#fff;background:#263d68}.counter-style-options{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0;padding:12px;border:1px solid #e0e7ef;border-radius:9px}.counter-style-options legend{padding:0 4px;color:#68778e;font-size:11px;font-weight:900}.counter-style-options label{font-size:12px;font-weight:700}.counter-style-options b{color:#148251}`;
+counterChoiceStyles.textContent = `
+.counter-choice-dialog{width:min(650px,calc(100vw - 32px));max-height:calc(100dvh - 32px);padding:0;border:0;border-radius:20px;color:#182641;background:#fff;box-shadow:0 28px 80px rgba(15,27,48,.35);overflow:auto}.counter-choice-dialog::backdrop{background:rgba(24,36,57,.56);backdrop-filter:blur(2px)}.counter-choice-dialog .dialog-close{position:absolute;z-index:2;top:18px;right:20px;display:grid;width:42px;height:42px;place-items:center;padding:0;border:1px solid #dce5ef;border-radius:10px;color:#71839a;background:#fff;font-size:28px;font-weight:400;line-height:1}.counter-choice-dialog .dialog-close:hover{color:#c31f35;border-color:#f0bdc4;background:#fff5f6;filter:none;transform:none}.counter-choice-title{padding:27px 32px 22px;border-bottom:1px solid #e8edf3}.counter-choice-title>span{display:block;margin-right:58px;color:#71829a;font-size:11px;font-weight:900;letter-spacing:.11em;text-transform:uppercase}.counter-choice-title>span:before{display:inline-block;width:13px;height:13px;margin-right:10px;border:2px solid #d3283d;border-radius:3px;vertical-align:-2px;background:radial-gradient(circle,#d3283d 0 4px,transparent 5px);content:''}.counter-choice-dialog h2{margin:5px 58px 0 0;color:#111d35;font-size:30px;line-height:1.1;letter-spacing:-.045em}.counter-portion-section{padding:26px 32px 8px}.counter-choice-section-head{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:16px}.counter-choice-section-head h3{margin:0;color:#1e2b42;font-size:16px;letter-spacing:-.02em}.counter-choice-section-head small{padding:5px 8px;border-radius:6px;color:#62738b;background:#eef3f8;font-size:10px;font-weight:900;letter-spacing:.04em;text-transform:uppercase}.counter-choice-options{display:grid;gap:12px;margin:0}.counter-choice-options label{display:block;cursor:pointer}.counter-choice-options input{position:absolute;opacity:0;pointer-events:none}.counter-choice-options span{display:grid;grid-template-columns:28px minmax(0,1fr) auto;align-items:center;gap:13px;min-height:82px;padding:16px 20px;border:1px solid #dce5ef;border-radius:11px;color:#25334b;background:#fff;transition:border-color .16s,background .16s,box-shadow .16s}.counter-choice-options span:hover{border-color:#c1cfde;background:#fbfcfe}.counter-choice-options span i{display:block;width:21px;height:21px;border:2px solid #c7d4e2;border-radius:50%;background:#fff}.counter-choice-options span strong{font-size:20px;letter-spacing:-.02em}.counter-choice-options span b{color:#44536b;font-size:21px;letter-spacing:-.03em}.counter-choice-options input:checked+span{border:2px solid #c61f34;color:#1d2a41;background:#fffafa;box-shadow:0 5px 13px rgba(192,31,52,.07)}.counter-choice-options input:checked+span i{position:relative;border-color:#c61f34;background:#c61f34}.counter-choice-options input:checked+span i:after{position:absolute;top:4px;left:6px;width:6px;height:3px;border-bottom:2px solid #fff;border-left:2px solid #fff;transform:rotate(-45deg);content:''}.counter-choice-options input:checked+span b{color:#bd1e33}.counter-style-options{display:flex;flex-wrap:wrap;gap:9px;margin:18px 32px 0;padding:13px 15px;border:1px solid #e1e8f0;border-radius:11px}.counter-style-options legend{padding:0 5px;color:#63748b;font-size:11px;font-weight:900}.counter-style-options label{font-size:12px;font-weight:750}.counter-style-options b{color:#148251}.counter-course-choice{display:grid;gap:8px;margin:22px 32px 0;color:#1e2b42;font-size:16px;font-weight:850}.counter-course-choice select{width:100%;min-height:58px;padding:0 18px;border:1px solid #d7e1ec;border-radius:10px;color:#27364e;background:#f9fbfd;font:800 16px Manrope,sans-serif}.counter-course-choice select:focus{outline:0;border-color:#c61f34;box-shadow:0 0 0 3px rgba(198,31,52,.1)}.counter-choice-dialog #counter-choice-add{display:flex;width:calc(100% - 64px);align-items:center;justify-content:space-between;gap:12px;margin:26px 32px 32px;padding:18px 22px;border-radius:10px;color:#fff;background:linear-gradient(135deg,#d72d43,#bc172e);box-shadow:0 10px 18px rgba(190,26,49,.22);font-size:19px;font-weight:900}.counter-choice-dialog #counter-choice-add span{display:flex;align-items:center;gap:12px}.counter-choice-dialog #counter-choice-add i{font-size:29px;font-style:normal;font-weight:400;line-height:.5}.counter-choice-dialog #counter-choice-add b{font-size:22px;letter-spacing:-.03em}.counter-choice-dialog #counter-choice-add:hover{filter:brightness(1.03);transform:translateY(-1px)}@media(max-width:560px){.counter-choice-dialog{width:calc(100vw - 20px);border-radius:16px}.counter-choice-title{padding:23px 20px 18px}.counter-choice-dialog .dialog-close{top:14px;right:14px;width:37px;height:37px}.counter-choice-dialog h2{font-size:25px}.counter-portion-section{padding:21px 20px 4px}.counter-choice-options span{min-height:70px;padding:13px 15px}.counter-choice-options span strong{font-size:17px}.counter-choice-options span b{font-size:18px}.counter-style-options{margin-inline:20px}.counter-course-choice{margin-inline:20px;font-size:14px}.counter-course-choice select{min-height:50px;font-size:14px}.counter-choice-dialog #counter-choice-add{width:calc(100% - 40px);margin:22px 20px 20px;padding:16px;font-size:16px}.counter-choice-dialog #counter-choice-add b{font-size:19px}}
+`;
 document.head.appendChild(counterChoiceStyles);
 const counterLayoutRefinements = document.createElement('style');
 counterLayoutRefinements.textContent = `.counter-menu-items{align-items:start;grid-auto-rows:150px}.counter-menu-item{height:150px;min-height:0}.counter-category-group{display:block;padding:13px 14px 7px;color:#9a2635;background:#f8fafc;font-size:10px;font-weight:900;letter-spacing:.09em;text-transform:uppercase}.counter-category-group~.counter-category{min-height:54px}.counter-cart{height:auto;min-height:0;align-self:start}.counter-cart-items{display:block;height:clamp(190px,28vh,260px);min-height:0;flex:0 0 auto;overflow-y:auto;margin:14px 0}.counter-cart-line{min-height:0;height:72px;padding:10px 0}.counter-customer{flex:0 0 auto;margin-top:0}.counter-customer textarea{resize:none}.counter-total,.counter-place-order,.counter-order-status{flex:0 0 auto}@media(max-width:800px){.counter-menu-items{grid-auto-rows:130px}.counter-menu-item{height:130px}.counter-category-group{display:none}.counter-cart-items{height:220px;max-height:45vh}}`;
@@ -1355,6 +1423,41 @@ document.head.appendChild(counterLayoutRefinements);
 const counterSmartKdsCourseStyles = document.createElement('style');
 counterSmartKdsCourseStyles.textContent = `.counter-course-choice,.counter-line-course{display:flex;align-items:center;gap:7px;margin:12px 0;color:#5d6d84;font-size:11px;font-weight:900}.counter-course-choice select,.counter-line-course select{min-height:30px;padding:5px 7px;border:1px solid #d4deea;border-radius:7px;color:#26344e;background:#fff;font:700 11px Manrope,sans-serif}.counter-line-course{margin:7px 0 0;font-size:9px;text-transform:uppercase}.counter-cart-line{height:auto!important;min-height:72px}@media(max-width:800px){.counter-cart-line{min-height:84px}}`;
 document.head.appendChild(counterSmartKdsCourseStyles);
+const counterChoiceRefinementStyles = document.createElement('style');
+counterChoiceRefinementStyles.textContent = `
+#counter-choice-dialog .counter-course-choice{display:grid;align-items:stretch;gap:8px;margin:22px 32px 0;color:#1e2b42;font-size:16px;font-weight:850;text-transform:none}#counter-choice-dialog .counter-course-choice select{width:100%;min-height:58px;padding:0 18px;border:1px solid #d7e1ec;border-radius:10px;color:#27364e;background:#f9fbfd;font:800 16px Manrope,sans-serif}#counter-choice-dialog .counter-course-choice select:focus{outline:0;border-color:#c61f34;box-shadow:0 0 0 3px rgba(198,31,52,.1)}@media(max-width:560px){#counter-choice-dialog .counter-course-choice{margin-inline:20px;font-size:14px}#counter-choice-dialog .counter-course-choice select{min-height:50px;font-size:14px}}
+`;
+document.head.appendChild(counterChoiceRefinementStyles);
+const counterChoiceCompactStyles = document.createElement('style');
+counterChoiceCompactStyles.textContent = `
+#counter-choice-dialog{width:min(590px,calc(100vw - 32px)}#counter-choice-dialog .dialog-close{top:15px;right:16px;width:38px;height:38px;font-size:25px}.counter-choice-title{padding:20px 26px 16px}.counter-choice-title>span{font-size:10px}.counter-choice-dialog h2{margin-top:4px;font-size:26px}.counter-portion-section{padding:18px 26px 3px}.counter-choice-section-head{margin-bottom:11px}.counter-choice-section-head h3{font-size:15px}.counter-choice-options{gap:9px}.counter-choice-options span{min-height:64px;padding:11px 15px;gap:11px}.counter-choice-options span strong{font-size:17px}.counter-choice-options span b{font-size:19px}.counter-style-options{margin:14px 26px 0;padding:10px 12px}.counter-course-choice,#counter-choice-dialog .counter-course-choice{gap:6px;margin:15px 26px 0;font-size:14px}.counter-course-choice select,#counter-choice-dialog .counter-course-choice select{min-height:48px;padding-inline:14px;font-size:14px}.counter-choice-dialog #counter-choice-add{width:calc(100% - 52px);margin:18px 26px 24px;padding:14px 18px;font-size:16px}.counter-choice-dialog #counter-choice-add i{font-size:24px}.counter-choice-dialog #counter-choice-add b{font-size:19px}@media(max-width:560px){#counter-choice-dialog{width:calc(100vw - 20px)}.counter-choice-title{padding:19px 18px 15px}.counter-portion-section{padding-inline:18px}.counter-choice-options span{min-height:61px}.counter-style-options{margin-inline:18px}.counter-course-choice,#counter-choice-dialog .counter-course-choice{margin-inline:18px}.counter-choice-dialog #counter-choice-add{width:calc(100% - 36px);margin:18px 18px 20px}}
+`;
+document.head.appendChild(counterChoiceCompactStyles);
+const counterWorkspaceStyles = document.createElement('style');
+counterWorkspaceStyles.textContent = `
+#counter-order-panel{max-width:none;margin:14px 12px 0;padding:0;overflow:hidden;border:1px solid #dfe6ef;border-radius:16px;background:#f7f9fc;box-shadow:0 12px 28px rgba(30,48,77,.08)}
+.counter-order-head{align-items:center;min-height:76px;padding:14px 20px;border-bottom:1px solid #e4eaf1;background:#fff}.counter-order-head .eyebrow{margin:0;color:#bc263d;font-size:10px}.counter-order-head h2{margin:3px 0 0;color:#172840;font-size:23px;letter-spacing:-.04em}.counter-order-head p{margin-top:3px;color:#728199;font-size:11px;font-weight:700}.counter-back{min-height:36px;padding:8px 11px;border:1px solid #dce4ee;border-radius:8px;color:#3e5778;background:#fff;font-size:11px;box-shadow:none}.counter-back:hover{border-color:#b7c7d9;color:#bd263d;background:#fff5f6;filter:none;transform:none}
+.counter-order-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(350px,410px);gap:0;min-height:calc(100dvh - 190px);margin:0}.counter-menu{display:grid;grid-template-columns:210px minmax(0,1fr);grid-template-rows:76px minmax(0,1fr);gap:0;padding:0;border:0;border-radius:0;background:#f7f9fc}.counter-search{grid-column:2;grid-row:1;align-self:center;margin:0 20px;padding:0 14px;border-color:#e1e7ef;border-radius:10px;background:#fff}.counter-search:focus-within{border-color:#d33a4b;box-shadow:0 0 0 3px rgba(211,58,75,.1)}.counter-search input{height:44px;color:#243752;font-size:13px}.counter-search input::placeholder{color:#95a2b4}
+.counter-categories{grid-column:1;grid-row:1 / 3;max-height:none;padding:12px 0;border:0;border-right:1px solid #e2e8f0;border-radius:0;background:#fff}.counter-category-group{padding:16px 18px 7px;color:#9a2638;background:#fff;font-size:9px}.counter-category{min-height:43px;padding:9px 18px;border:0;border-right:3px solid transparent;color:#596a81;background:#fff;font-size:12px}.counter-category:first-child{margin-bottom:4px;color:#b8253a;background:#fff5f6}.counter-category:hover{color:#bd263d;background:#fff7f8}.counter-category.is-active{color:#c3263c;border-right-color:#cf293f;background:#fff1f3;box-shadow:none}.counter-category-group~.counter-category{min-height:42px}
+.counter-menu-items{grid-column:2;grid-row:2;align-content:start;grid-template-columns:repeat(auto-fill,minmax(174px,1fr));grid-auto-rows:142px;gap:14px;max-height:none;padding:4px 20px 22px;overflow:auto}.counter-menu-item{height:142px;padding:14px;border:1px solid #e1e7ef;border-left:3px solid #d63146;border-radius:12px;background:#fff;box-shadow:0 3px 9px rgba(34,53,83,.045)}.counter-menu-item:hover{border-color:#c9d4e1;border-left-color:#c52a40;background:#fff;box-shadow:0 8px 16px rgba(34,53,83,.09);transform:translateY(-1px)}.counter-menu-item span{color:#8391a5;font-size:9px}.counter-menu-item b{margin:7px 26px 7px 0;color:#243651;font-size:13px}.counter-menu-item small{position:absolute;bottom:14px;left:14px;color:#172940;font-size:18px}.counter-menu-item i{right:13px;bottom:13px;width:30px;height:30px;border-radius:8px;color:#6d819d;background:#f1f5f9;font-size:25px;font-weight:500}.counter-menu-item:hover i{color:#fff;background:#ca2c42}
+.counter-cart{position:relative;min-height:0;max-height:calc(100dvh - 190px);padding:19px 20px;border:0;border-left:1px solid #e2e8f0;border-radius:0;background:#fff;box-shadow:none}.counter-cart-head{align-items:center;padding-bottom:14px;border-bottom:1px solid #e8edf3}.counter-cart-head h3{color:#172840;font-size:18px;letter-spacing:-.025em}.counter-clear{padding:7px 0;color:#c82b3f;background:transparent;font-size:10px}.counter-clear:hover{background:transparent;filter:none;transform:none;text-decoration:underline}.counter-cart-items{height:clamp(175px,31vh,300px);margin:12px 0;overflow-y:auto}.counter-cart-line{grid-template-columns:minmax(0,1fr) auto;gap:10px;min-height:0!important;height:auto!important;padding:12px 0}.counter-cart-line>strong{display:none}.counter-cart-line b{color:#263751;font-size:12px}.counter-cart-line small{font-size:10px}.counter-quantity{grid-column:2;grid-row:1;gap:0;border:1px solid #e0e7ef;border-radius:8px;overflow:hidden}.counter-quantity button{width:29px;height:29px;border-radius:0;color:#536b88;background:#fff;font-size:16px}.counter-quantity b{display:grid;min-width:28px;height:29px;place-items:center;border-inline:1px solid #e0e7ef;font-size:12px}.counter-line-course{grid-column:1 / -1;margin:2px 0 0}.counter-line-course select{min-height:26px;font-size:10px}
+.counter-customer{grid-template-columns:1fr 1fr;gap:9px;margin-top:auto;padding-top:13px;border-top:1px solid #e8edf3}.counter-customer label{gap:5px;font-size:9px}.counter-customer label:nth-of-type(3),.counter-customer label:nth-of-type(4),#counter-wallet{grid-column:1 / -1}.counter-customer input,.counter-customer textarea,.counter-customer select{min-height:37px;padding:8px 10px;border-color:#e0e7ef;border-radius:8px;font-size:11px}.counter-customer textarea{min-height:44px}.counter-total{margin-top:13px;padding:14px 0;border-top:1px solid #e2e9f1}.counter-total span{color:#74849b;font-size:10px;text-transform:uppercase}.counter-total b{color:#172840;font-size:25px}.counter-place-order{padding:13px;border-radius:9px;background:linear-gradient(135deg,#d72e43,#b71931);box-shadow:0 7px 14px rgba(193,32,55,.16)}#dine-in-actions{gap:7px;margin-top:11px;padding-top:11px;border-top:1px solid #e8edf3}#dine-in-actions button{min-height:39px;font-size:10px}.counter-order-status{margin:7px 0 0}.counter-empty{grid-column:1/-1;margin:44px 0;color:#8291a5}
+@media(max-width:1100px){.counter-order-layout{grid-template-columns:1fr;min-height:0}.counter-cart{max-height:none;border-top:1px solid #e2e8f0;border-left:0}.counter-cart-items{height:230px}.counter-menu{min-height:570px}}@media(max-width:760px){#counter-order-panel{margin:10px 12px 0}.counter-order-head{padding:13px 14px}.counter-order-head h2{font-size:19px}.counter-order-head p{display:none}.counter-order-layout{display:block}.counter-menu{display:grid;min-height:0;grid-template-columns:1fr;grid-template-rows:auto auto auto}.counter-search{grid-column:1;grid-row:1;margin:12px}.counter-categories{grid-column:1;grid-row:2;display:flex;max-height:none;padding:0 10px 10px;overflow-x:auto;border:0;border-bottom:1px solid #e2e8f0}.counter-category-group{display:none}.counter-category{width:auto;min-width:max-content;min-height:36px!important;padding:8px 11px;border-right:0;border-bottom:3px solid transparent;font-size:11px}.counter-category:first-child{margin:0}.counter-category.is-active{border-right:0;border-bottom-color:#ce293f}.counter-menu-items{grid-column:1;grid-row:3;grid-template-columns:repeat(2,minmax(0,1fr));grid-auto-rows:130px;gap:10px;padding:12px}.counter-menu-item{height:130px;padding:12px}.counter-menu-item small{left:12px;bottom:12px;font-size:15px}.counter-menu-item i{right:10px;bottom:10px;width:27px;height:27px}.counter-cart{padding:16px}.counter-customer{grid-template-columns:1fr}.counter-customer label:nth-of-type(3),.counter-customer label:nth-of-type(4){grid-column:auto}.counter-cart-items{height:220px}}
+`;
+document.head.appendChild(counterWorkspaceStyles);
+const counterWorkspacePolishStyles = document.createElement('style');
+counterWorkspacePolishStyles.textContent = `
+.counter-menu-items{grid-template-columns:repeat(auto-fill,minmax(215px,1fr));grid-auto-rows:154px}.counter-menu-item{display:flex;height:154px;flex-direction:column;padding:15px}.counter-menu-item b{display:-webkit-box;overflow:hidden;margin:7px 32px 0 0;line-height:1.3;-webkit-line-clamp:2;-webkit-box-orient:vertical}.counter-menu-item small{position:static;display:block;margin-top:auto;padding-right:38px;overflow:hidden;font-size:16px;line-height:1.15;text-overflow:ellipsis;white-space:nowrap}.counter-menu-item i{right:14px;bottom:14px}.counter-cart-items .counter-empty{display:grid;min-height:142px;margin:6px 0;place-items:center;padding:18px;border:1px dashed #d5dfeb;border-radius:11px;color:#788aa2;background:#fafcff;font-size:11px;font-weight:750;line-height:1.45;text-align:center}.counter-cart-items .counter-empty:before{display:block;width:32px;height:32px;margin:0 auto 7px;place-content:center;border-radius:50%;color:#b3c0d0;background:#edf2f7;content:'+';font-size:21px;font-weight:500}@media(min-width:1750px){.counter-menu-items{grid-template-columns:repeat(auto-fill,minmax(230px,1fr))}}@media(max-width:760px){.counter-menu-items{grid-template-columns:repeat(2,minmax(0,1fr));grid-auto-rows:136px}.counter-menu-item{height:136px}.counter-menu-item small{font-size:14px}.counter-cart-items .counter-empty{min-height:110px}}
+`;
+document.head.appendChild(counterWorkspacePolishStyles);
+const counterWorkspaceScrollStyles = document.createElement('style');
+counterWorkspaceScrollStyles.textContent = `
+@media(min-width:761px){body.is-counter-workspace{overflow:hidden}body.is-counter-workspace .fulfillment-actions,body.is-counter-workspace>.order-search-panel,body.is-counter-workspace>#orders,body.is-counter-workspace>#order-status-filters{display:none!important}body.is-counter-workspace #counter-order-panel{height:calc(100dvh - 94px);min-height:600px;margin-top:10px}body.is-counter-workspace .counter-order-layout{height:calc(100% - 76px);min-height:0}body.is-counter-workspace .counter-menu{height:100%;min-height:0}body.is-counter-workspace .counter-categories{min-height:0;overflow-y:auto}body.is-counter-workspace .counter-menu-items{min-height:0;height:100%;overflow-y:auto;overscroll-behavior:contain}body.is-counter-workspace .counter-cart{height:100%;max-height:none;min-height:0}body.is-counter-workspace .counter-cart-items{height:auto;min-height:0;flex:1 1 auto;overscroll-behavior:contain}body.is-counter-workspace .counter-cart-items .counter-empty{height:100%;min-height:0}body.is-counter-workspace .counter-customer{margin-top:0}body.is-counter-workspace .counter-order-status{min-height:0}}
+`;
+document.head.appendChild(counterWorkspaceScrollStyles);
+const counterWorkspaceSafetyStyles = document.createElement('style');
+counterWorkspaceSafetyStyles.textContent = `#dine-in-actions[hidden]{display:none!important}.counter-place-order:disabled{cursor:not-allowed;opacity:.48;box-shadow:none;filter:grayscale(.15)}`;
+document.head.appendChild(counterWorkspaceSafetyStyles);
 const operationsRoutingStyles = document.createElement('style');
 operationsRoutingStyles.textContent = `.operations-section{padding:20px;border:1px solid #e2e9f1;border-radius:15px;background:linear-gradient(145deg,#fff,#fbfcfe)}.operations-section+.operations-section{margin-top:16px}.operations-section-head{display:flex;align-items:start;justify-content:space-between;gap:16px}.operations-section-head h3{margin:3px 0 5px;color:#1f2e47;font-size:18px}.operations-section-head p{max-width:660px;margin:0;color:#6a7890;font-size:12px;line-height:1.5}.operations-count{padding:7px 9px;border-radius:999px;color:#36547d;background:#edf3fb;font-size:10px;font-weight:900;white-space:nowrap}.operations-printer-form,.operations-route-form{display:grid;gap:10px;align-items:end;margin:18px 0}.operations-printer-form{grid-template-columns:minmax(180px,1.2fr) minmax(130px,.55fr) minmax(180px,.9fr) 90px auto}.operations-route-form{grid-template-columns:minmax(180px,.8fr) minmax(320px,1.4fr) auto}.operations-printer-form label,.operations-route-form label{display:grid;gap:5px;color:#55657b;font-size:10px;font-weight:900;letter-spacing:.05em;text-transform:uppercase}.operations-printer-form input,.operations-printer-form select,.operations-route-form select{width:100%;min-height:42px;padding:10px 11px;border:1px solid #d5dfeb;border-radius:9px;color:#23334e;background:#fff;font:700 12px Manrope,sans-serif}.operations-printer-form input:focus,.operations-printer-form select:focus,.operations-route-form select:focus,.category-search:focus{outline:0;border-color:#2e67b1;box-shadow:0 0 0 3px rgba(46,103,177,.12)}.operations-printer-form button,.operations-route-form button{min-height:42px;padding:10px 13px;background:#263d68;font-size:11px;white-space:nowrap}.operations-printer-form button span{font-size:16px}.printer-grid{grid-template-columns:repeat(auto-fill,minmax(255px,1fr))}.operation-printer{min-height:146px;border-color:#dfe7f0;box-shadow:0 4px 12px rgba(30,51,83,.05)}.operation-printer-head{display:grid;grid-template-columns:38px minmax(0,1fr) auto;gap:10px}.printer-card-icon{display:grid;width:38px;height:38px;place-items:center;border-radius:10px;color:#087348;background:#e8f7ef;font-size:22px;font-weight:900}.printer-card-icon.bill{color:#315487;background:#eaf1ff}.operation-printer p{line-height:1.4}.printer-endpoint{margin:9px 0!important;padding:7px 9px;border-radius:8px;color:#56708f!important;background:#f2f6fb;font:800 10px ui-monospace,SFMono-Regular,Menlo,monospace!important}.printer-endpoint.is-pending{color:#9a6c20!important;background:#fff8e9}.routing-section{background:linear-gradient(145deg,#fffdf8,#fff)}.category-picker{border:1px solid #d5dfeb;border-radius:10px;background:#fff;padding:9px}.category-picker-top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}.category-picker-top b{color:#23334e;font-size:12px}.category-picker-top span{color:#64748b;font-size:10px;font-weight:800}.category-search{width:100%;min-height:37px;border:1px solid #d5dfeb;border-radius:8px;padding:8px 10px;font:700 12px Manrope,sans-serif}.category-checklist{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:7px;max-height:190px;overflow:auto;margin-top:9px;padding-right:2px}.category-choice{display:flex!important;align-items:center;gap:8px;padding:8px 9px;border:1px solid #e2e9f1;border-radius:8px;color:#33445f!important;background:#fbfcfe;font-size:11px!important;letter-spacing:0!important;text-transform:none!important;cursor:pointer}.category-choice:hover{border-color:#a9bdd8;background:#f1f6fd}.category-choice input{width:16px;height:16px;accent-color:#1e8b59}.category-choice.is-hidden{display:none!important}.route-row{display:grid;grid-template-columns:28px minmax(0,1fr) auto}.route-icon{display:grid;width:26px;height:26px;place-items:center;border-radius:7px;color:#087348;background:#e8f7ef;font-size:16px}.route-row span{display:block;margin-top:3px}.operations-save-bar{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:16px;padding:13px 15px;border:1px solid #cce8d8;border-radius:12px;background:#f3fbf6;color:#527260;font-size:12px;font-weight:700}.operations-save{margin:0!important;padding:10px 14px;white-space:nowrap}@media(max-width:900px){.operations-printer-form{grid-template-columns:1fr 1fr}.operations-printer-form button{width:100%}}@media(max-width:760px){.operations-printer-form,.operations-route-form{grid-template-columns:1fr}.operations-printer-form button,.operations-route-form button{width:100%}.operations-section{padding:16px}.operations-section-head{align-items:flex-start}.category-checklist{grid-template-columns:1fr}.operations-save-bar{align-items:stretch;flex-direction:column}.operations-save{width:100%}}`;
 document.head.appendChild(operationsRoutingStyles);
@@ -1604,11 +1707,14 @@ async function loadOrders() {
             })
         );
     if (orderView === 'current') known = ids;
-    const liveCount = document.getElementById('live-orders-count');
-    if (liveCount && orderView === 'current')
-      liveCount.textContent = String(
+    if (orderView === 'current') {
+      const activeCount = String(
         rows.filter((order) => !['completed', 'rejected', 'cancelled'].includes(order.status)).length
       );
+      document.querySelectorAll('#live-orders-count').forEach((count) => {
+        count.textContent = activeCount;
+      });
+    }
     firstLoad = false;
     const statusRows =
       orderStatusFilter === 'all'
@@ -3662,8 +3768,12 @@ document.getElementById('availability-toggle')?.addEventListener('click', async 
   if (isOpening) closeOpenPanels('availability');
   availability.hidden = !isOpening;
   document.getElementById('availability-toggle').setAttribute('aria-expanded', String(isOpening));
-  if (!isOpening) rememberOrdersWorkspace('tables');
+  if (!isOpening) {
+    setOrdersRailActive('tables');
+    rememberOrdersWorkspace('tables');
+  }
   if (isOpening) {
+    setOrdersRailActive('availability');
     rememberOrdersWorkspace('availability');
     try {
       await loadAvailability();
@@ -3678,8 +3788,12 @@ liveOrdersToggle.addEventListener('click', () => {
   liveOrdersPanel.hidden = !isOpening;
   liveOrdersToggle.classList.toggle('is-open', isOpening);
   liveOrdersToggle.setAttribute('aria-expanded', String(isOpening));
-  if (!isOpening) rememberOrdersWorkspace('tables');
+  if (!isOpening) {
+    setOrdersRailActive('tables');
+    rememberOrdersWorkspace('tables');
+  }
   if (isOpening) {
+    setOrdersRailActive('live');
     rememberOrdersWorkspace('live');
     orderView = 'current';
     historyAll = false;
@@ -3695,9 +3809,13 @@ liveOrdersToggle.addEventListener('click', () => {
 document.getElementById('availability-close')?.addEventListener('click', () => {
   availability.hidden = true;
   document.getElementById('availability-toggle').setAttribute('aria-expanded', 'false');
+  setOrdersRailActive('tables');
+  rememberOrdersWorkspace('tables');
 });
 document.getElementById('counter-order-close')?.addEventListener('click', () => {
   counterPanel.hidden = true;
+  document.body.classList.remove('is-counter-workspace');
+  rememberOrdersWorkspace('tables');
   showTableView();
 });
 document.getElementById('view-table-kot')?.addEventListener('click', () => {
@@ -3787,6 +3905,12 @@ viewKotDialog.addEventListener('click', async (event) => {
   }
 });
 document.getElementById('table-view-content')?.addEventListener('click', async (event) => {
+  const areaFilter = event.target.closest('[data-table-area-filter]');
+  if (areaFilter) {
+    tableViewAreaFilter = areaFilter.dataset.tableAreaFilter || 'all';
+    renderTableView();
+    return;
+  }
   if (event.target.closest('[data-toggle-move-kot]')) {
     moveKotItemsMode = !moveKotItemsMode;
     renderTableView();
@@ -3909,6 +4033,11 @@ document.getElementById('table-view-content')?.addEventListener('click', async (
     orderId: existing?.id || '',
   });
 });
+document.getElementById('table-view-content')?.addEventListener('input', (event) => {
+  if (event.target.id !== 'table-view-search') return;
+  tableViewSearch = event.target.value || '';
+  renderTableView();
+});
 const newOrderAction = document.createElement('button');
 newOrderAction.type = 'button';
 newOrderAction.id = 'new-order-action';
@@ -3920,6 +4049,7 @@ newOrderActionStyles.textContent = '';
 document.head.appendChild(newOrderActionStyles);
 newOrderAction.addEventListener('click', async () => {
   closeOpenPanels('tables');
+  rememberOrdersWorkspace('tables');
   await showTableView();
   tableViewPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
 });
@@ -4045,6 +4175,10 @@ document.getElementById('counter-menu-items')?.addEventListener('click', (event)
   counterBillSplit = null;
   renderCounterOrder();
 });
+document.getElementById('counter-choice-dialog')?.addEventListener('change', (event) => {
+  if (event.target.matches('input[name="counter-portion"], input[name="counter-style"]'))
+    updateCounterChoiceTotal();
+});
 document.getElementById('counter-choice-dialog')?.addEventListener('click', (event) => {
   if (event.target.closest('[data-counter-choice-close]')) {
     document.getElementById('counter-choice-dialog').close();
@@ -4110,10 +4244,11 @@ document.getElementById('counter-clear')?.addEventListener('click', () => {
 });
 async function submitDineInAction(action) {
   const status = document.getElementById('counter-order-status');
-  if (!counterTable || !counterCart.length) {
+  if (!counterCart.length) {
     status.textContent = 'Add at least one menu item first.';
     return;
   }
+  const isDineIn = !!counterTable;
   const button = document.querySelector(`[data-dine-action="${action}"]`);
   if (button) button.disabled = true;
   const payload = {
@@ -4124,19 +4259,21 @@ async function submitDineInAction(action) {
     specialRequest: document.getElementById('counter-special-request').value.trim(),
     courseMode: document.getElementById('counter-course-mode')?.value || 'normal_coursing',
     loyaltyPoints: Math.floor(Number(document.getElementById('counter-wallet-redeem')?.value || 0)),
-    tableArea: counterTable.area,
-    tableNumber: counterTable.number,
+    tableArea: counterTable?.area || '',
+    tableNumber: counterTable?.number || '',
     items: counterCart.map((item) => ({ ...item })),
   };
-  const tableLabel = `${counterTable.area} · Table ${String(counterTable.number).padStart(2, '0')}`;
+  const orderLabel = isDineIn
+    ? `${counterTable.area} · Table ${String(counterTable.number).padStart(2, '0')}`
+    : 'Takeaway order';
   let savedInBridgeLedger = false;
   try {
     status.textContent =
       action === 'hold'
-        ? 'Holding table bill…'
+        ? `Holding ${isDineIn ? 'table bill' : 'takeaway order'}…`
         : action === 'save'
-          ? 'Saving table bill…'
-          : 'Saving dine-in bill…';
+          ? `Saving ${isDineIn ? 'table bill' : 'takeaway order'}…`
+          : `Saving ${isDineIn ? 'dine-in bill' : 'takeaway order'}…`;
     if (['save', 'hold'].includes(action)) {
       try {
         await saveToBridgeLedger(payload);
@@ -4145,14 +4282,14 @@ async function submitDineInAction(action) {
         reportOrdersDiagnostic({
           level: 'warning',
           message: `Local ledger unavailable: ${ledgerError.message}`,
-          source: 'offline dine-in ledger',
+          source: isDineIn ? 'offline dine-in ledger' : 'offline takeaway ledger',
         });
       }
     }
     if (!navigator.onLine) {
       if (!['save', 'hold'].includes(action))
         throw new Error(
-          'KOT and final bill printing need an online order confirmation. Save or hold the table first; it will sync safely when the connection returns.'
+          'KOT and final bill printing need an online order confirmation. Save or hold the order first; it will sync safely when the connection returns.'
         );
       throw new TypeError('Offline');
     }
@@ -4163,10 +4300,14 @@ async function submitDineInAction(action) {
       updateConnectivity();
     }
     if (action === 'kot-print') {
-      const printing = await autoPrintOrder({ id: result.id, mode: 'table', status: 'accepted' });
+      const printing = await autoPrintOrder({
+        id: result.id,
+        mode: isDineIn ? 'table' : 'counter',
+        status: 'accepted',
+      });
       if (!printing.ok)
         throw new Error(printing.reason || 'KOTs could not be sent to the kitchen.');
-      status.textContent = `${tableLabel}: KOTs sent to the kitchen.`;
+      status.textContent = `${orderLabel}: KOTs sent to the kitchen.`;
     } else if (action === 'print') {
       await printOrder(result.id, counterBillSplit);
       const marked = await fetch(`/api/orders/${encodeURIComponent(result.id)}/bill-printed`, {
@@ -4177,15 +4318,19 @@ async function submitDineInAction(action) {
         throw new Error(
           markedData.error || 'Bill printed, but the table could not be marked for settlement.'
         );
-      status.textContent = `${tableLabel}: bill printed and waiting for settlement.`;
+      status.textContent = isDineIn
+        ? `${orderLabel}: bill printed and waiting for settlement.`
+        : `${orderLabel}: eBill printed.`;
     } else
       status.textContent =
-        action === 'hold' ? `${tableLabel} is on hold.` : `${tableLabel} saved in Saved bills.`;
+        action === 'hold'
+          ? `${orderLabel} is on hold.`
+          : `${orderLabel} saved for later.`;
     counterBillSplit = null;
     counterCart = [];
     renderCounterOrder();
     await loadOrders();
-    await showTableView();
+    if (isDineIn) await showTableView();
   } catch (error) {
     if (
       (!navigator.onLine || !error.status || error.status >= 500) &&
@@ -4196,13 +4341,15 @@ async function submitDineInAction(action) {
         queued.push(payload);
         saveQueuedCounterOrders(queued);
       }
-      reserveOfflineTable(payload);
+      if (isDineIn) reserveOfflineTable(payload);
       counterBillSplit = null;
       counterCart = [];
       renderCounterOrder();
-      status.textContent = `${tableLabel} is saved offline and reserved. It will sync automatically when internet returns.`;
+      status.textContent = isDineIn
+        ? `${orderLabel} is saved offline and reserved. It will sync automatically when internet returns.`
+        : `${orderLabel} is saved offline. It will sync automatically when internet returns.`;
       updateConnectivity();
-    } else status.textContent = error.message || 'Unable to save this dine-in bill.';
+    } else status.textContent = error.message || `Unable to save this ${isDineIn ? 'dine-in bill' : 'takeaway order'}.`;
   } finally {
     if (button) button.disabled = false;
   }
@@ -4332,9 +4479,11 @@ operationsToggle.addEventListener('click', async () => {
   operationsToggle.classList.toggle('is-open', opening);
   operationsToggle.setAttribute('aria-expanded', String(opening));
   if (!opening) {
+    setOrdersRailActive('tables');
     rememberOrdersWorkspace('tables');
     return;
   }
+  setOrdersRailActive('operations');
   rememberOrdersWorkspace('operations', operationsTab);
   const hasSnapshot =
     (operationsConfig.printers || []).length ||
@@ -4359,6 +4508,42 @@ operationsToggle.addEventListener('click', async () => {
     })
     .catch(() => {});
   void discoverSystemPrinters();
+});
+document.querySelector('.orders-rail')?.addEventListener('click', async (event) => {
+  const control = event.target.closest('[data-orders-rail]');
+  if (!control) return;
+  const workspace = control.dataset.ordersRail;
+  if (workspace === 'tables') {
+    event.preventDefault();
+    closeOpenPanels('tables');
+    rememberOrdersWorkspace('tables');
+    await showTableView();
+    tableViewPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return;
+  }
+  if (workspace === 'counter') {
+    event.preventDefault();
+    if (counterPanel.hidden) await openCounterOrder();
+    else counterPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return;
+  }
+  if (workspace === 'live') {
+    event.preventDefault();
+    if (liveOrdersPanel.hidden) liveOrdersToggle.click();
+    else liveOrdersPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return;
+  }
+  if (workspace === 'availability') {
+    event.preventDefault();
+    if (availability.hidden) availabilityButton?.click();
+    else availability.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return;
+  }
+  if (workspace === 'operations') {
+    event.preventDefault();
+    if (operationsPanel.hidden) operationsToggle.click();
+    else operationsPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
 });
 document.getElementById('operations-close')?.addEventListener('click', async () => {
   operationsPanel.hidden = true;
@@ -5092,17 +5277,23 @@ if (cachedTableAreas.length) {
 async function restoreLastOrdersWorkspace() {
   const saved = savedOrdersWorkspace();
   if (!saved || saved.area === 'tables') return;
+  if (saved.area === 'counter') {
+    await openCounterOrder();
+    return;
+  }
   if (saved.area === 'live') {
     closeOpenPanels('live');
     liveOrdersPanel.hidden = false;
     liveOrdersToggle.classList.add('is-open');
     liveOrdersToggle.setAttribute('aria-expanded', 'true');
+    setOrdersRailActive('live');
     return;
   }
   if (saved.area === 'availability') {
     closeOpenPanels('availability');
     availability.hidden = false;
     availabilityButton?.setAttribute('aria-expanded', 'true');
+    setOrdersRailActive('availability');
     try {
       await loadAvailability();
     } catch (_) {}
@@ -5115,6 +5306,7 @@ async function restoreLastOrdersWorkspace() {
   operationsPanel.hidden = false;
   operationsToggle.classList.add('is-open');
   operationsToggle.setAttribute('aria-expanded', 'true');
+  setOrdersRailActive('operations');
   renderOperations();
   try {
     await loadOrders();
