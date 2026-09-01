@@ -124,7 +124,8 @@ async function main() {
       setup.ledgerSummary?.pendingActions !== 1 ||
       !Array.isArray(setup.recentPrintFailures) ||
       setup.recentPrintFailures[0]?.status !== 'uncertain' ||
-      typeof setup.ledgerSummary?.printJobs?.unresolvedIssues !== 'number'
+      typeof setup.ledgerSummary?.printJobs?.unresolvedIssues !== 'number' ||
+      typeof setup.unavailableConfiguredPrinterCount !== 'number'
     )
       throw new Error('Bridge setup status did not expose the durable ledger state.');
     console.log('Print Bridge smoke test passed.');

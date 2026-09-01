@@ -1,8 +1,10 @@
 const {
   configuredPrintersFor,
+  printerFormat,
   printerCapabilities,
   printerSupports,
   setPrinterCapability,
+  setPrinterFormat,
 } = require('./printer-domain');
 
 describe('printer capability domain', () => {
@@ -41,5 +43,26 @@ describe('printer capability domain', () => {
     const printers = configuredPrintersFor(config, 'bill');
     expect(printers.map((printer) => printer.deviceName)).toEqual(['Queue A', 'Queue B']);
     expect(printers.map((printer) => printer.paperWidth)).toEqual([58, 58]);
+  });
+
+  test('Bill and KOT formats remain independent on a dual-purpose queue', () => {
+    const printer = { id: 'dual', capabilities: ['bill', 'kot'], paperWidth: 80 };
+    setPrinterFormat(printer, 'bill', { fontFamily: 'Arial', separatorGap: 5 });
+    setPrinterFormat(printer, 'kot', { fontFamily: 'Consolas', separatorGap: 2 });
+    expect(printerFormat(printer, 'bill')).toMatchObject({
+      fontFamily: 'Arial',
+      separatorGap: 5,
+    });
+    expect(printerFormat(printer, 'kot')).toMatchObject({
+      fontFamily: 'Consolas',
+      separatorGap: 2,
+    });
+    expect(printer.paperWidth).toBe(80);
+  });
+
+  test('legacy top-level format settings remain the fallback during migration', () => {
+    expect(printerFormat({ type: 'kot', fontFamily: 'Tahoma' }, 'kot').fontFamily).toBe(
+      'Tahoma'
+    );
   });
 });

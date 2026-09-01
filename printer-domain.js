@@ -42,6 +42,29 @@
     return printer;
   }
 
+  function printerFormat(printer, capability) {
+    if (!printer || typeof printer !== 'object') return {};
+    const normalized = normalizeCapability(capability);
+    const saved = normalized && printer.formats && typeof printer.formats === 'object'
+      ? printer.formats[normalized]
+      : null;
+    return saved && typeof saved === 'object' && !Array.isArray(saved)
+      ? { ...printer, ...saved }
+      : { ...printer };
+  }
+
+  function setPrinterFormat(printer, capability, settings) {
+    const normalized = normalizeCapability(capability);
+    if (!printer || typeof printer !== 'object' || !normalized) return printer;
+    const current =
+      printer.formats && typeof printer.formats === 'object' && !Array.isArray(printer.formats)
+        ? printer.formats
+        : {};
+    const next = settings && typeof settings === 'object' && !Array.isArray(settings) ? settings : {};
+    printer.formats = { ...current, [normalized]: { ...(current[normalized] || {}), ...next } };
+    return printer;
+  }
+
   function configuredPrintersFor(config, capability) {
     return [
       ...new Map(
@@ -63,8 +86,10 @@
     CAPABILITIES,
     capabilityLabel,
     configuredPrintersFor,
+    printerFormat,
     printerCapabilities,
     printerSupports,
     setPrinterCapability,
+    setPrinterFormat,
   };
 });

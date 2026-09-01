@@ -1,8 +1,8 @@
-const CACHE = 'red-lantern-orders-v19';
+const CACHE = 'red-lantern-orders-v20';
 const ORDER_SHELL = [
   '/orders',
   '/printer-domain.js?v=1',
-  '/orders.js?v=36',
+  '/orders.js?v=37',
   '/orders.css?v=7',
   '/orders-logo.css?v=7',
   '/orders-fixes.css?v=16',
@@ -106,14 +106,19 @@ self.addEventListener('push', (event) => {
     data = { ...data, ...event.data.json() };
   } catch {}
   event.waitUntil(
-    self.registration.showNotification(data.title, {
-      body: data.body,
-      icon: '/images/red-lantern-logo-600.webp',
-      badge: '/images/red-lantern-logo-600.webp',
-      tag: data.tag || 'red-lantern-order',
-      renotify: true,
-      data: { url: data.url || '/orders' },
-    })
+    Promise.all([
+      self.registration.showNotification(data.title, {
+        body: data.body,
+        icon: '/images/red-lantern-logo-600.webp',
+        badge: '/images/red-lantern-logo-600.webp',
+        tag: data.tag || 'red-lantern-order',
+        renotify: true,
+        data: { url: data.url || '/orders' },
+      }),
+      clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windows) =>
+        windows.forEach((client) => client.postMessage({ type: 'order-update' }))
+      ),
+    ])
   );
 });
 self.addEventListener('notificationclick', (event) => {

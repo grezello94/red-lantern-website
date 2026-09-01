@@ -5483,6 +5483,73 @@ app.put('/api/orders/operations/table-areas', async (req, res) => {
     res.status(500).json({ error: 'Unable to save table allocation.' });
   }
 });
+function sanitizePrinterFormat(source = {}) {
+  const layout = (value, min, max, fallback) => {
+    const parsed = Number(value);
+    return Math.max(min, Math.min(max, Number.isFinite(parsed) ? parsed : fallback));
+  };
+  const fontFamily = [
+    'Arial',
+    'Calibri',
+    'Verdana',
+    'Tahoma',
+    'Trebuchet MS',
+    'Georgia',
+    'Times New Roman',
+    'Courier New',
+    'Consolas',
+    'Lucida Console',
+  ].includes(String(source.fontFamily))
+    ? String(source.fontFamily)
+    : 'Arial';
+  return {
+    restaurantName: String(source.restaurantName || 'Red Lantern Restaurant')
+      .trim()
+      .slice(0, 60),
+    paperWidth: Number(source.paperWidth) === 58 ? 58 : 80,
+    receiptHeader: String(source.receiptHeader || '').trim().slice(0, 160),
+    receiptFooter: String(source.receiptFooter || '').trim().slice(0, 160),
+    showRestaurantName: source.showRestaurantName !== false,
+    showItemSerial: !!source.showItemSerial,
+    showCustomer: source.showCustomer !== false,
+    kotDetailsCentered: !!source.kotDetailsCentered,
+    quantityFirst: source.quantityFirst !== false,
+    showNotes: source.showNotes !== false,
+    extraSpace: Math.max(0, Math.min(2, Number(source.extraSpace) || 0)),
+    fontFamily,
+    fontSize: Math.max(8, Math.min(13, Number(source.fontSize) || 10)),
+    headerFontSize: Math.max(12, Math.min(18, Number(source.headerFontSize) || 15)),
+    headerBold: source.headerBold !== false,
+    footerBold: !!source.footerBold,
+    billingMainWidth: layout(source.billingMainWidth, 160, 400, 280),
+    billingOuterTop: layout(source.billingOuterTop, 0, 40, 0),
+    billingOuterRight: layout(source.billingOuterRight, 0, 40, 0),
+    billingOuterBottom: layout(source.billingOuterBottom, 0, 40, 0),
+    billingOuterLeft: layout(source.billingOuterLeft, 0, 40, 0),
+    billingItemBoxHeight: layout(source.billingItemBoxHeight, 0, 40, 0),
+    restaurantNameFontSize: layout(source.restaurantNameFontSize, 8, 24, 14),
+    headerFooterFontSize: layout(source.headerFooterFontSize, 8, 20, 13),
+    dateBillFontSize: layout(source.dateBillFontSize, 8, 20, 13),
+    itemListingFontSize: layout(source.itemListingFontSize, 8, 10, 10),
+    grandTotalFontSize: layout(source.grandTotalFontSize, 10, 11, 11),
+    serialColumnWidth: layout(source.serialColumnWidth, 0, 40, 10),
+    itemNameMinWidth: layout(source.itemNameMinWidth, 50, 220, 110),
+    quantityColumnWidth: layout(source.quantityColumnWidth, 8, 60, 20),
+    priceColumnWidth: layout(source.priceColumnWidth, 15, 100, 40),
+    amountColumnWidth: layout(source.amountColumnWidth, 15, 120, 55),
+    itemRowGap: layout(source.itemRowGap, 0, 20, 5),
+    separatorGap: layout(source.separatorGap, 0, 20, 5),
+    separatorThickness: layout(source.separatorThickness, 1, 4, 1),
+    kotHeaderFontSize: layout(source.kotHeaderFontSize, 8, 24, 12),
+    kotTitleFontSize: layout(source.kotTitleFontSize, 10, 26, 15),
+    kotMetaFontSize: layout(source.kotMetaFontSize, 8, 20, 10),
+    kotItemFontSize: layout(source.kotItemFontSize, 8, 22, 12),
+    kotFooterFontSize: layout(source.kotFooterFontSize, 8, 20, 10),
+    kotBottomFeedLines: layout(source.kotBottomFeedLines, 0, 12, 3),
+    itemsPerPage: layout(source.itemsPerPage, 0, 80, 0),
+  };
+}
+
 app.put('/api/orders/operations', async (req, res) => {
   try {
     await ensureOperationsConfigTable();
@@ -5490,18 +5557,17 @@ app.put('/api/orders/operations', async (req, res) => {
     const printers = (Array.isArray(source.printers) ? source.printers : [])
       .slice(0, 250)
       .map((printer) => {
-        const port = Number.parseInt(printer.port, 10),
-          layout = (value, min, max, fallback) =>
-            Math.max(min, Math.min(max, Number(value) || fallback));
+        const port = Number.parseInt(printer.port, 10);
         const capabilities = printerCapabilities(printer);
+        const formats =
+          printer.formats && typeof printer.formats === 'object' && !Array.isArray(printer.formats)
+            ? printer.formats
+            : {};
         return {
           id: String(printer.id || crypto.randomUUID())
             .replace(/[^a-zA-Z0-9_-]/g, '')
             .slice(0, 60),
           name: String(printer.name || '')
-            .trim()
-            .slice(0, 60),
-          restaurantName: String(printer.restaurantName || 'Red Lantern Restaurant')
             .trim()
             .slice(0, 60),
           capabilities,
@@ -5517,64 +5583,11 @@ app.put('/api/orders/operations', async (req, res) => {
           deviceName: String(printer.deviceName || '')
             .trim()
             .slice(0, 120),
-          paperWidth: Number(printer.paperWidth) === 58 ? 58 : 80,
-          receiptHeader: String(printer.receiptHeader || '')
-            .trim()
-            .slice(0, 160),
-          receiptFooter: String(printer.receiptFooter || '')
-            .trim()
-            .slice(0, 160),
-          showRestaurantName: printer.showRestaurantName !== false,
-          showItemSerial: !!printer.showItemSerial,
-          showCustomer: printer.showCustomer !== false,
-          kotDetailsCentered: !!printer.kotDetailsCentered,
-          quantityFirst: printer.quantityFirst !== false,
-          showNotes: printer.showNotes !== false,
-          extraSpace: Math.max(0, Math.min(2, Number(printer.extraSpace) || 0)),
-          fontFamily: [
-            'Arial',
-            'Calibri',
-            'Verdana',
-            'Tahoma',
-            'Trebuchet MS',
-            'Georgia',
-            'Times New Roman',
-            'Courier New',
-            'Consolas',
-            'Lucida Console',
-          ].includes(String(printer.fontFamily))
-            ? String(printer.fontFamily)
-            : 'Arial',
-          fontSize: Math.max(8, Math.min(13, Number(printer.fontSize) || 10)),
-          headerFontSize: Math.max(12, Math.min(18, Number(printer.headerFontSize) || 15)),
-          headerBold: printer.headerBold !== false,
-          footerBold: !!printer.footerBold,
-          billingMainWidth: layout(printer.billingMainWidth, 160, 400, 280),
-          billingOuterTop: layout(printer.billingOuterTop, 0, 40, 0),
-          billingOuterRight: layout(printer.billingOuterRight, 0, 40, 0),
-          billingOuterBottom: layout(printer.billingOuterBottom, 0, 40, 0),
-          billingOuterLeft: layout(printer.billingOuterLeft, 0, 40, 0),
-          billingItemBoxHeight: layout(printer.billingItemBoxHeight, 0, 40, 0),
-          restaurantNameFontSize: layout(printer.restaurantNameFontSize, 8, 24, 14),
-          headerFooterFontSize: layout(printer.headerFooterFontSize, 8, 20, 13),
-          dateBillFontSize: layout(printer.dateBillFontSize, 8, 20, 13),
-          itemListingFontSize: layout(printer.itemListingFontSize, 8, 10, 10),
-          grandTotalFontSize: layout(printer.grandTotalFontSize, 10, 11, 11),
-          serialColumnWidth: layout(printer.serialColumnWidth, 0, 40, 10),
-          itemNameMinWidth: layout(printer.itemNameMinWidth, 50, 220, 110),
-          quantityColumnWidth: layout(printer.quantityColumnWidth, 8, 60, 20),
-          priceColumnWidth: layout(printer.priceColumnWidth, 15, 100, 40),
-          amountColumnWidth: layout(printer.amountColumnWidth, 15, 120, 55),
-          itemRowGap: layout(printer.itemRowGap, 0, 20, 5),
-          separatorGap: layout(printer.separatorGap, 0, 20, 5),
-          separatorThickness: layout(printer.separatorThickness, 1, 4, 1),
-          kotHeaderFontSize: layout(printer.kotHeaderFontSize, 8, 24, 12),
-          kotTitleFontSize: layout(printer.kotTitleFontSize, 10, 26, 15),
-          kotMetaFontSize: layout(printer.kotMetaFontSize, 8, 20, 10),
-          kotItemFontSize: layout(printer.kotItemFontSize, 8, 22, 12),
-          kotFooterFontSize: layout(printer.kotFooterFontSize, 8, 20, 10),
-          kotBottomFeedLines: layout(printer.kotBottomFeedLines, 0, 12, 3),
-          itemsPerPage: layout(printer.itemsPerPage, 0, 80, 0),
+          ...sanitizePrinterFormat(printer),
+          formats: {
+            bill: sanitizePrinterFormat({ ...printer, ...(formats.bill || {}) }),
+            kot: sanitizePrinterFormat({ ...printer, ...(formats.kot || {}) }),
+          },
         };
       })
       .filter((printer) => printer.id && printer.name);
@@ -5637,12 +5650,12 @@ app.put('/api/orders/operations', async (req, res) => {
       return res.status(400).json({ error: 'Each routing rule must have a unique saved ID.' });
     const assignedTargets = new Set();
     for (const route of routes) {
-      const target = `${route.category}::${route.itemName || '*'}::${route.portion || '*'}`;
+      const target = `${route.printerId}::${route.category}::${route.itemName || '*'}::${route.portion || '*'}`;
       if (assignedTargets.has(target))
         return res
           .status(400)
           .json({
-            error: `${route.itemName || route.category}${route.portion ? ` (${route.portion})` : ''} is already routed to another printer. Remove its existing route first.`,
+            error: `${route.itemName || route.category}${route.portion ? ` (${route.portion})` : ''} is already routed to this printer.`,
           });
       assignedTargets.add(target);
     }

@@ -6,11 +6,16 @@ $ErrorActionPreference = 'Stop'
 $project = (Resolve-Path -LiteralPath $ProjectPath).Path
 $bridge = Join-Path $project 'print-bridge.js'
 $supervisor = Join-Path $project 'print-bridge-supervisor.js'
+$domain = Join-Path $project 'printer-domain.js'
 $launcherDir = Join-Path $env:LOCALAPPDATA 'Red Lantern Print Bridge'
 New-Item -ItemType Directory -Path $launcherDir -Force | Out-Null
+$installedBridge = Join-Path $launcherDir 'print-bridge.js'
+$installedSupervisor = Join-Path $launcherDir 'print-bridge-supervisor.js'
+$installedDomain = Join-Path $launcherDir 'printer-domain.js'
 $hiddenLauncher = Join-Path $launcherDir 'run-print-bridge-hidden.vbs'
 if (!(Test-Path -LiteralPath $bridge)) { throw "print-bridge.js was not found in $project" }
 if (!(Test-Path -LiteralPath $supervisor)) { throw "print-bridge-supervisor.js was not found in $project" }
+if (!(Test-Path -LiteralPath $domain)) { throw "printer-domain.js was not found in $project" }
 
 $bundledNode = Join-Path $project 'node.exe'
 $node = if (Test-Path -LiteralPath $bundledNode) { $bundledNode } else { (Get-Command node.exe -ErrorAction Stop).Source }
@@ -18,7 +23,7 @@ $taskName = 'Red Lantern Print Bridge Recovery'
 $nodeMajor = (& $node -p "process.versions.node.split('.')[0]")
 if ([int]$nodeMajor -lt 22) { throw "Node.js 22 or newer is required. This computer has $(& $node -v). Install a supported Node.js LTS release, then run this setup again." }
 $vbsNode = $node.Replace('"', '""')
-$vbsBridge = $supervisor.Replace('"', '""')
+$vbsBridge = $installedSupervisor.Replace('"', '""')
 $startup = [Environment]::GetFolderPath('Startup')
 $launcher = Join-Path $startup 'Red Lantern Print Bridge.vbs'
 $legacyLauncher = Join-Path $startup 'Red Lantern Print Bridge.cmd'
@@ -39,8 +44,8 @@ try {
   Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
     Where-Object {
       $_.CommandLine -and (
-        $_.CommandLine.IndexOf($bridge, [StringComparison]::OrdinalIgnoreCase) -ge 0 -or
-        $_.CommandLine.IndexOf($supervisor, [StringComparison]::OrdinalIgnoreCase) -ge 0
+        $_.CommandLine -match 'print-bridge\.js' -or
+        $_.CommandLine -match 'print-bridge-supervisor\.js'
       )
     } |
     ForEach-Object {
@@ -53,8 +58,13 @@ try {
     Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
     Start-Sleep -Milliseconds 350
   }
+  # Install to a stable per-user directory. Setup ZIPs and project checkouts can
+  # be replaced or removed after installation without breaking automatic start.
+  Copy-Item -LiteralPath $bridge -Destination $installedBridge -Force
+  Copy-Item -LiteralPath $supervisor -Destination $installedSupervisor -Force
+  Copy-Item -LiteralPath $domain -Destination $installedDomain -Force
   # WScript waits for the supervisor but has no visible console window.
-  $action = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\wscript.exe" -Argument ('"{0}"' -f $hiddenLauncher) -WorkingDirectory $project
+  $action = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\wscript.exe" -Argument ('"{0}"' -f $hiddenLauncher) -WorkingDirectory $launcherDir
   $trigger = New-ScheduledTaskTrigger -AtLogOn -User $currentUser
   # Keep the Bridge alive, with no visible terminal. It starts at every sign-in
   # and Task Scheduler restarts it after an unexpected exit.

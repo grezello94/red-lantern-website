@@ -18,7 +18,7 @@ const path = require('path');
 const { DatabaseSync } = require('node:sqlite');
 
 const PORT = Number(process.env.PRINT_BRIDGE_PORT || 9124);
-const BRIDGE_VERSION = '2026.08.31.1';
+const BRIDGE_VERSION = '2026.09.01.1';
 const PRINT_JOB_LEASE_MS = Math.max(
   30000,
   Number(process.env.PRINT_BRIDGE_JOB_LEASE_MS || 2 * 60 * 1000)
@@ -380,6 +380,31 @@ async function installedPrinters() {
   }
 }
 
+async function unavailablePrinterNames() {
+  try {
+    if (process.platform === 'win32') {
+      const output = await run('powershell.exe', [
+        '-NoProfile',
+        '-Command',
+        "Get-Printer | Where-Object { \"$($_.PrinterStatus)\" -match 'Offline|Error' } | Select-Object -ExpandProperty Name",
+      ]);
+      return new Set(output.split(/\r?\n/).map((name) => name.trim()).filter(Boolean));
+    }
+    const output = await run('lpstat', ['-p']);
+    return new Set(
+      output
+        .split(/\r?\n/)
+        .filter((line) => /^printer\s+\S+\s+is\s+disabled/i.test(line))
+        .map((line) => line.match(/^printer\s+([^\s]+)/i)?.[1] || '')
+        .filter(Boolean)
+    );
+  } catch (_) {
+    // Queue-state discovery is an extra readiness signal. Printer discovery and
+    // actual print attempts remain authoritative when the OS omits this data.
+    return new Set();
+  }
+}
+
 function formatPrinters(names) {
   return [...new Set(names.map((name) => name.trim()).filter(Boolean))]
     .sort((a, b) => a.localeCompare(b))
@@ -427,8 +452,10 @@ async function printText(printerName, text, settings = {}) {
       const headerFontSize = Math.max(12, Math.min(18, Number(settings.headerFontSize) || 15));
       const headerStyle = settings.headerBold === false ? 'Regular' : 'Bold';
       const footerStyle = settings.footerBold ? 'Bold' : 'Regular';
-      const layout = (value, min, max, fallback) =>
-        Math.max(min, Math.min(max, Number(value) || fallback));
+      const layout = (value, min, max, fallback) => {
+        const parsed = Number(value);
+        return Math.max(min, Math.min(max, Number.isFinite(parsed) ? parsed : fallback));
+      };
       // 309 hundredths of an inch is 78.5 mm: the measured printable span of
       // the 80 mm reference receipt.  The driver still owns the actual paper
       // form, so this safely shrinks when a printer has a narrower print area.
@@ -722,8 +749,10 @@ function billText(payload) {
     settings = payload.settings || {},
     items = Array.isArray(order.items) ? order.items : [],
     line = '__SEPARATOR__';
-  const sectionHeight = (key, fallback) =>
-    Math.max(0, Math.min(500, Number(settings[key]) || fallback));
+  const sectionHeight = (key, fallback) => {
+    const parsed = Number(settings[key]);
+    return Math.max(0, Math.min(500, Number.isFinite(parsed) ? parsed : fallback));
+  };
   const money = (value) => `₹${Math.round(Number(value) || 0)}`;
   const decimal = (value) => (Number(value) || 0).toFixed(2);
   const itemPrice = (item) =>
@@ -897,9 +926,10 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && req.url === '/v1/setup-status') {
     try {
       localLedger().prepare('SELECT 1 AS ok').get();
-      const [printers, config] = await Promise.all([
+      const [printers, config, unavailableNames] = await Promise.all([
         installedPrinters(),
         readJson(configFile, { printers: [], routes: [] }),
+        unavailablePrinterNames(),
       ]);
       const savedPrinters = Array.isArray(config.printers) ? config.printers : [];
       const savedRoutes = Array.isArray(config.routes) ? config.routes : [];
@@ -912,6 +942,13 @@ const server = http.createServer(async (req, res) => {
       );
       const missingConfiguredPrinters = assignedPrinters
         .filter((printer) => !installedNames.has(String(printer.deviceName || '').trim()))
+        .map((printer) => ({
+          id: String(printer.id || ''),
+          name: String(printer.name || ''),
+          deviceName: String(printer.deviceName || ''),
+        }));
+      const unavailableConfiguredPrinters = configuredPrinters
+        .filter((printer) => unavailableNames.has(String(printer.deviceName || '').trim()))
         .map((printer) => ({
           id: String(printer.id || ''),
           name: String(printer.name || ''),
@@ -957,6 +994,8 @@ const server = http.createServer(async (req, res) => {
           ),
           missingConfiguredPrinterCount: missingConfiguredPrinters.length,
           missingConfiguredPrinters,
+          unavailableConfiguredPrinterCount: unavailableConfiguredPrinters.length,
+          unavailableConfiguredPrinters,
           routeCount: savedRoutes.length,
           ledgerSummary: ledgerSummary(),
           recentPrintFailures: recentPrintFailures(),

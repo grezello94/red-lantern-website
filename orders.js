@@ -11,6 +11,10 @@ const historyDate = document.getElementById('history-date');
 let known = new Set();
 let firstLoad = true;
 let ordersRefreshInFlight = false;
+let fastOrdersRefreshQueued = false;
+let fastOrdersRefreshTimer = null;
+let printUpdateCursor = null;
+let printUpdatePollInFlight = false;
 let renderedOrdersSignature = '';
 let hasRenderedOrders = false;
 let menuItems = [];
@@ -28,9 +32,11 @@ let fulfillmentFilter = '';
 let operationsConfig = { printers: [], routes: [] };
 const {
   configuredPrintersFor,
+  printerFormat,
   printerCapabilities,
   printerSupports,
   setPrinterCapability,
+  setPrinterFormat,
 } = window.RedLanternPrinterDomain;
 let tableViewAreaFilter = 'all';
 let tableViewSearch = '';
@@ -1523,81 +1529,6 @@ printerEditStyles.textContent = `.printer-edit{max-width:1100px}.printer-edit>p{
 printerEditStyles.textContent += `.printer-typography-fields{display:grid;grid-column:1/-1;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.printer-typography-fields>.printer-format-intro,.printer-typography-fields>.printer-format-group:last-child{grid-column:1/-1}.printer-format-fields{align-items:start}.printer-format-fields>label{display:flex;flex-direction:column;gap:7px;min-height:128px}.printer-format-fields>label>small{min-height:28px;order:3}.printer-format-fields>label>input,.printer-format-fields>label>select{order:2}.receipt-live-preview{grid-column:1/-1;display:grid;grid-template-columns:minmax(0,1fr) minmax(255px,330px);gap:24px;align-items:center;padding:22px;border:1px solid #d8e2ed;border-radius:14px;background:linear-gradient(135deg,#f7fbff,#eef5fa)}.receipt-live-preview>div:first-child{display:grid;gap:7px}.receipt-live-preview b{color:#1b3457;font-size:16px}.receipt-live-preview p{margin:0;color:#60738d;font-size:12px;line-height:1.5}.receipt-preview-paper{position:relative;justify-self:center;width:250px;min-height:390px;padding:calc(var(--top,0px) + 16px) calc(var(--right,0px) + 12px) calc(var(--bottom,0px) + 14px) calc(var(--left,0px) + 12px);border:1px solid #d8d1c7;border-radius:3px;background:#fffef9;box-shadow:0 12px 25px rgba(43,54,70,.16);color:#141414;font-family:var(--receipt-font,Arial),sans-serif;font-size:10px;line-height:1.28;transform:scale(var(--preview-scale,1));transform-origin:center}.receipt-preview-paper [data-preview-target]{cursor:pointer;border-radius:3px}.receipt-preview-paper [data-preview-target]:hover{outline:1px dashed #2d66ad;background:rgba(45,102,173,.08)}.receipt-preview-drag{position:absolute;z-index:3;display:grid;place-items:center;width:22px;height:22px;padding:0;border:1px solid #2d66ad;border-radius:50%;color:#fff;background:#2d66ad;box-shadow:0 2px 5px rgba(30,66,112,.25);font-size:12px;cursor:grab;touch-action:none}.receipt-preview-drag:active{cursor:grabbing}.receipt-preview-drag[data-preview-drag=left]{left:-12px;top:50%}.receipt-preview-drag[data-preview-drag=right]{right:-12px;top:50%}.receipt-preview-drag[data-preview-drag=top]{top:-12px;left:50%}.receipt-preview-drag[data-preview-drag=bottom]{bottom:-12px;left:50%}.receipt-preview-paper .rp-center{text-align:center}.receipt-preview-paper .rp-name{font-size:15px;font-weight:800}.receipt-preview-paper .rp-rule{height:1px;margin:10px 0;background:#232323}.receipt-preview-paper .rp-meta{display:flex;justify-content:space-between;gap:8px}.receipt-preview-paper .rp-table{display:grid;grid-template-columns:minmax(0,1fr) 24px 40px 52px;gap:4px}.receipt-preview-paper .rp-table span:not(:first-child){text-align:right}.receipt-preview-paper .rp-head{font-weight:800}.receipt-preview-paper .rp-grand{font-size:11px;font-weight:900}.receipt-preview-paper .rp-foot{margin-top:12px;text-align:center}@media(max-width:760px){.printer-typography-fields{grid-template-columns:1fr}.printer-typography-fields>.printer-format-group:last-child{grid-column:auto}.printer-format-fields>label{min-height:0}.receipt-live-preview{grid-template-columns:1fr}.receipt-preview-paper{transform:none}}`;
 printerEditStyles.textContent += `.receipt-preview-column-drag{position:absolute;z-index:4;top:42%;bottom:22%;width:12px;padding:0;border:0;border-left:2px dashed #b52936;background:transparent;cursor:ew-resize;touch-action:none}.receipt-preview-column-drag::after{content:'↔';position:absolute;top:-18px;left:-8px;width:18px;height:18px;border-radius:50%;color:#fff;background:#b52936;font-size:11px;line-height:18px;text-align:center}.receipt-preview-column-drag:hover{border-left-color:#193a65}.receipt-column-values{grid-column:1/-1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:4px;padding-top:12px;border-top:1px dashed #d8e2ed}.receipt-column-values label{min-height:0!important}`;
 document.head.appendChild(printerEditStyles);
-document.addEventListener(
-  'click',
-  (event) => {
-    if (!event.target.closest('[data-save-printer-edit]')) return;
-    const printer = operationsConfig.printers.find((item) => item.id === assignmentPrinterId);
-    if (!printer) return;
-    const restaurantName = document.getElementById('printer-edit-restaurant-name');
-    if (restaurantName)
-      printer.restaurantName = String(restaurantName.value || 'Red Lantern Restaurant')
-        .trim()
-        .slice(0, 60);
-    const kotCentered = document.getElementById('printer-edit-kot-details-centered');
-    if (kotCentered) printer.kotDetailsCentered = !!kotCentered.checked;
-    ['itemNameMinWidth', 'quantityColumnWidth', 'priceColumnWidth', 'amountColumnWidth'].forEach(
-      (key) => {
-        const input = document.getElementById(`printer-edit-${key}`);
-        if (input) printer[key] = Math.max(8, Math.min(220, Number(input.value) || 0));
-      }
-    );
-    printer.fontFamily = String(
-      document.getElementById('printer-edit-font-family')?.value || 'Arial'
-    );
-    printer.fontSize = Math.max(
-      8,
-      Math.min(13, Number(document.getElementById('printer-edit-font-size')?.value) || 10)
-    );
-    printer.headerFontSize = Math.max(
-      12,
-      Math.min(18, Number(document.getElementById('printer-edit-header-size')?.value) || 15)
-    );
-    printer.headerBold = !!document.getElementById('printer-edit-header-bold')?.checked;
-    printer.footerBold = !!document.getElementById('printer-edit-footer-bold')?.checked;
-    [
-      'billingMainWidth',
-      'billingOuterTop',
-      'billingOuterRight',
-      'billingOuterBottom',
-      'billingOuterLeft',
-      'billingItemBoxHeight',
-      'restaurantNameFontSize',
-      'headerFooterFontSize',
-      'dateBillFontSize',
-      'itemListingFontSize',
-      'grandTotalFontSize',
-      'itemNameMinWidth',
-      'itemRowGap',
-      'separatorGap',
-      'separatorThickness',
-      'kotHeaderFontSize',
-      'kotTitleFontSize',
-      'kotMetaFontSize',
-      'kotItemFontSize',
-      'kotFooterFontSize',
-    ].forEach((key) => {
-      const input = document.getElementById(`printer-edit-${key}`);
-      if (input) printer[key] = Number(input.value);
-    });
-  },
-  true
-);
-
-document.addEventListener(
-  'click',
-  (event) => {
-    if (!event.target.closest('[data-save-printer-edit]')) return;
-    const printer = operationsConfig.printers.find((item) => item.id === assignmentPrinterId);
-    const input = document.getElementById('printer-edit-kotBottomFeedLines');
-    if (printer && input) {
-      const feed = Number(input.value);
-      printer.kotBottomFeedLines = Number.isFinite(feed) ? Math.max(0, Math.min(12, feed)) : 3;
-    }
-  },
-  true
-);
-
 const esc = (value) =>
   String(value ?? '').replace(
     /[&<>"']/g,
@@ -1789,7 +1720,59 @@ async function loadOrders() {
       });
   } finally {
     ordersRefreshInFlight = false;
+    if (fastOrdersRefreshQueued) requestFastOrdersRefresh();
   }
+}
+
+function requestFastOrdersRefresh() {
+  fastOrdersRefreshQueued = true;
+  if (ordersRefreshInFlight || fastOrdersRefreshTimer) return;
+  fastOrdersRefreshTimer = setTimeout(() => {
+    fastOrdersRefreshTimer = null;
+    fastOrdersRefreshQueued = false;
+    void loadOrders();
+  }, 25);
+}
+
+function printRelevantUpdate(type) {
+  return /created|accepted|items-added|kot-created|bill-request|service-request|service-updated/i.test(
+    String(type || '')
+  );
+}
+
+async function pollPrintUpdates() {
+  if (printUpdatePollInFlight || !navigator.onLine) return;
+  printUpdatePollInFlight = true;
+  try {
+    const suffix = Number.isInteger(printUpdateCursor) ? `?after=${printUpdateCursor}` : '';
+    const response = await fetch(`/api/orders/smart-kds/updates${suffix}`, {
+      cache: 'no-store',
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || 'Unable to check printer updates.');
+    const cursor = Number(payload.cursor);
+    if (Number.isInteger(cursor) && cursor >= 0) printUpdateCursor = cursor;
+    if ((payload.events || []).some((event) => printRelevantUpdate(event.type)))
+      requestFastOrdersRefresh();
+  } catch (_) {
+    // The normal three-second refresh remains the final fallback.
+  } finally {
+    printUpdatePollInFlight = false;
+  }
+}
+
+function connectFastPrintUpdates() {
+  if (!window.EventSource) return;
+  const stream = new EventSource('/api/orders/smart-kds/stream');
+  stream.addEventListener('connected', () => {
+    void pollPrintUpdates();
+  });
+  stream.addEventListener('smart-kds-update', (event) => {
+    try {
+      if (!printRelevantUpdate(JSON.parse(event.data || '{}').reason)) return;
+    } catch (_) {}
+    requestFastOrdersRefresh();
+  });
 }
 
 function renderOrder(order) {
@@ -2026,7 +2009,7 @@ async function printBillOnConfiguredPrinters(printers, order, printJobPrefix) {
           order,
           // Layout is always taken from the printer receiving this copy. No
           // bill queue inherits another printer's paper or typography settings.
-          settings: printer,
+          settings: printerFormat(printer, 'bill'),
         }),
       });
       await requireCompletedBridgePrint(response, `${printer.name || printer.deviceName} did not accept the bill.`);
@@ -2219,9 +2202,10 @@ function assignedKinds(printer) {
 function renderPrinterManagement() {
   const content = document.getElementById('operations-content');
   if (!content) return;
-  const printer = operationsConfig.printers.find((item) => item.id === assignmentPrinterId);
   const isPrinterEdit = assignmentMode === 'edit-bill' || assignmentMode === 'edit-kot';
   const editCapability = assignmentMode === 'edit-bill' ? 'bill' : 'kot';
+  const savedPrinter = operationsConfig.printers.find((item) => item.id === assignmentPrinterId);
+  const printer = isPrinterEdit ? printerFormat(savedPrinter, editCapability) : savedPrinter;
   const categories = [
     ...new Set(operationsMenu.map((item) => item.category).filter(Boolean)),
   ].sort();
@@ -2333,8 +2317,10 @@ function renderPrinterManagement() {
             '<button type="button" class="receipt-preview-column-drag" data-column-drag="item" title="Drag Item / Qty divider"></button><button type="button" class="receipt-preview-column-drag" data-column-drag="qty" title="Drag Qty / Price divider"></button><button type="button" class="receipt-preview-column-drag" data-column-drag="price" title="Drag Price / Amount divider"></button>'
           );
           const updatePreview = () => {
-            const value = (key, fallback = 0) =>
-              Number(typography.querySelector(`#printer-edit-${key}`)?.value) || fallback;
+            const value = (key, fallback = 0) => {
+              const parsed = Number(typography.querySelector(`#printer-edit-${key}`)?.value);
+              return Number.isFinite(parsed) ? parsed : fallback;
+            };
             const paper = preview.querySelector('[data-receipt-preview-paper]');
             paper.style.setProperty('--left', `${Math.min(30, value('billingOuterLeft')) / 3}px`);
             paper.style.setProperty('--right', `${Math.min(30, value('billingOuterRight')) / 3}px`);
@@ -2928,12 +2914,14 @@ function renderPrintBridgeSetup() {
       ? 'https://github.com/grezello94/red-lantern-website/releases/latest/download/Red-Lantern-Print-Bridge-macOS.pkg'
       : 'https://github.com/grezello94/red-lantern-website/releases/latest/download/Red-Lantern-Print-Bridge-Windows-Setup.exe';
   const missingPrinters = Number(status?.missingConfiguredPrinterCount || 0),
+    unavailablePrinters = Number(status?.unavailableConfiguredPrinterCount || 0),
     unroutedItems = Number(status?.unroutedItemCount || 0),
     configured =
       !!status?.cloud &&
       Number(status?.configuredBillPrinterCount || 0) > 0 &&
       Number(status?.configuredKotRouteCount || 0) > 0 &&
       !missingPrinters &&
+      !unavailablePrinters &&
       !unroutedItems;
   const failedJobs = Number(
       status?.ledgerSummary?.printJobs?.unresolvedIssues ??
@@ -2955,6 +2943,8 @@ function renderPrintBridgeSetup() {
       ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Printing needs review</h3><p>${failedJobs} local print job${failedJobs === 1 ? '' : 's'} failed or ended with uncertain output${failureDetail ? ` (${esc(failureDetail)})` : ''}. Check for a physical slip and inspect the Windows printer queue before deliberately reprinting.</p><button type="button" class="quiet-button" data-acknowledge-print-failures="${esc(JSON.stringify(failedIds))}">Mark reviewed</button><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
       : status?.ok && missingPrinters
         ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Assigned printer is missing</h3><p>${missingPrinters} saved printer ${missingPrinters === 1 ? 'queue is' : 'queues are'} no longer installed in Windows/macOS. Reassign the device before service.</p><button type="button" class="quiet-button" data-operations-tab="printers">Manage printers</button><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
+        : status?.ok && unavailablePrinters
+          ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Printer queue is offline</h3><p>${unavailablePrinters} configured printer ${unavailablePrinters === 1 ? 'queue is' : 'queues are'} reporting Offline or Error in the operating system. Check power, cable/Wi-Fi, and the saved printer port before service.</p><button type="button" class="quiet-button" data-operations-tab="printers">Manage printers</button><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
         : status?.ok && unroutedItems
           ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Menu routing is incomplete</h3><p>${unroutedItems} menu item${unroutedItems === 1 ? '' : 's'} ${unroutedItems === 1 ? 'has' : 'have'} no live KOT printer route${status.unroutedItems?.length ? `: ${esc(status.unroutedItems.slice(0, 5).join(', '))}${unroutedItems > 5 ? '…' : ''}` : ''}.</p><button type="button" class="quiet-button" data-operations-tab="printers">Manage printers</button></div>`
           : status?.ok && !status.cloud
@@ -3260,7 +3250,13 @@ function addSelectedRoutes() {
   if (!printerId) throw new Error('Choose a KOT printer before saving these categories.');
   if (allCategories) {
     operationsConfig.routes = operationsConfig.routes.filter(
-      (route) => !(route.category === '*' && !route.itemName)
+      (route) =>
+        !(
+          route.printerId === printerId &&
+          route.category === '*' &&
+          !route.itemName &&
+          !route.portion
+        )
     );
     operationsConfig.routes.push({ id: operationId(), printerId, category: '*', itemName: '' });
     return true;
@@ -3346,10 +3342,12 @@ async function dispatchKot(orderId, printerId) {
           printJobId: `manual-kot:${orderId}:${data.kotNumber}:${ticket.printerName}:${Date.now()}`,
           printerName: ticket.printerName,
           printerLabel: ticket.printerLabel,
-          settings:
+          settings: printerFormat(
             operationsConfig.printers.find(
               (printer) => printer.deviceName === ticket.printerName
-            ) || {},
+            ),
+            'kot'
+          ),
           items: ticket.items,
           order: {
             number: data.order.daily_order_number,
@@ -3516,8 +3514,10 @@ async function autoPrintOrder(order, { deferred = false } = {}) {
           const printers = await operationsPromise;
           await Promise.all(
             (savedKot.tickets || []).map(async (ticket) => {
-              const settings =
-                printers.find((printer) => printer.deviceName === ticket.printerName) || {};
+              const settings = printerFormat(
+                printers.find((printer) => printer.deviceName === ticket.printerName),
+                'kot'
+              );
               const response = await fetch(`${printBridgeOrigin}/v1/print-kot`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -4852,6 +4852,8 @@ document.getElementById('operations-content')?.addEventListener('click', async (
   if (event.target.closest('[data-save-printer-edit]')) {
     const printer = operationsConfig.printers.find((item) => item.id === assignmentPrinterId);
     if (!printer) return;
+    const capability = assignmentMode === 'edit-bill' ? 'bill' : 'kot';
+    const format = printerFormat(printer, capability);
     const name = String(document.getElementById('printer-edit-name')?.value || '')
       .trim()
       .slice(0, 60);
@@ -4860,32 +4862,41 @@ document.getElementById('operations-content')?.addEventListener('click', async (
       return;
     }
     const device = document.getElementById('printer-edit-device');
-    const numberSetting = (key, min, max, fallback) =>
-      Math.max(
-        min,
-        Math.min(max, Number(document.getElementById(`printer-edit-${key}`)?.value) || fallback)
-      );
+    const numberSetting = (key, min, max, fallback) => {
+      const parsed = Number(document.getElementById(`printer-edit-${key}`)?.value);
+      return Math.max(min, Math.min(max, Number.isFinite(parsed) ? parsed : fallback));
+    };
     printer.name = name;
     printer.deviceId = String(device?.value || printer.deviceId || '');
     printer.deviceName = String(
       device?.selectedOptions?.[0]?.textContent || printer.deviceName || ''
     ).trim();
-    printer.paperWidth =
+    format.paperWidth =
       Number(document.getElementById('printer-edit-paper')?.value) == 58 ? 58 : 80;
-    printer.receiptHeader = String(document.getElementById('printer-edit-header')?.value || '')
+    format.receiptHeader = String(document.getElementById('printer-edit-header')?.value || '')
       .trim()
       .slice(0, 160);
-    printer.receiptFooter = String(document.getElementById('printer-edit-footer')?.value || '')
+    format.receiptFooter = String(document.getElementById('printer-edit-footer')?.value || '')
       .trim()
       .slice(0, 160);
-    printer.showRestaurantName = !!document.getElementById('printer-edit-show-name')?.checked;
-    printer.showItemSerial = !!document.getElementById('printer-edit-show-serial')?.checked;
-    printer.showCustomer = !!document.getElementById('printer-edit-customer')?.checked;
+    const restaurantNameControl = document.getElementById('printer-edit-restaurant-name');
+    if (restaurantNameControl)
+      format.restaurantName = String(
+        restaurantNameControl.value || 'Red Lantern Restaurant'
+      )
+        .trim()
+        .slice(0, 60);
+    format.showRestaurantName = !!document.getElementById('printer-edit-show-name')?.checked;
+    format.showItemSerial = !!document.getElementById('printer-edit-show-serial')?.checked;
+    const customerControl = document.getElementById('printer-edit-customer');
+    if (customerControl) format.showCustomer = !!customerControl.checked;
+    const centeredControl = document.getElementById('printer-edit-kot-details-centered');
+    if (centeredControl) format.kotDetailsCentered = !!centeredControl.checked;
     // Kitchen tickets have one standard order: quantity always leads the item.
-    printer.quantityFirst = true;
+    format.quantityFirst = true;
     const notesControl = document.getElementById('printer-edit-notes');
-    printer.showNotes = notesControl ? !!notesControl.checked : printer.showNotes !== false;
-    printer.extraSpace = Math.max(
+    format.showNotes = notesControl ? !!notesControl.checked : format.showNotes !== false;
+    format.extraSpace = Math.max(
       0,
       Math.min(2, Number(document.getElementById('printer-edit-space')?.value) || 0)
     );
@@ -4901,7 +4912,11 @@ document.getElementById('operations-content')?.addEventListener('click', async (
       dateBillFontSize: [8, 20, 10],
       itemListingFontSize: [8, 10, 10],
       grandTotalFontSize: [10, 11, 11],
+      serialColumnWidth: [0, 40, 10],
       itemNameMinWidth: [50, 220, 110],
+      quantityColumnWidth: [8, 60, 28],
+      priceColumnWidth: [15, 100, 46],
+      amountColumnWidth: [15, 120, 60],
       itemRowGap: [0, 20, 5],
       separatorGap: [0, 20, 5],
       separatorThickness: [1, 4, 1],
@@ -4910,16 +4925,66 @@ document.getElementById('operations-content')?.addEventListener('click', async (
       kotMetaFontSize: [8, 20, 10],
       kotItemFontSize: [8, 22, 12],
       kotFooterFontSize: [8, 20, 10],
+      kotBottomFeedLines: [0, 12, 3],
     };
     Object.entries(fields).forEach(([key, [min, max, fallback]]) => {
       const input = document.getElementById(`printer-edit-${key}`);
-      if (input) printer[key] = numberSetting(key, min, max, fallback);
+      if (input) format[key] = numberSetting(key, min, max, fallback);
     });
-    printer.fontFamily = String(
+    format.fontFamily = String(
       document.getElementById('printer-edit-font-family')?.value || 'Arial'
     );
-    printer.headerBold = !!document.getElementById('printer-edit-header-bold')?.checked;
-    printer.footerBold = !!document.getElementById('printer-edit-footer-bold')?.checked;
+    format.headerBold = !!document.getElementById('printer-edit-header-bold')?.checked;
+    format.footerBold = !!document.getElementById('printer-edit-footer-bold')?.checked;
+    const formatKeys = [
+      'paperWidth',
+      'restaurantName',
+      'receiptHeader',
+      'receiptFooter',
+      'showRestaurantName',
+      'showItemSerial',
+      'showCustomer',
+      'kotDetailsCentered',
+      'quantityFirst',
+      'showNotes',
+      'extraSpace',
+      'fontFamily',
+      'fontSize',
+      'headerFontSize',
+      'headerBold',
+      'footerBold',
+      'billingMainWidth',
+      'billingOuterTop',
+      'billingOuterRight',
+      'billingOuterBottom',
+      'billingOuterLeft',
+      'billingItemBoxHeight',
+      'restaurantNameFontSize',
+      'headerFooterFontSize',
+      'dateBillFontSize',
+      'itemListingFontSize',
+      'grandTotalFontSize',
+      'serialColumnWidth',
+      'itemNameMinWidth',
+      'quantityColumnWidth',
+      'priceColumnWidth',
+      'amountColumnWidth',
+      'itemRowGap',
+      'separatorGap',
+      'separatorThickness',
+      'kotHeaderFontSize',
+      'kotTitleFontSize',
+      'kotMetaFontSize',
+      'kotItemFontSize',
+      'kotFooterFontSize',
+      'kotBottomFeedLines',
+      'itemsPerPage',
+    ];
+    setPrinterFormat(
+      printer,
+      capability,
+      Object.fromEntries(formatKeys.filter((key) => format[key] !== undefined).map((key) => [key, format[key]]))
+    );
     try {
       await saveOperations();
       assignmentPrinterId = '';
@@ -5324,7 +5389,16 @@ void checkPrintBridgeSetup();
 loadOrders();
 showTableView();
 void restoreLastOrdersWorkspace();
+void pollPrintUpdates();
+connectFastPrintUpdates();
+if ('serviceWorker' in navigator)
+  navigator.serviceWorker.addEventListener('message', (event) => {
+    if (event.data?.type === 'order-update') requestFastOrdersRefresh();
+  });
 setInterval(loadOrders, 3000);
+// Same-instance SSE is effectively immediate. This small persisted-event poll
+// covers serverless instance changes and reconnects without reloading all orders.
+setInterval(pollPrintUpdates, 1000);
 // Cloud reconciliation is deliberately slower than the live table refresh:
 // it retries durable local work promptly without flooding the API or printers.
 setInterval(() => {
