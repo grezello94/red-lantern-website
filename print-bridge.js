@@ -8,6 +8,7 @@
  * Printing is intentionally not exposed until the KOT dispatch workflow is enabled.
  */
 const http = require('http');
+const net = require('net');
 const { execFile, spawn } = require('child_process');
 const crypto = require('crypto');
 const { printerCapabilities, printerSupports } = require('./printer-domain');
@@ -18,7 +19,7 @@ const path = require('path');
 const { DatabaseSync } = require('node:sqlite');
 
 const PORT = Number(process.env.PRINT_BRIDGE_PORT || 9124);
-const BRIDGE_VERSION = '2026.09.01.1';
+const BRIDGE_VERSION = '2026.09.01.2';
 const PRINT_JOB_LEASE_MS = Math.max(
   30000,
   Number(process.env.PRINT_BRIDGE_JOB_LEASE_MS || 2 * 60 * 1000)
@@ -403,6 +404,57 @@ async function unavailablePrinterNames() {
     // actual print attempts remain authoritative when the OS omits this data.
     return new Set();
   }
+}
+
+async function networkPrinterEndpoints() {
+  try {
+    if (process.platform === 'win32') {
+      const output = await run('powershell.exe', [
+        '-NoProfile',
+        '-Command',
+        "$ports=@{}; Get-PrinterPort | ForEach-Object { $ports[$_.Name]=$_ }; @(Get-Printer | ForEach-Object { $port=$ports[$_.PortName]; if($port -and $port.PrinterHostAddress){ [PSCustomObject]@{ Name=$_.Name; Host=[string]$port.PrinterHostAddress; Port=[int]$port.PortNumber } } }) | ConvertTo-Json -Compress",
+      ]);
+      const parsed = JSON.parse(output || '[]');
+      return new Map(
+        (Array.isArray(parsed) ? parsed : [parsed])
+          .filter((entry) => entry?.Name && entry?.Host)
+          .map((entry) => [
+            String(entry.Name),
+            { host: String(entry.Host), port: Number(entry.Port) || 9100 },
+          ])
+      );
+    }
+    const output = await run('lpstat', ['-v']);
+    return new Map(
+      output
+        .split(/\r?\n/)
+        .map((line) => {
+          const match = line.match(/^device for\s+([^:]+):\s+(?:socket|ipp|ipps):\/\/([^/:\s]+)(?::(\d+))?/i);
+          return match
+            ? [match[1], { host: match[2], port: Number(match[3]) || (line.includes('ipp') ? 631 : 9100) }]
+            : null;
+        })
+        .filter(Boolean)
+    );
+  } catch (_) {
+    return new Map();
+  }
+}
+
+function tcpEndpointReachable(host, port, timeout = 900) {
+  return new Promise((resolve) => {
+    const socket = net.createConnection({ host, port: Number(port) || 9100 });
+    let completed = false;
+    const finish = (reachable) => {
+      if (completed) return;
+      completed = true;
+      socket.destroy();
+      resolve(reachable);
+    };
+    socket.setTimeout(timeout, () => finish(false));
+    socket.once('connect', () => finish(true));
+    socket.once('error', () => finish(false));
+  });
 }
 
 function formatPrinters(names) {
@@ -926,10 +978,11 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && req.url === '/v1/setup-status') {
     try {
       localLedger().prepare('SELECT 1 AS ok').get();
-      const [printers, config, unavailableNames] = await Promise.all([
+      const [printers, config, unavailableNames, networkEndpoints] = await Promise.all([
         installedPrinters(),
         readJson(configFile, { printers: [], routes: [] }),
         unavailablePrinterNames(),
+        networkPrinterEndpoints(),
       ]);
       const savedPrinters = Array.isArray(config.printers) ? config.printers : [];
       const savedRoutes = Array.isArray(config.routes) ? config.routes : [];
@@ -954,6 +1007,23 @@ const server = http.createServer(async (req, res) => {
           name: String(printer.name || ''),
           deviceName: String(printer.deviceName || ''),
         }));
+      const networkChecks = await Promise.all(
+        configuredPrinters.map(async (printer) => {
+          const deviceName = String(printer.deviceName || '').trim();
+          const endpoint = networkEndpoints.get(deviceName);
+          if (!endpoint) return null;
+          return (await tcpEndpointReachable(endpoint.host, endpoint.port))
+            ? null
+            : {
+                id: String(printer.id || ''),
+                name: String(printer.name || ''),
+                deviceName,
+                host: endpoint.host,
+                port: endpoint.port,
+              };
+        })
+      );
+      const unreachableConfiguredPrinters = networkChecks.filter(Boolean);
       const configuredKotIds = new Set(
         configuredPrinters
           .filter((printer) => printerSupports(printer, 'kot'))
@@ -996,6 +1066,8 @@ const server = http.createServer(async (req, res) => {
           missingConfiguredPrinters,
           unavailableConfiguredPrinterCount: unavailableConfiguredPrinters.length,
           unavailableConfiguredPrinters,
+          unreachableConfiguredPrinterCount: unreachableConfiguredPrinters.length,
+          unreachableConfiguredPrinters,
           routeCount: savedRoutes.length,
           ledgerSummary: ledgerSummary(),
           recentPrintFailures: recentPrintFailures(),

@@ -13,7 +13,7 @@ Printer configuration is capability-based and does not depend on saved printer n
 
 The bridge tries CIM, PowerShell PrinterManagement, and WMIC discovery, in that order, so it continues working when one Windows management provider is unavailable. The installer registers a per-user scheduled task with automatic restart; if task registration is unavailable, it retains a Startup-folder fallback instead.
 
-The Orders readiness check also blocks a green “Printing is ready” state when Windows or CUPS reports a configured queue as Offline/Error, when a saved queue is missing, or when a live menu item has no KOT route.
+The Orders readiness check also blocks a green “Printing is ready” state when Windows or CUPS reports a configured queue as Offline/Error, when a saved queue is missing, when a configured LAN endpoint does not accept a TCP connection, or when a live menu item has no KOT route.
 
 ## macOS
 

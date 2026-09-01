@@ -2915,6 +2915,7 @@ function renderPrintBridgeSetup() {
       : 'https://github.com/grezello94/red-lantern-website/releases/latest/download/Red-Lantern-Print-Bridge-Windows-Setup.exe';
   const missingPrinters = Number(status?.missingConfiguredPrinterCount || 0),
     unavailablePrinters = Number(status?.unavailableConfiguredPrinterCount || 0),
+    unreachablePrinters = Number(status?.unreachableConfiguredPrinterCount || 0),
     unroutedItems = Number(status?.unroutedItemCount || 0),
     configured =
       !!status?.cloud &&
@@ -2922,6 +2923,7 @@ function renderPrintBridgeSetup() {
       Number(status?.configuredKotRouteCount || 0) > 0 &&
       !missingPrinters &&
       !unavailablePrinters &&
+      !unreachablePrinters &&
       !unroutedItems;
   const failedJobs = Number(
       status?.ledgerSummary?.printJobs?.unresolvedIssues ??
@@ -2945,6 +2947,8 @@ function renderPrintBridgeSetup() {
         ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Assigned printer is missing</h3><p>${missingPrinters} saved printer ${missingPrinters === 1 ? 'queue is' : 'queues are'} no longer installed in Windows/macOS. Reassign the device before service.</p><button type="button" class="quiet-button" data-operations-tab="printers">Manage printers</button><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
         : status?.ok && unavailablePrinters
           ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Printer queue is offline</h3><p>${unavailablePrinters} configured printer ${unavailablePrinters === 1 ? 'queue is' : 'queues are'} reporting Offline or Error in the operating system. Check power, cable/Wi-Fi, and the saved printer port before service.</p><button type="button" class="quiet-button" data-operations-tab="printers">Manage printers</button><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
+        : status?.ok && unreachablePrinters
+          ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Network printer is unreachable</h3><p>${unreachablePrinters} configured LAN printer ${unreachablePrinters === 1 ? 'endpoint is' : 'endpoints are'} not accepting connections. Check printer power, Ethernet/Wi-Fi, unique IP/MAC settings, and RAW port 9100.</p><button type="button" class="quiet-button" data-operations-tab="printers">Manage printers</button><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
         : status?.ok && unroutedItems
           ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Menu routing is incomplete</h3><p>${unroutedItems} menu item${unroutedItems === 1 ? '' : 's'} ${unroutedItems === 1 ? 'has' : 'have'} no live KOT printer route${status.unroutedItems?.length ? `: ${esc(status.unroutedItems.slice(0, 5).join(', '))}${unroutedItems > 5 ? '…' : ''}` : ''}.</p><button type="button" class="quiet-button" data-operations-tab="printers">Manage printers</button></div>`
           : status?.ok && !status.cloud
