@@ -6,6 +6,7 @@ const http = require('http');
 const net = require('net');
 const os = require('os');
 const path = require('path');
+const { DatabaseSync } = require('node:sqlite');
 
 function request(port, pathname, options = {}) {
   return new Promise((resolve, reject) => {
@@ -94,18 +95,44 @@ async function main() {
     const status = await request(port, '/health');
     if (status.ledgerSummary?.pendingActions !== 1)
       throw new Error('Bridge ledger health did not report the queued action.');
+    const testLedger = new DatabaseSync(path.join(dataDir, 'orders-ledger.sqlite'));
+    testLedger
+      .prepare(
+        "INSERT INTO print_jobs (id,kind,printer_name,status,created_at,content_hash,lease_expires_at) VALUES (?,?,?,?,?,?,?)"
+      )
+      .run(
+        'stale-print-1',
+        'kot',
+        'Test printer',
+        'printing',
+        new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+        'stale-test',
+        new Date(Date.now() - 5 * 60 * 1000).toISOString()
+      );
+    testLedger.close();
+    const recovered = await request(port, '/health');
+    if (
+      recovered.ledgerSummary?.printJobs?.printing !== 0 ||
+      recovered.ledgerSummary?.printJobs?.uncertain !== 1 ||
+      recovered.ledgerSummary?.printJobs?.unresolvedIssues !== 1
+    )
+      throw new Error('Bridge did not surface an expired print lease for staff review.');
     const setup = await request(port, '/v1/setup-status');
     if (
       !setup.ok ||
       !setup.version ||
       setup.ledgerSummary?.pendingActions !== 1 ||
       !Array.isArray(setup.recentPrintFailures) ||
-      typeof setup.ledgerSummary?.printJobs?.unresolvedFailed !== 'number'
+      setup.recentPrintFailures[0]?.status !== 'uncertain' ||
+      typeof setup.ledgerSummary?.printJobs?.unresolvedIssues !== 'number'
     )
       throw new Error('Bridge setup status did not expose the durable ledger state.');
     console.log('Print Bridge smoke test passed.');
   } finally {
-    child.kill();
+    if (child.exitCode === null) {
+      child.kill();
+      await new Promise((resolve) => child.once('exit', resolve));
+    }
     await fs.rm(dataDir, { recursive: true, force: true });
   }
 }

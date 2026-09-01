@@ -26,6 +26,12 @@ let historyAll = false;
 let orderStatusFilter = 'all';
 let fulfillmentFilter = '';
 let operationsConfig = { printers: [], routes: [] };
+const {
+  configuredPrintersFor,
+  printerCapabilities,
+  printerSupports,
+  setPrinterCapability,
+} = window.RedLanternPrinterDomain;
 let tableViewAreaFilter = 'all';
 let tableViewSearch = '';
 const tableAllocationCacheKey = 'red-lantern-table-allocation';
@@ -1617,7 +1623,7 @@ const toPushKey = (value) => {
   return Uint8Array.from(raw, (character) => character.charCodeAt(0));
 };
 
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('/orders-sw.js?v=17');
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/orders-sw.js?v=18');
 document.getElementById('enable-notifications')?.addEventListener('click', async () => {
   closeOpenPanels();
   const button = document.getElementById('enable-notifications');
@@ -1995,7 +2001,59 @@ function splitReceiptParts(receipt, split) {
     .filter((part) => Number(part.total) > 0);
 }
 
+async function requireCompletedBridgePrint(response, fallbackMessage) {
+  const body = await response.json().catch(() => ({}));
+  if (response.status === 202 || body.pending)
+    throw new Error(
+      'This print job is still in progress. Wait for it to finish; do not send another copy yet.'
+    );
+  if (!response.ok) throw new Error(body.error || fallbackMessage);
+  return body;
+}
+
+async function printBillOnConfiguredPrinters(printers, order, printJobPrefix) {
+  const results = await Promise.allSettled(
+    printers.map(async (printer) => {
+      const printerKey = String(printer.id || printer.deviceName)
+        .replace(/[^a-zA-Z0-9_-]/g, '_')
+        .slice(0, 80);
+      const response = await fetch(`${printBridgeOrigin}/v1/print-bill`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          printJobId: `${printJobPrefix}:${printerKey}`,
+          printerName: printer.deviceName,
+          order,
+          // Layout is always taken from the printer receiving this copy. No
+          // bill queue inherits another printer's paper or typography settings.
+          settings: printer,
+        }),
+      });
+      await requireCompletedBridgePrint(response, `${printer.name || printer.deviceName} did not accept the bill.`);
+      return printer;
+    })
+  );
+  const failed = results
+    .map((result, index) => ({ result, printer: printers[index] }))
+    .filter(({ result }) => result.status === 'rejected');
+  if (failed.length) {
+    const printedCount = results.length - failed.length;
+    const error = new Error(
+      `${failed.length} of ${results.length} Bill printer${results.length === 1 ? '' : 's'} failed: ${failed
+        .map(({ printer, result }) =>
+          `${printer.name || printer.deviceName} (${result.reason?.message || 'unknown error'})`
+        )
+        .join('; ')}`
+    );
+    error.physicalPrintAttempted = true;
+    error.printedCount = printedCount;
+    throw error;
+  }
+  return results.length;
+}
+
 async function printOrder(id, split = null) {
+  let physicalPrintAttempted = false;
   try {
     const bridgeResponse = await fetch(`${printBridgeOrigin}/v1/printers`, { cache: 'no-store' });
     if (!bridgeResponse.ok) throw new Error('Print Bridge is not available on this computer.');
@@ -2003,10 +2061,8 @@ async function printOrder(id, split = null) {
     const operations = await operationsResponse.json();
     if (!operationsResponse.ok)
       throw new Error(operations.error || 'Printer configuration could not load.');
-    const billPrinter = (operations.config?.printers || []).find(
-      (printer) => printer.type === 'bill' && printer.deviceName
-    );
-    if (!billPrinter) throw new Error('No Bill printer is configured.');
+    const billPrinters = configuredPrintersFor(operations.config, 'bill');
+    if (!billPrinters.length) throw new Error('No Bill printer is configured.');
     const receiptResponse = await fetch(`/api/orders/${encodeURIComponent(id)}/print`, {
       cache: 'no-store',
     });
@@ -2014,21 +2070,14 @@ async function printOrder(id, split = null) {
     if (!receiptResponse.ok) throw new Error(receipt.error || 'Unable to prepare the receipt.');
     const receipts = splitReceiptParts(receipt, split);
     if (!receipts.length) throw new Error('Assign at least one item to every split bill.');
-    for (const part of receipts) {
-      const printed = await fetch(`${printBridgeOrigin}/v1/print-bill`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          printJobId: `manual-bill:${id}:${Date.now()}:${part.label || 'full'}`,
-          printerName: billPrinter.deviceName,
-          order: part,
-          settings: billPrinter,
-        }),
-      });
-      if (!printed.ok)
-        throw new Error(
-          (await printed.json().catch(() => ({}))).error || 'Bill printer did not accept the job.'
-        );
+    const printBatchId = Date.now();
+    for (const [index, part] of receipts.entries()) {
+      physicalPrintAttempted = true;
+      await printBillOnConfiguredPrinters(
+        billPrinters,
+        part,
+        `manual-bill:${id}:${printBatchId}:${index + 1}`
+      );
     }
     return;
   } catch (error) {
@@ -2037,6 +2086,13 @@ async function printOrder(id, split = null) {
       message: `Direct bill reprint failed: ${error.message}`,
       source: 'manual bill printing',
     });
+    if (physicalPrintAttempted || error.physicalPrintAttempted) {
+      alert(
+        `${error.message}\n\nCheck every assigned Bill printer before reprinting; one or more copies may already exist.`
+      );
+      if (split) throw error;
+      return;
+    }
     if (split) throw error;
   }
   const popup = window.open('', 'red-lantern-receipt', 'popup=yes,width=420,height=720');
@@ -2111,7 +2167,7 @@ const operationItemOptions = (item) => {
 const routePrinters = (item) => {
   const printers = new Map(operationsConfig.printers.map((printer) => [printer.id, printer]));
   const routes = operationsConfig.routes.filter(
-    (route) => printers.get(route.printerId)?.type === 'kot'
+    (route) => printerSupports(printers.get(route.printerId), 'kot')
   );
   return [
     ...new Map(
@@ -2152,14 +2208,20 @@ function refreshRouteItemOptions() {
 }
 function assignedKinds(printer) {
   const kinds = [];
-  if (printer.type === 'bill') kinds.push('Bill');
-  if (operationsConfig.routes.some((route) => route.printerId === printer.id)) kinds.push('KOT');
+  if (printerSupports(printer, 'bill')) kinds.push('Bill');
+  if (
+    printerSupports(printer, 'kot') &&
+    operationsConfig.routes.some((route) => route.printerId === printer.id)
+  )
+    kinds.push('KOT');
   return kinds;
 }
 function renderPrinterManagement() {
   const content = document.getElementById('operations-content');
   if (!content) return;
   const printer = operationsConfig.printers.find((item) => item.id === assignmentPrinterId);
+  const isPrinterEdit = assignmentMode === 'edit-bill' || assignmentMode === 'edit-kot';
+  const editCapability = assignmentMode === 'edit-bill' ? 'bill' : 'kot';
   const categories = [
     ...new Set(operationsMenu.map((item) => item.category).filter(Boolean)),
   ].sort();
@@ -2175,15 +2237,15 @@ function renderPrinterManagement() {
         .map((route) => `${route.category}::${route.itemName}::${route.portion || ''}`)
     );
     content.innerHTML =
-      assignmentMode === 'edit'
-        ? `<section class="printer-assignment printer-edit"><button type="button" class="assignment-back" data-assignment-back>‹ Back</button><h3>Edit printer · ${esc(printer.name)}</h3><p>Set the printer name, system device, paper, and ${printer.type === 'bill' ? 'receipt' : 'KOT'} format.</p><div class="printer-edit-grid"><label>Printer name<input id="printer-edit-name" maxlength="60" value="${esc(printer.name)}"></label><label>System printer<select id="printer-edit-device"><option value="${esc(printer.deviceId || '')}">${esc(printer.deviceName || 'Keep current system printer')}</option>${installedSystemPrinters
+      isPrinterEdit
+        ? `<section class="printer-assignment printer-edit"><button type="button" class="assignment-back" data-assignment-back>‹ Back</button><h3>Edit ${editCapability === 'bill' ? 'Bill' : 'KOT'} settings · ${esc(printer.name)}</h3><p>Set the printer name, system device, paper, and ${editCapability === 'bill' ? 'receipt' : 'KOT'} format. These settings belong only to this queue.</p><div class="printer-edit-grid"><label>Printer name<input id="printer-edit-name" maxlength="60" value="${esc(printer.name)}"></label><label>System printer<select id="printer-edit-device"><option value="${esc(printer.deviceId || '')}">${esc(printer.deviceName || 'Keep current system printer')}</option>${installedSystemPrinters
             .filter((item) => item.id !== printer.deviceId)
             .map((item) => `<option value="${esc(item.id)}">${esc(item.name)}</option>`)
             .join(
               ''
-            )}</select></label><label>Paper width<select id="printer-edit-paper"><option value="80" ${String(printer.paperWidth || 80) === '80' ? 'selected' : ''}>80 mm (recommended)</option><option value="58" ${String(printer.paperWidth) === '58' ? 'selected' : ''}>58 mm</option></select></label><label>Header text<textarea id="printer-edit-header" maxlength="160">${esc(printer.receiptHeader || defaultBillHeader)}</textarea></label><label>Footer text<textarea id="printer-edit-footer" maxlength="160">${esc(printer.receiptFooter || defaultBillFooter)}</textarea></label><label class="printer-edit-check"><input id="printer-edit-show-name" type="checkbox" ${printer.showRestaurantName !== false ? 'checked' : ''}> Show restaurant name</label><label class="printer-edit-check"><input id="printer-edit-show-serial" type="checkbox" ${printer.showItemSerial ? 'checked' : ''}> Show item serial numbers</label>${printer.type === 'kot' ? `<label class="printer-edit-check"><input id="printer-edit-customer" type="checkbox" ${printer.showCustomer !== false ? 'checked' : ''}> Show customer details</label><label>Extra bottom space<select id="printer-edit-space"><option value="0">None</option><option value="1" ${Number(printer.extraSpace) === 1 ? 'selected' : ''}>Small</option><option value="2" ${Number(printer.extraSpace) === 2 ? 'selected' : ''}>Large</option></select></label>` : ''}</div><div class="assignment-actions"><button type="button" data-assignment-back>Cancel</button><button type="button" class="operations-save" data-save-printer-edit>Save printer settings</button></div></section>`
+              )}</select></label><label>Paper width<select id="printer-edit-paper"><option value="80" ${String(printer.paperWidth || 80) === '80' ? 'selected' : ''}>80 mm (recommended)</option><option value="58" ${String(printer.paperWidth) === '58' ? 'selected' : ''}>58 mm</option></select></label><label>Header text<textarea id="printer-edit-header" maxlength="160">${esc(printer.receiptHeader || defaultBillHeader)}</textarea></label><label>Footer text<textarea id="printer-edit-footer" maxlength="160">${esc(printer.receiptFooter || defaultBillFooter)}</textarea></label><label class="printer-edit-check"><input id="printer-edit-show-name" type="checkbox" ${printer.showRestaurantName !== false ? 'checked' : ''}> Show restaurant name</label><label class="printer-edit-check"><input id="printer-edit-show-serial" type="checkbox" ${printer.showItemSerial ? 'checked' : ''}> Show item serial numbers</label>${editCapability === 'kot' ? `<label class="printer-edit-check"><input id="printer-edit-customer" type="checkbox" ${printer.showCustomer !== false ? 'checked' : ''}> Show customer details</label><label>Extra bottom space<select id="printer-edit-space"><option value="0">None</option><option value="1" ${Number(printer.extraSpace) === 1 ? 'selected' : ''}>Small</option><option value="2" ${Number(printer.extraSpace) === 2 ? 'selected' : ''}>Large</option></select></label>` : ''}</div><div class="assignment-actions"><button type="button" data-assignment-back>Cancel</button><button type="button" class="operations-save" data-save-printer-edit>Save printer settings</button></div></section>`
         : assignmentMode === 'choose'
-          ? `<section class="printer-assignment"><button type="button" class="assignment-back" data-assignment-back>‹ Back</button><h3>Assign printer · ${esc(printer.name)}</h3><p>Choose how this installed printer will be used.</p><div class="assignment-choices"><button type="button" data-assign-bill><b>▤ Assign to Bill</b><span>Customer receipts and bills</span></button><button type="button" data-assign-kot><b>⌑ Assign to KOT</b><span>Kitchen order tickets</span></button></div></section>`
+          ? `<section class="printer-assignment"><button type="button" class="assignment-back" data-assignment-back>‹ Back</button><h3>Printer capabilities · ${esc(printer.name)}</h3><p>Enable either capability or both. One physical queue can handle Bills and routed KOTs with separate format controls.</p><div class="assignment-choices"><button type="button" data-assign-bill><b>▤ ${printerSupports(printer, 'bill') ? 'Disable Bill printing' : 'Enable Bill printing'}</b><span>${printerSupports(printer, 'bill') ? 'Currently receives every final Bill' : 'Customer receipts and bills'}</span></button><button type="button" data-assign-kot><b>⌑ Configure KOT routing</b><span>${printerSupports(printer, 'kot') ? 'KOT capability enabled' : 'Kitchen order tickets'}</span></button>${printerSupports(printer, 'bill') ? '<button type="button" data-edit-printer-capability="bill"><b>✎ Edit Bill format</b><span>Paper, receipt layout and typography</span></button>' : ''}${printerSupports(printer, 'kot') ? '<button type="button" data-edit-printer-capability="kot"><b>✎ Edit KOT format</b><span>Ticket typography and paper feed</span></button><button type="button" data-disable-kot><b>× Disable KOT printing</b><span>Removes this queue\'s KOT routes</span></button>' : ''}</div></section>`
           : `<section class="printer-assignment"><button type="button" class="assignment-back" data-assignment-back>‹ Back</button><h3>Assign KOT routing · ${esc(printer.name)}</h3><p>Assign whole categories, or expand a category and select only the dishes that belong on this station. Bone-in and boneless options can be routed separately.</p><label class="assignment-all-categories"><input type="checkbox" data-assignment-all-categories ${selected.has('*') ? 'checked' : ''}><span><b>All categories</b><small>Send every current and future menu category to this printer.</small></span></label><div class="assignment-category-grid">${categories
               .map((category) => {
                 const items = operationsMenu
@@ -2204,7 +2266,7 @@ function renderPrinterManagement() {
               .join(
                 ''
               )}</div><div class="assignment-actions"><button type="button" data-assignment-back>Cancel</button><button type="button" class="operations-save" data-save-kot-assignment>Save KOT routing</button></div></section>`;
-    if (assignmentMode === 'edit') {
+    if (isPrinterEdit) {
       const grid = content.querySelector('.printer-edit-grid');
       const anchor = content.querySelector('#printer-edit-header')?.closest('label');
       if (grid && anchor) {
@@ -2224,7 +2286,7 @@ function renderPrinterManagement() {
         ];
         const field = (key, label, value, help = '') =>
           `<label>${label}<input id="printer-edit-${key}" type="number" min="0" max="400" value="${Number(printer[key] ?? value)}">${help ? `<small>${help}</small>` : ''}</label>`;
-        if (printer.type === 'kot') {
+        if (editCapability === 'kot') {
           typography.innerHTML = `<div class="printer-format-intro"><span>KOT format</span><b>These font sizes are saved for this kitchen printer only.</b></div><section class="printer-format-group"><div class="printer-format-group-head"><span><b>Text style</b><small>Font and hierarchy for the kitchen ticket</small></span></div><div class="printer-format-fields"><label>Font family<select id="printer-edit-font-family">${fonts.map((font) => `<option value="${esc(font)}" ${String(printer.fontFamily || 'Arial') === font ? 'selected' : ''}>${esc(font)}</option>`).join('')}</select></label>${field('kotHeaderFontSize', 'Header text font size', 12)}${field('kotTitleFontSize', 'Kitchen title font size', 15)}${field('kotMetaFontSize', 'KOT details font size', 10)}${field('kotItemFontSize', 'Item font size', 12)}${field('kotFooterFontSize', 'Footer text font size', 10)}<label class="printer-edit-check"><input id="printer-edit-header-bold" type="checkbox" ${printer.headerBold !== false ? 'checked' : ''}> Bold header</label><label class="printer-edit-check"><input id="printer-edit-footer-bold" type="checkbox" ${printer.footerBold ? 'checked' : ''}> Bold footer</label></div></section><section class="printer-format-group"><div class="printer-format-group-head"><span><b>Spacing</b><small>Controls the ticket dividers and paper after the final line</small></span></div><div class="printer-format-fields">${field('separatorGap', 'Separator gap', 3)}${field('separatorThickness', 'Separator thickness', 1)}</div></section>`;
         } else {
           const billField = (key, label, value, help = '') =>
@@ -2239,24 +2301,24 @@ function renderPrinterManagement() {
             );
           typography.innerHTML = `<div class="printer-format-intro"><span>Bill format</span><b>These are the active controls used by the verified receipt layout.</b></div><details class="printer-format-group" open><summary><span><b>Paper & margins</b><small>Controls receipt width and safe printing area</small></span><i>⌄</i></summary><div class="printer-format-fields">${billField('billingMainWidth', 'Bill print width', 250, '250 is the verified printable width for this printer.')}${billField('billingOuterLeft', 'Left outer space', 14)}${billField('billingOuterTop', 'Top outer space', 0)}${billField('billingOuterRight', 'Right outer space', 0, 'Increase only if content reaches the right edge.')}${billField('billingOuterBottom', 'Bottom outer space', 0)}${billField('billingItemBoxHeight', 'Minimum item row height', 0)}</div></details><details class="printer-format-group"><summary><span><b>Text style</b><small>Font and hierarchy for the printed bill</small></span><i>⌄</i></summary><div class="printer-format-fields"><label>Font family<select id="printer-edit-font-family">${fonts.map((font) => `<option value="${esc(font)}" ${String(printer.fontFamily || 'Arial') === font ? 'selected' : ''}>${esc(font)}</option>`).join('')}</select></label>${billField('restaurantNameFontSize', 'Restaurant name font size', 15)}${billField('headerFooterFontSize', 'Header / footer font size', 10)}${billField('dateBillFontSize', 'Date / bill box font size', 10)}${billField('itemListingFontSize', 'Item listing font size', 10, 'Maximum 10 pt so the full four-column table fits.')}${billField('grandTotalFontSize', 'Grand total font size', 11, 'Maximum 11 pt so the final amount is never cut off.')}<label class="printer-edit-check"><input id="printer-edit-header-bold" type="checkbox" ${printer.headerBold !== false ? 'checked' : ''}> Bold restaurant name</label><label class="printer-edit-check"><input id="printer-edit-footer-bold" type="checkbox" ${printer.footerBold ? 'checked' : ''}> Bold footer</label></div></details><details class="printer-format-group"><summary><span><b>Items & spacing</b><small>Columns are automatically fitted to the verified 250-unit printable width</small></span><i>⌄</i></summary><div class="printer-format-fields">${billField('itemNameMinWidth', 'Minimum item-name width', 110, 'Qty, Price, and Amount are automatically protected and aligned.')}${billField('itemRowGap', 'Item row gap', 5)}${billField('separatorGap', 'Separator gap', 5)}${billField('separatorThickness', 'Separator thickness', 1)}</div></details>`;
         }
-        if (printer.type === 'bill') {
+        if (editCapability === 'bill') {
           const nameControl = document.createElement('label');
           nameControl.innerHTML = `Restaurant name<input id="printer-edit-restaurant-name" maxlength="60" value="${esc(printer.restaurantName || 'Red Lantern Restaurant')}">`;
           typography.querySelectorAll('.printer-format-fields')[1]?.prepend(nameControl);
         }
-        if (printer.type === 'kot') {
+        if (editCapability === 'kot') {
           const centerControl = document.createElement('label');
           centerControl.className = 'printer-edit-check';
           centerControl.innerHTML = `<input id="printer-edit-kot-details-centered" type="checkbox" ${printer.kotDetailsCentered ? 'checked' : ''}> Center KOT details`;
           typography.querySelector('.printer-format-fields')?.append(centerControl);
         }
-        if (printer.type === 'bill') {
+        if (editCapability === 'bill') {
           const columns = document.createElement('div');
           columns.className = 'receipt-column-values';
           columns.innerHTML = `<label>Item column width<input id="printer-edit-itemNameMinWidth" type="number" min="50" max="220" value="${Math.max(50, Number(printer.itemNameMinWidth) || 110)}"></label><label>Qty column width<input id="printer-edit-quantityColumnWidth" type="number" min="25" max="60" value="${Math.max(28, Number(printer.quantityColumnWidth) || 28)}"></label><label>Price column width<input id="printer-edit-priceColumnWidth" type="number" min="40" max="100" value="${Math.max(46, Number(printer.priceColumnWidth) || 46)}"></label><label>Amount column width<input id="printer-edit-amountColumnWidth" type="number" min="52" max="120" value="${Math.max(60, Number(printer.amountColumnWidth) || 60)}"></label>`;
           typography.querySelectorAll('.printer-format-fields')[2]?.append(columns);
         }
-        if (printer.type === 'bill') {
+        if (editCapability === 'bill') {
           const preview = document.createElement('aside');
           preview.className = 'receipt-live-preview';
           preview.innerHTML = `<div><b>Live bill preview</b><p>Click any receipt section to jump to its setting. This is a scaled 80 mm preview that updates before printing.</p></div><div class="receipt-preview-paper" data-receipt-preview-paper data-preview-target="billingMainWidth"><div class="rp-center rp-name" data-rp-name data-preview-target="restaurantNameFontSize">Red Lantern Restaurant</div><div class="rp-center" data-rp-header data-preview-target="header">Colva Goa<br>9922853605 / 9049558369<br>[Follow] Insta ID:<br>red_lantern_restaurant</div><div class="rp-rule"></div><div data-rp-date data-preview-target="dateBillFontSize">Date: 16/08/26 09:59 &nbsp;&nbsp; Dine In · AC</div><div class="rp-meta" data-preview-target="dateBillFontSize"><span>Cashier: biller</span><span>Bill No.: 05</span></div><b data-preview-target="dateBillFontSize">Token No.: 01</b><div class="rp-rule"></div><div class="rp-table rp-head" data-preview-target="itemListingFontSize"><span>Item</span><span>Qty</span><span>Price</span><span>Amount</span></div><div class="rp-rule"></div><div class="rp-table" data-preview-target="itemListingFontSize"><span>Tomato Salad<br>(Regular)</span><span>1</span><span>120.00</span><span>120.00</span></div><div class="rp-table" data-preview-target="itemListingFontSize"><span>Veg Sweet Corn<br>Soup (Regular)</span><span>1</span><span>120.00</span><span>120.00</span></div><div class="rp-rule"></div><div data-rp-summary data-preview-target="itemRowGap">Total Qty: 2 &nbsp;&nbsp; Sub Total: ₹240</div><div class="rp-grand" data-rp-grand data-preview-target="grandTotalFontSize">GRAND TOTAL: ₹240</div><div class="rp-rule"></div><div class="rp-foot" data-rp-footer data-preview-target="footer">Thank you for choosing us!<br>Kindly leave us a review<br>Google | Zomato | Swiggy</div></div>`;
@@ -2446,7 +2508,7 @@ function renderPrinterManagement() {
           });
           updatePreview();
         }
-        if (printer.type === 'kot') {
+        if (editCapability === 'kot') {
           const preview = document.createElement('aside');
           preview.className = 'receipt-live-preview';
           preview.innerHTML = `<div><b>Live KOT preview</b><p>Click a ticket section to jump to its setting. Text, hierarchy, dividers and customer details update as you edit.</p></div><div class="receipt-preview-paper" data-kot-preview><b data-kp-kot data-preview-target="kotMetaFontSize">KOT # 12</b><div data-kp-customer data-preview-target="showCustomer">Table: AC · 1<br>Guest: Walk-in customer</div><div class="rp-rule"></div><div data-kp-item data-preview-target="kotItemFontSize"></div><div data-kp-item data-preview-target="kotItemFontSize"></div><div class="rp-rule"></div><div class="rp-foot" data-kp-footer data-preview-target="kotBottomFeedLines"></div></div>`;
@@ -2565,14 +2627,14 @@ function renderPrinterManagement() {
           section.append(fields);
           group.replaceWith(section);
         });
-        if (printer.type === 'kot') {
+        if (editCapability === 'kot') {
           const spacing = document.createElement('section');
           spacing.className = 'printer-format-group';
           spacing.innerHTML = `<div class="printer-format-group-head"><span><b>Item & paper spacing</b><small>Controls space between KOT items and paper fed after the ticket</small></span></div><div class="printer-format-fields">${field('itemRowGap', 'Item row gap', 5)}${field('kotBottomFeedLines', 'Bottom feed lines', 3, 'Base paper feed after the KOT; Extra bottom space adds to this.')}</div>`;
           typography.append(spacing);
         }
         grid.insertBefore(typography, anchor);
-        if (printer.type === 'kot') {
+        if (editCapability === 'kot') {
           [
             'printer-edit-header',
             'printer-edit-footer',
@@ -2591,10 +2653,13 @@ function renderPrinterManagement() {
     printBridgeState === 'available'
       ? 'Print Bridge is running — installed printers are available.'
       : 'Print Bridge is not detected on this computer.';
-  content.innerHTML = `<section class="manage-printers"><div class="manage-printers-head"><div><span class="eyebrow">Printer setup</span><h3>Manage printers</h3><p>Connect each installed printer once, then choose whether it handles bills or specific kitchen categories.</p></div><span class="bridge-status ${printBridgeState === 'available' ? 'online' : ''}">${bridgeText}</span></div><div class="add-system-printer"><div class="add-printer-copy"><b>Add an installed printer</b><span>Choose a printer already available on this Windows computer.</span></div><label class="quick-printer-name">Printer name <input id="quick-printer-name" maxlength="60" placeholder="e.g. Kitchen Printer"></label><select id="quick-system-printer"><option value="">Choose installed printer</option>${installedSystemPrinters.map((item) => `<option value="${esc(item.id)}">${esc(item.name)}</option>`).join('')}</select><button type="button" id="quick-add-printer">＋ Add printer</button></div><div class="printer-card-list">${
+  content.innerHTML = `<section class="manage-printers"><div class="manage-printers-head"><div><span class="eyebrow">Printer setup</span><h3>Manage printers</h3><p>Connect any number of installed printers. Every Bill printer receives a bill copy using its own layout; KOT printers receive only their routed menu items.</p></div><span class="bridge-status ${printBridgeState === 'available' ? 'online' : ''}">${bridgeText}</span></div><div class="add-system-printer"><div class="add-printer-copy"><b>Add an installed printer</b><span>Choose a printer already available on this Windows computer.</span></div><label class="quick-printer-name">Printer name <input id="quick-printer-name" maxlength="60" placeholder="e.g. Kitchen Printer"></label><select id="quick-system-printer"><option value="">Choose installed printer</option>${installedSystemPrinters.map((item) => `<option value="${esc(item.id)}">${esc(item.name)}</option>`).join('')}</select><button type="button" id="quick-add-printer">＋ Add printer</button></div><div class="printer-card-list">${
     operationsConfig.printers
       .map((item) => {
         const kinds = assignedKinds(item);
+        const capabilities = printerCapabilities(item);
+        const isBillPrinter = capabilities.includes('bill');
+        const isKotPrinter = capabilities.includes('kot');
         const routes = operationsConfig.routes.filter((route) => route.printerId === item.id);
         const allCategories = routes.some((route) => route.category === '*' && !route.itemName);
         const categories = [
@@ -2623,21 +2688,23 @@ function renderPrinterManagement() {
         const summary = allCategories
           ? 'Receives every current and future menu category.'
           : [...categories, ...overrideNames].join(' · ');
-        return `<article class="printer-card"><div class="printer-card-top"><span class="printer-card-mark ${item.type === 'bill' ? 'is-bill' : ''}" aria-hidden="true">${item.type === 'bill' ? '▤' : '⌑'}</span><div><span class="printer-card-label">${item.type === 'bill' ? 'Bill printer' : 'KOT printer'}</span><h4>${esc(item.name)}</h4><p>${esc(item.deviceName || 'System printer not assigned')}</p></div><span class="printer-card-state ${kinds.length ? 'is-ready' : ''}">${kinds.length ? 'Configured' : 'Needs assignment'}</span></div><div class="printer-routing-summary"><b>${esc(assignment)}</b><span>${esc(summary || 'Choose Bill or KOT categories to complete setup.')}</span></div><div class="printer-card-actions"><button type="button" data-rename-printer="${esc(item.id)}">Rename</button><button type="button" data-assign-printer="${esc(item.id)}">Configure routing</button><button type="button" class="remove-printer" data-delete-printer="${esc(item.id)}">Remove</button></div></article>`;
+        const capabilityLabel = capabilities.length
+          ? `${capabilities.map((capability) => (capability === 'bill' ? 'Bill' : 'KOT')).join(' + ')} printer`
+          : 'Unassigned printer';
+        const assignmentLabel = isBillPrinter
+          ? isKotPrinter
+            ? `Bill enabled · KOT: ${assignment}`
+            : 'Receives every final bill'
+          : assignment;
+        const assignmentSummary = isBillPrinter
+          ? isKotPrinter
+            ? `Bills use this queue's saved receipt format. KOT: ${summary || 'routing is not configured yet.'}`
+            : `Uses ${item.deviceName || 'the selected queue'} with this printer's own saved paper and layout settings.`
+          : summary || 'Choose Bill or KOT capabilities to complete setup.';
+        return `<article class="printer-card"><div class="printer-card-top"><span class="printer-card-mark ${isBillPrinter ? 'is-bill' : ''}" aria-hidden="true">${isBillPrinter && isKotPrinter ? '▣' : isBillPrinter ? '▤' : '⌑'}</span><div><span class="printer-card-label">${esc(capabilityLabel)}</span><h4>${esc(item.name)}</h4><p>${esc(item.deviceName || 'System printer not assigned')}</p></div><span class="printer-card-state ${kinds.length ? 'is-ready' : ''}">${kinds.length ? 'Configured' : 'Needs assignment'}</span></div><div class="printer-routing-summary"><b>${esc(assignmentLabel)}</b><span>${esc(assignmentSummary)}</span></div><div class="printer-card-actions"><button type="button" data-rename-printer="${esc(item.id)}">Edit</button><button type="button" data-assign-printer="${esc(item.id)}">Configure capabilities</button><button type="button" class="remove-printer" data-delete-printer="${esc(item.id)}">Remove</button></div></article>`;
       })
       .join('') || '<div class="operations-empty">Choose an installed printer above to begin.</div>'
   }</div></section>`;
-  content.querySelectorAll('.printer-card').forEach((card, index) => {
-    const configured = operationsConfig.printers[index];
-    if (configured?.type !== 'bill') return;
-    const title = card.querySelector('.printer-routing-summary b');
-    const description = card.querySelector('.printer-routing-summary span');
-    if (title) title.textContent = 'Final bill printing enabled';
-    if (description)
-      description.textContent = configured.deviceName
-        ? `All final customer bills print on ${configured.deviceName}.`
-        : 'Choose an installed system printer to enable final bill printing.';
-  });
   content.querySelectorAll('[data-rename-printer]').forEach((button) => {
     button.className = 'printer-action-icon';
     button.title = 'Edit printer';
@@ -2664,21 +2731,6 @@ function renderPrinterManagement() {
   content.querySelectorAll('[data-assign-printer]').forEach((button) => {
     button.className = 'printer-assign-button';
     button.textContent = 'Assign';
-  });
-}
-function refreshBillPrinterSummary() {
-  document.querySelectorAll('.printer-card').forEach((card, index) => {
-    const printer = operationsConfig.printers[index];
-    if (printer?.type !== 'bill') return;
-    const summary = card.querySelector('.printer-routing-summary');
-    if (!summary) return;
-    const title = summary.querySelector('b');
-    const description = summary.querySelector('span');
-    if (title) title.textContent = 'Final bill printing enabled';
-    if (description)
-      description.textContent = printer.deviceName
-        ? `All final customer bills print on ${printer.deviceName}.`
-        : 'Choose an installed system printer to enable final bill printing.';
   });
 }
 function renderTableAllocation() {
@@ -2852,119 +2904,7 @@ function renderOperations() {
     );
   } else {
     renderPrinterManagement();
-    refreshBillPrinterSummary();
     return;
-    const kotPrinters = operationsConfig.printers.filter((printer) => printer.type === 'kot');
-    const categories = [
-      ...new Set(operationsMenu.map((item) => item.category).filter(Boolean)),
-    ].sort();
-    const printerOptions = kotPrinters
-      .map((printer) => `<option value="${esc(printer.id)}">${esc(printer.name)}</option>`)
-      .join('');
-    content.innerHTML = `<section class="operations-section"><div class="operations-section-head"><div><span class="eyebrow">Step 1</span><h3>Printers</h3><p>Create every printer used by your restaurant. You can add as many KOT and Bill printers as needed.</p></div><span class="operations-count">${operationsConfig.printers.length} configured</span></div><div class="operations-printer-form"><label>Printer name<input id="operation-printer-name" maxlength="60" placeholder="e.g. Tandoori Printer"></label><label>Printer type<select id="operation-printer-type"><option value="kot">KOT printer</option><option value="bill">Bill printer</option></select></label><button type="button" id="operation-add-printer"><span aria-hidden="true">＋</span> Add printer</button></div><div class="operations-grid printer-grid">${operationsConfig.printers.map((printer) => `<article class="operation-printer"><div class="operation-printer-head"><span class="printer-card-icon ${esc(printer.type)}" aria-hidden="true">${printer.type === 'bill' ? '▣' : '⌑'}</span><div><h3>${esc(printer.name)}</h3><p>${printer.type === 'bill' ? 'Counter / bill receipt printer' : 'Kitchen order ticket printer'}</p></div><span class="printer-type ${esc(printer.type)}">${esc(printer.type)}</span></div><button type="button" data-delete-printer="${esc(printer.id)}">Remove</button></article>`).join('') || '<div class="operations-empty">Add your first printer to start routing KOTs.</div>'}</div></section><section class="operations-section routing-section"><div class="operations-section-head"><div><span class="eyebrow">Step 2</span><h3>KOT routing</h3><p>Select every category this printer should receive. Use the item override only for a single-item exception.</p></div><span class="operations-count">${operationsConfig.routes.length} rules</span></div><div class="operations-route-form"><label>Send to printer<select id="operation-route-printer"><option value="">Choose KOT printer</option>${printerOptions}</select></label><div class="category-picker"><div class="category-picker-top"><b>Categories for this printer</b><span id="route-category-count">0 selected</span></div><input id="operation-route-category-search" class="category-search" type="search" placeholder="Search categories"><div id="operation-route-categories" class="category-checklist">${categories.map((category) => `<label class="category-choice"><input class="operation-route-category-check" type="checkbox" value="${esc(category)}"><span>${esc(category)}</span></label>`).join('')}</div></div><label>Specific item <select id="operation-route-item" disabled><option value="">Select one category first</option></select></label><button type="button" id="operation-add-route">Add selected routes</button></div><div class="routing-list">${
-      operationsConfig.routes
-        .map((route) => {
-          const printer = operationsConfig.printers.find((item) => item.id === route.printerId);
-          return `<div class="route-row"><span class="route-icon" aria-hidden="true">⌑</span><div><b>${esc(route.category)}${route.itemName ? ` · ${esc(route.itemName)}` : ' · all items'}</b><span>Print on ${esc(printer?.name || 'Missing printer')}</span></div><button type="button" data-delete-route="${esc(route.id)}">Remove</button></div>`;
-        })
-        .join('') ||
-      '<div class="operations-empty">No KOT routes yet. Select one or more categories above to set up routing.</div>'
-    }</div></section><div class="operations-save-bar"><span>Changes are saved only when you confirm.</span><button type="button" id="operations-save" class="operations-save">Save printer configuration</button></div>`;
-    const printerForm = document.querySelector('.operations-printer-form');
-    const addPrinterButton = document.getElementById('operation-add-printer');
-    if (printerForm && addPrinterButton) {
-      const setupFlow = document.createElement('div');
-      setupFlow.className = 'printer-setup-flow';
-      const isMac = /macintosh|mac os x/i.test(navigator.userAgent);
-      const bridgeCommand = isMac
-        ? 'bash ./install-print-bridge-macos.sh'
-        : 'powershell -ExecutionPolicy Bypass -File .\\install-print-bridge-windows.ps1';
-      const bridgeLabel =
-        printBridgeState === 'available'
-          ? 'Print Bridge is running on this computer.'
-          : 'Print Bridge is not running on this computer.';
-      setupFlow.innerHTML = `<i aria-hidden="true">▣</i><div><b>Add a restaurant printer</b><span>Give it a clear role, select its installed system printer, then assign its menu categories in Step 2.</span></div><div class="bridge-setup"><b>${bridgeLabel}</b><span>One-time setup on every computer that has printers. Open Terminal / PowerShell in the website folder, then run:</span><code>${esc(bridgeCommand)}</code><button type="button" id="copy-print-bridge-command" data-command="${esc(bridgeCommand)}">Copy setup command</button></div>`;
-      printerForm.before(setupFlow);
-      const deviceField = document.createElement('label');
-      const bridgeMessage =
-        printBridgeState === 'checking'
-          ? 'Detecting installed printers…'
-          : printBridgeState === 'offline'
-            ? 'Print Bridge not detected'
-            : 'Choose installed printer';
-      deviceField.innerHTML = `Installed system printer<select id="operation-printer-device"><option value="">${bridgeMessage}</option>${installedSystemPrinters.map((printer) => `<option value="${esc(printer.id)}">${esc(printer.name)}</option>`).join('')}</select>`;
-      printerForm.insertBefore(deviceField, addPrinterButton);
-    }
-    document.querySelectorAll('.operation-printer').forEach((card, index) => {
-      const printer = operationsConfig.printers[index];
-      if (!printer) return;
-      const endpoint = document.createElement('p');
-      endpoint.className = `printer-endpoint${printer.deviceName ? '' : ' is-pending'}`;
-      endpoint.textContent = printer.deviceName
-        ? `System printer · ${printer.deviceName}`
-        : 'System printer to be assigned during installation';
-      card.querySelector('.operation-printer-head')?.after(endpoint);
-    });
-    const routeForm = document.querySelector('.operations-route-form');
-    const categoryPicker = routeForm?.querySelector('.category-picker');
-    const printerControl = document.getElementById('operation-route-printer')?.closest('label');
-    const itemControl = document.getElementById('operation-route-item')?.closest('label');
-    const addRouteButton = document.getElementById('operation-add-route');
-    if (routeForm && categoryPicker && printerControl && itemControl && addRouteButton) {
-      const controls = document.createElement('div');
-      controls.className = 'route-side-controls';
-      controls.append(printerControl, itemControl, addRouteButton);
-      routeForm.prepend(controls);
-
-      const assignedCategoryCount = new Set(
-        operationsConfig.routes
-          .filter((route) => route.category !== '*' && !route.itemName)
-          .map((route) => route.category)
-      ).size;
-      const assignedItemCount = operationsConfig.routes.filter((route) => route.itemName).length;
-      const allRoute = operationsConfig.routes.find(
-        (route) => route.category === '*' && !route.itemName
-      );
-      categoryPicker.insertAdjacentHTML(
-        'afterbegin',
-        `<label class="all-categories-choice"><input id="operation-route-all-categories" type="checkbox" ${allRoute ? 'checked' : ''}><span><b>All categories</b><small>${allRoute ? `Assigned to ${esc(operationsConfig.printers.find((printer) => printer.id === allRoute.printerId)?.name || 'a KOT printer')}` : `${assignedCategoryCount} categories assigned · ${assignedItemCount} item overrides`}</small></span><em>⌄</em></label><p class="all-categories-help">Use this only when one station should receive every current and future category. Category or item rules still take priority.</p>`
-      );
-      if (allRoute)
-        document
-          .querySelectorAll('.operation-route-category-check, .operation-route-item-check')
-          .forEach((input) => {
-            input.disabled = true;
-            input.checked = false;
-          });
-      document.querySelectorAll('.category-choice').forEach((choice) => {
-        const category = choice.querySelector('input')?.value || '';
-        const items = operationsMenu
-          .filter((item) => item.category === category)
-          .sort((a, b) => a.name.localeCompare(b.name));
-        const assigned = operationsConfig.routes.filter((route) => route.category === category);
-        const preview = document.createElement('div');
-        preview.className = 'category-item-preview';
-        preview.hidden = true;
-        preview.innerHTML = `<div><b>Select individual dishes</b><span>${assigned.length ? `${assigned.length} routing rule${assigned.length === 1 ? '' : 's'} saved` : `${items.length} menu item${items.length === 1 ? '' : 's'}`}</span></div>${items.map((item) => `<label class="category-item-choice"><input class="operation-route-item-check" type="checkbox" value="${esc(item.name)}" data-category="${esc(category)}"><span>${esc(item.name)}</span></label>`).join('') || '<span>No menu items yet</span>'}`;
-        const toggle = document.createElement('button');
-        toggle.type = 'button';
-        toggle.className = 'category-expand';
-        toggle.dataset.routeCategoryExpand = category;
-        toggle.setAttribute('aria-label', `Show ${category} items`);
-        toggle.textContent = '⌄';
-        choice.append(toggle);
-        choice.after(preview);
-      });
-    }
-    const saveStatus = document.querySelector('.operations-save-bar span');
-    if (saveStatus) {
-      saveStatus.textContent =
-        printBridgeConfigState === 'synced'
-          ? 'Saved securely in the cloud and on this restaurant computer.'
-          : printBridgeConfigState === 'waiting-for-bridge'
-            ? 'Saved securely in the cloud. The local offline copy will sync when Print Bridge is running.'
-            : 'Save once. The local Print Bridge will retain this routing for offline use.';
-    }
   }
 }
 function detectedDesktopPlatform() {
@@ -2987,26 +2927,72 @@ function renderPrintBridgeSetup() {
     platform === 'macOS'
       ? 'https://github.com/grezello94/red-lantern-website/releases/latest/download/Red-Lantern-Print-Bridge-macOS.pkg'
       : 'https://github.com/grezello94/red-lantern-website/releases/latest/download/Red-Lantern-Print-Bridge-Windows-Setup.exe';
-  const configured =
-    Number(status?.configuredBillPrinterCount || 0) > 0 &&
-    Number(status?.configuredKotRouteCount || 0) > 0;
-  const failedJobs = Number(status?.ledgerSummary?.printJobs?.unresolvedFailed || 0),
+  const missingPrinters = Number(status?.missingConfiguredPrinterCount || 0),
+    unroutedItems = Number(status?.unroutedItemCount || 0),
+    configured =
+      !!status?.cloud &&
+      Number(status?.configuredBillPrinterCount || 0) > 0 &&
+      Number(status?.configuredKotRouteCount || 0) > 0 &&
+      !missingPrinters &&
+      !unroutedItems;
+  const failedJobs = Number(
+      status?.ledgerSummary?.printJobs?.unresolvedIssues ??
+        status?.ledgerSummary?.printJobs?.unresolvedFailed ??
+        0
+    ),
     failedIds = (Array.isArray(status?.recentPrintFailures) ? status.recentPrintFailures : [])
       .map((job) => job.id)
       .filter(Boolean),
     failureDetail = (Array.isArray(status?.recentPrintFailures) ? status.recentPrintFailures : [])
-      .map((job) => `${job.kind.toUpperCase()} · ${job.printerName}`)
+      .map(
+        (job) =>
+          `${job.kind.toUpperCase()} · ${job.printerName}${job.status === 'uncertain' ? ' · output uncertain' : ''}`
+      )
       .join(' · ');
   const card = status?.checking
     ? `<span class="printing-status-icon is-checking" aria-hidden="true">…</span><div><h3>Preparing printing…</h3><p>This takes a moment.</p></div>`
     : status?.ok && failedJobs
-      ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Printing needs review</h3><p>${failedJobs} local print job${failedJobs === 1 ? '' : 's'} failed${failureDetail ? ` (${esc(failureDetail)})` : ''}. Check paper, power, cable/network and the Windows printer queue, then reprint the affected KOT or Bill from Operations.</p><button type="button" class="quiet-button" data-acknowledge-print-failures="${esc(JSON.stringify(failedIds))}">Mark reviewed</button><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
+      ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Printing needs review</h3><p>${failedJobs} local print job${failedJobs === 1 ? '' : 's'} failed or ended with uncertain output${failureDetail ? ` (${esc(failureDetail)})` : ''}. Check for a physical slip and inspect the Windows printer queue before deliberately reprinting.</p><button type="button" class="quiet-button" data-acknowledge-print-failures="${esc(JSON.stringify(failedIds))}">Mark reviewed</button><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
+      : status?.ok && missingPrinters
+        ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Assigned printer is missing</h3><p>${missingPrinters} saved printer ${missingPrinters === 1 ? 'queue is' : 'queues are'} no longer installed in Windows/macOS. Reassign the device before service.</p><button type="button" class="quiet-button" data-operations-tab="printers">Manage printers</button><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
+        : status?.ok && unroutedItems
+          ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Menu routing is incomplete</h3><p>${unroutedItems} menu item${unroutedItems === 1 ? '' : 's'} ${unroutedItems === 1 ? 'has' : 'have'} no live KOT printer route${status.unroutedItems?.length ? `: ${esc(status.unroutedItems.slice(0, 5).join(', '))}${unroutedItems > 5 ? '…' : ''}` : ''}.</p><button type="button" class="quiet-button" data-operations-tab="printers">Manage printers</button></div>`
+          : status?.ok && !status.cloud
+            ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Cloud configuration is unavailable</h3><p>The local Bridge is running, but printer routes could not be checked against the live menu. Restore internet or sign in again, then check printing.</p><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
       : status?.ok && configured
         ? `<span class="printing-status-icon" aria-hidden="true">✓</span><div><h3>Printing is ready</h3><p>This computer is ready to print bills and kitchen orders${status.version ? ` · Bridge ${esc(status.version)}` : ''}.</p><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
         : status?.ok
           ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Finish printer setup</h3><p>Print Bridge is running, but this computer needs an assigned Bill printer and a KOT route attached to a real system printer before service.</p><button type="button" class="quiet-button" data-operations-tab="printers">Manage printers</button><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
           : `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Set up printing</h3><p>${esc(status?.detail || `Install printing once on this ${platform} computer.`)}</p><a class="operations-save bridge-download" href="${download}">Set up printing</a><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`;
   content.innerHTML = `<section class="simple-printing-setup"><button type="button" class="assignment-back" data-operations-tab="home">‹ Back</button><span class="eyebrow">Printing</span><div class="simple-printing-card">${card}</div></section>`;
+}
+
+function unroutedOperationItems(menu, config) {
+  const printers = new Map(
+    (Array.isArray(config?.printers) ? config.printers : [])
+      .filter((printer) => printerSupports(printer, 'kot') && printer.deviceName)
+      .map((printer) => [String(printer.id), printer])
+  );
+  const routes = (Array.isArray(config?.routes) ? config.routes : []).filter((route) =>
+    printers.has(String(route.printerId))
+  );
+  const missing = [];
+  (Array.isArray(menu) ? menu : []).forEach((item) => {
+    const portions = operationItemOptions(item).map((option) => option.portion);
+    const variants = portions.length ? portions : [''];
+    variants.forEach((portion) => {
+      const routed = routes.some((route) =>
+        route.category === '*'
+          ? !route.itemName && !route.portion
+          : route.category === item.category &&
+            ((!route.itemName && !route.portion) ||
+              (route.itemName === item.name && (!route.portion || route.portion === portion)))
+      );
+      if (!routed)
+        missing.push(`${item.name || 'Unnamed item'}${portion ? ` (${portion})` : ''}`);
+    });
+  });
+  return [...new Set(missing)];
 }
 async function checkPrintBridgeSetup() {
   printBridgeSetupStatus = { checking: true };
@@ -3015,9 +3001,12 @@ async function checkPrintBridgeSetup() {
     const controller = new AbortController(),
       timeout = setTimeout(() => controller.abort(), 4000);
     try {
-      return (
-        await fetch('/api/orders/operations', { cache: 'no-store', signal: controller.signal })
-      ).ok;
+      const response = await fetch('/api/orders/operations', {
+        cache: 'no-store',
+        signal: controller.signal,
+      });
+      if (!response.ok) return null;
+      return await response.json();
     } catch (_) {
       return false;
     } finally {
@@ -3035,17 +3024,29 @@ async function checkPrintBridgeSetup() {
     const data = await response.json().catch(() => ({}));
     if (!response.ok || !data.ok)
       throw new Error(data.detail || data.error || 'The local service did not complete its check.');
-    printBridgeSetupStatus = { ...data, cloud: await cloudCheck };
+    const cloudData = await cloudCheck,
+      unrouted = cloudData
+        ? unroutedOperationItems(cloudData.menu, cloudData.config)
+        : [];
+    printBridgeSetupStatus = {
+      ...data,
+      cloud: !!cloudData,
+      unroutedItemCount: unrouted.length,
+      unroutedItems: unrouted,
+    };
     installedSystemPrinters = Array.from(
       { length: Number(data.printerCount) || 0 },
       (_, index) => installedSystemPrinters[index]
     ).filter(Boolean);
     printBridgeState = 'available';
-    void syncOperationsToPrintBridge(operationsConfig);
+    // Only the authenticated cloud response may refresh the machine's durable
+    // printer routing. A failed/unauthenticated page load must never replace it
+    // with the browser's empty startup defaults.
+    if (cloudData?.config) void syncOperationsToPrintBridge(cloudData.config);
   } catch (error) {
     printBridgeSetupStatus = {
       ok: false,
-      cloud: await cloudCheck,
+      cloud: !!(await cloudCheck),
       detail: error.message || 'Print Bridge was not found.',
     };
     printBridgeState = 'offline';
@@ -3367,8 +3368,7 @@ async function dispatchKot(orderId, printerId) {
           },
         }),
       });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body.error || 'The Print Bridge could not send this KOT.');
+      await requireCompletedBridgePrint(response, 'The Print Bridge could not send this KOT.');
     })
   );
 }
@@ -3392,10 +3392,8 @@ async function autoPrintRequestedTableBill(order) {
     const operations = await operationsResponse.json().catch(() => ({}));
     if (!operationsResponse.ok)
       throw new Error(operations.error || 'Printer configuration could not load.');
-    const billPrinter = (operations.config?.printers || []).find(
-      (printer) => printer.type === 'bill' && printer.deviceName
-    );
-    if (!billPrinter) throw new Error('No Bill printer is assigned in Operations.');
+    const billPrinters = configuredPrintersFor(operations.config, 'bill');
+    if (!billPrinters.length) throw new Error('No Bill printer is assigned in Operations.');
     const claimResponse = await fetch(`/api/orders/${encodeURIComponent(order.id)}/bill-print/claim`, {
       method: 'POST',
     });
@@ -3408,18 +3406,11 @@ async function autoPrintRequestedTableBill(order) {
       });
       const receipt = await receiptResponse.json().catch(() => ({}));
       if (!receiptResponse.ok) throw new Error(receipt.error || 'Unable to prepare the receipt.');
-      const printed = await fetch(`${printBridgeOrigin}/v1/print-bill`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          printJobId: `captain-bill:${order.id}`,
-          printerName: billPrinter.deviceName,
-          order: receipt,
-          settings: billPrinter,
-        }),
-      });
-      const result = await printed.json().catch(() => ({}));
-      if (!printed.ok) throw new Error(result.error || 'Bill printer did not accept the job.');
+      await printBillOnConfiguredPrinters(
+        billPrinters,
+        receipt,
+        `captain-bill:${order.id}`
+      );
       await fetch(`/api/orders/${encodeURIComponent(order.id)}/bill-print/complete`, {
         method: 'POST',
       });
@@ -3552,11 +3543,7 @@ async function autoPrintOrder(order, { deferred = false } = {}) {
                   },
                 }),
               });
-              if (!response.ok)
-                throw new Error(
-                  (await response.json().catch(() => ({}))).error ||
-                    'KOT printer did not accept the job.'
-                );
+              await requireCompletedBridgePrint(response, 'KOT printer did not accept the job.');
             })
           );
         }
@@ -3579,8 +3566,8 @@ async function autoPrintOrder(order, { deferred = false } = {}) {
     }
     // The bill starts at the same time as the KOT. Neither printer can delay the other.
     const billPromise = operationsPromise.then(async (printers) => {
-      const billPrinter = printers.find((printer) => printer.type === 'bill' && printer.deviceName);
-      if (!billPrinter) {
+      const billPrinters = configuredPrintersFor({ printers }, 'bill');
+      if (!billPrinters.length) {
         const reason = 'No Bill printer is assigned in Operations.';
         reportOrdersDiagnostic({
           level: 'warning',
@@ -3601,20 +3588,7 @@ async function autoPrintOrder(order, { deferred = false } = {}) {
         });
         const receipt = await receiptResponse.json();
         if (!receiptResponse.ok) throw new Error(receipt.error || 'Unable to prepare the receipt.');
-        const printed = await fetch(`${printBridgeOrigin}/v1/print-bill`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            printJobId: `auto-bill:${order.id}`,
-            printerName: billPrinter.deviceName,
-            order: receipt,
-            settings: billPrinter,
-          }),
-        });
-        if (!printed.ok)
-          throw new Error(
-            (await printed.json().catch(() => ({}))).error || 'Bill printer did not accept the job.'
-          );
+        await printBillOnConfiguredPrinters(billPrinters, receipt, `auto-bill:${order.id}`);
         await fetch(`/api/orders/${encodeURIComponent(order.id)}/bill-print/complete`, {
           method: 'POST',
         });
@@ -4854,6 +4828,7 @@ document.getElementById('operations-content')?.addEventListener('click', async (
     operationsConfig.printers.push({
       id: operationId(),
       name,
+      capabilities: [],
       type: 'kot',
       connection: 'system',
       deviceId,
@@ -4865,7 +4840,12 @@ document.getElementById('operations-content')?.addEventListener('click', async (
   const renamePrinter = event.target.closest('[data-rename-printer]');
   if (renamePrinter) {
     assignmentPrinterId = renamePrinter.dataset.renamePrinter || '';
-    assignmentMode = 'edit';
+    const printer = operationsConfig.printers.find((item) => item.id === assignmentPrinterId);
+    assignmentMode = printerSupports(printer, 'bill')
+      ? 'edit-bill'
+      : printerSupports(printer, 'kot')
+        ? 'edit-kot'
+        : 'choose';
     renderOperations();
     return;
   }
@@ -4957,6 +4937,13 @@ document.getElementById('operations-content')?.addEventListener('click', async (
     renderOperations();
     return;
   }
+  const editPrinterCapability = event.target.closest('[data-edit-printer-capability]');
+  if (editPrinterCapability) {
+    assignmentMode =
+      editPrinterCapability.dataset.editPrinterCapability === 'bill' ? 'edit-bill' : 'edit-kot';
+    renderOperations();
+    return;
+  }
   if (event.target.closest('[data-assignment-back]')) {
     assignmentPrinterId = '';
     assignmentMode = '';
@@ -4966,10 +4953,7 @@ document.getElementById('operations-content')?.addEventListener('click', async (
   if (event.target.closest('[data-assign-bill]')) {
     const printer = operationsConfig.printers.find((item) => item.id === assignmentPrinterId);
     if (printer) {
-      printer.type = 'bill';
-      operationsConfig.routes = operationsConfig.routes.filter(
-        (route) => route.printerId !== printer.id
-      );
+      setPrinterCapability(printer, 'bill', !printerSupports(printer, 'bill'));
       try {
         await saveOperations();
         assignmentPrinterId = '';
@@ -4984,6 +4968,23 @@ document.getElementById('operations-content')?.addEventListener('click', async (
   if (event.target.closest('[data-assign-kot]')) {
     assignmentMode = 'kot';
     renderOperations();
+    return;
+  }
+  if (event.target.closest('[data-disable-kot]')) {
+    const printer = operationsConfig.printers.find((item) => item.id === assignmentPrinterId);
+    if (!printer) return;
+    setPrinterCapability(printer, 'kot', false);
+    operationsConfig.routes = operationsConfig.routes.filter(
+      (route) => route.printerId !== printer.id
+    );
+    try {
+      await saveOperations();
+      assignmentPrinterId = '';
+      assignmentMode = '';
+      renderOperations();
+    } catch (error) {
+      alert(error.message);
+    }
     return;
   }
   if (event.target.closest('[data-save-kot-assignment]')) {
@@ -5004,7 +5005,7 @@ document.getElementById('operations-content')?.addEventListener('click', async (
       return;
     }
     if (printer) {
-      printer.type = 'kot';
+      setPrinterCapability(printer, 'kot', true);
       operationsConfig.routes = operationsConfig.routes.filter(
         (route) => route.printerId !== printer.id
       );
@@ -5064,6 +5065,7 @@ document.getElementById('operations-content')?.addEventListener('click', async (
     operationsConfig.printers.push({
       id: operationId(),
       name,
+      capabilities: [type],
       type,
       connection: 'system',
       deviceId,

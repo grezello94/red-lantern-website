@@ -10,6 +10,7 @@
 const http = require('http');
 const { execFile, spawn } = require('child_process');
 const crypto = require('crypto');
+const { printerCapabilities, printerSupports } = require('./printer-domain');
 const fs = require('fs/promises');
 const fsSync = require('fs');
 const os = require('os');
@@ -17,13 +18,40 @@ const path = require('path');
 const { DatabaseSync } = require('node:sqlite');
 
 const PORT = Number(process.env.PRINT_BRIDGE_PORT || 9124);
-const BRIDGE_VERSION = '2026.08.18.3';
+const BRIDGE_VERSION = '2026.08.31.1';
+const PRINT_JOB_LEASE_MS = Math.max(
+  30000,
+  Number(process.env.PRINT_BRIDGE_JOB_LEASE_MS || 2 * 60 * 1000)
+);
+const PRINT_COMMAND_TIMEOUT_MS = Math.max(
+  10000,
+  Number(process.env.PRINT_BRIDGE_PRINT_TIMEOUT_MS || 30000)
+);
 const storageDir =
   process.env.PRINT_BRIDGE_DATA_DIR || path.join(os.homedir(), '.red-lantern-print-bridge');
 const configFile = path.join(storageDir, 'printer-config.json');
 const queueFile = path.join(storageDir, 'kot-queue.json');
 const ledgerFile = path.join(storageDir, 'orders-ledger.sqlite');
 let ledger = null;
+let shuttingDown = false;
+
+function closeLedger() {
+  try {
+    ledger?.close();
+  } catch (_) {}
+  ledger = null;
+}
+
+function shutdown(exitCode = 0) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  const finish = () => {
+    closeLedger();
+    process.exit(exitCode);
+  };
+  server.close(finish);
+  setTimeout(finish, 2000).unref();
+}
 
 function localLedger() {
   if (ledger) return ledger;
@@ -61,7 +89,21 @@ function localLedger() {
   try {
     ledger.exec('ALTER TABLE print_jobs ADD COLUMN acknowledged_at TEXT');
   } catch (_) {}
+  try {
+    ledger.exec('ALTER TABLE print_jobs ADD COLUMN lease_expires_at TEXT');
+  } catch (_) {}
   return ledger;
+}
+
+function expireStalePrintJobs(db = localLedger()) {
+  const now = new Date().toISOString();
+  return Number(
+    db
+      .prepare(
+        "UPDATE print_jobs SET status='uncertain', completed_at=NULL, acknowledged_at=NULL, lease_expires_at=NULL WHERE status='printing' AND (lease_expires_at IS NULL OR lease_expires_at<=?)"
+      )
+      .run(now).changes || 0
+  );
 }
 
 function claimPrintJob(id, kind, printerName, contentHash = '') {
@@ -70,34 +112,48 @@ function claimPrintJob(id, kind, printerName, contentHash = '') {
     .slice(0, 160);
   if (!safeId) return { claim: true, tracked: false };
   const db = localLedger(),
-    now = new Date().toISOString();
-  const existing = db.prepare('SELECT status, content_hash FROM print_jobs WHERE id=?').get(safeId);
+    now = new Date(),
+    nowIso = now.toISOString(),
+    leaseExpiresAt = new Date(now.getTime() + PRINT_JOB_LEASE_MS).toISOString();
+  expireStalePrintJobs(db);
+  const existing = db
+    .prepare('SELECT status, content_hash, lease_expires_at FROM print_jobs WHERE id=?')
+    .get(safeId);
   // A retry with the same payload must never create a second physical slip.
   // If the content has changed, however, it is a genuinely new print request
   // and must not be hidden behind an old completed job.
   if (existing?.status === 'printed' && (!contentHash || existing.content_hash === contentHash))
     return { claim: false, duplicate: true };
   if (existing?.status === 'printing') return { claim: false, pending: true };
+  if (existing?.status === 'uncertain') return { claim: false, uncertain: true };
   db.prepare(
-    'INSERT INTO print_jobs (id,kind,printer_name,status,created_at,completed_at,content_hash,acknowledged_at) VALUES (?,?,?,?,?,NULL,?,NULL) ON CONFLICT(id) DO UPDATE SET status=excluded.status, printer_name=excluded.printer_name, created_at=excluded.created_at, completed_at=NULL, content_hash=excluded.content_hash, acknowledged_at=NULL'
+    'INSERT INTO print_jobs (id,kind,printer_name,status,created_at,completed_at,content_hash,acknowledged_at,lease_expires_at) VALUES (?,?,?,?,?,NULL,?,NULL,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status, printer_name=excluded.printer_name, created_at=excluded.created_at, completed_at=NULL, content_hash=excluded.content_hash, acknowledged_at=NULL, lease_expires_at=excluded.lease_expires_at'
   ).run(
     safeId,
     kind,
     String(printerName || '').slice(0, 160),
     'printing',
-    now,
-    String(contentHash || '').slice(0, 64)
+    nowIso,
+    String(contentHash || '').slice(0, 64),
+    leaseExpiresAt
   );
   return { claim: true, tracked: true };
 }
-function finishPrintJob(id, success) {
+function finishPrintJob(id, result) {
   const safeId = String(id || '')
     .trim()
     .slice(0, 160);
   if (!safeId) return;
+  const status = ['printed', 'failed', 'uncertain'].includes(result)
+    ? result
+    : result
+      ? 'printed'
+      : 'failed';
   localLedger()
-    .prepare('UPDATE print_jobs SET status=?, completed_at=?, acknowledged_at=NULL WHERE id=?')
-    .run(success ? 'printed' : 'failed', success ? new Date().toISOString() : null, safeId);
+    .prepare(
+      'UPDATE print_jobs SET status=?, completed_at=?, acknowledged_at=NULL, lease_expires_at=NULL WHERE id=?'
+    )
+    .run(status, status === 'printed' ? new Date().toISOString() : null, safeId);
 }
 
 function ledgerAction(row) {
@@ -168,6 +224,7 @@ function updateLedgerAction(id, status, error = '') {
 }
 
 function ledgerSummary() {
+  expireStalePrintJobs();
   const rows = localLedger()
     .prepare('SELECT status, COUNT(*) AS count FROM ledger_actions GROUP BY status')
     .all();
@@ -178,11 +235,16 @@ function ledgerSummary() {
   const jobs = localLedger()
     .prepare('SELECT status, COUNT(*) AS count FROM print_jobs GROUP BY status')
     .all();
-  const printJobs = { printing: 0, printed: 0, failed: 0 };
+  const printJobs = { printing: 0, printed: 0, failed: 0, uncertain: 0 };
   jobs.forEach((row) => {
     if (Object.hasOwn(printJobs, row.status)) printJobs[row.status] = Number(row.count || 0);
   });
-  const unresolvedFailures = localLedger()
+  const unresolvedIssues = localLedger()
+    .prepare(
+      "SELECT COUNT(*) AS count FROM print_jobs WHERE status IN ('failed','uncertain') AND acknowledged_at IS NULL"
+    )
+    .get();
+  const unresolvedFailed = localLedger()
     .prepare(
       "SELECT COUNT(*) AS count FROM print_jobs WHERE status='failed' AND acknowledged_at IS NULL"
     )
@@ -191,20 +253,26 @@ function ledgerSummary() {
     actions: counts,
     pendingActions: counts.queued + counts.syncing,
     blockedActions: counts.blocked,
-    printJobs: { ...printJobs, unresolvedFailed: Number(unresolvedFailures?.count || 0) },
+    printJobs: {
+      ...printJobs,
+      unresolvedFailed: Number(unresolvedFailed?.count || 0),
+      unresolvedIssues: Number(unresolvedIssues?.count || 0),
+    },
   };
 }
 
 function recentPrintFailures() {
+  expireStalePrintJobs();
   return localLedger()
     .prepare(
-      "SELECT id, kind, printer_name, created_at, completed_at FROM print_jobs WHERE status='failed' AND acknowledged_at IS NULL ORDER BY created_at DESC LIMIT 5"
+      "SELECT id, kind, printer_name, status, created_at, completed_at FROM print_jobs WHERE status IN ('failed','uncertain') AND acknowledged_at IS NULL ORDER BY created_at DESC LIMIT 5"
     )
     .all()
     .map((job) => ({
       id: job.id,
       kind: job.kind,
       printerName: job.printer_name,
+      status: job.status,
       createdAt: job.created_at,
       completedAt: job.completed_at || '',
     }));
@@ -227,15 +295,15 @@ function acknowledgePrintJobs(ids) {
     now = new Date().toISOString();
   const result = localLedger()
     .prepare(
-      `UPDATE print_jobs SET acknowledged_at=? WHERE status='failed' AND acknowledged_at IS NULL AND id IN (${placeholders})`
+      `UPDATE print_jobs SET acknowledged_at=? WHERE status IN ('failed','uncertain') AND acknowledged_at IS NULL AND id IN (${placeholders})`
     )
     .run(now, ...safeIds);
   return Number(result.changes || 0);
 }
 
-function run(command, args) {
+function run(command, args, timeout = 5000) {
   return new Promise((resolve, reject) => {
-    execFile(command, args, { windowsHide: true, timeout: 5000 }, (error, stdout) => {
+    execFile(command, args, { windowsHide: true, timeout }, (error, stdout) => {
       if (error) reject(error);
       else resolve(String(stdout || ''));
     });
@@ -558,9 +626,9 @@ $doc.add_PrintPage({ param($sender, $event)
   }
 })
 $doc.Print()`;
-      await run('powershell.exe', ['-NoProfile', '-Command', script]);
+      await run('powershell.exe', ['-NoProfile', '-Command', script], PRINT_COMMAND_TIMEOUT_MS);
     } else {
-      await run('lp', ['-d', printerName, file]);
+      await run('lp', ['-d', printerName, file], PRINT_COMMAND_TIMEOUT_MS);
     }
   } finally {
     await fs.unlink(file).catch(() => {});
@@ -835,12 +903,23 @@ const server = http.createServer(async (req, res) => {
       ]);
       const savedPrinters = Array.isArray(config.printers) ? config.printers : [];
       const savedRoutes = Array.isArray(config.routes) ? config.routes : [];
-      const configuredPrinters = savedPrinters.filter((printer) =>
+      const installedNames = new Set(printers.map((printer) => String(printer.name).trim()));
+      const assignedPrinters = savedPrinters.filter((printer) =>
         String(printer.deviceName || '').trim()
       );
+      const configuredPrinters = assignedPrinters.filter((printer) =>
+        installedNames.has(String(printer.deviceName || '').trim())
+      );
+      const missingConfiguredPrinters = assignedPrinters
+        .filter((printer) => !installedNames.has(String(printer.deviceName || '').trim()))
+        .map((printer) => ({
+          id: String(printer.id || ''),
+          name: String(printer.name || ''),
+          deviceName: String(printer.deviceName || ''),
+        }));
       const configuredKotIds = new Set(
         configuredPrinters
-          .filter((printer) => printer.type === 'kot')
+          .filter((printer) => printerSupports(printer, 'kot'))
           .map((printer) => String(printer.id))
       );
       const configuredKotRoutes = savedRoutes.filter((route) =>
@@ -864,9 +943,20 @@ const server = http.createServer(async (req, res) => {
           printerCount: printers.length,
           configuredPrinterCount: configuredPrinters.length,
           configuredBillPrinterCount: configuredPrinters.filter(
-            (printer) => printer.type === 'bill'
+            (printer) => printerSupports(printer, 'bill')
           ).length,
           configuredKotRouteCount: configuredKotRoutes.length,
+          uniqueKotRouteTargetCount: new Set(
+            configuredKotRoutes.map(
+              (route) =>
+                `${String(route.category || '')}::${String(route.itemName || '')}::${String(route.portion || '')}`
+            )
+          ).size,
+          hasWildcardKotRoute: configuredKotRoutes.some(
+            (route) => route.category === '*' && !route.itemName && !route.portion
+          ),
+          missingConfiguredPrinterCount: missingConfiguredPrinters.length,
+          missingConfiguredPrinters,
           routeCount: savedRoutes.length,
           ledgerSummary: ledgerSummary(),
           recentPrintFailures: recentPrintFailures(),
@@ -889,8 +979,7 @@ const server = http.createServer(async (req, res) => {
       // a detached process here: detached replacements escape Task Scheduler
       // and were the cause of later unrecovered bridge outages.
       if (process.env.PRINT_BRIDGE_SUPERVISED === '1') {
-        server.close(() => process.exit(75));
-        setTimeout(() => process.exit(75), 1000).unref();
+        shutdown(75);
         return;
       }
       const child = spawn(process.execPath, [__filename], {
@@ -900,8 +989,7 @@ const server = http.createServer(async (req, res) => {
         windowsHide: true,
       });
       child.unref();
-      server.close(() => process.exit(0));
-      setTimeout(() => process.exit(0), 1000).unref();
+      shutdown(0);
     }, 250).unref();
     return;
   }
@@ -939,15 +1027,19 @@ const server = http.createServer(async (req, res) => {
       const config = (await readBody(req)).config || {};
       const printers = (Array.isArray(config.printers) ? config.printers : [])
         .slice(0, 250)
-        .map((printer) => ({
-          id: String(printer.id || '').slice(0, 60),
-          name: String(printer.name || '')
-            .trim()
-            .slice(0, 60),
-          type: printer.type === 'bill' ? 'bill' : 'kot',
-          deviceId: String(printer.deviceId || '').slice(0, 160),
-          deviceName: String(printer.deviceName || '').slice(0, 120),
-        }))
+        .map((printer) => {
+          const capabilities = printerCapabilities(printer);
+          return {
+            id: String(printer.id || '').slice(0, 60),
+            name: String(printer.name || '')
+              .trim()
+              .slice(0, 60),
+            capabilities,
+            type: capabilities[0] || (printer.type === 'bill' ? 'bill' : 'kot'),
+            deviceId: String(printer.deviceId || '').slice(0, 160),
+            deviceName: String(printer.deviceName || '').slice(0, 120),
+          };
+        })
         .filter((printer) => printer.id && printer.name);
       const printerIds = new Set(printers.map((printer) => printer.id));
       const routes = (Array.isArray(config.routes) ? config.routes : [])
@@ -961,6 +1053,9 @@ const server = http.createServer(async (req, res) => {
           itemName: String(route.itemName || '')
             .trim()
             .slice(0, 160),
+          portion: String(route.portion || '')
+            .trim()
+            .slice(0, 40),
         }))
         .filter((route) => route.id && printerIds.has(route.printerId) && route.category);
       const safeConfig = { printers, routes, savedAt: new Date().toISOString() };
@@ -1105,16 +1200,31 @@ const server = http.createServer(async (req, res) => {
       if (!claim.claim)
         return reply(
           res,
-          claim.duplicate ? 200 : 202,
-          { ok: true, duplicate: !!claim.duplicate, pending: !!claim.pending, printerName },
+          claim.duplicate ? 200 : claim.uncertain ? 409 : 202,
+          {
+            ok: !!claim.duplicate || !!claim.pending,
+            duplicate: !!claim.duplicate,
+            pending: !!claim.pending,
+            uncertain: !!claim.uncertain,
+            printerName,
+            ...(claim.uncertain
+              ? {
+                  error:
+                    'The previous print attempt ended unexpectedly. Check for a physical slip, then use the explicit Reprint action if another copy is needed.',
+                }
+              : {}),
+          },
           origin
         );
       await printText(printerName, ticketText, payload.settings || {});
-      finishPrintJob(payload.printJobId, true);
+      finishPrintJob(payload.printJobId, 'printed');
       return reply(res, 201, { ok: true, printerName, itemCount: items.length }, origin);
     } catch (error) {
       try {
-        finishPrintJob(printJobId, false);
+        finishPrintJob(
+          printJobId,
+          error?.killed || error?.signal || error?.code === 'ETIMEDOUT' ? 'uncertain' : 'failed'
+        );
       } catch (_) {}
       return reply(res, 400, { error: error.message || 'Unable to print KOT.' }, origin);
     }
@@ -1133,16 +1243,31 @@ const server = http.createServer(async (req, res) => {
       if (!claim.claim)
         return reply(
           res,
-          claim.duplicate ? 200 : 202,
-          { ok: true, duplicate: !!claim.duplicate, pending: !!claim.pending, printerName },
+          claim.duplicate ? 200 : claim.uncertain ? 409 : 202,
+          {
+            ok: !!claim.duplicate || !!claim.pending,
+            duplicate: !!claim.duplicate,
+            pending: !!claim.pending,
+            uncertain: !!claim.uncertain,
+            printerName,
+            ...(claim.uncertain
+              ? {
+                  error:
+                    'The previous print attempt ended unexpectedly. Check for a physical bill, then use the explicit Reprint action if another copy is needed.',
+                }
+              : {}),
+          },
           origin
         );
       await printText(printerName, billText(payload), payload.settings || {});
-      finishPrintJob(payload.printJobId, true);
+      finishPrintJob(payload.printJobId, 'printed');
       return reply(res, 201, { ok: true, printerName }, origin);
     } catch (error) {
       try {
-        finishPrintJob(printJobId, false);
+        finishPrintJob(
+          printJobId,
+          error?.killed || error?.signal || error?.code === 'ETIMEDOUT' ? 'uncertain' : 'failed'
+        );
       } catch (_) {}
       return reply(res, 400, { error: error.message || 'Unable to print bill.' }, origin);
     }
@@ -1151,8 +1276,11 @@ const server = http.createServer(async (req, res) => {
 });
 server.on('error', (error) => {
   console.error(`Red Lantern Print Bridge could not start: ${error.message}`);
+  closeLedger();
   process.exitCode = 1;
 });
+process.on('SIGINT', () => shutdown(0));
+process.on('SIGTERM', () => shutdown(0));
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`Red Lantern Print Bridge is running at http://127.0.0.1:${PORT}`);
 });

@@ -99,11 +99,13 @@ Each saved printer can be:
 - Assigned to **KOT** — receives kitchen tickets based on configured routes.
 - Removed — requires confirmation and removes related routing rules.
 
+There is no fixed printer-count limit in normal restaurant use. Printer use is capability-based: each installed queue can handle Bill, KOT, or both. Every Bill-capable printer receives one copy of each final bill using that queue's own paper, typography, margin, and header/footer settings. Any number of KOT-capable printers can have independent category, item, and portion routes. The shared printer-domain module is the only capability registry, so future print roles can be introduced without adding printer-name or printer-count assumptions throughout the system. Duplicate saved references are rejected by the server and collapsed defensively during Bill dispatch.
+
 ### Print Bridge
 
 Physical printing requires the local `print-bridge.js` process on the counter computer. The website sends print jobs to `http://127.0.0.1:9124`; Vercel cannot directly reach LAN/USB printers.
 
-In **Orders → Operations → Print & offline setup**, staff can run one readiness check for cloud access, the local Bridge, SQLite ledger, system printers, and saved printer routes. It identifies Windows or macOS automatically. If the Bridge is already configured, the platform installer only verifies/starts the existing service; it does not create a second service or require repeated setup.
+In **Orders → Operations → Print & offline setup**, staff can run one readiness check for cloud access, the local Bridge, SQLite ledger, system printers, and saved printer routes. It identifies Windows or macOS automatically. Readiness requires every saved device to exist as an installed system queue and every current menu item to have a KOT route. Re-running the platform installer safely updates and restarts its single background service.
 
 For a new workstation, that screen provides one platform-specific setup download. Unzip it and open `START-SETUP.cmd` on Windows or `START-SETUP.command` on macOS. The lightweight ZIP setup requires Node.js 22 LTS; the signed native installer release includes its own Node.js 22 runtime. The setup bundle and its platform launchers are rebuilt with `npm run bundle:print-bridge` during every website build.
 
@@ -135,7 +137,7 @@ On macOS, the installed Bridge also starts automatically after the billing user 
 - If the internet fails, keep using `/orders` on the billing computer. Safe counter orders and operational changes are stored locally and reconcile when the connection returns.
 - Do not clear browser data, uninstall the Print Bridge, delete `~/.red-lantern-print-bridge`, or copy its SQLite file while pending work is shown. Ask the administrator to resolve a sync warning first.
 - Guest QR checkout requires internet and clearly reports when an order has not been sent; guests must retry only after connectivity returns.
-- Final automatic KOT/Bill printing is online-confirmed. If printing fails, use Operations → Printed KOTs / Manage printers to inspect the route and reprint deliberately.
+- Final automatic KOT/Bill printing is online-confirmed. A pending Bridge response is not reported as printed. If the Bridge stops during a print, the expired job is marked **uncertain** for staff review instead of being retried blindly and risking a duplicate slip. Check the physical printer, acknowledge the warning, and reprint deliberately only when needed.
 - If Operations says the Bridge is unavailable: check that the computer is online, printer is powered on, then click **Check again**. Use **Restart Bridge** only if it still remains unavailable.
 
 #### When printers or computers change
@@ -154,6 +156,7 @@ The Print Bridge:
 - Uses small margins to reduce blank paper at the top.
 - Receives per-printer receipt/KOT settings with each job.
 - Keeps a durable SQLite ledger at `~/.red-lantern-print-bridge/orders-ledger.sqlite` on the billing computer.
+- Uses a time-limited print claim. An interrupted claim becomes an explicit unresolved/uncertain issue in Print & offline setup until staff reviews it.
 
 The Windows printer driver must also be configured to the same roll width. For EPSON TM-T82X and the shown thermal printers, use **80 mm** unless a 58 mm roll is actually loaded.
 
@@ -275,7 +278,7 @@ The website calls the bridge only on the same counter device:
 | `GET http://127.0.0.1:9124/v1/printers` | Lists Windows/CUPS installed printers. |
 | `PUT http://127.0.0.1:9124/v1/config` | Syncs Operations printer/routing configuration. |
 | `POST http://127.0.0.1:9124/v1/print-kot` | Sends one routed KOT ticket to an installed local printer. |
-| `POST http://127.0.0.1:9124/v1/print-bill` | Sends one final Bill to the configured local Bill printer. |
+| `POST http://127.0.0.1:9124/v1/print-bill` | Sends one final Bill copy to a specified configured local queue; the browser dispatches once per Bill-capable printer. |
 | `POST http://127.0.0.1:9124/v1/ledger/actions` | Writes a durable offline action to the local SQLite ledger. |
 | `GET http://127.0.0.1:9124/v1/ledger/actions?status=queued` | Reads queued actions for controlled reconciliation. |
 

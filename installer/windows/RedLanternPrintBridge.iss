@@ -18,6 +18,7 @@ SolidCompression=yes
 WizardStyle=modern
 
 [Files]
+Source: "..\..\printer-domain.js"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\print-bridge.js"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\print-bridge-supervisor.js"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\run-print-bridge-hidden.vbs"; DestDir: "{app}"; Flags: ignoreversion

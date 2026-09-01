@@ -26,6 +26,7 @@ const { evaluateServiceRisk, applyServiceRiskPriority } = require('./smart-kds-s
 const { transitionForAction } = require('./smart-kds-workflow');
 const { reasonCodesForRecommendation } = require('./smart-kds-reasons');
 const { buildKitchenMetrics } = require('./smart-kds-metrics');
+const { printerCapabilities, printerSupports } = require('./printer-domain');
 
 const envPath = path.join(__dirname, '.env');
 if (fs.existsSync(envPath)) {
@@ -925,7 +926,7 @@ async function getSmartKdsFoundation() {
     ? operationsRows[0].config.printers
     : [];
   for (const printer of printers) {
-    if (!printer || printer.type !== 'kot' || !String(printer.id || '').trim()) continue;
+    if (!printerSupports(printer, 'kot') || !String(printer.id || '').trim()) continue;
     const stationId = String(printer.id).trim().slice(0, 120);
     const stationName = String(printer.name || stationId).trim().slice(0, 120);
     await sql`INSERT INTO kitchen_stations (station_id,station_name,printer_id) VALUES (${stationId},${stationName},${stationId}) ON CONFLICT (station_id) DO NOTHING`;
@@ -5103,7 +5104,9 @@ app.post('/api/orders/:id/kots', async (req, res) => {
       matchingRoutes.forEach((route) => {
         const printer = printers.find(
           (candidate) =>
-            candidate.id === route.printerId && candidate.type === 'kot' && candidate.deviceName
+            candidate.id === route.printerId &&
+            printerSupports(candidate, 'kot') &&
+            candidate.deviceName
         );
         if (!printer || printedBy.has(printer.id)) return;
         printedBy.add(printer.id);
@@ -5490,6 +5493,7 @@ app.put('/api/orders/operations', async (req, res) => {
         const port = Number.parseInt(printer.port, 10),
           layout = (value, min, max, fallback) =>
             Math.max(min, Math.min(max, Number(value) || fallback));
+        const capabilities = printerCapabilities(printer);
         return {
           id: String(printer.id || crypto.randomUUID())
             .replace(/[^a-zA-Z0-9_-]/g, '')
@@ -5500,7 +5504,8 @@ app.put('/api/orders/operations', async (req, res) => {
           restaurantName: String(printer.restaurantName || 'Red Lantern Restaurant')
             .trim()
             .slice(0, 60),
-          type: printer.type === 'bill' ? 'bill' : 'kot',
+          capabilities,
+          type: capabilities[0] || (printer.type === 'bill' ? 'bill' : 'kot'),
           connection: 'system',
           host: String(printer.host || '')
             .trim()
@@ -5553,9 +5558,10 @@ app.put('/api/orders/operations', async (req, res) => {
           restaurantNameFontSize: layout(printer.restaurantNameFontSize, 8, 24, 14),
           headerFooterFontSize: layout(printer.headerFooterFontSize, 8, 20, 13),
           dateBillFontSize: layout(printer.dateBillFontSize, 8, 20, 13),
-          itemListingFontSize: layout(printer.itemListingFontSize, 8, 20, 13),
-          grandTotalFontSize: layout(printer.grandTotalFontSize, 10, 26, 14),
+          itemListingFontSize: layout(printer.itemListingFontSize, 8, 10, 10),
+          grandTotalFontSize: layout(printer.grandTotalFontSize, 10, 11, 11),
           serialColumnWidth: layout(printer.serialColumnWidth, 0, 40, 10),
+          itemNameMinWidth: layout(printer.itemNameMinWidth, 50, 220, 110),
           quantityColumnWidth: layout(printer.quantityColumnWidth, 8, 60, 20),
           priceColumnWidth: layout(printer.priceColumnWidth, 15, 100, 40),
           amountColumnWidth: layout(printer.amountColumnWidth, 15, 120, 55),
@@ -5576,7 +5582,16 @@ app.put('/api/orders/operations', async (req, res) => {
       return res
         .status(400)
         .json({ error: 'Each configured printer must have a unique saved ID.' });
-    const printerIds = new Set(printers.map((printer) => printer.id));
+    const configuredDeviceIds = printers
+      .map((printer) => printer.deviceId || printer.deviceName)
+      .filter(Boolean);
+    if (new Set(configuredDeviceIds).size !== configuredDeviceIds.length)
+      return res
+        .status(400)
+        .json({ error: 'Each operating-system printer queue can be configured only once.' });
+    const kotPrinterIds = new Set(
+      printers.filter((printer) => printerSupports(printer, 'kot')).map((printer) => printer.id)
+    );
     const menu = await getSection('airMenu');
     const allItems = [...(menu.items || []), ...(menu.barItems || [])].map((item) => ({
       name: String(item.name || ''),
@@ -5610,7 +5625,7 @@ app.put('/api/orders/operations', async (req, res) => {
       .filter(
         (route) =>
           route.id &&
-          printerIds.has(route.printerId) &&
+          kotPrinterIds.has(route.printerId) &&
           (route.category === '*'
             ? !route.itemName && !route.portion
             : categories.has(route.category) &&

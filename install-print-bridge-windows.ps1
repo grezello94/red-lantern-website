@@ -6,7 +6,9 @@ $ErrorActionPreference = 'Stop'
 $project = (Resolve-Path -LiteralPath $ProjectPath).Path
 $bridge = Join-Path $project 'print-bridge.js'
 $supervisor = Join-Path $project 'print-bridge-supervisor.js'
-$hiddenLauncher = Join-Path $project 'run-print-bridge-hidden.vbs'
+$launcherDir = Join-Path $env:LOCALAPPDATA 'Red Lantern Print Bridge'
+New-Item -ItemType Directory -Path $launcherDir -Force | Out-Null
+$hiddenLauncher = Join-Path $launcherDir 'run-print-bridge-hidden.vbs'
 if (!(Test-Path -LiteralPath $bridge)) { throw "print-bridge.js was not found in $project" }
 if (!(Test-Path -LiteralPath $supervisor)) { throw "print-bridge-supervisor.js was not found in $project" }
 
@@ -17,6 +19,9 @@ $nodeMajor = (& $node -p "process.versions.node.split('.')[0]")
 if ([int]$nodeMajor -lt 22) { throw "Node.js 22 or newer is required. This computer has $(& $node -v). Install a supported Node.js LTS release, then run this setup again." }
 $vbsNode = $node.Replace('"', '""')
 $vbsBridge = $supervisor.Replace('"', '""')
+$startup = [Environment]::GetFolderPath('Startup')
+$launcher = Join-Path $startup 'Red Lantern Print Bridge.vbs'
+$legacyLauncher = Join-Path $startup 'Red Lantern Print Bridge.cmd'
 # WScript waits for the supervisor and keeps the task attached, while using
 # window style 0 so counter staff never see a Node/terminal window.
 @(
@@ -28,11 +33,19 @@ try {
   # Windows printers are user-scoped on many POS systems, so a task registered
   # under an elevated installer account can appear healthy but have no printers.
   $currentUser = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-  # Stop only the Bridge being upgraded. Without this, its old process can keep
-  # port 9124 occupied and cause the replacement task to exit immediately.
+  # Stop the Bridge and its watchdog being upgraded. Leaving the old supervisor
+  # alive lets it immediately recreate the old child and compete with the new
+  # scheduled-task supervisor for port 9124.
   Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
-    Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf($bridge, [StringComparison]::OrdinalIgnoreCase) -ge 0 } |
-    ForEach-Object { Invoke-CimMethod -InputObject $_ -MethodName Terminate | Out-Null }
+    Where-Object {
+      $_.CommandLine -and (
+        $_.CommandLine.IndexOf($bridge, [StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+        $_.CommandLine.IndexOf($supervisor, [StringComparison]::OrdinalIgnoreCase) -ge 0
+      )
+    } |
+    ForEach-Object {
+      Invoke-CimMethod -InputObject $_ -MethodName Terminate -ErrorAction SilentlyContinue | Out-Null
+    }
   Start-Sleep -Milliseconds 350
   $existing = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
   if ($existing) {
@@ -57,12 +70,14 @@ try {
     }
   }
   if (!$ready) { throw 'The Windows task started but the Print Bridge did not become ready.' }
+  # A previous non-admin installation may have created the Startup fallback.
+  # Once Task Scheduler is healthy, remove both fallback launchers so only one
+  # supervisor can start at the next sign-in.
+  Remove-Item -LiteralPath $launcher -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $legacyLauncher -Force -ErrorAction SilentlyContinue
   Write-Host 'Print Bridge is installed, running, and will restart at sign-in or after an unexpected stop.'
 } catch {
   $failure = $_.Exception.Message
-  $startup = [Environment]::GetFolderPath('Startup')
-  $launcher = Join-Path $startup 'Red Lantern Print Bridge.vbs'
-  $legacyLauncher = Join-Path $startup 'Red Lantern Print Bridge.cmd'
   # A .vbs launcher keeps the bridge completely out of the staff workflow:
   # no Command Prompt window appears at sign-in or when the fallback starts.
   @(
@@ -74,5 +89,5 @@ try {
   # a command or manage a terminal window.
   Start-Process -FilePath "$env:SystemRoot\System32\wscript.exe" -ArgumentList ('"{0}"' -f $launcher) -WindowStyle Hidden
   Write-Host "Print Bridge installed silently in this user's Startup folder and started. Scheduled-task setup will be retried at the next installer update."
-  Write-Verbose "Scheduled-task setup fallback: $failure"
+  Write-Warning "Scheduled-task setup fallback reason: $failure"
 }
