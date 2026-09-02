@@ -1,5 +1,44 @@
 const { test, expect } = require('@playwright/test');
 
+async function expectNoPageOverflow(page) {
+  const overflow = await page.evaluate(() => ({
+    viewport: window.innerWidth,
+    documentWidth: document.documentElement.scrollWidth,
+    bodyWidth: document.body.scrollWidth,
+  }));
+  expect(overflow.documentWidth).toBeLessThanOrEqual(overflow.viewport);
+  expect(overflow.bodyWidth).toBeLessThanOrEqual(overflow.viewport);
+}
+
+async function expectContained(page, selector) {
+  const failures = await page.locator(selector).evaluateAll((roots) =>
+    roots.flatMap((root, rootIndex) => {
+      const parent = root.getBoundingClientRect();
+      return [...root.querySelectorAll('*')]
+        .filter((node) => {
+          const style = getComputedStyle(node);
+          const box = node.getBoundingClientRect();
+          return style.display !== 'none' && style.visibility !== 'hidden' && box.width && box.height;
+        })
+        .filter((node) => {
+          const box = node.getBoundingClientRect();
+          return (
+            box.left < parent.left - 1 ||
+            box.right > parent.right + 1 ||
+            box.top < parent.top - 1 ||
+            box.bottom > parent.bottom + 1
+          );
+        })
+        .map((node) => ({
+          root: rootIndex,
+          node: node.className || node.tagName,
+          text: node.textContent.trim().slice(0, 80),
+        }));
+    })
+  );
+  expect(failures).toEqual([]);
+}
+
 test.beforeEach(async ({ page }) => {
   await page.route('http://127.0.0.1:9124/**', async (route) => {
     const request = route.request();
@@ -30,11 +69,236 @@ test('orders page loads with expected title', async ({ page }) => {
   await expect(page.locator('#orders')).toHaveCount(1);
 });
 
+test('occupied table details and actions stay contained inside the table card', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      'red-lantern-table-allocation',
+      JSON.stringify([{ id: 'non-ac', name: 'NON AC', from: 1, to: 2 }])
+    );
+  });
+  await page.route(/\/api\/orders\?.*/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([
+        {
+          id: 'table-order-1',
+          mode: 'table',
+          table_area: 'NON AC',
+          table_number: 1,
+          status: 'accepted',
+          created_at: new Date().toISOString(),
+          customer_name: 'Walk-in customer',
+          total: 270,
+          items: [],
+        },
+      ]),
+    });
+  });
+
+  await page.goto('/orders.html');
+  const occupied = page.locator('.table-tile.is-running');
+  await expect(occupied).toBeVisible();
+
+  const layout = await occupied.evaluate((card) => {
+    const box = (node) => {
+      const bounds = node.getBoundingClientRect();
+      return {
+        left: bounds.left,
+        top: bounds.top,
+        right: bounds.right,
+        bottom: bounds.bottom,
+        width: bounds.width,
+        height: bounds.height,
+      };
+    };
+    return {
+      card: box(card),
+      heading: box(card.querySelector('.table-tile-top')),
+      status: box(card.querySelector('.table-tile-top em')),
+      info: box(card.querySelector('.table-tile-info')),
+      guest: box(card.querySelector('.table-tile-info small')),
+      amount: box(card.querySelector('.table-tile-info strong')),
+      actions: box(card.parentElement.querySelector('.table-tile-actions')),
+      action: box(card.parentElement.querySelector('.table-tile-action')),
+    };
+  });
+
+  expect(layout.status.left).toBeGreaterThanOrEqual(layout.card.left);
+  expect(layout.status.right).toBeLessThanOrEqual(layout.card.right);
+  expect(layout.info.top).toBeGreaterThanOrEqual(layout.heading.bottom);
+  expect(layout.info.right).toBeLessThanOrEqual(layout.card.right);
+  expect(layout.guest.right).toBeLessThanOrEqual(layout.card.right);
+  expect(layout.guest.bottom).toBeLessThanOrEqual(layout.actions.top);
+  expect(layout.amount.right).toBeLessThanOrEqual(layout.actions.left);
+  expect(layout.actions.right).toBeLessThanOrEqual(layout.card.right);
+  expect(layout.actions.bottom).toBeLessThanOrEqual(layout.card.bottom);
+  expect(layout.action.width).toBeGreaterThanOrEqual(34);
+  expect(layout.action.height).toBeGreaterThanOrEqual(34);
+
+  const availableOrder = await page.locator('.table-tile.is-blank').evaluate((card) => {
+    const number = card.querySelector('.table-tile-top b').getBoundingClientRect();
+    const label = card.querySelector(':scope > small').getBoundingClientRect();
+    return { numberBottom: number.bottom, labelTop: label.top };
+  });
+  expect(availableOrder.labelTop).toBeGreaterThanOrEqual(availableOrder.numberBottom);
+});
+
+test('orders tables and live-order cards remain contained on desktop and phone widths', async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      'red-lantern-table-allocation',
+      JSON.stringify([
+        { id: 'restaurant-outdoor', name: 'OUTDOOR FAMILY DINING AREA', from: 1, to: 3 },
+      ])
+    );
+  });
+  await page.route(/\/api\/orders\?.*/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([
+        {
+          id: 'a-very-long-order-reference-that-must-not-break-the-card-layout',
+          mode: 'table',
+          table_area: 'OUTDOOR FAMILY DINING AREA',
+          table_number: 1,
+          status: 'preparing',
+          created_at: new Date().toISOString(),
+          customer_name: 'A customer name deliberately long enough to require safe truncation',
+          customer_phone: '9999999999',
+          special_request:
+            'Please prepare this carefully with a long operational note that must wrap inside the card.',
+          total: 1270,
+          items: [
+            {
+              name: 'Extra long restaurant dish name with preparation details',
+              quantity: 2,
+              price: 635,
+            },
+          ],
+        },
+      ]),
+    });
+  });
+
+  for (const viewport of [
+    { width: 1280, height: 900 },
+    { width: 360, height: 780 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.goto('/orders.html');
+    await page.locator('[data-orders-rail="tables"]').click();
+    await expect(page.locator('.table-tile.is-running, .table-tile.is-kot')).toBeVisible();
+    await expectNoPageOverflow(page);
+    await expectContained(page, '.table-tile-wrap');
+
+    await page.locator('[data-orders-rail="live"]').click();
+    await expect(page.locator('.order')).toBeVisible();
+    await expectNoPageOverflow(page);
+    await expectContained(page, '.order');
+  }
+});
+
 test('captain page loads with login screen', async ({ page }) => {
   await page.goto('/captain.html');
   await expect(page).toHaveTitle(/Captain/i);
   await expect(page.locator('#captain-login')).toBeVisible();
   await expect(page.locator('#captain-account-list')).toBeVisible();
+});
+
+test('captain table board and menu cards stay contained on desktop and phone widths', async ({
+  page,
+}) => {
+  await page.route('**/api/**', async (route) => {
+    const url = new URL(route.request().url());
+    let body = {};
+    if (url.pathname === '/api/captain/accounts') {
+      body = {
+        captains: [
+          {
+            id: 'captain-1',
+            name: 'Captain With A Long Display Name',
+            areas: ['OUTDOOR FAMILY DINING AREA'],
+          },
+        ],
+      };
+    } else if (url.pathname === '/api/captain/login') {
+      body = {
+        token: 'test-token',
+        captain: {
+          id: 'captain-1',
+          name: 'Captain With A Long Display Name',
+          areas: ['OUTDOOR FAMILY DINING AREA'],
+          idleMinutes: 120,
+        },
+      };
+    } else if (url.pathname === '/api/orders/operations') {
+      body = {
+        config: {
+          tableAreas: [
+            { id: 'restaurant-outdoor', name: 'OUTDOOR FAMILY DINING AREA', from: 1, to: 4 },
+          ],
+        },
+      };
+    } else if (url.pathname === '/api/orders/menu') {
+      body = [
+        {
+          key: 'dish-1',
+          name: 'Extra long restaurant dish name with preparation details',
+          category: 'CHEF SPECIAL RECOMMENDATIONS WITH A LONG CATEGORY NAME',
+          price: 495,
+        },
+      ];
+    } else if (url.pathname === '/api/orders') {
+      body = [
+        {
+          id: 'captain-table-order-1',
+          captain_id: 'captain-1',
+          mode: 'table',
+          table_area: 'OUTDOOR FAMILY DINING AREA',
+          table_number: 1,
+          status: 'preparing',
+          created_at: new Date().toISOString(),
+          items: [],
+          total: 495,
+        },
+      ];
+    } else if (url.pathname === '/api/orders/availability') {
+      body = [];
+    } else if (url.pathname === '/api/captain/menu-insights') {
+      body = { items: [] };
+    } else if (url.pathname === '/api/captain/ready-alerts') {
+      body = { alerts: [] };
+    }
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+  });
+
+  await page.goto('/captain.html');
+  await page.locator('[data-captain-id="captain-1"]').click();
+  await page.locator('#captain-pin').fill('1234');
+  await page.locator('#captain-pin-form').dispatchEvent('submit');
+  await expect(page.locator('.captain-app')).toBeVisible();
+  await expect(page.locator('#table-board .table-tile')).toHaveCount(4);
+
+  for (const viewport of [
+    { width: 1280, height: 900 },
+    { width: 360, height: 780 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await expectNoPageOverflow(page);
+    await expectContained(page, '#table-board .table-tile');
+
+    await page.locator('#table-board .table-tile').nth(1).click();
+    await expect(page.locator('#menu-screen')).toBeVisible();
+    await expect(page.locator('.menu-item')).toBeVisible();
+    await expectNoPageOverflow(page);
+    await expectContained(page, '.menu-item');
+    await page.locator('[data-captain-back]').first().click();
+    await expect(page.locator('#tables-screen')).toBeVisible();
+  }
 });
 
 test('an urgent order event refreshes the billing console without waiting for the fallback poll', async ({
