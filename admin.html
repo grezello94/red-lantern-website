@@ -4240,12 +4240,232 @@
       @media (max-width: 900px) { .smart-kds-course-target { grid-template-columns: 180px repeat(3, minmax(120px, 1fr)); gap: 10px; } }
       @media (max-width: 760px) { #tab-smart-kds > .header { min-height: 0; padding: 24px 20px; border-radius: 18px; } .smart-kds-setting-groups, .smart-kds-planning-grid, .smart-kds-setting-fields { grid-template-columns: 1fr; } .smart-kds-setting-fields .form-group, .smart-kds-setting-fields .form-group:nth-last-child(-n+2) { border-bottom: 1px solid #edf1f5; } .smart-kds-setting-fields .form-group:last-child { border-bottom: 0; } .smart-kds-setting-group:last-child, .smart-kds-planning-card.smart-kds-planning-primary { grid-column: auto; } .smart-kds-planning-primary .smart-kds-timing-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); } .smart-kds-course-target { grid-template-columns: 1fr 1fr; } .smart-kds-course-name { grid-column: 1 / -1; } .smart-kds-station { grid-template-columns: 1fr 1fr; } }
       @media (max-width: 560px) { .smart-kds-phase-banner, .smart-kds-profile-title, .smart-kds-profile-toolbar, .smart-kds-capacity-head, .smart-kds-capacity-work-row, .smart-kds-pacing-order > header, .smart-kds-pacing-course-head { flex-direction: column; align-items: stretch; } #tab-smart-kds > .header { align-items: stretch; } .smart-kds-header-actions { justify-content: stretch; } .smart-kds-header-actions a { flex: 1; text-align: center; } #smart-kds-config-form > .smart-kds-grid, .smart-kds-grid, .smart-kds-station, .smart-kds-profile > summary, .smart-kds-profile-skeleton, .smart-kds-profile-fields .form-grid, .smart-kds-timing-summary, .smart-kds-metrics-grid, .smart-kds-timing-task, .smart-kds-pacing-task, .smart-kds-priority-card, .smart-kds-fairness-card, .smart-kds-batch-card, .smart-kds-course-target { grid-template-columns: 1fr; } .smart-kds-course-name { grid-column: auto; } .smart-kds-audit-row { grid-template-columns: 1fr; gap: 3px; } .smart-kds-priority-reasons, .smart-kds-batch-allocations { grid-column: auto; } .smart-kds-actions .btn-save { width: 100%; } .smart-kds-admin-nav { position: static; overflow-x: auto; flex-wrap: nowrap; } .smart-kds-admin-nav a, .smart-kds-admin-nav button { white-space: nowrap; } }
+
+      /* Final responsive admin shell and high-volume directory safeguards. */
+      .admin-nav-toggle {
+        display: none;
+      }
+      details.air-sheet-collapse:not([open]) > :not(summary) {
+        display: none !important;
+      }
+      .trusted-contact-list-head,
+      .trusted-contact-strip {
+        grid-template-columns:
+          minmax(180px, 0.85fr)
+          minmax(145px, 0.65fr)
+          minmax(220px, 1.55fr)
+          minmax(230px, auto);
+        gap: 12px;
+      }
+      .trusted-contact-actions {
+        min-width: 0;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+      .trusted-contact-actions button {
+        flex: 0 1 auto;
+      }
+      @media (max-width: 1220px) and (min-width: 761px) {
+        .trusted-contact-list-head {
+          display: none;
+        }
+        .trusted-contact-strip {
+          grid-template-columns: minmax(180px, 0.85fr) minmax(145px, 0.65fr) minmax(0, 1.5fr);
+        }
+        .trusted-contact-actions {
+          grid-column: 1 / -1;
+          justify-content: flex-end;
+          padding-top: 10px;
+          border-top: 1px solid #edf1f5;
+        }
+      }
+      @media (max-width: 900px) {
+        body {
+          display: block;
+          min-width: 0;
+        }
+        body.admin-nav-open {
+          overflow: hidden;
+        }
+        body.admin-nav-open::before {
+          position: fixed;
+          z-index: 998;
+          inset: 0;
+          background: rgba(17, 24, 39, 0.38);
+          content: '';
+        }
+        .sidebar {
+          position: sticky;
+          z-index: 1000;
+          top: 0;
+          width: 100%;
+          height: auto;
+          max-height: none;
+          padding: 0;
+          overflow: visible;
+          box-shadow: 0 5px 18px rgba(19, 28, 44, 0.18);
+        }
+        .sidebar-brand {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          min-height: 64px;
+          margin: 0;
+          padding: 12px 16px;
+          border: 0;
+        }
+        .admin-nav-toggle {
+          display: inline-flex;
+          align-items: center;
+          gap: 7px;
+          width: auto;
+          min-height: 40px;
+          margin: 0;
+          padding: 8px 13px;
+          border: 1px solid rgba(255, 255, 255, 0.26);
+          border-radius: 9px;
+          color: #fff;
+          background: rgba(255, 255, 255, 0.1);
+          font: 800 13px Manrope, sans-serif;
+          cursor: pointer;
+        }
+        .sidebar nav {
+          display: none;
+          position: absolute;
+          z-index: 1001;
+          top: calc(100% + 8px);
+          right: 10px;
+          left: 10px;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 3px;
+          max-height: calc(100dvh - 84px);
+          padding: 10px;
+          overflow-y: auto;
+          border: 1px solid rgba(255, 255, 255, 0.14);
+          border-radius: 14px;
+          background: #2a1118;
+          box-shadow: 0 18px 42px rgba(17, 7, 10, 0.36);
+        }
+        .sidebar.is-open nav {
+          display: grid;
+        }
+        .sidebar .nav-category {
+          grid-column: 1 / -1;
+          margin-top: 5px;
+          padding: 10px 10px 5px;
+        }
+        .sidebar .nav-item {
+          min-width: 0;
+          margin: 0;
+          padding: 11px 12px;
+          border-radius: 8px;
+        }
+        .main-content {
+          width: 100%;
+          min-width: 0;
+          margin-left: 0;
+          padding: 18px 14px 48px;
+        }
+        #tab-air-menu,
+        #tab-air-menu form,
+        #tab-air-menu .card,
+        #tab-air-menu details,
+        #tab-air-menu .air-sheet-wrap {
+          min-width: 0;
+          max-width: 100%;
+        }
+        #tab-air-menu .air-import-grid,
+        #tab-air-menu .form-grid,
+        #tab-air-menu .service-sessions,
+        #tab-air-menu .closure-fields {
+          grid-template-columns: minmax(0, 1fr);
+        }
+        #tab-air-menu .form-group,
+        #tab-air-menu .service-session,
+        #tab-air-menu .air-import-card {
+          min-width: 0;
+        }
+        #tab-air-menu input,
+        #tab-air-menu select,
+        #tab-air-menu textarea {
+          max-width: 100%;
+        }
+        #tab-air-menu input[type='file'] {
+          width: 100%;
+          min-width: 0;
+        }
+        #tab-air-menu details.air-sheet-collapse {
+          overflow: hidden;
+        }
+        #tab-air-menu .air-sheet-collapse > :not(summary) {
+          margin-right: 14px;
+          margin-left: 14px;
+        }
+        #tab-air-menu .air-sheet-wrap {
+          width: auto;
+          overflow-x: auto;
+          overscroll-behavior-x: contain;
+          -webkit-overflow-scrolling: touch;
+        }
+      }
+      @media (max-width: 760px) {
+        .trusted-contact-list-head {
+          display: none;
+        }
+        .trusted-contact-strip {
+          grid-template-columns: minmax(0, 1fr);
+          gap: 9px;
+          padding: 14px;
+        }
+        .trusted-contact-actions {
+          grid-column: auto;
+          box-sizing: border-box;
+          width: 100%;
+          max-width: 100%;
+          justify-content: flex-start;
+          padding-top: 9px;
+          border-top: 1px solid #edf1f5;
+        }
+        .trusted-contact-actions button {
+          min-width: 0;
+          max-width: 100%;
+        }
+      }
+      @media (max-width: 560px) {
+        .sidebar nav {
+          grid-template-columns: 1fr;
+        }
+        .sidebar .nav-category {
+          display: none;
+        }
+        .main-content {
+          padding: 14px 10px 42px;
+        }
+        #tab-air-menu .air-sheet-collapse > :not(summary) {
+          margin-right: 10px;
+          margin-left: 10px;
+        }
+        .trusted-contact-actions button {
+          flex: 1 1 105px;
+        }
+      }
     </style>
   </head>
   <body>
-    <aside class="sidebar">
-      <div class="sidebar-brand">Red Lantern Admin</div>
-      <nav>
+    <aside class="sidebar" id="admin-sidebar">
+      <div class="sidebar-brand">
+        <span>Red Lantern Admin</span>
+        <button
+          type="button"
+          class="admin-nav-toggle"
+          id="admin-nav-toggle"
+          aria-controls="admin-navigation"
+          aria-expanded="false"
+        >
+          <span aria-hidden="true">☰</span> Menu
+        </button>
+      </div>
+      <nav id="admin-navigation">
         <div class="nav-category website">Website management</div>
         <div class="nav-item active" data-target="tab-home">Home Page</div>
         <div class="nav-item" data-target="tab-menu">Menu Page</div>
@@ -6261,6 +6481,20 @@ Watch competitors ranking for Colva Beach, seafood, Goan food, Chinese food, fam
     <script>
       const navItems = document.querySelectorAll('.nav-item');
       const tabContents = document.querySelectorAll('.tab-content');
+      const adminSidebar = document.getElementById('admin-sidebar');
+      const adminNavToggle = document.getElementById('admin-nav-toggle');
+      const setAdminNavOpen = (open) => {
+        if (!adminSidebar || !adminNavToggle) return;
+        adminSidebar.classList.toggle('is-open', open);
+        document.body.classList.toggle('admin-nav-open', open);
+        adminNavToggle.setAttribute('aria-expanded', String(open));
+      };
+      adminNavToggle?.addEventListener('click', () => {
+        setAdminNavOpen(!adminSidebar.classList.contains('is-open'));
+      });
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') setAdminNavOpen(false);
+      });
       const activateAdminTab = (targetId, { updateUrl = false } = {}) => {
         const tab = document.getElementById(targetId);
         const nav = [...navItems].find((item) => item.getAttribute('data-target') === targetId);
@@ -6270,6 +6504,10 @@ Watch competitors ranking for Colva Beach, seafood, Goan food, Chinese food, fam
         nav.classList.add('active');
         tab.classList.add('active');
         if (updateUrl) history.replaceState(null, '', `#${targetId}`);
+        setAdminNavOpen(false);
+        document.dispatchEvent(
+          new CustomEvent('admin-tab-change', { detail: { targetId } })
+        );
         return true;
       };
       navItems.forEach((item) => {
@@ -6564,10 +6802,15 @@ Watch competitors ranking for Colva Beach, seafood, Goan food, Chinese food, fam
           saveButton.textContent = 'Save all changes';
         }
       });
-      document.querySelector('[data-target="tab-captain-app"]')?.addEventListener('click', () => {
+      document.addEventListener('admin-tab-change', (event) => {
+        if (event.detail?.targetId !== 'tab-captain-app') return;
         loadCaptains();
         loadCaptainActivity();
       });
+      if (document.getElementById('tab-captain-app')?.classList.contains('active')) {
+        loadCaptains();
+        loadCaptainActivity();
+      }
       document
         .getElementById('captain-activity-refresh')
         ?.addEventListener('click', loadCaptainActivity);
@@ -6783,6 +7026,6 @@ Watch competitors ranking for Colva Beach, seafood, Goan food, Chinese food, fam
         });
       }
     </script>
-    <script src="admin-cms.js?v=20260829-32" defer></script>
+    <script src="admin-cms.js?v=20260902-33" defer></script>
   </body>
 </html>

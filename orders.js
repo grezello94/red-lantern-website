@@ -184,8 +184,20 @@ connectivity.setAttribute('role', 'status');
 connectivity.setAttribute('aria-live', 'polite');
 connectivity.setAttribute('aria-atomic', 'true');
 document.querySelector('.orders-rail')?.after(connectivity);
-function counterRequestId() {
-  return `counter-${Date.now()}-${crypto.getRandomValues(new Uint32Array(1))[0].toString(36)}`;
+let counterRequestAttempt = { signature: '', id: '' };
+let counterOrderOperation = 0;
+function counterRequestId(payload = {}) {
+  const signature = JSON.stringify(payload);
+  if (counterRequestAttempt.id && counterRequestAttempt.signature === signature)
+    return counterRequestAttempt.id;
+  counterRequestAttempt = {
+    signature,
+    id: `counter-${Date.now()}-${crypto.getRandomValues(new Uint32Array(1))[0].toString(36)}`,
+  };
+  return counterRequestAttempt.id;
+}
+function resetCounterRequestAttempt() {
+  counterRequestAttempt = { signature: '', id: '' };
 }
 function settlementRequestId() {
   return `settlement-${Date.now()}-${crypto.getRandomValues(new Uint32Array(1))[0].toString(36)}`;
@@ -602,7 +614,7 @@ const dineInActions = document.createElement('div');
 dineInActions.id = 'dine-in-actions';
 dineInActions.hidden = true;
 dineInActions.innerHTML =
-  '<button type="button" class="dine-in-split" data-dine-action="split">Split</button><button type="button" data-dine-action="save">Save</button><button type="button" data-dine-action="print">Print &amp; eBill</button><button type="button" class="dine-in-kot" data-dine-action="kot-print">Send KOT</button><button type="button" class="dine-in-hold" data-dine-action="hold">Hold</button>';
+  '<button type="button" class="dine-in-split" data-dine-action="split">Split</button><button type="button" data-dine-action="save">Save</button><button type="button" data-dine-action="print">Print &amp; eBill</button><button type="button" class="dine-in-kot" data-dine-action="kot-print">Send KOT to kitchen</button><button type="button" class="dine-in-hold" data-dine-action="hold">Hold</button>';
 counterPanel.querySelector('.counter-cart')?.append(dineInActions);
 const splitBillDialog = document.createElement('dialog');
 splitBillDialog.id = 'split-bill-dialog';
@@ -846,6 +858,11 @@ function renderCounterOrder() {
     const hasItems = counterCart.length > 0;
     placeOrderButton.disabled = !hasItems;
     placeOrderButton.title = hasItems ? '' : 'Add an item before placing the order.';
+    document.querySelectorAll('#dine-in-actions button').forEach((button) => {
+      if (button.classList.contains('is-processing')) return;
+      button.disabled = !hasItems;
+      button.title = hasItems ? '' : 'Add an item before using this action.';
+    });
   }
   const note = document.getElementById('counter-wallet-note');
   if (note) note.textContent = usablePoints ? `₹${usablePoints} wallet discount applied.` : '';
@@ -1838,6 +1855,36 @@ function renderOrder(order) {
       ? `<div class="request">Table service: <b>${esc(String(order.service_state).replace('_', ' '))}</b> <button data-clear-service="${esc(order.id)}">Handled</button></div>`
       : '';
   return `<article class="order" data-order-id="${esc(order.id)}"><div class="order-heading"><span class="daily-order-number">Order #${orderNumber}</span><span class="order-status">${esc(order.status)}</span></div><div class="order-reference">Ref ${esc(order.id)}</div><div class="order-time">${age} min ago</div><div class="placed-at"><span>Placed</span>${esc(placedAt)} <small>Goa time</small></div><div class="meta">${esc(order.customer_name || 'Walk-in customer')}${hasGuestContact ? ` · <b class="phone">${esc(order.customer_phone)}</b>` : ''}</div>${service}${hasGuestContact ? `<div class="customer-trust"><b>${orderCount === 1 ? 'New customer' : `${orderCount} orders from this number`}</b><span>${history}</span></div>` : ''}${order.special_request ? `<div class="request">Special request: ${esc(order.special_request)}</div>` : ''}${order.cancellation_reason ? `<div class="request">Cancelled: ${esc(order.cancellation_reason)}</div>` : ''}<div class="items">${items.map((item) => `<div><b>${Number(item.quantity || 0)}×</b> ${esc(item.name)} ${item.portion ? `(${esc(item.portion)})` : ''}${item.style ? ` — ${esc(item.style)} (+₹10)` : ''}</div>`).join('')}</div><div class="totals"><b>${itemCount} item${itemCount === 1 ? '' : 's'}</b><strong>Total ${money(total)}</strong></div><div class="actions">${controls}${canCancel ? `<button class="cancel-order" onclick="cancelOrder('${esc(order.id)}')">Cancel order</button>` : ''}${canModify ? `<button class="modify-order" data-modify-order="${esc(order.id)}">Modify order</button>` : ''}<button class="print" onclick="printOrder('${esc(order.id)}')">Print</button></div></article>`;
+}
+
+function renderOrders(rows) {
+  const query = String(orderSearch?.value || '')
+    .replace(/\D/g, '')
+    .slice(0, 16);
+  const statusRows =
+    orderStatusFilter === 'all'
+      ? rows
+      : rows.filter((order) => order.status === orderStatusFilter);
+  const visibleRows = fulfillmentFilter
+    ? statusRows.filter(
+        (order) => String(order.fulfillment_type || '').toLowerCase() === fulfillmentFilter
+      )
+    : statusRows;
+  const searchedRows = query
+    ? visibleRows.filter((order) => {
+        const searchable = `${order.daily_order_number || ''}${order.customer_phone || ''}`.replace(
+          /\D/g,
+          ''
+        );
+        return searchable.includes(query);
+      })
+    : visibleRows;
+  root.innerHTML =
+    searchedRows.map(renderOrder).join('') ||
+    `<div class="empty-state">${query ? 'No orders match that number.' : 'No orders in this view.'}</div>`;
+  renderedOrdersSignature = '';
+  hasRenderedOrders = true;
+  if (!tableViewPanel.hidden) renderTableView();
 }
 
 async function setStatus(id, status, reason = '') {
@@ -3343,7 +3390,6 @@ async function dispatchKot(orderId, printerId) {
     if (data.latestKot) {
       data.kotNumber = data.latestKot.kot_number;
       data.tickets = data.latestKot.tickets;
-      data.order = data.order;
       data.reprint = true;
     } else throw new Error(data.error || 'Unable to create KOT.');
   }
@@ -3482,7 +3528,7 @@ async function flushDeferredAutomaticPrints() {
     deferredPrintSyncInProgress = false;
   }
 }
-async function autoPrintOrder(order, { deferred = false } = {}) {
+async function autoPrintOrder(order, { deferred = false, kotOnly = false } = {}) {
   const canReleaseToKitchen =
     deferred ||
     order?.mode === 'counter' ||
@@ -3580,7 +3626,7 @@ async function autoPrintOrder(order, { deferred = false } = {}) {
         return { ok: false, reason };
       }
     })();
-    if (order.mode === 'table') {
+    if (order.mode === 'table' || kotOnly) {
       const kotResult = await kotPromise;
       return kotResult.ok ? { ok: true, kotOnly: true } : kotResult;
     }
@@ -4233,20 +4279,43 @@ document.getElementById('counter-cart-items')?.addEventListener('change', (event
 document.getElementById('counter-clear')?.addEventListener('click', () => {
   counterBillSplit = null;
   counterCart = [];
-  document.getElementById('counter-order-status').textContent = '';
+  resetCounterRequestAttempt();
+  setCounterOrderStatus('');
   renderCounterOrder();
 });
-async function submitDineInAction(action) {
+function setCounterOrderStatus(message, state = '') {
   const status = document.getElementById('counter-order-status');
+  if (!status) return;
+  status.textContent = message;
+  if (state) status.dataset.state = state;
+  else delete status.dataset.state;
+}
+async function submitDineInAction(action) {
   if (!counterCart.length) {
-    status.textContent = 'Add at least one menu item first.';
+    setCounterOrderStatus('Add at least one menu item first.', 'error');
     return;
   }
   const isDineIn = !!counterTable;
+  const operationId = ++counterOrderOperation;
   const button = document.querySelector(`[data-dine-action="${action}"]`);
-  if (button) button.disabled = true;
+  const actionButtons = [...document.querySelectorAll('#dine-in-actions button')];
+  const idleButtonLabel = button?.textContent || '';
+  actionButtons.forEach((actionButton) => {
+    actionButton.disabled = true;
+  });
+  if (button) {
+    button.classList.add('is-processing');
+    button.setAttribute('aria-busy', 'true');
+    button.textContent =
+      action === 'kot-print'
+        ? 'Saving KOT…'
+        : action === 'print'
+          ? 'Preparing bill…'
+          : action === 'hold'
+            ? 'Holding…'
+            : 'Saving…';
+  }
   const payload = {
-    clientRequestId: counterRequestId(),
     action,
     customerName: document.getElementById('counter-customer-name').value.trim(),
     customerPhone: document.getElementById('counter-customer-phone').value.trim(),
@@ -4257,17 +4326,22 @@ async function submitDineInAction(action) {
     tableNumber: counterTable?.number || '',
     items: counterCart.map((item) => ({ ...item })),
   };
+  payload.clientRequestId = counterRequestId(payload);
   const orderLabel = isDineIn
     ? `${counterTable.area} · Table ${String(counterTable.number).padStart(2, '0')}`
     : 'Takeaway order';
   let savedInBridgeLedger = false;
   try {
-    status.textContent =
+    setCounterOrderStatus(
       action === 'hold'
         ? `Holding ${isDineIn ? 'table bill' : 'takeaway order'}…`
         : action === 'save'
           ? `Saving ${isDineIn ? 'table bill' : 'takeaway order'}…`
-          : `Saving ${isDineIn ? 'dine-in bill' : 'takeaway order'}…`;
+          : action === 'kot-print'
+            ? 'Saving the order securely…'
+            : `Saving ${isDineIn ? 'dine-in bill' : 'takeaway order'}…`,
+      'sending'
+    );
     if (['save', 'hold'].includes(action)) {
       try {
         await saveToBridgeLedger(payload);
@@ -4294,14 +4368,46 @@ async function submitDineInAction(action) {
       updateConnectivity();
     }
     if (action === 'kot-print') {
-      const printing = await autoPrintOrder({
+      const savedOrderLabel = isDineIn
+        ? orderLabel
+        : `Takeaway order #${result.orderNumber}`;
+      counterBillSplit = null;
+      counterCart = [];
+      resetCounterRequestAttempt();
+      counterLoyaltyPoints = 0;
+      document.getElementById('counter-customer-name').value = '';
+      document.getElementById('counter-customer-phone').value = '';
+      document.getElementById('counter-special-request').value = '';
+      document.getElementById('counter-wallet-redeem').value = '0';
+      counterWallet.hidden = true;
+      renderCounterOrder();
+      setCounterOrderStatus(
+        `${savedOrderLabel} saved. Sending the KOT to the kitchen…`,
+        'sending'
+      );
+      // Saving to the database is the success boundary for the POS. Printer
+      // discovery and physical output continue without blocking the counter.
+      void autoPrintOrder({
         id: result.id,
         mode: isDineIn ? 'table' : 'counter',
-        status: 'accepted',
+        status: result.status || 'accepted',
+      }, { kotOnly: true }).then((printing) => {
+        if (operationId !== counterOrderOperation) return;
+        if (printing?.ok)
+          setCounterOrderStatus(
+            `${savedOrderLabel} saved — KOT sent to the configured kitchen printers.`,
+            'success'
+          );
+        else
+          setCounterOrderStatus(
+            `${savedOrderLabel} is safely saved, but KOT printing needs attention. ${printing?.reason || 'Check Operations.'}`,
+            'error'
+          );
       });
-      if (!printing.ok)
-        throw new Error(printing.reason || 'KOTs could not be sent to the kitchen.');
-      status.textContent = `${orderLabel}: KOTs sent to the kitchen.`;
+      void loadOrders();
+      void refreshCounterLiveStatus();
+      if (isDineIn) void showTableView();
+      return;
     } else if (action === 'print') {
       await printOrder(result.id, counterBillSplit);
       const marked = await fetch(`/api/orders/${encodeURIComponent(result.id)}/bill-printed`, {
@@ -4312,16 +4418,20 @@ async function submitDineInAction(action) {
         throw new Error(
           markedData.error || 'Bill printed, but the table could not be marked for settlement.'
         );
-      status.textContent = isDineIn
-        ? `${orderLabel}: bill printed and waiting for settlement.`
-        : `${orderLabel}: eBill printed.`;
+      setCounterOrderStatus(
+        isDineIn
+          ? `${orderLabel}: bill printed and waiting for settlement.`
+          : `${orderLabel}: eBill printed.`,
+        'success'
+      );
     } else
-      status.textContent =
-        action === 'hold'
-          ? `${orderLabel} is on hold.`
-          : `${orderLabel} saved for later.`;
+      setCounterOrderStatus(
+        action === 'hold' ? `${orderLabel} is on hold.` : `${orderLabel} saved for later.`,
+        'success'
+      );
     counterBillSplit = null;
     counterCart = [];
+    resetCounterRequestAttempt();
     renderCounterOrder();
     await loadOrders();
     if (isDineIn) await showTableView();
@@ -4338,14 +4448,33 @@ async function submitDineInAction(action) {
       if (isDineIn) reserveOfflineTable(payload);
       counterBillSplit = null;
       counterCart = [];
+      resetCounterRequestAttempt();
       renderCounterOrder();
-      status.textContent = isDineIn
-        ? `${orderLabel} is saved offline and reserved. It will sync automatically when internet returns.`
-        : `${orderLabel} is saved offline. It will sync automatically when internet returns.`;
+      setCounterOrderStatus(
+        isDineIn
+          ? `${orderLabel} is saved offline and reserved. It will sync automatically when internet returns.`
+          : `${orderLabel} is saved offline. It will sync automatically when internet returns.`,
+        'success'
+      );
       updateConnectivity();
-    } else status.textContent = error.message || `Unable to save this ${isDineIn ? 'dine-in bill' : 'takeaway order'}.`;
+    } else
+      setCounterOrderStatus(
+        !error.status && /failed to fetch|network\s*error/i.test(String(error.message || ''))
+          ? 'Unable to confirm the save because the connection was interrupted. Your order is still here—press Send KOT again.'
+          : error.message ||
+              `Unable to save this ${isDineIn ? 'dine-in bill' : 'takeaway order'}.`,
+        'error'
+      );
   } finally {
-    if (button) button.disabled = false;
+    if (button) {
+      button.classList.remove('is-processing');
+      button.removeAttribute('aria-busy');
+      button.textContent = idleButtonLabel;
+    }
+    const hasItems = counterCart.length > 0;
+    actionButtons.forEach((actionButton) => {
+      actionButton.disabled = !hasItems;
+    });
   }
 }
 document.getElementById('dine-in-actions')?.addEventListener('click', async (event) => {
@@ -4364,9 +4493,9 @@ document.getElementById('counter-place-order')?.addEventListener('click', async 
     return;
   }
   const button = document.getElementById('counter-place-order');
+  const operationId = ++counterOrderOperation;
   button.disabled = true;
   const payload = {
-    clientRequestId: counterRequestId(),
     customerName: document.getElementById('counter-customer-name').value.trim(),
     customerPhone: document.getElementById('counter-customer-phone').value.trim(),
     specialRequest: document.getElementById('counter-special-request').value.trim(),
@@ -4376,6 +4505,7 @@ document.getElementById('counter-place-order')?.addEventListener('click', async 
     tableNumber: counterTable?.number || '',
     items: counterCart.map((item) => ({ ...item })),
   };
+  payload.clientRequestId = counterRequestId(payload);
   if (payload.loyaltyPoints >= 100) {
     const first = window.confirm(`Apply ₹${payload.loyaltyPoints} from this customer's wallet?`);
     const second =
@@ -4418,6 +4548,7 @@ document.getElementById('counter-place-order')?.addEventListener('click', async 
     }
     status.textContent = `${counterTable ? `${counterTable.area} Table ${String(counterTable.number).padStart(2, '0')}` : `Takeaway order #${result.orderNumber}`} accepted. Sending KOTs…`;
     counterCart = [];
+    resetCounterRequestAttempt();
     counterLoyaltyPoints = 0;
     document.getElementById('counter-customer-name').value = '';
     document.getElementById('counter-customer-phone').value = '';
@@ -4430,6 +4561,7 @@ document.getElementById('counter-place-order')?.addEventListener('click', async 
       mode: counterTable ? 'table' : 'counter',
       status: result.status || 'accepted',
     }).then((printing) => {
+      if (operationId !== counterOrderOperation) return;
       if (printing?.ok)
         status.textContent = `${counterTable ? `${counterTable.area} Table ${String(counterTable.number).padStart(2, '0')}` : `Takeaway order #${result.orderNumber}`} accepted. KOTs were sent to the configured kitchens.`;
       else if (printing?.reason)
@@ -4446,6 +4578,7 @@ document.getElementById('counter-place-order')?.addEventListener('click', async 
       }
       reserveOfflineTable(payload);
       counterCart = [];
+      resetCounterRequestAttempt();
       document.getElementById('counter-customer-name').value = '';
       document.getElementById('counter-customer-phone').value = '';
       document.getElementById('counter-special-request').value = '';

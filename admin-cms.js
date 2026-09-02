@@ -526,6 +526,10 @@ function airBarItemMarkup(item = {}, index = 0) {
 
 let airCategoryVisibility = {};
 let airCategoryOrder = [];
+let deferredAirFoodItems = [];
+let deferredAirBarItems = [];
+let airFoodSheetHydrated = false;
+let airBarSheetHydrated = false;
 let airCategoryGroups = new Map();
 
 function isAlcoholCategory(category) {
@@ -623,6 +627,8 @@ function renderAirCategoryControls(items = []) {
 function renderAirItems(items = []) {
   const container = document.getElementById('air-items-container');
   if (!container) return;
+  deferredAirFoodItems = items.map((item) => ({ ...item }));
+  airFoodSheetHydrated = true;
   container.innerHTML = items.map((item, index) => airItemMarkup(item, index)).join('');
   if (!items.length)
     container.innerHTML =
@@ -632,6 +638,7 @@ function renderAirItems(items = []) {
 }
 
 function airSheetItems() {
+  if (!airFoodSheetHydrated) return deferredAirFoodItems.map((item) => ({ ...item }));
   return [...document.querySelectorAll('#air-items-container .air-item-entry')]
     .map((row) => {
       const category = row.querySelector('[name="airItemCategory[]"]')?.value.trim() || 'Menu';
@@ -658,6 +665,7 @@ function airSheetItems() {
 }
 
 function airBarSheetItems() {
+  if (!airBarSheetHydrated) return deferredAirBarItems.map((item) => ({ ...item }));
   return [...document.querySelectorAll('#air-bar-items-container .air-bar-item-entry')]
     .map((row) => ({
       name: row.querySelector('[name="airBarItemName[]"]')?.value.trim() || '',
@@ -678,6 +686,8 @@ function airBarSheetItems() {
 function renderAirBarItems(items = []) {
   const container = document.getElementById('air-bar-items-container');
   if (!container) return;
+  deferredAirBarItems = items.map((item) => ({ ...item, isBar: true }));
+  airBarSheetHydrated = true;
   container.innerHTML = items.map((item, index) => airBarItemMarkup(item, index)).join('');
   if (!items.length)
     container.innerHTML =
@@ -692,13 +702,45 @@ function updateAirSheetCounts() {
   const food = document.getElementById('air-food-sheet-count'),
     bar = document.getElementById('air-bar-sheet-count');
   if (food) {
-    const total = count('[name="airItemName[]"]');
+    const total = airFoodSheetHydrated
+      ? count('[name="airItemName[]"]')
+      : deferredAirFoodItems.filter((item) => String(item.name || '').trim()).length;
     food.textContent = `${total} item${total === 1 ? '' : 's'}`;
   }
   if (bar) {
-    const total = count('[name="airBarItemName[]"]');
+    const total = airBarSheetHydrated
+      ? count('[name="airBarItemName[]"]')
+      : deferredAirBarItems.filter((item) => String(item.name || '').trim()).length;
     bar.textContent = `${total} item${total === 1 ? '' : 's'}`;
   }
+}
+
+function hydrateAirFoodSheet() {
+  if (!airFoodSheetHydrated) renderAirItems(deferredAirFoodItems);
+}
+
+function hydrateAirBarSheet() {
+  if (!airBarSheetHydrated) renderAirBarItems(deferredAirBarItems);
+}
+
+function hydrateAllAirSheets() {
+  hydrateAirFoodSheet();
+  hydrateAirBarSheet();
+}
+
+function deferAirSheetRendering(foodItems = [], barItems = []) {
+  deferredAirFoodItems = foodItems.map((item) => ({ ...item }));
+  deferredAirBarItems = barItems.map((item) => ({ ...item, isBar: true }));
+  airFoodSheetHydrated = false;
+  airBarSheetHydrated = false;
+  const foodContainer = document.getElementById('air-items-container');
+  const barContainer = document.getElementById('air-bar-items-container');
+  if (foodContainer) foodContainer.innerHTML = '';
+  if (barContainer) barContainer.innerHTML = '';
+  updateAirSheetCounts();
+  renderAirCategoryControls([...deferredAirFoodItems, ...deferredAirBarItems]);
+  if (document.querySelector('details.air-menu-sheet')?.open) hydrateAirFoodSheet();
+  if (document.querySelector('details.bar-sheet')?.open) hydrateAirBarSheet();
 }
 document.addEventListener('input', (event) => {
   if (event.target.matches('[name="airItemName[]"],[name="airBarItemName[]"]'))
@@ -927,32 +969,71 @@ function fillAirMenu(menu = {}) {
   airCategoryOrder = Array.isArray(menu.categoryOrder)
     ? menu.categoryOrder.map((category) => String(category || '').trim()).filter(Boolean)
     : [];
-  renderAirItems(Array.isArray(menu.items) ? menu.items : []);
-  renderAirBarItems(Array.isArray(menu.barItems) ? menu.barItems : []);
+  deferAirSheetRendering(
+    Array.isArray(menu.items) ? menu.items : [],
+    Array.isArray(menu.barItems) ? menu.barItems : []
+  );
 }
 
 const tableQrStyles = document.createElement('style');
-tableQrStyles.textContent = `.table-qr-manager{margin-top:22px;padding:20px;border:1px solid #d9e5f2;border-radius:16px;background:#f8fbff}.table-qr-manager>div:first-child{display:grid;gap:4px}.table-qr-manager strong{color:#223b5c;font-size:16px}.table-qr-code-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:14px;margin-top:16px}.table-qr-code{padding:14px;border:1px solid #dce6f0;border-radius:14px;background:#fff;text-align:center}.table-qr-code img{display:block;width:138px;height:138px;margin:8px auto;object-fit:contain}.table-qr-code b,.table-qr-code small{display:block}.table-qr-code b{color:#243852;font-size:14px}.table-qr-code small{margin:4px 0 10px;color:#71839b;font-size:11px}.table-qr-actions{display:flex;align-items:center;justify-content:center;gap:9px}.table-qr-actions a{padding:8px 10px;border-radius:8px;color:#175b9a;background:#eef6ff;font-size:11px;font-weight:800;text-decoration:none}.table-qr-toggle{display:inline-flex;align-items:center;gap:6px;color:#52677f;font-size:11px;font-weight:800}.table-qr-toggle input{appearance:none;width:38px;height:22px;margin:0;border-radius:999px;background:radial-gradient(circle at 11px 50%,#fff 0 8px,transparent 9px),#cbd5e1;cursor:pointer}.table-qr-toggle input:checked{background:radial-gradient(circle at 27px 50%,#fff 0 8px,transparent 9px),#c22635}`;
+tableQrStyles.textContent = `.table-qr-manager{margin-top:22px;padding:20px;border:1px solid #d9e5f2;border-radius:16px;background:#f8fbff}.table-qr-manager>div:first-child{display:grid;gap:4px}.table-qr-manager strong{color:#223b5c;font-size:16px}.table-qr-code-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:14px;margin-top:16px}.table-qr-code{padding:14px;border:1px solid #dce6f0;border-radius:14px;background:#fff;text-align:center}.table-qr-preview{display:grid;place-items:center;width:138px;height:138px;margin:8px auto;border:1px dashed #c9d7e6;border-radius:12px;background:#f7faff}.table-qr-preview img{display:block;width:132px;height:132px;object-fit:contain}.table-qr-preview img[hidden]{display:none}.table-qr-preview button{width:auto;min-height:38px;margin:0;padding:8px 12px;border:1px solid #c9d7e6;border-radius:8px;color:#315487;background:#fff;font:800 11px Manrope,Arial,sans-serif;cursor:pointer}.table-qr-code b,.table-qr-code small{display:block}.table-qr-code b{color:#243852;font-size:14px}.table-qr-code small{margin:4px 0 10px;color:#71839b;font-size:11px}.table-qr-actions{display:flex;align-items:center;justify-content:center;gap:9px}.table-qr-actions a{padding:8px 10px;border-radius:8px;color:#175b9a;background:#eef6ff;font-size:11px;font-weight:800;text-decoration:none}.table-qr-toggle{display:inline-flex;align-items:center;gap:6px;color:#52677f;font-size:11px;font-weight:800}.table-qr-toggle input{appearance:none;width:38px;height:22px;margin:0;border-radius:999px;background:radial-gradient(circle at 11px 50%,#fff 0 8px,transparent 9px),#cbd5e1;cursor:pointer}.table-qr-toggle input:checked{background:radial-gradient(circle at 27px 50%,#fff 0 8px,transparent 9px),#c22635}`;
 document.head.appendChild(tableQrStyles);
 
-async function loadTableQrCodes() {
+let tableQrCodesLoaded = false;
+let tableQrCodesLoading = null;
+async function loadTableQrCodes({ force = false } = {}) {
   const container = document.getElementById('table-qr-codes');
   if (!container) return;
-  try {
-    const response = await fetch('/api/admin/table-qr-codes', { cache: 'no-store' });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || 'Unable to load table QR codes.');
-    container.innerHTML = data.codes?.length
-      ? data.codes
-          .map((code) => {
-            const query = `area=${encodeURIComponent(code.areaId)}&table=${code.tableNumber}`;
-            return `<article class="table-qr-code"><b>${escapeHtml(`${code.areaName} Table ${code.tableNumber}`)}</b><small>Permanent table menu QR</small><img src="/api/admin/qr/table?${query}" alt="${escapeHtml(`${code.areaName} Table ${code.tableNumber} QR code`)}"><div class="table-qr-actions"><a href="/api/admin/qr/table?${query}" download="red-lantern-table-${code.tableNumber}-qr.svg">Download</a><label class="table-qr-toggle"><input type="checkbox" data-table-qr-area="${escapeHtml(code.areaId)}" data-table-qr-number="${code.tableNumber}" ${code.enabled ? 'checked' : ''}>${code.enabled ? 'Live' : 'Disabled'}</label></div></article>`;
-          })
-          .join('')
-      : '<p class="help-text">Add table areas in Orders → Operations → Table allocation. Their permanent QR codes will appear here automatically.</p>';
-  } catch (error) {
-    container.innerHTML = `<p class="help-text">${escapeHtml(error.message || 'Unable to load table QR codes.')}</p>`;
-  }
+  if (!force && tableQrCodesLoaded) return;
+  if (!force && tableQrCodesLoading) return tableQrCodesLoading;
+  tableQrCodesLoading = (async () => {
+    try {
+      const response = await fetch('/api/admin/table-qr-codes', { cache: 'no-store' });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to load table QR codes.');
+      container.innerHTML = data.codes?.length
+        ? data.codes
+            .map((code) => {
+              const query = `area=${encodeURIComponent(code.areaId)}&table=${code.tableNumber}`;
+              const source = `/api/admin/qr/table?${query}`;
+              return `<article class="table-qr-code"><b>${escapeHtml(`${code.areaName} Table ${code.tableNumber}`)}</b><small>Permanent table menu QR</small><div class="table-qr-preview"><img hidden data-table-qr-image data-src="${source}" alt="${escapeHtml(`${code.areaName} Table ${code.tableNumber} QR code`)}"><button type="button" data-show-table-qr>Show QR</button></div><div class="table-qr-actions"><a href="${source}" download="red-lantern-table-${code.tableNumber}-qr.svg">Download</a><label class="table-qr-toggle"><input type="checkbox" data-table-qr-area="${escapeHtml(code.areaId)}" data-table-qr-number="${code.tableNumber}" ${code.enabled ? 'checked' : ''}>${code.enabled ? 'Live' : 'Disabled'}</label></div></article>`;
+            })
+            .join('')
+        : '<p class="help-text">Add table areas in Orders → Operations → Table allocation. Their permanent QR codes will appear here automatically.</p>';
+      tableQrCodesLoaded = true;
+    } catch (error) {
+      container.innerHTML = `<p class="help-text">${escapeHtml(error.message || 'Unable to load table QR codes.')}</p>`;
+    } finally {
+      tableQrCodesLoading = null;
+    }
+  })();
+  return tableQrCodesLoading;
+}
+
+document.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-show-table-qr]');
+  if (!button) return;
+  const image = button.parentElement?.querySelector('[data-table-qr-image]');
+  if (!image) return;
+  image.src = image.dataset.src;
+  image.hidden = false;
+  button.remove();
+});
+
+function setupDeferredAirMenuUi() {
+  document.querySelector('details.air-menu-sheet')?.addEventListener('toggle', (event) => {
+    if (event.currentTarget.open) hydrateAirFoodSheet();
+  });
+  document.querySelector('details.bar-sheet')?.addEventListener('toggle', (event) => {
+    if (event.currentTarget.open) hydrateAirBarSheet();
+  });
+  document
+    .querySelector('form[action="/api/update-airMenu"]')
+    ?.addEventListener('submit', hydrateAllAirSheets, { capture: true });
+  document.addEventListener('admin-tab-change', (event) => {
+    if (event.detail?.targetId === 'tab-air-menu') loadTableQrCodes();
+  });
+  if (document.getElementById('tab-air-menu')?.classList.contains('active')) loadTableQrCodes();
 }
 
 document.addEventListener('change', async (event) => {
@@ -966,7 +1047,8 @@ document.addEventListener('change', async (event) => {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'Unable to update this QR code.');
     showSaveToast();
-    await loadTableQrCodes();
+    tableQrCodesLoaded = false;
+    await loadTableQrCodes({ force: true });
   } catch (error) {
     toggle.checked = !toggle.checked;
     alert(error.message || 'Unable to update this QR code.');
@@ -1987,7 +2069,6 @@ async function refreshGrowthProgress() {
     if (!response.ok) throw new Error('Unable to refresh progress.');
     const content = await response.json();
     buildGrowthDashboard(content);
-    loadTableQrCodes();
   } catch (error) {
     const scoreLabel = document.getElementById('growth-score-label');
     if (scoreLabel) scoreLabel.textContent = error.message || 'Unable to refresh progress.';
@@ -2699,8 +2780,10 @@ function setupCustomerInsights() {
     clearTimeout(timer);
     timer = setTimeout(load, 250);
   });
-  document.querySelector('[data-target="tab-customer-insights"]')?.addEventListener('click', load);
-  load();
+  document.addEventListener('admin-tab-change', (event) => {
+    if (event.detail?.targetId === 'tab-customer-insights') load();
+  });
+  if (document.getElementById('tab-customer-insights')?.classList.contains('active')) load();
 }
 
 function setupTrustedContacts() {
@@ -2878,8 +2961,10 @@ function setupTrustedContacts() {
     page = direction === 'next' ? page + 1 : Math.max(1, page - 1);
     load();
   });
-  document.querySelector('[data-target="tab-trusted-contacts"]')?.addEventListener('click', load);
-  load();
+  document.addEventListener('admin-tab-change', (event) => {
+    if (event.detail?.targetId === 'tab-trusted-contacts') load();
+  });
+  if (document.getElementById('tab-trusted-contacts')?.classList.contains('active')) load();
 }
 
 function setupSmartKds() {
@@ -3663,7 +3748,6 @@ fetch('/api/admin/content')
     fillContact(content.contact);
     fillGlobal(content.global);
     buildGrowthDashboard(content);
-    loadTableQrCodes();
   })
   .catch(() => {});
 
@@ -3676,6 +3760,7 @@ setupRichTextToolbar();
 setupBlogDescriptionGenerator();
 setupAirMenuEditor();
 setupAirBarMenuEditor();
+setupDeferredAirMenuUi();
 setupCustomerInsights();
 setupTrustedContacts();
 setupSmartKds();

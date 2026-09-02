@@ -86,6 +86,54 @@ async function signInCaptain(page) {
   await expect(page.locator('.captain-app')).toBeVisible();
 }
 
+async function mockCounterWorkspace(page, { onCounterOrder, onKot } = {}) {
+  await page.route('**/api/**', async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    let status = 200;
+    let body = {};
+    if (url.pathname === '/api/orders/menu') {
+      body = [
+        {
+          name: 'Test Soup',
+          category: 'SOUP',
+          menuType: 'food',
+          price: '₹110',
+        },
+      ];
+    } else if (url.pathname === '/api/orders/availability') body = [];
+    else if (url.pathname === '/api/orders/operations')
+      body = { config: { printers: [], routes: [], tableAreas: [] }, menu: [] };
+    else if (url.pathname === '/api/orders/counter') {
+      const override = await onCounterOrder?.(route, request);
+      if (override === 'handled') return;
+      body = {
+        id: 'counter-order-1',
+        status: 'accepted',
+        orderNumber: '01',
+        total: 110,
+      };
+    } else if (/\/api\/orders\/[^/]+\/kots$/.test(url.pathname)) {
+      await onKot?.(route, request);
+      body = {
+        kotNumber: 1,
+        order: { id: 'counter-order-1', daily_order_number: 1, mode: 'counter' },
+        tickets: [],
+      };
+      status = 201;
+    } else if (url.pathname === '/api/orders') body = [];
+    else if (url.pathname === '/api/orders/print-updates') body = { updates: [], cursor: null };
+    await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+  });
+}
+
+async function addCounterTestItem(page) {
+  await page.locator('[data-orders-rail="counter"]').click();
+  await expect(page.locator('.counter-menu-item')).toBeVisible();
+  await page.locator('.counter-menu-item').first().click();
+  await expect(page.locator('#counter-total')).toHaveText('₹110');
+}
+
 test.beforeEach(async ({ page }) => {
   await page.route('http://127.0.0.1:9124/**', async (route) => {
     const request = route.request();
@@ -114,6 +162,53 @@ test('orders page loads with expected title', async ({ page }) => {
   await expect(page).toHaveTitle(/Red Lantern Orders/i);
   await expect(page.getByRole('navigation', { name: 'Orders workspace' })).toBeVisible();
   await expect(page.locator('#orders')).toHaveCount(1);
+});
+
+test('Send KOT clears the counter immediately while kitchen printing continues', async ({ page }) => {
+  let releaseKot;
+  const kotBlocked = new Promise((resolve) => {
+    releaseKot = resolve;
+  });
+  await mockCounterWorkspace(page, {
+    onKot: async () => kotBlocked,
+  });
+  await page.goto('/orders.html');
+  await addCounterTestItem(page);
+
+  await page.locator('[data-dine-action="kot-print"]').click();
+  await expect(page.locator('#counter-total')).toHaveText('₹0');
+  await expect(page.locator('#counter-order-status')).toContainText('saved');
+  await expect(page.locator('#counter-order-status')).toContainText('Sending the KOT');
+
+  releaseKot();
+  await expect(page.locator('#counter-order-status')).toContainText('KOT sent');
+});
+
+test('an interrupted Send KOT retry reuses the same idempotency key', async ({ page }) => {
+  const requestIds = [];
+  let attempt = 0;
+  await mockCounterWorkspace(page, {
+    onCounterOrder: async (route, request) => {
+      requestIds.push(request.postDataJSON().clientRequestId);
+      attempt += 1;
+      if (attempt === 1) {
+        await route.abort('connectionreset');
+        return 'handled';
+      }
+      return null;
+    },
+  });
+  await page.goto('/orders.html');
+  await addCounterTestItem(page);
+
+  await page.locator('[data-dine-action="kot-print"]').click();
+  await expect(page.locator('#counter-order-status')).toContainText('connection was interrupted');
+  await expect(page.locator('#counter-total')).toHaveText('₹110');
+  await page.locator('[data-dine-action="kot-print"]').click();
+  await expect(page.locator('#counter-total')).toHaveText('₹0');
+
+  expect(requestIds).toHaveLength(2);
+  expect(requestIds[1]).toBe(requestIds[0]);
 });
 
 test('occupied table details and actions stay contained inside the table card', async ({ page }) => {

@@ -830,6 +830,22 @@ async function ensureKotRoundStatusTable() {
     kotRoundStatusTableReady = sql`CREATE TABLE IF NOT EXISTS order_kot_round_status (order_id TEXT NOT NULL, kot_number INTEGER NOT NULL, printer_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'accepted', updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (order_id, kot_number, printer_id))`;
   return kotRoundStatusTableReady;
 }
+async function ensureKotTicketStatuses(orderId, kotNumber, tickets = [], { newRound = false } = {}) {
+  const validTickets = (Array.isArray(tickets) ? tickets : []).filter(
+    (ticket) => ticket && ticket.printerId
+  );
+  await Promise.all(
+    validTickets.map((ticket) => {
+      const stationStatus = newRound
+        ? sql`INSERT INTO order_kot_station_status (order_id,printer_id,status) VALUES (${orderId},${ticket.printerId},'accepted') ON CONFLICT (order_id,printer_id) DO UPDATE SET status='accepted',updated_at=NOW()`
+        : sql`INSERT INTO order_kot_station_status (order_id,printer_id,status) VALUES (${orderId},${ticket.printerId},'accepted') ON CONFLICT (order_id,printer_id) DO NOTHING`;
+      return Promise.all([
+        sql`INSERT INTO order_kot_round_status (order_id,kot_number,printer_id,status) VALUES (${orderId},${kotNumber},${ticket.printerId},'accepted') ON CONFLICT (order_id,kot_number,printer_id) DO NOTHING`,
+        stationStatus,
+      ]);
+    })
+  );
+}
 async function ensureOrderPrintJobsTable() {
   if (!sql) throw new Error('Orders database is not configured.');
   if (!orderPrintJobsTableReady)
@@ -4290,8 +4306,11 @@ app.post('/api/orders/counter', async (req, res) => {
       .filter(Boolean);
     if (!clean.length || clean.length !== submitted.length)
       return res.status(400).json({ error: 'Choose at least one current menu item.' });
-    await Promise.all([ensureDirectOrdersTable(), ensureOperationsConfigTable()]);
-    await ensureMenuAvailabilityTable();
+    await Promise.all([
+      ensureDirectOrdersTable(),
+      ensureOperationsConfigTable(),
+      ensureMenuAvailabilityTable(),
+    ]);
     if (clientRequestId) {
       const existing =
         await sql`SELECT id,daily_order_number,total FROM direct_orders WHERE client_request_id=${clientRequestId} LIMIT 1`;
@@ -4504,20 +4523,21 @@ app.post('/api/orders/counter', async (req, res) => {
           captainId: captain.id,
           captainName: captain.name,
         });
+      res.status(201).json({
+        id: result.id,
+        status: result.status,
+        orderNumber: String(result.daily_order_number).padStart(2, '0'),
+        total: Number(result.total),
+        continued: true,
+        duplicate: !applied,
+      });
+      // The order is already durable at this point. Build the Smart KDS plan
+      // after replying so a busy kitchen never delays the Captain/POS screen.
       if (result.status === 'accepted' && applied)
-        await materializeSmartKdsOrderTiming(activeTable[0].id).catch((error) =>
+        void materializeSmartKdsOrderTiming(activeTable[0].id).catch((error) =>
           console.warn('Smart KDS timing materialisation failed:', error.message)
         );
-      return res
-        .status(201)
-        .json({
-          id: result.id,
-          status: result.status,
-          orderNumber: String(result.daily_order_number).padStart(2, '0'),
-          total: Number(result.total),
-          continued: true,
-          duplicate: !applied,
-        });
+      return;
     }
     const [{ number }, { billYear, number: billNumber }] = await Promise.all([
       nextDailyOrderNumber(),
@@ -4569,17 +4589,6 @@ app.post('/api/orders/counter', async (req, res) => {
       itemCount: saved.reduce((count, item) => count + Number(item.quantity || 0), 0),
       ...(captain ? { captainId: captain.id, captainName: captain.name } : {}),
     });
-    if (initialStatus === 'accepted')
-      await materializeSmartKdsOrderTiming(id).catch((error) =>
-        console.warn('Smart KDS timing materialisation failed:', error.message)
-      );
-    if (initialStatus === 'accepted')
-      void notifyDirectOrder({
-        id,
-        dailyOrderNumber: number,
-        total,
-        itemCount: saved.reduce((count, item) => count + Number(item.quantity || 0), 0),
-      });
     res
       .status(201)
       .json({
@@ -4589,6 +4598,20 @@ app.post('/api/orders/counter', async (req, res) => {
         orderNumber: String(number).padStart(2, '0'),
         total,
       });
+    if (initialStatus === 'accepted') {
+      // Database confirmation is the POS success boundary. Smart KDS
+      // materialisation and notifications are follow-up work and must not
+      // keep staff staring at a blocked Send KOT button.
+      void materializeSmartKdsOrderTiming(id).catch((error) =>
+        console.warn('Smart KDS timing materialisation failed:', error.message)
+      );
+      void notifyDirectOrder({
+        id,
+        dailyOrderNumber: number,
+        total,
+        itemCount: saved.reduce((count, item) => count + Number(item.quantity || 0), 0),
+      });
+    }
   } catch (error) {
     if (error?.code === '23505' && counterTableContext) {
       const conflict = await sql`SELECT id,status,daily_order_number,items FROM direct_orders WHERE order_day=${counterTableContext.orderDay}::date AND mode='table' AND table_area=${counterTableContext.tableArea} AND table_number=${counterTableContext.tableNumber} AND status IN ('saved','held','accepted','preparing','ready') LIMIT 1`.catch(
@@ -5122,12 +5145,14 @@ app.get('/api/orders/operations', async (req, res) => {
 });
 app.post('/api/orders/:id/kots', async (req, res) => {
   try {
-    await ensureDirectOrdersTable();
-    await ensureOperationsConfigTable();
-    await ensureKotsTable();
-    await ensureOrderEventsTable();
-    await ensureKotStationStatusTable();
-    await ensureKotRoundStatusTable();
+    await Promise.all([
+      ensureDirectOrdersTable(),
+      ensureOperationsConfigTable(),
+      ensureKotsTable(),
+      ensureOrderEventsTable(),
+      ensureKotStationStatusTable(),
+      ensureKotRoundStatusTable(),
+    ]);
     const [orderRows, configRows, previous] = await Promise.all([
       sql`SELECT o.id, o.status, o.mode, o.daily_order_number, o.customer_name, o.customer_phone, o.fulfillment_type, o.table_area, o.table_number, o.special_request, o.items, o.created_at,
         COALESCE((SELECT e.details->>'source' FROM order_events e WHERE e.order_id=o.id AND e.event_type='created' ORDER BY e.created_at ASC LIMIT 1), CASE WHEN o.mode='table' THEN 'counter' ELSE o.mode END) AS order_source,
@@ -5232,6 +5257,13 @@ app.post('/api/orders/:id/kots', async (req, res) => {
     if (!created.length) {
       const existing =
         await sql`SELECT COALESCE(daily_kot_number, kot_number) AS kot_number, tickets FROM order_kots WHERE order_id=${orderRows[0].id} AND item_fingerprint=${fingerprint} LIMIT 1`;
+      if (!existing.length)
+        throw new Error('The existing KOT could not be recovered. Please retry.');
+      await ensureKotTicketStatuses(
+        orderRows[0].id,
+        existing[0].kot_number,
+        existing[0].tickets
+      );
       if (req.captain && ['saved', 'held'].includes(orderRows[0].status)) {
         await sql`UPDATE direct_orders SET status='accepted',updated_at=NOW() WHERE id=${orderRows[0].id} AND status IN ('saved','held')`;
         await materializeSmartKdsOrderTiming(orderRows[0].id).catch((error) =>
@@ -5247,14 +5279,9 @@ app.post('/api/orders/:id/kots', async (req, res) => {
           reused: true,
         });
     }
-    await Promise.all(
-      tickets.map((ticket) =>
-        Promise.all([
-          sql`INSERT INTO order_kot_round_status (order_id,kot_number,printer_id,status) VALUES (${orderRows[0].id},${created[0].kot_number},${ticket.printerId},'accepted') ON CONFLICT (order_id,kot_number,printer_id) DO UPDATE SET status='accepted',updated_at=NOW()`,
-          sql`INSERT INTO order_kot_station_status (order_id,printer_id,status) VALUES (${orderRows[0].id},${ticket.printerId},'accepted') ON CONFLICT (order_id,printer_id) DO UPDATE SET status='accepted',updated_at=NOW()`,
-        ])
-      )
-    );
+    await ensureKotTicketStatuses(orderRows[0].id, created[0].kot_number, tickets, {
+      newRound: true,
+    });
     await recordOrderEvent(orderRows[0].id, 'kot-created', {
       kotNumber: created[0].kot_number,
       printerCount: tickets.length,
