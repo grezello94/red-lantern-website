@@ -1,6 +1,6 @@
 // Offline app shell only. Live operational data is handled by Captain's
 // account-scoped snapshot in local storage, never cached as a shared API response.
-const CACHE = 'red-lantern-captain-v22';
+const CACHE = 'red-lantern-captain-v23';
 const STATIC_ASSETS = [
   '/captain',
   '/captain.css',

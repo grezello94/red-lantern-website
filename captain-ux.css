@@ -487,9 +487,23 @@ body {
   display: block !important;
 }
 .menu-head-actions,
-.captain-flow-hint,
-#captain-table-service {
+.captain-flow-hint {
   display: none !important;
+}
+#captain-table-service:not([hidden]) {
+  display: flex !important;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 14px;
+}
+#captain-table-service button {
+  min-height: 42px;
+  padding: 8px 12px;
+  border: 1px solid #d9e0e9;
+  border-radius: 10px;
+  color: #26374f;
+  background: #fff;
+  font-weight: 800;
 }
 .active-table-context {
   margin: 5px 0 0;

@@ -1562,7 +1562,7 @@ const toPushKey = (value) => {
   return Uint8Array.from(raw, (character) => character.charCodeAt(0));
 };
 
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('/orders-sw.js?v=18');
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/orders-sw.js?v=23');
 document.getElementById('enable-notifications')?.addEventListener('click', async () => {
   closeOpenPanels();
   const button = document.getElementById('enable-notifications');
@@ -1696,7 +1696,13 @@ async function loadOrders() {
     // This billing computer owns print dispatch. Retry all accepted live orders
     // after an outage or restart; stable bridge job IDs prevent duplicate tickets.
     if (orderView === 'current') {
-      rows.filter((order) => order.status === 'accepted').forEach(autoPrintOrder);
+      rows
+        .filter(
+          (order) =>
+            order.status === 'accepted' ||
+            (order.mode === 'table' && ['preparing', 'ready'].includes(order.status))
+        )
+        .forEach(autoPrintOrder);
       rows.filter((order) => order.mode === 'table' && order.service_state === 'bill_requested').forEach(
         autoPrintRequestedTableBill
       );
@@ -3478,7 +3484,9 @@ async function flushDeferredAutomaticPrints() {
 }
 async function autoPrintOrder(order, { deferred = false } = {}) {
   const canReleaseToKitchen =
-    deferred || order?.mode === 'counter' || order?.status === 'accepted';
+    deferred ||
+    order?.mode === 'counter' ||
+    (order?.mode === 'table' && ['accepted', 'preparing', 'ready'].includes(order?.status));
   if (
     !order?.id ||
     !canReleaseToKitchen ||

@@ -1,30 +1,8 @@
 const recentKey = 'red-lantern-captain-recent-items',
   sessionKey = 'red-lantern-captain-session',
+  activityKey = 'red-lantern-captain-last-activity',
   loginSelectionKey = 'red-lantern-captain-login-selection',
   readyKey = 'red-lantern-captain-ready-seen';
-// Keep the operational UI at a fixed scale on touch devices; one-finger scrolling remains enabled.
-document.addEventListener('gesturestart', (event) => event.preventDefault(), { passive: false });
-document.addEventListener('gesturechange', (event) => event.preventDefault(), { passive: false });
-document.addEventListener('gestureend', (event) => event.preventDefault(), { passive: false });
-document.addEventListener(
-  'touchmove',
-  (event) => {
-    if (event.touches.length > 1) event.preventDefault();
-  },
-  { passive: false }
-);
-let lastCaptainTap = 0;
-document.addEventListener(
-  'touchend',
-  (event) => {
-    const now = Date.now();
-    if (now - lastCaptainTap < 300) {
-      event.preventDefault();
-    }
-    lastCaptainTap = now;
-  },
-  { passive: false }
-);
 const $ = (selector) => document.querySelector(selector);
 const esc = (value) =>
   String(value ?? '').replace(
@@ -33,6 +11,7 @@ const esc = (value) =>
       ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[character]
   );
 const money = (value) => `₹${Number(value || 0).toFixed(0)}`;
+const readyAlertKey = (alert) => `${alert?.id || ''}:${alert?.kot_number || ''}`;
 const readJSON = (key, fallback) => {
   try {
     return JSON.parse(sessionStorage.getItem(key) || '');
@@ -97,7 +76,28 @@ async function fetchWithTimeout(input, init = {}, timeout = 7000) {
 const captainIdleMs = () =>
   Math.max(2, Math.min(120, Number(state.captain?.idleMinutes) || 15)) * 60 * 1000;
 let captainIdleTimer = null;
+let lastActivityPersisted = 0;
 let captainToastTimer = null;
+function captainLastActivity() {
+  try {
+    return Number(localStorage.getItem(activityKey) || sessionStorage.getItem(activityKey) || 0);
+  } catch {
+    return 0;
+  }
+}
+function captainIdleExpired() {
+  const lastActivity = captainLastActivity();
+  return !lastActivity || Date.now() - lastActivity >= captainIdleMs();
+}
+function persistCaptainActivity() {
+  const now = Date.now();
+  if (now - lastActivityPersisted < 5000) return;
+  lastActivityPersisted = now;
+  try {
+    sessionStorage.setItem(activityKey, String(now));
+    localStorage.setItem(activityKey, String(now));
+  } catch {}
+}
 function showCaptainToast(message, type = 'success') {
   const toast = $('#captain-toast');
   if (!toast) return;
@@ -596,7 +596,7 @@ async function flushPending() {
 }
 function renderReadyAlerts() {
   const root = $('#captain-ready-alerts'),
-    visible = state.readyAlerts.filter((alert) => !state.readySeen[alert.id]);
+    visible = state.readyAlerts.filter((alert) => !state.readySeen[readyAlertKey(alert)]);
   root.hidden = !visible.length;
   root.innerHTML = visible
     .map(
@@ -624,10 +624,10 @@ async function loadReadyAlerts() {
     state.readyAlerts
       .filter(
         (alert) =>
-          !state.readySeen[alert.id] && !state.readyNotified[`${alert.id}:${alert.kot_number}`]
+          !state.readySeen[readyAlertKey(alert)] && !state.readyNotified[readyAlertKey(alert)]
       )
       .forEach((alert) => {
-        const key = `${alert.id}:${alert.kot_number}`;
+        const key = readyAlertKey(alert);
         state.readyNotified[key] = Date.now();
         try {
           sessionStorage.setItem(
@@ -691,6 +691,19 @@ function activeTable(area, number) {
       !['completed', 'rejected', 'cancelled'].includes(order.status)
   );
 }
+function prepareSavedKotRelease(order) {
+  state.kotRetry =
+    order && ['saved', 'held'].includes(String(order.status || ''))
+      ? {
+          id: order.id,
+          orderNumber: String(order.daily_order_number || '').padStart(2, '0'),
+          releaseOnly: true,
+        }
+      : null;
+}
+function clearSavedKotRelease() {
+  if (state.kotRetry?.releaseOnly) state.kotRetry = null;
+}
 function orderAge(order) {
   const minutes = order?.created_at
     ? Math.max(0, Math.floor((Date.now() - new Date(order.created_at).getTime()) / 60000))
@@ -715,12 +728,12 @@ async function loadKotProgress(orderId) {
     root.innerHTML = `<b>Kitchen progress</b><div>${data.rounds
       .map((round) => {
         const state =
-          round.ready > 0
-            ? 'ready'
-            : round.preparing > 0
-              ? 'preparing'
-              : round.served === round.stations && round.stations
-                ? 'served'
+          round.served === round.stations && round.stations
+            ? 'served'
+            : round.ready === round.stations && round.stations
+              ? 'ready'
+              : round.preparing > 0 || round.ready > 0
+                ? 'preparing'
                 : 'accepted';
         const label =
           state === 'ready'
@@ -739,7 +752,7 @@ async function loadKotProgress(orderId) {
 function setScreen(screen) {
   state.screen = screen;
   ['tables', 'menu', 'review'].forEach((name) => ($(`#${name}-screen`).hidden = name !== screen));
-  $('#basket-bar').hidden = screen === 'tables' || !state.cart.length;
+  $('#basket-bar').hidden = screen === 'tables' || (!state.cart.length && !state.kotRetry);
   if (screen === 'menu') {
     const isTakeaway = state.table?.mode === 'takeaway',
       active =
@@ -790,7 +803,7 @@ function renderCaptainNav() {
         !['completed', 'rejected', 'cancelled'].includes(order.status) &&
         String(order.captain_id || '') === String(state.captain.id)
     ),
-    ready = state.readyAlerts.filter((alert) => !state.readySeen[alert.id]),
+    ready = state.readyAlerts.filter((alert) => !state.readySeen[readyAlertKey(alert)]),
     reviews = state.pending
       .map((entry, index) => ({ entry, index }))
       .filter(({ entry }) => entry.status === 'review'),
@@ -1058,11 +1071,15 @@ function renderTables() {
       const active = activeTable(area, number),
         ready = state.readyAlerts.some(
           (alert) =>
-            !state.readySeen[alert.id] &&
+            !state.readySeen[readyAlertKey(alert)] &&
             alert.table_area === area &&
             Number(alert.table_number) === Number(number)
         ),
-        service = String(active?.service_state || '');
+        service = ['bill_requested', 'water_requested', 'assistance_requested'].includes(
+          String(active?.service_state || '')
+        )
+          ? String(active.service_state)
+          : '';
       return { active, ready, service, attention: ready || !!service };
     },
     available = cards.filter((card) => !meta(card).active).length,
@@ -1106,7 +1123,7 @@ function renderTables() {
               : service === 'assistance_requested'
                 ? 'Help requested'
                 : `${String(active.status || 'Active').replace(/^./, (letter) => letter.toUpperCase())} · ${orderAge(active)}`,
-      action = !active ? 'Start order' : ready ? 'Serve now' : 'Open order',
+      action = !active ? 'Start order' : ready ? 'Serve now' : 'Open · hold for actions',
       stateClass = ready ? ' is-ready' : service ? ' is-service' : '';
     return `<button type="button" class="table-tile${active ? ' is-active' : ''}${selected ? ' is-selected' : ''}${stateClass}" data-table-area="${esc(area)}" data-table-number="${number}" aria-label="${esc(`${area} table ${number}: ${status}. ${action}`)}"><span>${esc(area)}</span><b>Table ${String(number).padStart(2, '0')}</b><small>${status}</small><em>${action} <i>→</i></em></button>`;
   };
@@ -1207,7 +1224,7 @@ function renderMenu() {
             control = inCart
               ? `<span class="menu-inline-quantity"><button type="button" data-menu-cart-change="-1" data-menu-index="${index}" aria-label="Remove one ${esc(item.name)}">−</button><b>${inCart}</b><button type="button" data-menu-cart-change="1" data-menu-index="${index}" aria-label="Add one ${esc(item.name)}">+</button></span>`
               : `<button type="button" class="menu-add-button" data-menu-index="${index}" aria-label="Add ${esc(item.name)}">+</button>`;
-          return `<article class="menu-item${inCart ? ' is-added' : ''}" data-menu-index="${index}" data-menu-category-section="${esc(item.category || 'Menu')}" tabindex="0" role="button"><i class="diet ${dietary}"></i><span>${esc(item.category || 'Menu')}</span><b>${esc(item.name)}</b><small>${options.length > 1 ? 'From ' : ''}${money(first[1])}${options.length > 1 ? ' · choose' : ' · add'}</small>${control}</article>`;
+          return `<article class="menu-item${inCart ? ' is-added' : ''}" data-menu-index="${index}" data-menu-category-section="${esc(item.category || 'Menu')}"><i class="diet ${dietary}"></i><span>${esc(item.category || 'Menu')}</span><b>${esc(item.name)}</b><small>${options.length > 1 ? 'From ' : ''}${money(first[1])}${options.length > 1 ? ' · choose' : ' · add'}</small>${control}</article>`;
         })
         .join('')
     : '<p class="cart-empty">No available dishes match your search.</p>';
@@ -1215,7 +1232,13 @@ function renderMenu() {
 function renderCart() {
   const count = itemCount(),
     amount = total(),
-    lines = state.cart.length
+    savedOrder = state.kotRetry?.releaseOnly
+      ? activeTable(state.table?.area, state.table?.number)
+      : null,
+    displayAmount = savedOrder ? Number(savedOrder.total || 0) : amount,
+    lines = savedOrder
+      ? '<p class="cart-empty">The items already saved on this bill will be sent to the kitchen.</p>'
+      : state.cart.length
       ? state.cart
           .map(
             (line, index) =>
@@ -1225,7 +1248,9 @@ function renderCart() {
       : '<p class="cart-empty">No items yet. Add dishes from the menu.</p>';
   $('#cart-list').innerHTML = lines;
   $('#order-dock-list').innerHTML = lines;
-  $('#cart-caption').textContent = count
+  $('#cart-caption').textContent = savedOrder
+    ? `Saved order #${state.kotRetry.orderNumber} is ready to release.`
+    : count
     ? `${count} item${count === 1 ? '' : 's'} in this order.`
     : 'No items in this order.';
   $('#order-dock-caption').textContent = count
@@ -1237,19 +1262,23 @@ function renderCart() {
       : state.table
         ? `Table ${String(state.table.number).padStart(2, '0')}`
         : 'Your order';
-  $('#review-total').textContent = money(amount);
-  $('#order-dock-total').textContent = money(amount);
-  $('#cart-count').textContent = `${count} item${count === 1 ? '' : 's'}`;
-  $('#basket-total').textContent = money(amount);
-  $('#basket-bar').hidden = state.screen === 'tables' || !count;
-  $('#place-order').disabled = !count || state.sending;
+  $('#review-total').textContent = money(displayAmount);
+  $('#order-dock-total').textContent = money(displayAmount);
+  $('#cart-count').textContent = state.kotRetry?.releaseOnly
+    ? 'Saved order'
+    : `${count} item${count === 1 ? '' : 's'}`;
+  $('#basket-total').textContent = state.kotRetry?.releaseOnly ? 'Send KOT' : money(amount);
+  $('#basket-bar').hidden = state.screen === 'tables' || (!count && !state.kotRetry);
+  $('#place-order').disabled = (!count && !state.kotRetry) || state.sending;
   const sendKot = $('#send-kot').checked;
   $('#place-order').textContent = state.sending
     ? state.kotRetry
       ? 'Sending KOT…'
       : 'Saving order…'
     : state.kotRetry
-      ? 'Retry KOT ↗'
+      ? state.kotRetry.releaseOnly
+        ? 'Send saved KOT ↗'
+        : 'Retry KOT ↗'
       : navigator.onLine
         ? sendKot
           ? 'Send to kitchen ↗'
@@ -1286,6 +1315,7 @@ function openChoice(item) {
 function addChoice() {
   const choice = state.choice;
   if (!choice) return;
+  clearSavedKotRelease();
   const style = $('input[name="captain-style"]:checked')?.value || '',
     note = $('#choice-note').value.trim(),
     courseOverride = $('#choice-course').value || '',
@@ -1316,6 +1346,7 @@ function addChoice() {
 function addSimpleItem(item) {
   const [portion, price] = priceOptions(item)[0] || [];
   if (!portion || !price) return;
+  clearSavedKotRelease();
   const key = itemKey({ menuType: item.menuType, name: item.name, category: item.category, portion, style: '', courseOverride: '' }),
     existing = state.cart.find((line) => line.key === key);
   if (existing) existing.quantity = Math.min(20, existing.quantity + 1);
@@ -1337,6 +1368,7 @@ function addSimpleItem(item) {
   renderMenu();
 }
 function signOut(message = 'Signed out.') {
+  clearTimeout(captainIdleTimer);
   state.captain = null;
   state.loginAccount = null;
   state.table = null;
@@ -1345,7 +1377,9 @@ function signOut(message = 'Signed out.') {
   try {
     sessionStorage.removeItem(sessionKey);
     sessionStorage.removeItem(loginSelectionKey);
+    sessionStorage.removeItem(activityKey);
     localStorage.removeItem(sessionKey);
+    localStorage.removeItem(activityKey);
   } catch {}
   setCaptainUI();
   $('#captain-login-status').textContent = message;
@@ -1353,6 +1387,7 @@ function signOut(message = 'Signed out.') {
 }
 function resetCaptainIdleLock() {
   if (!state.captain) return;
+  persistCaptainActivity();
   clearTimeout(captainIdleTimer);
   captainIdleTimer = setTimeout(() => {
     saveDraft();
@@ -1404,6 +1439,8 @@ $('#captain-pin-form').addEventListener('submit', async (event) => {
     state.captain = { ...data.captain, token: data.token };
     sessionStorage.setItem(sessionKey, JSON.stringify(state.captain));
     localStorage.setItem(sessionKey, JSON.stringify(state.captain));
+    lastActivityPersisted = 0;
+    persistCaptainActivity();
     if (navigator.storage?.persist) void navigator.storage.persist().catch(() => {});
     loadPending();
     setCaptainUI();
@@ -1451,6 +1488,7 @@ $('#captain-nav-active-list').addEventListener('click', (event) => {
   if (!active) return;
   state.table = { area, number, orderId: active.id };
   state.cart = [];
+  prepareSavedKotRelease(active);
   $('#captain-nav').hidden = true;
   renderCart();
   setScreen('menu');
@@ -1465,6 +1503,7 @@ $('#captain-nav-ready-list').addEventListener('click', (event) => {
   if (!active) return;
   state.table = { area, number, orderId: active.id };
   state.cart = [];
+  prepareSavedKotRelease(active);
   $('#captain-table-service').hidden = false;
   $('#captain-nav').hidden = true;
   renderCart();
@@ -1481,9 +1520,12 @@ $('#captain-ready-alerts').addEventListener('click', async (event) => {
       ),
       data = await response.json();
     if (!response.ok) throw new Error(data.error || 'Unable to mark served.');
-    state.readyAlerts = state.readyAlerts.filter(
-      (alert) => alert.id !== button.dataset.readyServed
-    );
+    const servedKey = `${button.dataset.readyServed}:${button.dataset.readyKot}`;
+    state.readySeen[servedKey] = Date.now();
+    try {
+      sessionStorage.setItem(readyKey, JSON.stringify(state.readySeen));
+    } catch {}
+    state.readyAlerts = state.readyAlerts.filter((alert) => readyAlertKey(alert) !== servedKey);
     renderReadyAlerts();
     showCaptainToast('Marked as served.', 'success');
   } catch (error) {
@@ -1496,12 +1538,14 @@ $('#captain-table-service').addEventListener('click', async (event) => {
   if (!button || !state.table?.orderId) return;
   button.disabled = true;
   try {
+    const serviceState = button.dataset.tableService,
+      proximity = serviceState === 'bill_requested' ? await captainPrintLocation() : undefined;
     const response = await fetch(
         `/api/captain/orders/${encodeURIComponent(state.table.orderId)}/service`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...captainHeaders() },
-          body: JSON.stringify({ serviceState: button.dataset.tableService }),
+          body: JSON.stringify({ serviceState, ...(proximity ? { proximity } : {}) }),
         }
       ),
       data = await response.json();
@@ -1582,6 +1626,8 @@ $('#table-board').addEventListener('click', (event) => {
   $('#captain-table-service').hidden = !active;
   state.cart = [];
   restoreDraft();
+  if (state.cart.length) clearSavedKotRelease();
+  else prepareSavedKotRelease(active);
   renderTables();
   renderCart();
   setScreen('menu');
@@ -1773,7 +1819,7 @@ $('#cart-list').addEventListener('change', changeCartCourse);
 $('#order-dock-list').addEventListener('change', changeCartCourse);
 document.querySelectorAll('[data-open-review]').forEach((button) =>
   button.addEventListener('click', () => {
-    if (state.cart.length) setScreen('review');
+    if (state.cart.length || state.kotRetry) setScreen('review');
     else showCaptainToast('Add at least one dish before reviewing.', 'error');
   })
 );
@@ -1799,7 +1845,7 @@ $('#table-board').addEventListener('click', (event) => {
 });
 $('#send-kot').addEventListener('change', renderCart);
 $('#place-order').addEventListener('click', async () => {
-  if (state.sending || !state.table || !state.cart.length) return;
+  if (state.sending || !state.table || (!state.cart.length && !state.kotRetry)) return;
   let payload = null;
   const status = $('#order-status'),
     isTakeaway = state.table.mode === 'takeaway',
@@ -1851,6 +1897,7 @@ $('#place-order').addEventListener('click', async () => {
     payload = {
       clientRequestId: requestId(),
       source: 'captain',
+      mode: state.table.mode || 'table',
       action: sendKot ? 'submit' : 'save',
       sendKot,
       tableArea: state.table.area,
@@ -1912,6 +1959,11 @@ window.addEventListener('offline', () => {
 });
 window.addEventListener('resize', () => renderCart());
 window.addEventListener('pageshow', () => {
+  if (state.captain && captainIdleExpired()) {
+    saveDraft();
+    signOut('Session locked after inactivity. Sign in with your PIN to continue.');
+    return;
+  }
   if (!state.captain) {
     setCaptainUI();
     void loadAccounts();
@@ -1919,6 +1971,8 @@ window.addEventListener('pageshow', () => {
 });
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') saveDraft();
+  else if (state.captain && captainIdleExpired())
+    signOut('Session locked after inactivity. Sign in with your PIN to continue.');
   else resetCaptainIdleLock();
 });
 ['pointerdown', 'keydown', 'touchstart'].forEach((eventName) =>
@@ -2009,8 +2063,7 @@ function restoreLatestDraft() {
     table = context?.table;
   if (
     !table ||
-    !table.area ||
-    !Number(table.number) ||
+    (table.mode !== 'takeaway' && (!table.area || !Number(table.number))) ||
     Date.now() - Number(context.savedAt || 0) > 24 * 60 * 60 * 1000
   )
     return false;
@@ -2129,7 +2182,16 @@ $('#table-board').addEventListener(
   true
 );
 $('#table-board').addEventListener('contextmenu', (event) => {
-  if (event.target.closest('.table-tile.is-active')) event.preventDefault();
+  const tile = event.target.closest('.table-tile.is-active');
+  if (!tile) return;
+  event.preventDefault();
+  openCaptainTableActions(tile);
+});
+$('#table-board').addEventListener('keydown', (event) => {
+  const tile = event.target.closest('.table-tile.is-active');
+  if (!tile || (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10'))) return;
+  event.preventDefault();
+  openCaptainTableActions(tile);
 });
 captainTableActionSheet.addEventListener('click', async (event) => {
   if (event.target.closest('[data-captain-table-actions-close]'))
@@ -2141,6 +2203,7 @@ captainTableActionSheet.addEventListener('click', async (event) => {
     captainTableActionSheet.close();
     state.table = { area, number, orderId: order.id };
     state.cart = [];
+    prepareSavedKotRelease(order);
     renderCart();
     setScreen('menu');
     void loadKotProgress(order.id);
@@ -2162,7 +2225,7 @@ captainTableActionSheet.addEventListener('click', async (event) => {
         data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Unable to request the bill.');
       captainTableActionSheet.close();
-      showCaptainToast('Bill sent to the billing printer.', 'success');
+      showCaptainToast('Bill request sent to the counter for printing.', 'success');
     } catch (error) {
       showCaptainToast(error.message || 'Unable to request the bill.', 'error');
     } finally {
@@ -2170,7 +2233,59 @@ captainTableActionSheet.addEventListener('click', async (event) => {
     }
     return;
   }
-  showCaptainToast('Move Table is available from the counter POS.', 'offline');
+  if (action === 'move') {
+    const areaNames = state.areas.map((area) => area.name),
+      requestedArea = prompt(
+        `Move Table ${captainHeldTable.number} to which area?\n${areaNames.join(', ')}`,
+        captainHeldTable.area
+      );
+    if (requestedArea === null) return;
+    const destinationArea = state.areas.find(
+      (area) => String(area.name).toLowerCase() === requestedArea.trim().toLowerCase()
+    );
+    if (!destinationArea) {
+      showCaptainToast('Choose one of your assigned table areas.', 'error');
+      return;
+    }
+    const requestedNumber = prompt(
+      `Choose a table number from ${destinationArea.from} to ${destinationArea.to}.`,
+      String(destinationArea.from)
+    );
+    if (requestedNumber === null) return;
+    const tableNumber = Number.parseInt(requestedNumber, 10);
+    if (
+      !Number.isInteger(tableNumber) ||
+      tableNumber < Number(destinationArea.from) ||
+      tableNumber > Number(destinationArea.to)
+    ) {
+      showCaptainToast('Choose an allocated table number.', 'error');
+      return;
+    }
+    const button = event.target.closest('[data-captain-table-action]');
+    button.disabled = true;
+    try {
+      const response = await fetch(
+          `/api/captain/orders/${encodeURIComponent(captainHeldTable.order.id)}/move`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...captainHeaders() },
+            body: JSON.stringify({ tableArea: destinationArea.name, tableNumber }),
+          }
+        ),
+        data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to move this table.');
+      captainTableActionSheet.close();
+      await load();
+      showCaptainToast(
+        `Moved to ${destinationArea.name} Table ${String(tableNumber).padStart(2, '0')}.`,
+        'success'
+      );
+    } catch (error) {
+      showCaptainToast(error.message || 'Unable to move this table.', 'error');
+    } finally {
+      button.disabled = false;
+    }
+  }
 });
 window.addEventListener('popstate', () => {
   if (!state.captain) {
@@ -2195,6 +2310,15 @@ window.addEventListener('popstate', () => {
 });
 clock();
 setInterval(clock, 30000);
+if (state.captain && captainIdleExpired()) {
+  try {
+    sessionStorage.removeItem(sessionKey);
+    sessionStorage.removeItem(activityKey);
+    localStorage.removeItem(sessionKey);
+    localStorage.removeItem(activityKey);
+  } catch {}
+  state.captain = null;
+}
 setCaptainUI();
 if (state.captain) {
   loadPending();
@@ -2205,8 +2329,12 @@ if (state.captain) {
   })();
 } else loadAccounts();
 setInterval(() => {
-  if (navigator.onLine && state.captain && state.screen === 'tables') {
-    void load();
+  if (navigator.onLine && state.captain) {
+    if (state.screen === 'tables') void load();
+    else {
+      void loadReadyAlerts();
+      if (state.table?.orderId) void loadKotProgress(state.table.orderId);
+    }
     void flushPending();
   }
 }, 10000);

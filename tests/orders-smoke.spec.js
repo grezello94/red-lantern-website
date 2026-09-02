@@ -39,6 +39,53 @@ async function expectContained(page, selector) {
   expect(failures).toEqual([]);
 }
 
+async function mockCaptainApp(page, { orders = [], alerts = [], onKot, onServed } = {}) {
+  await page.route('**/api/**', async (route) => {
+    const request = route.request(),
+      url = new URL(request.url());
+    let status = 200,
+      body = {};
+    if (url.pathname === '/api/captain/accounts')
+      body = { captains: [{ id: 'captain-1', name: 'Test Captain', areas: ['DINING'] }] };
+    else if (url.pathname === '/api/captain/login')
+      body = {
+        token: 'test-token',
+        captain: {
+          id: 'captain-1',
+          name: 'Test Captain',
+          areas: ['DINING'],
+          idleMinutes: 120,
+        },
+      };
+    else if (url.pathname === '/api/orders/operations')
+      body = { config: { tableAreas: [{ id: 'dining', name: 'DINING', from: 1, to: 3 }] } };
+    else if (url.pathname === '/api/orders/menu') body = [];
+    else if (url.pathname === '/api/orders') body = orders;
+    else if (url.pathname === '/api/orders/availability') body = [];
+    else if (url.pathname === '/api/captain/menu-insights') body = { items: [] };
+    else if (url.pathname === '/api/captain/ready-alerts') body = { alerts };
+    else if (/\/api\/captain\/orders\/[^/]+\/kot-progress$/.test(url.pathname))
+      body = { rounds: [] };
+    else if (/\/api\/orders\/[^/]+\/kots$/.test(url.pathname)) {
+      onKot?.(request);
+      status = 201;
+      body = { kotNumber: 12, tickets: [] };
+    } else if (/\/api\/captain\/orders\/[^/]+\/kots\/[^/]+\/served$/.test(url.pathname)) {
+      onServed?.(request);
+      body = { ok: true };
+    }
+    await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+  });
+}
+
+async function signInCaptain(page) {
+  await page.goto('/captain.html');
+  await page.locator('[data-captain-id="captain-1"]').click();
+  await page.locator('#captain-pin').fill('1234');
+  await page.locator('#captain-pin-form').dispatchEvent('submit');
+  await expect(page.locator('.captain-app')).toBeVisible();
+}
+
 test.beforeEach(async ({ page }) => {
   await page.route('http://127.0.0.1:9124/**', async (route) => {
     const request = route.request();
@@ -301,6 +348,87 @@ test('captain table board and menu cards stay contained on desktop and phone wid
   }
 });
 
+test('captain can release a saved table KOT without adding another item', async ({ page }) => {
+  let kotRequests = 0;
+  await mockCaptainApp(page, {
+    orders: [
+      {
+        id: 'saved-table-order',
+        captain_id: 'captain-1',
+        mode: 'table',
+        table_area: 'DINING',
+        table_number: 1,
+        status: 'saved',
+        daily_order_number: 7,
+        created_at: new Date().toISOString(),
+        items: [{ name: 'Soup', quantity: 1, price: 180 }],
+        total: 180,
+        service_state: 'active',
+      },
+    ],
+    onKot: () => {
+      kotRequests += 1;
+    },
+  });
+  await signInCaptain(page);
+  await expect(page.locator('#table-quick-stats')).not.toContainText('Need attention');
+
+  await page.locator('#table-board .table-tile.is-active').click();
+  await expect(page.locator('#basket-bar')).toBeVisible();
+  await expect(page.locator('#basket-bar')).toContainText('Saved order');
+  await page.locator('#basket-bar').click();
+  await expect(page.locator('#place-order')).toHaveText(/Send saved KOT/);
+  await expect(page.locator('#review-total')).toHaveText('₹180');
+  await page.locator('#place-order').click();
+
+  await expect.poll(() => kotRequests).toBe(1);
+});
+
+test('captain keeps separate ready alerts for multiple KOT rounds on one table', async ({ page }) => {
+  const served = [];
+  await mockCaptainApp(page, {
+    orders: [
+      {
+        id: 'ready-table-order',
+        captain_id: 'captain-1',
+        mode: 'table',
+        table_area: 'DINING',
+        table_number: 2,
+        status: 'ready',
+        daily_order_number: 8,
+        created_at: new Date().toISOString(),
+        items: [],
+        total: 200,
+      },
+    ],
+    alerts: [
+      {
+        id: 'ready-table-order',
+        daily_order_number: 8,
+        table_area: 'DINING',
+        table_number: 2,
+        kot_number: 10,
+      },
+      {
+        id: 'ready-table-order',
+        daily_order_number: 8,
+        table_area: 'DINING',
+        table_number: 2,
+        kot_number: 11,
+      },
+    ],
+    onServed: (request) => served.push(request.url()),
+  });
+  await signInCaptain(page);
+
+  await expect(page.locator('#captain-ready-alerts article')).toHaveCount(2);
+  await page.locator('[data-ready-kot="10"]').click();
+  await expect(page.locator('#captain-ready-alerts article')).toHaveCount(1);
+  await expect(page.locator('#captain-ready-alerts')).toContainText('KOT #11');
+  expect(served).toHaveLength(1);
+  expect(served[0]).toContain('/kots/10/served');
+});
+
 test('an urgent order event refreshes the billing console without waiting for the fallback poll', async ({
   page,
 }) => {
@@ -465,7 +593,7 @@ test('one routed KOT can be dispatched concurrently to multiple printer queues',
   });
 
   const result = await page.evaluate(() =>
-    window.autoPrintOrder({ id: 'order-2', mode: 'table', status: 'accepted' })
+    window.autoPrintOrder({ id: 'order-2', mode: 'table', status: 'preparing' })
   );
   expect(result.ok).toBe(true);
   expect(kotJobs).toHaveLength(2);

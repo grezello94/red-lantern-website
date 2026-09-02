@@ -1700,11 +1700,14 @@ async function ensureDirectOrdersTable() {
       await sql`CREATE UNIQUE INDEX IF NOT EXISTS direct_orders_tracking_token_unique ON direct_orders (tracking_token) WHERE tracking_token IS NOT NULL`;
       await sql`CREATE UNIQUE INDEX IF NOT EXISTS direct_orders_client_request_unique ON direct_orders (client_request_id) WHERE client_request_id IS NOT NULL`;
       await sql`CREATE UNIQUE INDEX IF NOT EXISTS direct_orders_settlement_request_unique ON direct_orders (settlement_request_id) WHERE settlement_request_id IS NOT NULL`;
+      await sql`CREATE UNIQUE INDEX IF NOT EXISTS direct_orders_active_table_unique ON direct_orders (order_day, table_area, table_number) WHERE mode='table' AND table_area IS NOT NULL AND table_number IS NOT NULL AND status IN ('saved','held','accepted','preparing','ready')`;
       await sql`CREATE INDEX IF NOT EXISTS direct_orders_day_created_index ON direct_orders (order_day, created_at DESC)`;
       await sql`CREATE INDEX IF NOT EXISTS direct_orders_phone_created_index ON direct_orders (customer_phone, created_at DESC)`;
       await sql`CREATE INDEX IF NOT EXISTS direct_orders_smart_kds_active_index ON direct_orders (created_at ASC) WHERE status IN ('accepted','preparing','ready')`;
       await sql`CREATE TABLE IF NOT EXISTS direct_order_counters (order_day DATE PRIMARY KEY, next_number INTEGER NOT NULL)`;
       await sql`CREATE TABLE IF NOT EXISTS direct_order_bill_counters (bill_year INTEGER PRIMARY KEY, next_number INTEGER NOT NULL)`;
+      await sql`CREATE TABLE IF NOT EXISTS captain_order_requests (request_id TEXT PRIMARY KEY, captain_id TEXT NOT NULL, order_id TEXT NOT NULL, payload_hash TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;
+      await sql`CREATE INDEX IF NOT EXISTS captain_order_requests_created_index ON captain_order_requests (created_at DESC)`;
     })();
   return directOrdersTableReady;
 }
@@ -4182,6 +4185,7 @@ app.post('/api/direct-orders', async (req, res) => {
 
 app.post('/api/orders/counter', async (req, res) => {
   let counterClientRequestId = '';
+  let counterTableContext = null;
   try {
     const {
       customerName,
@@ -4196,14 +4200,17 @@ app.post('/api/orders/counter', async (req, res) => {
       action = 'submit',
       source = '',
     } = req.body || {};
-    const captain =
-      source === 'captain' ? await getActiveCaptainSession(req.get('X-Captain-Session')) : null;
+    // Authentication determines Captain privileges. Never trust the mutable
+    // request body to decide whether Captain restrictions apply.
+    const captain = req.captain || null;
     if (source === 'captain' && !captain)
       return res.status(401).json({ error: 'Captain sign-in has expired. Sign in again.' });
     const clientRequestId = String(req.get('X-Counter-Order-Id') || req.body?.clientRequestId || '')
       .trim()
       .slice(0, 80);
     counterClientRequestId = clientRequestId;
+    if (captain && !clientRequestId)
+      return res.status(400).json({ error: 'A request ID is required for Captain orders.' });
     const menu = await getSection('airMenu');
     const priceNumber = (value) => Number(String(value || '').replace(/[^0-9.]/g, '')) || 0;
     const displayItemName = (value) =>
@@ -4283,11 +4290,21 @@ app.post('/api/orders/counter', async (req, res) => {
       .filter(Boolean);
     if (!clean.length || clean.length !== submitted.length)
       return res.status(400).json({ error: 'Choose at least one current menu item.' });
-    await ensureDirectOrdersTable();
+    await Promise.all([ensureDirectOrdersTable(), ensureOperationsConfigTable()]);
     await ensureMenuAvailabilityTable();
     if (clientRequestId) {
       const existing =
         await sql`SELECT id,daily_order_number,total FROM direct_orders WHERE client_request_id=${clientRequestId} LIMIT 1`;
+      if (
+        existing.length &&
+        captain &&
+        String(tableOrderId || '').trim() &&
+        existing[0].id !== String(tableOrderId || '').trim()
+      )
+        return res.status(409).json({
+          error: 'This Captain request ID was already used for a different order.',
+          code: 'request_id_reused',
+        });
       if (existing.length)
         return res.json({
           id: existing[0].id,
@@ -4303,11 +4320,7 @@ app.post('/api/orders/counter', async (req, res) => {
     );
     if (clean.some((item) => unavailable.has(item.availabilityKey)))
       return res.status(409).json({ error: 'One or more selected items are out of stock.' });
-    const [{ orderDay, number }, { billYear, number: billNumber }] = await Promise.all([
-      nextDailyOrderNumber(),
-      nextAnnualBillNumber(),
-    ]);
-    const id = `RL${Date.now().toString(36).toUpperCase()}${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
+    const orderDay = kolkataOrderDay();
     const saved = await attachSmartKdsOrderItemProfiles(
         clean.map(({ availabilityKey, ...item }) => item)
       ),
@@ -4345,6 +4358,24 @@ app.post('/api/orders/counter', async (req, res) => {
       dineInNumber = Number.parseInt(tableNumber, 10);
     const isDineIn =
       !!dineInArea && Number.isInteger(dineInNumber) && dineInNumber > 0 && dineInNumber <= 9999;
+    if (captain && !isDineIn && String(req.body?.mode || '').toLowerCase() !== 'takeaway')
+      return res.status(400).json({ error: 'Choose an allocated table or Takeaway.' });
+    if (isDineIn) {
+      const configRows =
+          await sql`SELECT config FROM order_operations_config WHERE config_key='default' LIMIT 1`,
+        tableAreas = Array.isArray(configRows[0]?.config?.tableAreas)
+          ? configRows[0].config.tableAreas
+          : [];
+      if (
+        !tableAreas.some(
+          (area) =>
+            String(area.name || '') === dineInArea &&
+            dineInNumber >= Number(area.from) &&
+            dineInNumber <= Number(area.to)
+        )
+      )
+        return res.status(400).json({ error: 'Choose an allocated table.' });
+    }
     if (isDineIn && captain && captain.areas.length && !captain.areas.includes(dineInArea))
       return res
         .status(403)
@@ -4364,7 +4395,7 @@ app.post('/api/orders/counter', async (req, res) => {
         }
       : null;
     if (
-      source === 'captain' &&
+      captain &&
       expectedTableOrderId &&
       (!activeTable.length || activeTable[0].id !== expectedTableOrderId)
     )
@@ -4376,7 +4407,7 @@ app.post('/api/orders/counter', async (req, res) => {
           code: 'table_changed',
           conflict: tableConflict,
         });
-    if (source === 'captain' && !expectedTableOrderId && activeTable.length)
+    if (captain && !expectedTableOrderId && activeTable.length)
       return res
         .status(409)
         .json({
@@ -4384,7 +4415,7 @@ app.post('/api/orders/counter', async (req, res) => {
           code: 'table_changed',
           conflict: tableConflict,
         });
-    if (activeTable.length && source !== 'captain')
+    if (activeTable.length && !captain)
       return res
         .status(409)
         .json({
@@ -4402,56 +4433,102 @@ app.post('/api/orders/counter', async (req, res) => {
     const stagedAction = ['save', 'hold'].includes(String(action)) ? String(action) : 'submit';
     const initialStatus =
       stagedAction === 'hold' ? 'held' : stagedAction === 'save' ? 'saved' : 'accepted';
-    const phone = suppliedPhone || `walkin-${id}`,
-      total = subtotal - requestedLoyaltyPoints * loyalty.pointValue,
+    const total = subtotal - requestedLoyaltyPoints * loyalty.pointValue,
       earned = loyalty.enabled
         ? Math.floor((subtotal - requestedLoyaltyPoints * loyalty.pointValue) / loyalty.spend) *
           loyalty.earn
-        : 0,
-      trackingToken = crypto.randomBytes(24).toString('base64url');
-    if (activeTable.length && source === 'captain') {
-      const existingItems = await attachSmartKdsOrderItemProfiles(
-        Array.isArray(activeTable[0].items) ? activeTable[0].items : [],
-        { preserveSnapshots: true }
-      );
-      const merged = [...existingItems];
-      // Keep an add-on as its own order line.  It has its own ordered timestamp
-      // and production target, even when it is the same dish as an earlier KOT.
-      merged.push(...saved);
-      const nextTotal =
-        merged.reduce(
+        : 0;
+    if (activeTable.length && captain) {
+      const addonNote = String(specialRequest || '').trim().slice(0, 240),
+        addonSubtotal = saved.reduce(
           (sum, item) =>
             sum + Number(item.quantity || 0) * (priceNumber(item.price) + (item.style ? 10 : 0)),
           0
-        ) -
-        Number(activeTable[0].loyalty_points_redeemed || 0) * loyalty.pointValue;
-      await sql`UPDATE direct_orders SET items=${JSON.stringify(merged)},total=${nextTotal},special_request=CASE WHEN ${String(specialRequest || '').trim()}='' THEN special_request WHEN special_request='' THEN ${String(
-        specialRequest || ''
+        ),
+        requestHash = crypto
+          .createHash('sha256')
+          .update(
+            JSON.stringify({
+              captainId: captain.id,
+              orderId: activeTable[0].id,
+              items: clean.map(({ lineId, orderedAt, availabilityKey, ...item }) => item),
+              note: addonNote,
+              action: stagedAction,
+            })
+          )
+          .digest('hex');
+      const merged = await sql`WITH claimed AS (
+        INSERT INTO captain_order_requests (request_id,captain_id,order_id,payload_hash)
+        SELECT ${clientRequestId},${captain.id},${activeTable[0].id},${requestHash}
+        WHERE EXISTS (SELECT 1 FROM direct_orders WHERE id=${activeTable[0].id} AND status IN ('saved','held','accepted','preparing','ready'))
+        ON CONFLICT (request_id) DO NOTHING
+        RETURNING request_id
+      ), updated AS (
+        UPDATE direct_orders
+        SET items=COALESCE(items,'[]'::jsonb) || ${JSON.stringify(saved)}::jsonb,
+            total=total+${addonSubtotal},
+            status=CASE WHEN ${stagedAction}='submit' AND status IN ('saved','held') THEN 'accepted' ELSE status END,
+            special_request=CASE WHEN ${addonNote}='' THEN special_request WHEN COALESCE(special_request,'')='' THEN ${addonNote} ELSE special_request || ' · ' || ${addonNote} END,
+            updated_at=NOW()
+        WHERE id=${activeTable[0].id} AND EXISTS (SELECT 1 FROM claimed)
+        RETURNING id,status,daily_order_number,total
       )
-        .trim()
-        .slice(0, 240)} ELSE special_request || ' · ' || ${String(specialRequest || '')
-        .trim()
-        .slice(0, 240)} END,updated_at=NOW() WHERE id=${activeTable[0].id}`;
-      await recordOrderEvent(activeTable[0].id, 'captain-items-added', {
-        itemCount: saved.reduce((count, item) => count + Number(item.quantity || 0), 0),
-        source: 'captain',
-        captainId: captain.id,
-        captainName: captain.name,
-      });
-      if (activeTable[0].status === 'accepted')
+      SELECT r.captain_id,r.order_id,r.payload_hash,u.id,u.status,u.daily_order_number,u.total,TRUE AS applied
+      FROM captain_order_requests r JOIN updated u ON u.id=r.order_id
+      WHERE r.request_id=${clientRequestId}
+      UNION ALL
+      SELECT r.captain_id,r.order_id,r.payload_hash,o.id,o.status,o.daily_order_number,o.total,FALSE AS applied
+      FROM captain_order_requests r JOIN direct_orders o ON o.id=r.order_id
+      WHERE r.request_id=${clientRequestId} AND NOT EXISTS (SELECT 1 FROM updated)
+      LIMIT 1`;
+      const result = merged[0],
+        applied = result?.applied === true || result?.applied === 't';
+      if (!result)
+        return res.status(409).json({
+          error: 'This table changed while the add-on was being saved. Refresh and review it.',
+          code: 'table_changed',
+        });
+      if (
+        result.captain_id !== captain.id ||
+        result.order_id !== activeTable[0].id ||
+        result.payload_hash !== requestHash
+      )
+        return res.status(409).json({
+          error: 'This Captain request ID was already used for a different order.',
+          code: 'request_id_reused',
+        });
+      if (applied)
+        await recordOrderEvent(activeTable[0].id, 'captain-items-added', {
+          itemCount: saved.reduce((count, item) => count + Number(item.quantity || 0), 0),
+          source: 'captain',
+          captainId: captain.id,
+          captainName: captain.name,
+        });
+      if (result.status === 'accepted' && applied)
         await materializeSmartKdsOrderTiming(activeTable[0].id).catch((error) =>
           console.warn('Smart KDS timing materialisation failed:', error.message)
         );
       return res
         .status(201)
         .json({
-          id: activeTable[0].id,
-          status: activeTable[0].status,
-          orderNumber: String(activeTable[0].daily_order_number).padStart(2, '0'),
-          total: nextTotal,
+          id: result.id,
+          status: result.status,
+          orderNumber: String(result.daily_order_number).padStart(2, '0'),
+          total: Number(result.total),
           continued: true,
+          duplicate: !applied,
         });
     }
+    const [{ number }, { billYear, number: billNumber }] = await Promise.all([
+      nextDailyOrderNumber(),
+      nextAnnualBillNumber(),
+    ]);
+    const id = `RL${Date.now().toString(36).toUpperCase()}${crypto.randomBytes(2).toString('hex').toUpperCase()}`,
+      phone = suppliedPhone || `walkin-${id}`,
+      trackingToken = crypto.randomBytes(24).toString('base64url');
+    counterTableContext = isDineIn
+      ? { orderDay, tableArea: dineInArea, tableNumber: dineInNumber }
+      : null;
     if (requestedLoyaltyPoints) {
       await ensureLoyaltyTable();
       const inserted =
@@ -4513,6 +4590,16 @@ app.post('/api/orders/counter', async (req, res) => {
         total,
       });
   } catch (error) {
+    if (error?.code === '23505' && counterTableContext) {
+      const conflict = await sql`SELECT id,status,daily_order_number,items FROM direct_orders WHERE order_day=${counterTableContext.orderDay}::date AND mode='table' AND table_area=${counterTableContext.tableArea} AND table_number=${counterTableContext.tableNumber} AND status IN ('saved','held','accepted','preparing','ready') LIMIT 1`.catch(
+        () => []
+      );
+      return res.status(409).json({
+        error: 'This table became active while the order was being saved. Review it before merging.',
+        code: 'table_changed',
+        conflict: conflict[0] || null,
+      });
+    }
     if (counterClientRequestId) {
       try {
         await ensureDirectOrdersTable();
@@ -4539,13 +4626,14 @@ app.get('/api/orders', async (req, res) => {
       .slice(0, 16);
     const like = `%${search}%`;
     const today = kolkataOrderDay();
-    const history = req.query.history === '1';
+    const history = !req.captain && req.query.history === '1';
     const requestedDay = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.date || ''))
       ? String(req.query.date)
       : '';
     const operatingStatus = await getOrdersOperatingStatus();
-    const select =
-      "SELECT o.*, (SELECT COUNT(*) FROM direct_orders h WHERE h.customer_phone=o.customer_phone) AS customer_order_count, (SELECT MAX(h.created_at) FROM direct_orders h WHERE h.customer_phone=o.customer_phone AND h.id<>o.id) AS customer_last_order_at, COALESCE((SELECT e.details->>'captainId' FROM order_events e WHERE e.order_id=o.id AND e.event_type='created' ORDER BY e.created_at ASC LIMIT 1),'') AS captain_id, COALESCE((SELECT string_agg(DISTINCT NULLIF(TRIM(e.details->>'captainName'), ''), ', ') FROM order_events e WHERE e.order_id=o.id AND e.event_type IN ('created','captain-items-added')),'') AS captain_names FROM direct_orders o";
+    const select = req.captain
+      ? "SELECT o.id,o.status,o.mode,o.customer_name,o.items,o.total,o.created_at,o.updated_at,o.order_day,o.daily_order_number,o.fulfillment_type,o.course_mode,o.table_area,o.table_number,o.bill_printed_at,o.service_state,o.service_requested_at,COALESCE((SELECT e.details->>'captainId' FROM order_events e WHERE e.order_id=o.id AND e.event_type='created' ORDER BY e.created_at ASC LIMIT 1),'') AS captain_id FROM direct_orders o"
+      : "SELECT o.*, (SELECT COUNT(*) FROM direct_orders h WHERE h.customer_phone=o.customer_phone) AS customer_order_count, (SELECT MAX(h.created_at) FROM direct_orders h WHERE h.customer_phone=o.customer_phone AND h.id<>o.id) AS customer_last_order_at, COALESCE((SELECT e.details->>'captainId' FROM order_events e WHERE e.order_id=o.id AND e.event_type='created' ORDER BY e.created_at ASC LIMIT 1),'') AS captain_id, COALESCE((SELECT string_agg(DISTINCT NULLIF(TRIM(e.details->>'captainName'), ''), ', ') FROM order_events e WHERE e.order_id=o.id AND e.event_type IN ('created','captain-items-added')),'') AS captain_names FROM direct_orders o";
     res.set({
       'Cache-Control': 'no-store',
       'X-Orders-Day': today,
@@ -5014,6 +5102,12 @@ app.get('/api/orders/operations', async (req, res) => {
         ? rows[0].config
         : { printers: [], routes: [] };
     res.set('Cache-Control', 'no-store');
+    if (req.captain)
+      return res.json({
+        config: {
+          tableAreas: Array.isArray(config.tableAreas) ? config.tableAreas : [],
+        },
+      });
     res.json({
       config: {
         printers: Array.isArray(config.printers) ? config.printers : [],
@@ -5035,7 +5129,7 @@ app.post('/api/orders/:id/kots', async (req, res) => {
     await ensureKotStationStatusTable();
     await ensureKotRoundStatusTable();
     const [orderRows, configRows, previous] = await Promise.all([
-      sql`SELECT o.id, o.mode, o.daily_order_number, o.customer_name, o.customer_phone, o.fulfillment_type, o.table_area, o.table_number, o.special_request, o.items, o.created_at,
+      sql`SELECT o.id, o.status, o.mode, o.daily_order_number, o.customer_name, o.customer_phone, o.fulfillment_type, o.table_area, o.table_number, o.special_request, o.items, o.created_at,
         COALESCE((SELECT e.details->>'source' FROM order_events e WHERE e.order_id=o.id AND e.event_type='created' ORDER BY e.created_at ASC LIMIT 1), CASE WHEN o.mode='table' THEN 'counter' ELSE o.mode END) AS order_source,
         COALESCE((SELECT e.details->>'captainName' FROM order_events e WHERE e.order_id=o.id AND e.event_type='created' ORDER BY e.created_at ASC LIMIT 1), '') AS captain_name
         FROM direct_orders o WHERE o.id=${req.params.id} LIMIT 1`,
@@ -5083,6 +5177,12 @@ app.post('/api/orders/:id/kots', async (req, res) => {
     if (!pending.length) {
       const latest =
         await sql`SELECT COALESCE(daily_kot_number, kot_number) AS kot_number, tickets FROM order_kots WHERE order_id=${orderRows[0].id} ORDER BY created_at DESC, kot_number DESC LIMIT 1`;
+      if (req.captain && latest.length && ['saved', 'held'].includes(orderRows[0].status)) {
+        await sql`UPDATE direct_orders SET status='accepted',updated_at=NOW() WHERE id=${orderRows[0].id} AND status IN ('saved','held')`;
+        await materializeSmartKdsOrderTiming(orderRows[0].id).catch((error) =>
+          console.warn('Smart KDS timing materialisation failed:', error.message)
+        );
+      }
       return res
         .status(409)
         .json({
@@ -5132,6 +5232,12 @@ app.post('/api/orders/:id/kots', async (req, res) => {
     if (!created.length) {
       const existing =
         await sql`SELECT COALESCE(daily_kot_number, kot_number) AS kot_number, tickets FROM order_kots WHERE order_id=${orderRows[0].id} AND item_fingerprint=${fingerprint} LIMIT 1`;
+      if (req.captain && ['saved', 'held'].includes(orderRows[0].status)) {
+        await sql`UPDATE direct_orders SET status='accepted',updated_at=NOW() WHERE id=${orderRows[0].id} AND status IN ('saved','held')`;
+        await materializeSmartKdsOrderTiming(orderRows[0].id).catch((error) =>
+          console.warn('Smart KDS timing materialisation failed:', error.message)
+        );
+      }
       return res
         .status(200)
         .json({
@@ -5154,6 +5260,12 @@ app.post('/api/orders/:id/kots', async (req, res) => {
       printerCount: tickets.length,
       itemCount: pending.reduce((count, item) => count + Number(item.quantity || 0), 0),
     });
+    if (req.captain && ['saved', 'held'].includes(orderRows[0].status)) {
+      await sql`UPDATE direct_orders SET status='accepted',updated_at=NOW() WHERE id=${orderRows[0].id} AND status IN ('saved','held')`;
+      await materializeSmartKdsOrderTiming(orderRows[0].id).catch((error) =>
+        console.warn('Smart KDS timing materialisation failed:', error.message)
+      );
+    }
     res.status(201).json({ kotNumber: created[0].kot_number, order: orderRows[0], tickets });
   } catch (error) {
     res.status(500).json({ error: error.message || 'Unable to create KOT.' });
@@ -6759,11 +6871,38 @@ app.get('/api/captain/accounts', async (req, res) => {
     res.status(500).json({ error: 'Unable to load Captain accounts.' });
   }
 });
+const captainLoginFailures = new Map(),
+  captainLoginWindowMs = 5 * 60 * 1000,
+  captainLoginFailureLimit = 8;
+function captainLoginFailureKey(req, captainId) {
+  return `${hashIp(req)}:${String(captainId || 'unknown').slice(0, 64)}`;
+}
+function currentCaptainLoginFailures(req, captainId) {
+  const key = captainLoginFailureKey(req, captainId),
+    now = Date.now(),
+    failures = (captainLoginFailures.get(key) || []).filter(
+      (timestamp) => now - timestamp < captainLoginWindowMs
+    );
+  if (failures.length) captainLoginFailures.set(key, failures);
+  else captainLoginFailures.delete(key);
+  return { key, failures };
+}
 app.post('/api/captain/login', async (req, res) => {
-  if (!allowPublicRequest(req, res, 'captain-login', 8, 5 * 60 * 1000)) return;
   try {
+    const captainId = String(req.body?.id || '').slice(0, 64),
+      loginFailures = currentCaptainLoginFailures(req, captainId);
+    if (loginFailures.failures.length >= captainLoginFailureLimit) {
+      const retryAfter = Math.max(
+        1,
+        Math.ceil(
+          (captainLoginWindowMs - (Date.now() - loginFailures.failures[0])) / 1000
+        )
+      );
+      res.set('Retry-After', String(retryAfter));
+      return res.status(429).json({ error: 'Too many incorrect PIN attempts. Please wait.' });
+    }
     const config = await getSection('captain'),
-      captain = (config.captains || []).find((entry) => entry.id === String(req.body?.id || '')),
+      captain = (config.captains || []).find((entry) => entry.id === captainId),
       idleMinutes = Math.max(2, Math.min(120, Number(config.settings?.idleMinutes) || 15));
     const pin = String(req.body?.pin || ''),
       stored = captain?.pinHash ? Buffer.from(captain.pinHash, 'hex') : null,
@@ -6774,8 +6913,12 @@ app.post('/api/captain/login', async (req, res) => {
       !stored ||
       stored.length !== attempt.length ||
       !crypto.timingSafeEqual(stored, attempt)
-    )
+    ) {
+      loginFailures.failures.push(Date.now());
+      captainLoginFailures.set(loginFailures.key, loginFailures.failures);
       return res.status(401).json({ error: 'Incorrect PIN.' });
+    }
+    captainLoginFailures.delete(loginFailures.key);
     res.set('Cache-Control', 'no-store');
     res.json({
       captain: { id: captain.id, name: captain.name, areas: captain.areas || [], idleMinutes },
@@ -6821,7 +6964,7 @@ app.get('/api/captain/ready-alerts', async (req, res) => {
     ]);
     const day = kolkataOrderDay(),
       alerts =
-        await sql`SELECT o.id,o.daily_order_number,o.table_area,o.table_number,o.updated_at,latest.kot_number,MAX(s.updated_at) AS ready_at FROM direct_orders o JOIN order_events e ON e.order_id=o.id AND e.event_type='created' AND e.details->>'captainId'=${captain.id} JOIN (SELECT order_id,MAX(COALESCE(daily_kot_number,kot_number)) AS kot_number FROM order_kots GROUP BY order_id) latest ON latest.order_id=o.id JOIN order_kot_round_status s ON s.order_id=o.id AND s.kot_number=latest.kot_number WHERE o.order_day=${day}::date AND o.mode='table' AND o.status IN ('accepted','preparing','ready') GROUP BY o.id,o.daily_order_number,o.table_area,o.table_number,o.updated_at,latest.kot_number HAVING COUNT(*)>0 AND COUNT(*) FILTER (WHERE s.status='ready')=COUNT(*) ORDER BY ready_at DESC LIMIT 20`;
+        await sql`SELECT o.id,o.daily_order_number,o.table_area,o.table_number,o.updated_at,s.kot_number,MAX(s.updated_at) AS ready_at FROM direct_orders o JOIN order_events e ON e.order_id=o.id AND e.event_type='created' AND e.details->>'captainId'=${captain.id} JOIN order_kot_round_status s ON s.order_id=o.id WHERE o.order_day=${day}::date AND o.mode='table' AND o.status IN ('accepted','preparing','ready') GROUP BY o.id,o.daily_order_number,o.table_area,o.table_number,o.updated_at,s.kot_number HAVING COUNT(*)>0 AND COUNT(*) FILTER (WHERE s.status='ready')=COUNT(*) ORDER BY ready_at DESC LIMIT 20`;
     res.set('Cache-Control', 'no-store');
     res.json({ alerts });
   } catch (error) {
@@ -6943,7 +7086,7 @@ app.post('/api/captain/orders/:id/service', async (req, res) => {
         });
     }
     const owner =
-      await sql`SELECT o.id FROM direct_orders o JOIN order_events e ON e.order_id=o.id AND e.event_type='created' AND e.details->>'captainId'=${captain.id} WHERE o.id=${req.params.id} AND o.mode='table' AND o.status IN ('accepted','preparing','ready') LIMIT 1`;
+      await sql`SELECT o.id FROM direct_orders o JOIN order_events e ON e.order_id=o.id AND e.event_type='created' AND e.details->>'captainId'=${captain.id} WHERE o.id=${req.params.id} AND o.mode='table' AND o.status IN ('saved','held','accepted','preparing','ready') LIMIT 1`;
     if (!owner.length)
       return res
         .status(404)
@@ -6989,14 +7132,17 @@ app.post('/api/captain/orders/:id/move', async (req, res) => {
     return res.status(401).json({ error: 'Captain sign-in has expired. Sign in again.' });
   if (!tableArea || !Number.isInteger(tableNumber) || tableNumber < 1)
     return res.status(400).json({ error: 'Choose a valid destination table.' });
+  if (captain.areas.length && !captain.areas.includes(tableArea))
+    return res.status(403).json({ error: 'That table area is not assigned to your Captain account.' });
   try {
     await Promise.all([
       ensureDirectOrdersTable(),
       ensureOrderEventsTable(),
       ensureOperationsConfigTable(),
     ]);
-    const owner =
-      await sql`SELECT o.table_area,o.table_number FROM direct_orders o JOIN order_events e ON e.order_id=o.id AND e.event_type='created' AND e.details->>'captainId'=${captain.id} WHERE o.id=${req.params.id} AND o.mode='table' AND o.status IN ('saved','held','accepted','preparing','ready') LIMIT 1`;
+    const orderDay = kolkataOrderDay(),
+      owner =
+        await sql`SELECT o.table_area,o.table_number FROM direct_orders o JOIN order_events e ON e.order_id=o.id AND e.event_type='created' AND e.details->>'captainId'=${captain.id} WHERE o.id=${req.params.id} AND o.order_day=${orderDay}::date AND o.mode='table' AND o.status IN ('saved','held','accepted','preparing','ready') LIMIT 1`;
     if (!owner.length)
       return res
         .status(404)
@@ -7014,10 +7160,10 @@ app.post('/api/captain/orders/:id/move', async (req, res) => {
     )
       return res.status(400).json({ error: 'Choose an allocated table.' });
     const occupied =
-      await sql`SELECT id FROM direct_orders WHERE mode='table' AND table_area=${tableArea} AND table_number=${tableNumber} AND status IN ('saved','held','accepted','preparing','ready') AND id<>${req.params.id} LIMIT 1`;
+        await sql`SELECT id FROM direct_orders WHERE order_day=${orderDay}::date AND mode='table' AND table_area=${tableArea} AND table_number=${tableNumber} AND status IN ('saved','held','accepted','preparing','ready') AND id<>${req.params.id} LIMIT 1`;
     if (occupied.length)
       return res.status(409).json({ error: 'That table already has an active order.' });
-    await sql`UPDATE direct_orders SET table_area=${tableArea},table_number=${tableNumber},updated_at=NOW() WHERE id=${req.params.id}`;
+    await sql`UPDATE direct_orders SET table_area=${tableArea},table_number=${tableNumber},updated_at=NOW() WHERE id=${req.params.id} AND order_day=${orderDay}::date`;
     await recordOrderEvent(req.params.id, 'table-moved', {
       fromArea: owner[0].table_area,
       fromNumber: Number(owner[0].table_number),
@@ -7027,6 +7173,8 @@ app.post('/api/captain/orders/:id/move', async (req, res) => {
     });
     res.json({ ok: true, tableArea, tableNumber });
   } catch (error) {
+    if (error?.code === '23505')
+      return res.status(409).json({ error: 'That table already has an active order.' });
     res.status(500).json({ error: 'Unable to move this table.' });
   }
 });
