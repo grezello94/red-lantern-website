@@ -83,6 +83,14 @@ main {
 .items b {
   color: #c42b28;
 }
+.items .order-item-addons {
+  display: block;
+  margin: 3px 0 0 27px;
+  color: #526780;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.35;
+}
 .actions {
   display: flex;
   flex-wrap: wrap;

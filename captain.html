@@ -329,6 +329,8 @@
           <small>+₹10</small></label
         >
       </fieldset>
+      <div id="captain-addon-groups" class="captain-addon-groups"></div>
+      <p id="captain-addon-error" class="captain-addon-error" aria-live="polite"></p>
       <label class="item-note"
         >Kitchen note
         <input id="choice-note" maxlength="80" placeholder="e.g. less spicy, no onion" /></label
@@ -397,7 +399,8 @@
       </div>
     </dialog>
     <script src="/client-config.js"></script>
-    <script src="/captain.js?v=56"></script>
+    <script src="/addons-domain.js?v=1"></script>
+    <script src="/captain.js?v=57"></script>
     <script>
       if ('serviceWorker' in navigator) {
         let reloadedForCaptainWorker = false;
@@ -408,7 +411,7 @@
           }
         });
         navigator.serviceWorker
-          .register('/captain-sw.js?v=23')
+          .register('/captain-sw.js?v=24')
           .then((registration) => {
             registration.update().catch(() => {});
             if (registration.waiting) registration.waiting.postMessage({ type: 'SKIP_WAITING' });

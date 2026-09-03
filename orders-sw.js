@@ -1,8 +1,9 @@
-const CACHE = 'red-lantern-orders-v23';
+const CACHE = 'red-lantern-orders-v24';
 const ORDER_SHELL = [
   '/orders',
   '/printer-domain.js?v=1',
-  '/orders.js?v=40',
+  '/addons-domain.js?v=1',
+  '/orders.js?v=43',
   '/orders.css?v=7',
   '/orders-logo.css?v=7',
   '/orders-fixes.css?v=16',
@@ -63,7 +64,7 @@ self.addEventListener('fetch', (event) => {
   const isOrdersShell =
     url.pathname === '/orders' ||
     url.pathname === '/orders.html' ||
-    /\/orders(?:-fixes|-logo)?\.css$|\/orders\.js$|\/orders\.webmanifest$/.test(url.pathname);
+    /\/orders(?:-fixes|-logo)?\.css$|\/orders\.js$|\/orders\.webmanifest$|\/addons-domain\.js$/.test(url.pathname);
   if (!isOrdersData && !isOrdersShell) return;
   event.respondWith(
     (async () => {

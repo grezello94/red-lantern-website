@@ -7,15 +7,18 @@ $project = (Resolve-Path -LiteralPath $ProjectPath).Path
 $bridge = Join-Path $project 'print-bridge.js'
 $supervisor = Join-Path $project 'print-bridge-supervisor.js'
 $domain = Join-Path $project 'printer-domain.js'
+$addonsDomain = Join-Path $project 'addons-domain.js'
 $launcherDir = Join-Path $env:LOCALAPPDATA 'Red Lantern Print Bridge'
 New-Item -ItemType Directory -Path $launcherDir -Force | Out-Null
 $installedBridge = Join-Path $launcherDir 'print-bridge.js'
 $installedSupervisor = Join-Path $launcherDir 'print-bridge-supervisor.js'
 $installedDomain = Join-Path $launcherDir 'printer-domain.js'
+$installedAddonsDomain = Join-Path $launcherDir 'addons-domain.js'
 $hiddenLauncher = Join-Path $launcherDir 'run-print-bridge-hidden.vbs'
 if (!(Test-Path -LiteralPath $bridge)) { throw "print-bridge.js was not found in $project" }
 if (!(Test-Path -LiteralPath $supervisor)) { throw "print-bridge-supervisor.js was not found in $project" }
 if (!(Test-Path -LiteralPath $domain)) { throw "printer-domain.js was not found in $project" }
+if (!(Test-Path -LiteralPath $addonsDomain)) { throw "addons-domain.js was not found in $project" }
 
 $bundledNode = Join-Path $project 'node.exe'
 $node = if (Test-Path -LiteralPath $bundledNode) { $bundledNode } else { (Get-Command node.exe -ErrorAction Stop).Source }
@@ -63,6 +66,7 @@ try {
   Copy-Item -LiteralPath $bridge -Destination $installedBridge -Force
   Copy-Item -LiteralPath $supervisor -Destination $installedSupervisor -Force
   Copy-Item -LiteralPath $domain -Destination $installedDomain -Force
+  Copy-Item -LiteralPath $addonsDomain -Destination $installedAddonsDomain -Force
   # WScript waits for the supervisor but has no visible console window.
   $action = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\wscript.exe" -Argument ('"{0}"' -f $hiddenLauncher) -WorkingDirectory $launcherDir
   $trigger = New-ScheduledTaskTrigger -AtLogOn -User $currentUser

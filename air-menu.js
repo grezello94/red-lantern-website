@@ -1,10 +1,13 @@
 const params = new URLSearchParams(window.location.search);
+const Addons = window.RedLanternAddons;
 const fallbackUrl = 'https://www.redlanternrestaurant.in/menu';
 const expires = Number(params.get('expires'));
 const orderStorageKey = `red-lantern-order:${params.get('signature') || expires}`;
+const orderAddonStorageKey = `${orderStorageKey}:addons`;
 const directOrderRequestKey = `${orderStorageKey}:request-id`;
 const orderCatalog = new Map();
 let orderSelections = {};
+let persistedAddonItems = [];
 let orderShowsPrices = false;
 let orderWhatsAppNumber = '';
 let orderIsBusinessCard = false;
@@ -150,8 +153,11 @@ window.addEventListener('resize', syncOrderVisibleHeight);
 
 try {
   orderSelections = JSON.parse(sessionStorage.getItem(orderStorageKey) || '{}');
+  persistedAddonItems = JSON.parse(sessionStorage.getItem(orderAddonStorageKey) || '[]');
+  if (!Array.isArray(persistedAddonItems)) persistedAddonItems = [];
 } catch {
   orderSelections = {};
+  persistedAddonItems = [];
 }
 
 const escapeHtml = (value) =>
@@ -185,9 +191,11 @@ function displayPrice(dish) {
 
 function orderPriceWithStyle(item) {
   const price = String(item.price || '').trim();
-  if (!item.style || !price) return price;
+  if (!price) return price;
   const amount = price.match(/(?:₹|Rs\.?|INR)?\s*(\d{1,5}(?:\.\d{1,2})?)/i)?.[1];
-  return amount ? `₹${Number(amount) + 10}` : price;
+  return amount
+    ? `₹${Number(amount) + (item.style ? 10 : 0) + Addons.lineModifierTotal(item)}`
+    : price;
 }
 
 function styleLabel(item) {
@@ -291,6 +299,8 @@ function registerOrderOptions(dish, category, index, showPrices) {
           price: variant.price || '',
           showPrices,
           gravyStyleAvailable: hasGravyStyles,
+          addonGroups: dish.addonGroups || [],
+          menuType: dish.isBar ? 'bar' : 'food',
         });
         return { ...style, key };
       });
@@ -326,7 +336,7 @@ function orderSummaryText() {
     if (!item || quantity <= 0) return;
     const price = orderPriceWithStyle(item);
     lines.push(
-      `${quantity} × ${item.name}${item.portion ? ` (${item.portion})` : ''}${item.style ? ` — ${styleLabel(item)}` : ''}${orderShowsPrices && price ? ` – ${price}${quantity > 1 ? ` each` : ''}` : ''}`
+      `${quantity} × ${item.name}${item.portion ? ` (${item.portion})` : ''}${item.style ? ` — ${styleLabel(item)}` : ''}${Addons.modifierText(item.modifiers) ? ` + ${Addons.modifierText(item.modifiers)}` : ''}${orderShowsPrices && price ? ` – ${price}${quantity > 1 ? ` each` : ''}` : ''}`
     );
   });
   if (orderIsBusinessCard) {
@@ -351,6 +361,14 @@ function updateOrderUI() {
     element.closest('.order-picker')?.classList.toggle('selected', quantity > 0);
   });
   sessionStorage.setItem(orderStorageKey, JSON.stringify(orderSelections));
+  persistedAddonItems = [...orderCatalog.values()]
+    .filter((item) => item.modifiers?.length && Number(orderSelections[item.key] || 0) > 0)
+    .map((item) => ({
+      key: item.key,
+      baseKey: item.baseKey,
+      modifiers: item.modifiers,
+    }));
+  sessionStorage.setItem(orderAddonStorageKey, JSON.stringify(persistedAddonItems));
   const fab = document.getElementById('open-order-summary');
   fab.hidden = totalCount === 0;
   document.getElementById('order-count').textContent = totalCount;
@@ -379,7 +397,7 @@ function renderOrderSummary() {
           const customisation = styleChoices
             ? `<fieldset class="summary-style-options"><legend>Style <em>(optional · Dry by default)</em></legend>${styleChoices}</fieldset>`
             : '';
-          return `<div class="summary-item"><div><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml([item.category, item.portion, styleLabel(item)].filter(Boolean).join(' · '))}</span>${customisation}</div><div class="summary-quantity"><button type="button" data-order-action="minus" data-order-key="${key}">−</button><b>${quantity}</b><button type="button" data-order-action="plus" data-order-key="${key}">+</button></div></div>`;
+          return `<div class="summary-item"><div><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml([item.category, item.portion, styleLabel(item)].filter(Boolean).join(' · '))}</span>${Addons.modifierText(item.modifiers) ? `<small class="summary-addons">+ ${escapeHtml(Addons.modifierText(item.modifiers))}</small>` : ''}${customisation}</div><div class="summary-quantity"><button type="button" data-order-action="minus" data-order-key="${key}">−</button><b>${quantity}</b><button type="button" data-order-action="plus" data-order-key="${key}">+</button></div></div>`;
         })
         .join('')
     : '<p class="empty">No dishes selected yet.</p>';
@@ -473,6 +491,64 @@ function changeOrderStyle(control) {
   updateOrderUI();
 }
 
+const addonDialog = document.createElement('dialog');
+addonDialog.className = 'air-addon-dialog';
+addonDialog.innerHTML = '<div class="air-addon-dialog-head"><div><small>Customise item</small><h2 id="air-addon-title"></h2></div><button type="button" data-air-addon-close aria-label="Close">×</button></div><div id="air-addon-choices"></div><p id="air-addon-error" aria-live="polite"></p><button type="button" id="air-addon-add">Add to order <b></b></button>';
+document.body.appendChild(addonDialog);
+let airAddonBaseItem = null;
+function airAddonSelections() {
+  return (airAddonBaseItem?.addonGroups || []).map((group) => ({
+    groupId: group.id,
+    options: [...addonDialog.querySelectorAll(`[data-air-addon-group="${group.id}"] input:checked`)].map((input) => ({ optionId: input.value, quantity: 1 })),
+  }));
+}
+function updateAirAddonDialog() {
+  if (!airAddonBaseItem) return;
+  (airAddonBaseItem.addonGroups || []).forEach((group) => {
+    const inputs = [...addonDialog.querySelectorAll(`[data-air-addon-group="${group.id}"] input[type="checkbox"]`)];
+    const atLimit = inputs.filter((input) => input.checked).length >= Number(group.max || 1);
+    inputs.forEach((input) => { input.disabled = atLimit && !input.checked; });
+  });
+  const result = Addons.validateSelections(airAddonBaseItem.addonGroups || [], airAddonSelections());
+  const base = Number(String(airAddonBaseItem.price || '').replace(/[^0-9.]/g, '')) || 0;
+  const total = base + (airAddonBaseItem.style ? 10 : 0) + (result.ok ? result.total : 0);
+  document.getElementById('air-addon-error').textContent = result.ok ? '' : result.error;
+  document.getElementById('air-addon-add').disabled = !result.ok;
+  document.querySelector('#air-addon-add b').textContent = orderShowsPrices ? `₹${total}` : '';
+}
+function openAirAddonDialog(item) {
+  airAddonBaseItem = item;
+  document.getElementById('air-addon-title').textContent = item.name;
+  document.getElementById('air-addon-choices').innerHTML = (item.addonGroups || []).map((group) => `<fieldset data-air-addon-group="${escapeHtml(group.id)}"><legend>${escapeHtml(group.displayName || group.name)} <small>${group.min ? `Choose ${group.min}${group.max !== group.min ? `–${group.max}` : ''}` : `Optional · up to ${group.max}`}</small></legend>${group.options.filter((option) => option.active !== false).map((option) => `<label><input type="${group.selection === 'single' ? 'radio' : 'checkbox'}" name="air-addon-${escapeHtml(group.id)}" value="${escapeHtml(option.id)}"><span>${escapeHtml(option.name)}<b>${option.price ? `+₹${option.price}` : 'Included'}</b></span></label>`).join('')}</fieldset>`).join('');
+  updateAirAddonDialog();
+  addonDialog.showModal();
+}
+addonDialog.addEventListener('change', updateAirAddonDialog);
+addonDialog.addEventListener('click', (event) => {
+  if (event.target.closest('[data-air-addon-close]')) {
+    addonDialog.close();
+    return;
+  }
+  if (!event.target.closest('#air-addon-add') || !airAddonBaseItem) return;
+  const result = Addons.validateSelections(airAddonBaseItem.addonGroups || [], airAddonSelections());
+  if (!result.ok) {
+    document.getElementById('air-addon-error').textContent = result.error;
+    return;
+  }
+  const key = `${airAddonBaseItem.key}|addons:${encodeURIComponent(Addons.selectionFingerprint(result.modifiers))}`;
+  orderCatalog.set(key, {
+    ...airAddonBaseItem,
+    key,
+    baseKey: airAddonBaseItem.baseKey || airAddonBaseItem.key,
+    modifiers: result.modifiers,
+    modifierTotal: result.total,
+  });
+  orderSelections[key] = Number(orderSelections[key] || 0) + 1;
+  addonDialog.close();
+  airAddonBaseItem = null;
+  updateOrderUI();
+});
+
 function setupOrderShortlist() {
   const dialog = document.getElementById('order-summary');
   const summaryItems = document.getElementById('order-summary-items');
@@ -494,6 +570,16 @@ function setupOrderShortlist() {
   const handleQuantity = (event) => {
     const button = event.target.closest('[data-order-action]');
     if (!button) return;
+    const item = orderCatalog.get(button.dataset.orderKey);
+    if (
+      button.dataset.orderAction === 'plus' &&
+      button.closest('#menu-content') &&
+      item?.addonGroups?.length &&
+      !item.modifiers
+    ) {
+      openAirAddonDialog(item);
+      return;
+    }
     changeOrderQuantity(button.dataset.orderKey, button.dataset.orderAction === 'plus' ? 1 : -1);
   };
   document.getElementById('menu-content').addEventListener('click', handleQuantity);
@@ -858,6 +944,30 @@ async function loadMenu() {
           .join('')
       : '<p class="empty">The menu is being updated. Please ask our team for today’s selections.</p>';
     if (entries.length) {
+      persistedAddonItems.forEach((saved) => {
+        const base = orderCatalog.get(saved.baseKey);
+        if (!base) {
+          delete orderSelections[saved.key];
+          return;
+        }
+        const result = Addons.validateSelections(base.addonGroups || [], saved.modifiers || []);
+        if (!result.ok) {
+          delete orderSelections[saved.key];
+          return;
+        }
+        const key = `${base.key}|addons:${encodeURIComponent(Addons.selectionFingerprint(result.modifiers))}`;
+        if (key !== saved.key) {
+          orderSelections[key] = Number(orderSelections[key] || 0) + Number(orderSelections[saved.key] || 0);
+          delete orderSelections[saved.key];
+        }
+        orderCatalog.set(key, {
+          ...base,
+          key,
+          baseKey: base.key,
+          modifiers: result.modifiers,
+          modifierTotal: result.total,
+        });
+      });
       setupMenuControls();
       updateOrderUI();
     }

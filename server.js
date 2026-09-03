@@ -27,6 +27,7 @@ const { transitionForAction } = require('./smart-kds-workflow');
 const { reasonCodesForRecommendation } = require('./smart-kds-reasons');
 const { buildKitchenMetrics } = require('./smart-kds-metrics');
 const { printerCapabilities, printerSupports } = require('./printer-domain');
+const Addons = require('./addons-domain');
 
 const envPath = path.join(__dirname, '.env');
 if (fs.existsSync(envPath)) {
@@ -1188,6 +1189,7 @@ async function getSmartKdsTimingPreview() {
           category: String(line.category || ''),
           portion: String(line.portion || ''),
           style: String(line.style || ''),
+          modifiers: Array.isArray(line.modifiers) ? line.modifiers : [],
           note: String(line.note || ''),
           orderedAt: line.orderedAt || order.created_at,
           quantity: Math.max(1, Number(line.quantity) || 1),
@@ -1238,6 +1240,7 @@ async function getSmartKdsTimingPreview() {
           category: line.category,
           portion: line.portion,
           style: line.style,
+          modifiers: line.modifiers,
           quantity,
           course,
           stationId: stationId || '',
@@ -2027,43 +2030,7 @@ function normalizeAirMenu(body) {
   let addonGroups = [];
   try {
     const parsed = JSON.parse(body.airAddonGroups || '[]');
-    if (Array.isArray(parsed))
-      addonGroups = parsed
-        .slice(0, 100)
-        .map((group) => {
-          const selection = group.selection === 'multiple' ? 'multiple' : 'single',
-            max =
-              selection === 'single'
-                ? 1
-                : Math.max(1, Math.min(20, Math.floor(Number(group.max) || 1))),
-            min = Math.min(max, Math.max(0, Math.min(20, Math.floor(Number(group.min) || 0))));
-          return {
-            id: String(group.id || crypto.randomUUID())
-              .replace(/[^a-zA-Z0-9_-]/g, '')
-              .slice(0, 60),
-            name: String(group.name || '')
-              .trim()
-              .slice(0, 80),
-            displayName: String(group.displayName || '')
-              .trim()
-              .slice(0, 100),
-            min,
-            max,
-            selection,
-            active: group.active !== false,
-            options: (Array.isArray(group.options) ? group.options : [])
-              .slice(0, 50)
-              .map((option) => ({
-                name: String(option.name || '')
-                  .trim()
-                  .slice(0, 80),
-                price: Math.max(0, Math.min(100000, Number(option.price) || 0)),
-                dietary: option.dietary === 'nonveg' ? 'nonveg' : 'veg',
-              }))
-              .filter((option) => option.name),
-          };
-        })
-        .filter((group) => group.id && group.name);
+    if (Array.isArray(parsed)) addonGroups = Addons.normalizeGroups(parsed);
   } catch {
     addonGroups = [];
   }
@@ -2375,6 +2342,36 @@ function menuItemKey(item = {}) {
     .replace(/[^a-z0-9]/g, '')}::${String(item.name || '')
     .toLowerCase()
     .replace(/[^a-z0-9]/g, '')}`;
+}
+
+function addonGroupsForMenuItem(menu, item) {
+  return Addons.groupsForItem(
+    menu?.addonGroups || [],
+    item.menuType || (item.isBar ? 'bar' : 'food'),
+    item.category,
+    item.name
+  );
+}
+
+function menuPortionPrice(item = {}, portion = '') {
+  const key = String(portion || '').trim().toLowerCase();
+  const variants = {
+    half: item.halfPrice,
+    full: item.fullPrice,
+    'with bone': item.withBonePrice,
+    boneless: item.bonelessPrice,
+    '30 ml': item.price30ml,
+    '60 ml': item.price60ml,
+    '90 ml': item.price90ml,
+    '180 ml': item.price180ml,
+  };
+  if (key && Object.prototype.hasOwnProperty.call(variants, key)) return variants[key] || '';
+  if (!key || key === 'regular') return item.price || '';
+  return '';
+}
+
+function validateMenuItemModifiers(menu, source, submittedModifiers) {
+  return Addons.validateSelections(addonGroupsForMenuItem(menu, source), submittedModifiers);
 }
 
 function dedupeMenuItems(items = []) {
@@ -3915,7 +3912,13 @@ app.get('/api/air-menu', async (req, res) => {
     tableNumber: tableQr?.number || null,
     mode: req.query.mode,
     expires: Number(req.query.expires),
-    dishes: visibleDishes,
+    dishes: visibleDishes.map((dish) => ({
+      ...dish,
+      addonGroups: addonGroupsForMenuItem(menu, {
+        ...dish,
+        menuType: dish.isBar ? 'bar' : 'food',
+      }),
+    })),
   });
 });
 
@@ -3976,22 +3979,7 @@ app.post('/api/direct-orders', async (req, res) => {
       ...(Array.isArray(menu.items) ? menu.items.map((item) => ({ ...item, menuType: 'food' })) : []),
       ...(Array.isArray(menu.barItems) ? menu.barItems.map((item) => ({ ...item, menuType: 'bar' })) : []),
     ];
-    const portionPrice = (item, portion) => {
-      const key = String(portion || '')
-        .trim()
-        .toLowerCase();
-      const prices = {
-        half: item.halfPrice,
-        full: item.fullPrice,
-        'with bone': item.withBonePrice,
-        boneless: item.bonelessPrice,
-        '30 ml': item.price30ml,
-        '60 ml': item.price60ml,
-        '90 ml': item.price90ml,
-        '180 ml': item.price180ml,
-      };
-      return prices[key] || item.price || '';
-    };
+    const portionPrice = menuPortionPrice;
     const submittedItems = Array.isArray(items)
       ? items.filter((item) => Number(item.quantity) > 0).slice(0, 30)
       : [];
@@ -4020,6 +4008,8 @@ app.post('/api/direct-orders', async (req, res) => {
             : '';
         const price = portionPrice(source, item.portion);
         if (!priceNumber(price)) return null;
+        const modifierResult = validateMenuItemModifiers(menu, source, item.modifiers);
+        if (!modifierResult.ok) return { modifierError: modifierResult.error };
         return {
           lineId: crypto.randomUUID(),
           orderedAt: new Date().toISOString(),
@@ -4030,6 +4020,8 @@ app.post('/api/direct-orders', async (req, res) => {
           style,
           quantity: Math.min(20, Number(item.quantity) || 0),
           price: `₹${priceNumber(price)}`,
+          modifiers: modifierResult.modifiers,
+          modifierTotal: modifierResult.total,
           availabilityKey: `${String(source.category || '').toLowerCase()}::${String(source.name || '').toLowerCase()}`,
         };
       })
@@ -4037,12 +4029,13 @@ app.post('/api/direct-orders', async (req, res) => {
     if (
       !cleanItems.length ||
       cleanItems.length !== submittedItems.length ||
-      cleanItems.some((item) => !item.name)
+      cleanItems.some((item) => !item.name || item.modifierError)
     )
       return res
         .status(400)
         .json({
           error:
+            cleanItems.find((item) => item.modifierError)?.modifierError ||
             'One or more selected items are no longer available. Refresh the menu and try again.',
         });
     await ensureDirectOrdersTable();
@@ -4098,7 +4091,10 @@ app.post('/api/direct-orders', async (req, res) => {
     const id = `RL${Date.now().toString(36).toUpperCase()}${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
     const trackingToken = crypto.randomBytes(24).toString('base64url');
     const subtotal = cleanItems.reduce(
-      (sum, item) => sum + item.quantity * (priceNumber(item.price) + (item.style ? 10 : 0)),
+      (sum, item) =>
+        sum +
+        item.quantity *
+          (priceNumber(item.price) + (item.style ? 10 : 0) + Addons.lineModifierTotal(item)),
       0
     );
     const redemptionValue = requestedLoyaltyPoints * loyalty.pointValue;
@@ -4239,23 +4235,7 @@ app.post('/api/orders/counter', async (req, res) => {
       ...(Array.isArray(menu.items) ? menu.items.map((item) => ({ ...item, menuType: 'food' })) : []),
       ...(Array.isArray(menu.barItems) ? menu.barItems.map((item) => ({ ...item, menuType: 'bar' })) : []),
     ];
-    const portionPrice = (item, portion) =>
-      ({
-        half: item.halfPrice,
-        full: item.fullPrice,
-        'with bone': item.withBonePrice,
-        boneless: item.bonelessPrice,
-        '30 ml': item.price30ml,
-        '60 ml': item.price60ml,
-        '90 ml': item.price90ml,
-        '180 ml': item.price180ml,
-      })[
-        String(portion || '')
-          .trim()
-          .toLowerCase()
-      ] ||
-      item.price ||
-      '';
+    const portionPrice = menuPortionPrice;
     const submitted = Array.isArray(items)
       ? items.filter((item) => Number(item.quantity) > 0).slice(0, 30)
       : [];
@@ -4278,6 +4258,8 @@ app.post('/api/orders/counter', async (req, res) => {
         );
         const price = source && portionPrice(source, item.portion);
         if (!source || !priceNumber(price)) return null;
+        const modifierResult = validateMenuItemModifiers(menu, source, item.modifiers);
+        if (!modifierResult.ok) return { modifierError: modifierResult.error };
         const style =
           /^(gravy|semi-gravy)$/i.test(String(item.style || '').trim()) &&
           (source.gravyStyleAvailable || source.gravyAvailable || source.semiGravyAvailable)
@@ -4300,12 +4282,18 @@ app.post('/api/orders/counter', async (req, res) => {
           ...(courseOverride ? { courseOverride } : {}),
           quantity: Math.min(20, Number(item.quantity) || 0),
           price: `₹${priceNumber(price)}`,
+          modifiers: modifierResult.modifiers,
+          modifierTotal: modifierResult.total,
           availabilityKey: `${String(source.category || '').toLowerCase()}::${String(source.name || '').toLowerCase()}`,
         };
       })
       .filter(Boolean);
-    if (!clean.length || clean.length !== submitted.length)
-      return res.status(400).json({ error: 'Choose at least one current menu item.' });
+    if (!clean.length || clean.length !== submitted.length || clean.some((item) => item.modifierError))
+      return res.status(400).json({
+        error:
+          clean.find((item) => item.modifierError)?.modifierError ||
+          'Choose at least one current menu item.',
+      });
     await Promise.all([
       ensureDirectOrdersTable(),
       ensureOperationsConfigTable(),
@@ -4344,7 +4332,10 @@ app.post('/api/orders/counter', async (req, res) => {
         clean.map(({ availabilityKey, ...item }) => item)
       ),
       subtotal = saved.reduce(
-        (sum, item) => sum + item.quantity * (priceNumber(item.price) + (item.style ? 10 : 0)),
+        (sum, item) =>
+          sum +
+          item.quantity *
+            (priceNumber(item.price) + (item.style ? 10 : 0) + Addons.lineModifierTotal(item)),
         0
       );
     const suppliedPhone = String(customerPhone || '')
@@ -4461,7 +4452,9 @@ app.post('/api/orders/counter', async (req, res) => {
       const addonNote = String(specialRequest || '').trim().slice(0, 240),
         addonSubtotal = saved.reduce(
           (sum, item) =>
-            sum + Number(item.quantity || 0) * (priceNumber(item.price) + (item.style ? 10 : 0)),
+            sum +
+            Number(item.quantity || 0) *
+              (priceNumber(item.price) + (item.style ? 10 : 0) + Addons.lineModifierTotal(item)),
           0
         ),
         requestHash = crypto
@@ -4711,8 +4704,7 @@ app.get('/api/orders/live-summary', async (req, res) => {
 });
 app.get('/api/orders/:id/print', async (req, res) => {
   try {
-    await ensureDirectOrdersTable();
-    await ensureLoyaltyTable();
+    await Promise.all([ensureDirectOrdersTable(), ensureLoyaltyTable()]);
     const rows =
       await sql`SELECT o.*, COALESCE(l.points, 0) AS loyalty_points FROM direct_orders o LEFT JOIN loyalty_accounts l ON l.customer_phone=o.customer_phone WHERE o.id=${req.params.id} LIMIT 1`;
     if (!rows.length) return res.status(404).json({ error: 'Order not found.' });
@@ -4724,8 +4716,7 @@ app.get('/api/orders/:id/print', async (req, res) => {
 });
 app.post('/api/orders/:id/bill-print/claim', async (req, res) => {
   try {
-    await ensureDirectOrdersTable();
-    await ensureOrderPrintJobsTable();
+    await Promise.all([ensureDirectOrdersTable(), ensureOrderPrintJobsTable()]);
     const order = await sql`SELECT id FROM direct_orders WHERE id=${req.params.id} LIMIT 1`;
     if (!order.length) return res.status(404).json({ error: 'Order not found.' });
     await sql`INSERT INTO order_print_jobs (order_id,job_type,status) VALUES (${req.params.id},'bill','queued') ON CONFLICT (order_id,job_type) DO NOTHING`;
@@ -4838,7 +4829,10 @@ app.patch('/api/orders/:id/items', async (req, res) => {
       return res.status(400).json({ error: 'Keep at least one item in the order.' });
     const price = (value) => Number(String(value || '').replace(/[^0-9.]/g, '')) || 0;
     const subtotal = items.reduce(
-      (sum, item) => sum + item.quantity * (price(item.price) + (item.style ? 10 : 0)),
+      (sum, item) =>
+        sum +
+        item.quantity *
+          (price(item.price) + (item.style ? 10 : 0) + Addons.lineModifierTotal(item)),
       0
     );
     const menu = await getSection('airMenu');
@@ -5062,17 +5056,17 @@ app.get('/api/orders/availability', async (req, res) => {
 });
 app.get('/api/orders/menu', async (req, res) => {
   try {
-    const menu = await getSection('airMenu');
+    const [menu, profileData] = await Promise.all([
+      getSection('airMenu'),
+      getSmartKdsMenuProfiles().catch((error) => {
+        console.warn('Smart KDS menu courses unavailable:', error.message);
+        return { items: [] };
+      }),
+    ]);
     const order = Array.isArray(menu.categoryOrder) ? menu.categoryOrder : [];
-    let coursesByKey = new Map();
-    try {
-      const profileData = await getSmartKdsMenuProfiles();
-      coursesByKey = new Map(
-        profileData.items.map((item) => [item.itemKey, String(item.profile?.course || '')])
-      );
-    } catch (error) {
-      console.warn('Smart KDS menu courses unavailable:', error.message);
-    }
+    const coursesByKey = new Map(
+      profileData.items.map((item) => [item.itemKey, String(item.profile?.course || '')])
+    );
     const format = (items, menuType) =>
       items
         .map((item) => ({
@@ -5097,6 +5091,7 @@ app.get('/api/orders/menu', async (req, res) => {
             item.gravyAvailable ||
             item.semiGravyAvailable
           ),
+          addonGroups: addonGroupsForMenuItem(menu, { ...item, menuType }),
         }))
         .filter((item) => item.name);
     res.json([...format(menu.items || [], 'food'), ...format(menu.barItems || [], 'bar')]);
@@ -5109,6 +5104,25 @@ app.get('/api/orders/operations', async (req, res) => {
     await ensureOperationsConfigTable();
     const rows =
       await sql`SELECT config FROM order_operations_config WHERE config_key='default' LIMIT 1`;
+    const config =
+      rows[0]?.config && typeof rows[0].config === 'object'
+        ? rows[0].config
+        : { printers: [], routes: [] };
+    res.set('Cache-Control', 'no-store');
+    // Printing and Captain screens only need the small routing payload. Avoid
+    // loading and serialising the complete Air Menu on their critical path.
+    if (req.captain || req.query.configOnly === '1')
+      return res.json({
+        config: {
+          ...(req.captain
+            ? {}
+            : {
+                printers: Array.isArray(config.printers) ? config.printers : [],
+                routes: Array.isArray(config.routes) ? config.routes : [],
+              }),
+          tableAreas: Array.isArray(config.tableAreas) ? config.tableAreas : [],
+        },
+      });
     const menu = await getSection('airMenu');
     const format = (items, menuType) =>
       items
@@ -5120,17 +5134,6 @@ app.get('/api/orders/operations', async (req, res) => {
           bonelessPrice: String(item.bonelessPrice || ''),
         }))
         .filter((item) => item.name);
-    const config =
-      rows[0]?.config && typeof rows[0].config === 'object'
-        ? rows[0].config
-        : { printers: [], routes: [] };
-    res.set('Cache-Control', 'no-store');
-    if (req.captain)
-      return res.json({
-        config: {
-          tableAreas: Array.isArray(config.tableAreas) ? config.tableAreas : [],
-        },
-      });
     res.json({
       config: {
         printers: Array.isArray(config.printers) ? config.printers : [],
@@ -5176,7 +5179,7 @@ app.post('/api/orders/:id/kots', async (req, res) => {
     const printers = Array.isArray(config.printers) ? config.printers : [];
     const routes = Array.isArray(config.routes) ? config.routes : [];
     const kotItemKey = (item) =>
-      `${item.category || ''}::${item.name || ''}::${item.portion || ''}::${item.style || ''}::${item.note || ''}`;
+      `${item.category || ''}::${item.name || ''}::${item.portion || ''}::${item.style || ''}::${item.note || ''}::${Addons.selectionFingerprint(item.modifiers)}`;
     const sent = new Map();
     previous.forEach((kot) => {
       const quantities = new Map();
@@ -6009,6 +6012,28 @@ app.post('/api/admin/air-menu/gravy-style', async (req, res) => {
     res.json({ saved: true, gravyStyleAvailable });
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+app.patch('/api/admin/air-menu/addons/:groupId/options/:optionId/availability', async (req, res) => {
+  try {
+    const menu = await getSection('airMenu');
+    const groups = Addons.normalizeGroups(menu.addonGroups || []);
+    const group = groups.find((entry) => entry.id === String(req.params.groupId || ''));
+    const option = group?.options.find((entry) => entry.id === String(req.params.optionId || ''));
+    if (!group || !option) return res.status(404).json({ error: 'Add-on choice not found.' });
+    option.active = req.body?.active === true;
+    await saveSection('airMenu', { addonGroups: groups });
+    clearPublicContentCache();
+    res.json({
+      ok: true,
+      groupId: group.id,
+      optionId: option.id,
+      active: option.active,
+      updatedAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Unable to update add-on availability.' });
   }
 });
 

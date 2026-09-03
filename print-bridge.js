@@ -12,6 +12,7 @@ const net = require('net');
 const { execFile, spawn } = require('child_process');
 const crypto = require('crypto');
 const { printerCapabilities, printerSupports } = require('./printer-domain');
+const Addons = require('./addons-domain');
 const fs = require('fs/promises');
 const fsSync = require('fs');
 const os = require('os');
@@ -19,7 +20,7 @@ const path = require('path');
 const { DatabaseSync } = require('node:sqlite');
 
 const PORT = Number(process.env.PRINT_BRIDGE_PORT || 9124);
-const BRIDGE_VERSION = '2026.09.01.2';
+const BRIDGE_VERSION = '2026.09.03.1';
 const PRINT_JOB_LEASE_MS = Math.max(
   30000,
   Number(process.env.PRINT_BRIDGE_JOB_LEASE_MS || 2 * 60 * 1000)
@@ -387,9 +388,14 @@ async function unavailablePrinterNames() {
       const output = await run('powershell.exe', [
         '-NoProfile',
         '-Command',
-        "Get-Printer | Where-Object { \"$($_.PrinterStatus)\" -match 'Offline|Error' } | Select-Object -ExpandProperty Name",
+        'Get-Printer | Where-Object { "$($_.PrinterStatus)" -match \'Offline|Error\' } | Select-Object -ExpandProperty Name',
       ]);
-      return new Set(output.split(/\r?\n/).map((name) => name.trim()).filter(Boolean));
+      return new Set(
+        output
+          .split(/\r?\n/)
+          .map((name) => name.trim())
+          .filter(Boolean)
+      );
     }
     const output = await run('lpstat', ['-p']);
     return new Set(
@@ -412,7 +418,7 @@ async function networkPrinterEndpoints() {
       const output = await run('powershell.exe', [
         '-NoProfile',
         '-Command',
-        "$ports=@{}; Get-PrinterPort | ForEach-Object { $ports[$_.Name]=$_ }; @(Get-Printer | ForEach-Object { $port=$ports[$_.PortName]; if($port -and $port.PrinterHostAddress){ [PSCustomObject]@{ Name=$_.Name; Host=[string]$port.PrinterHostAddress; Port=[int]$port.PortNumber } } }) | ConvertTo-Json -Compress",
+        '$ports=@{}; Get-PrinterPort | ForEach-Object { $ports[$_.Name]=$_ }; @(Get-Printer | ForEach-Object { $port=$ports[$_.PortName]; if($port -and $port.PrinterHostAddress){ [PSCustomObject]@{ Name=$_.Name; Host=[string]$port.PrinterHostAddress; Port=[int]$port.PortNumber } } }) | ConvertTo-Json -Compress',
       ]);
       const parsed = JSON.parse(output || '[]');
       return new Map(
@@ -429,9 +435,14 @@ async function networkPrinterEndpoints() {
       output
         .split(/\r?\n/)
         .map((line) => {
-          const match = line.match(/^device for\s+([^:]+):\s+(?:socket|ipp|ipps):\/\/([^/:\s]+)(?::(\d+))?/i);
+          const match = line.match(
+            /^device for\s+([^:]+):\s+(?:socket|ipp|ipps):\/\/([^/:\s]+)(?::(\d+))?/i
+          );
           return match
-            ? [match[1], { host: match[2], port: Number(match[3]) || (line.includes('ipp') ? 631 : 9100) }]
+            ? [
+                match[1],
+                { host: match[2], port: Number(match[3]) || (line.includes('ipp') ? 631 : 9100) },
+              ]
             : null;
         })
         .filter(Boolean)
@@ -746,11 +757,12 @@ function kotText(payload) {
   const order = payload.order || {};
   const settings = payload.settings || {};
   const items = Array.isArray(payload.items) ? payload.items : [];
-  const tableLine = order.tableArea || order.tableNumber
-    ? `Table: ${order.tableArea || 'Dining'} · ${order.tableNumber || '—'}`
-    : order.fulfillment
-      ? `Order: ${order.fulfillment}`
-      : '';
+  const tableLine =
+    order.tableArea || order.tableNumber
+      ? `Table: ${order.tableArea || 'Dining'} · ${order.tableNumber || '—'}`
+      : order.fulfillment
+        ? `Order: ${order.fulfillment}`
+        : '';
   const guestLine = `Guest: ${order.customer || 'Walk-in customer'}`;
   const source = String(order.source || '').toLowerCase();
   const originLine =
@@ -764,14 +776,17 @@ function kotText(payload) {
     : guestLine;
   const isRunningTable = order.mode === 'table' && Number(order.kotNumber) > 1;
   const metaLine = settings.kotDetailsCentered ? '__KOTCENTERMETA__' : '__KOTMETA__';
-  const boldMetaLine = settings.kotDetailsCentered
-    ? '__KOTCENTERMETABOLD__'
-    : '__KOTMETABOLD__';
+  const boldMetaLine = settings.kotDetailsCentered ? '__KOTCENTERMETABOLD__' : '__KOTMETABOLD__';
   const labels = kotHighlightLabels(items);
   const rows = items.flatMap((item, index) =>
     [
       `__KOTITEM__${Number(item.quantity || 0)}|${labels[index]}`,
-      [item.portion ? `(${item.portion})` : '', item.style || ''].filter(Boolean).join(' ') ? `__KOTMODIFIER__${[item.portion ? `(${item.portion})` : '', item.style || ''].filter(Boolean).join(' ')}` : '',
+      [item.portion ? `(${item.portion})` : '', item.style || ''].filter(Boolean).join(' ')
+        ? `__KOTMODIFIER__${[item.portion ? `(${item.portion})` : '', item.style || ''].filter(Boolean).join(' ')}`
+        : '',
+      Addons.modifierText(item.modifiers)
+        ? `__KOTMODIFIER__+ ${Addons.modifierText(item.modifiers)}`
+        : '',
       item.note ? `__KOTNOTE__↳ ${item.note}` : '',
     ].filter(Boolean)
   );
@@ -785,7 +800,9 @@ function kotText(payload) {
     `${boldMetaLine}KOT # ${order.kotNumber || '—'}`,
     tableLine ? `${metaLine}${tableLine}` : '',
     `${metaLine}${originLine}`,
-    settings.showCustomer !== false ? `${metaLine}${source === 'qr' ? qrGuestLine : guestLine}` : '',
+    settings.showCustomer !== false
+      ? `${metaLine}${source === 'qr' ? qrGuestLine : guestLine}`
+      : '',
     '__KOTRULE__',
     '__KOTMETABOLD__Qty. Item',
     ...rows,
@@ -808,7 +825,9 @@ function billText(payload) {
   const money = (value) => `₹${Math.round(Number(value) || 0)}`;
   const decimal = (value) => (Number(value) || 0).toFixed(2);
   const itemPrice = (item) =>
-    Number(String(item.price || '').replace(/[^0-9.]/g, '')) + (item.style ? 10 : 0);
+    Number(String(item.price || '').replace(/[^0-9.]/g, '')) +
+    (item.style ? 10 : 0) +
+    Addons.lineModifierTotal(item);
   const subtotal = items.reduce(
     (sum, item) => sum + itemPrice(item) * Number(item.quantity || 0),
     0
@@ -823,6 +842,9 @@ function billText(payload) {
     return [
       `__ITEM__${label}|${quantity}|${decimal(unit)}|${decimal(itemAmount)}`,
       item.style ? `__ITEM__  ${item.style} gravy|||` : '',
+      Addons.modifierText(item.modifiers)
+        ? `__ITEM__  + ${Addons.modifierText(item.modifiers)}|||`
+        : '',
     ].filter(Boolean);
   });
   const token = String(order.daily_order_number || '—').padStart(2, '0');
@@ -1049,8 +1071,8 @@ const server = http.createServer(async (req, res) => {
           ledger: 'ready',
           printerCount: printers.length,
           configuredPrinterCount: configuredPrinters.length,
-          configuredBillPrinterCount: configuredPrinters.filter(
-            (printer) => printerSupports(printer, 'bill')
+          configuredBillPrinterCount: configuredPrinters.filter((printer) =>
+            printerSupports(printer, 'bill')
           ).length,
           configuredKotRouteCount: configuredKotRoutes.length,
           uniqueKotRouteTargetCount: new Set(
@@ -1390,8 +1412,12 @@ server.on('error', (error) => {
   closeLedger();
   process.exitCode = 1;
 });
-process.on('SIGINT', () => shutdown(0));
-process.on('SIGTERM', () => shutdown(0));
-server.listen(PORT, '127.0.0.1', () => {
-  console.log(`Red Lantern Print Bridge is running at http://127.0.0.1:${PORT}`);
-});
+if (require.main === module) {
+  process.on('SIGINT', () => shutdown(0));
+  process.on('SIGTERM', () => shutdown(0));
+  server.listen(PORT, '127.0.0.1', () => {
+    console.log(`Red Lantern Print Bridge is running at http://127.0.0.1:${PORT}`);
+  });
+}
+
+module.exports = { kotText, billText };

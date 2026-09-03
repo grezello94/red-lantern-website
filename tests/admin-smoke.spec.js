@@ -34,14 +34,14 @@ function sampleContent() {
   };
 }
 
-async function mockAdmin(page, { onRequest } = {}) {
+async function mockAdmin(page, { onRequest, content = sampleContent() } = {}) {
   await page.route('**/api/**', async (route) => {
     const request = route.request();
     const url = new URL(request.url());
     onRequest?.(request, url);
     let body = {};
     let contentType = 'application/json';
-    if (url.pathname === '/api/admin/content') body = sampleContent();
+    if (url.pathname === '/api/admin/content') body = content;
     else if (url.pathname === '/api/admin/trusted-contacts')
       body = {
         contacts: [
@@ -50,7 +50,10 @@ async function mockAdmin(page, { onRequest } = {}) {
             customer_name: 'A trusted customer with a deliberately long name',
             blocked: false,
             last_items: [
-              { name: 'A long latest-order dish name that must remain inside its strip', quantity: 2 },
+              {
+                name: 'A long latest-order dish name that must remain inside its strip',
+                quantity: 2,
+              },
             ],
             last_order_at: '2026-09-01T10:00:00.000Z',
           },
@@ -75,7 +78,9 @@ async function mockAdmin(page, { onRequest } = {}) {
   });
 }
 
-test('admin restores a trusted-contact deep link after refresh and fits a phone', async ({ page }) => {
+test('admin restores a trusted-contact deep link after refresh and fits a phone', async ({
+  page,
+}) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockAdmin(page);
   await page.goto('/admin.html#tab-trusted-contacts');
@@ -117,14 +122,62 @@ test('Air Menu defers large sheets, preserves all rows on save, and does not pre
   });
   await expect(page.locator('#air-items-container .air-item-entry')).toHaveCount(100);
   await expect(page.locator('#air-bar-items-container .air-bar-item-entry')).toHaveCount(50);
-  const savedNames = await page
-    .locator('form[action="/api/update-airMenu"]')
-    .evaluate((form) => ({
-      food: new FormData(form).getAll('airItemName[]'),
-      bar: new FormData(form).getAll('airBarItemName[]'),
-    }));
+  const savedNames = await page.locator('form[action="/api/update-airMenu"]').evaluate((form) => ({
+    food: new FormData(form).getAll('airItemName[]'),
+    bar: new FormData(form).getAll('airBarItemName[]'),
+  }));
   expect(savedNames.food).toHaveLength(100);
   expect(savedNames.food).toContain('Food item 100');
   expect(savedNames.bar).toHaveLength(50);
   expect(savedNames.bar).toContain('Bar item 50');
+});
+
+test('Admin preserves add-on rules, availability and dish assignments in the saved payload', async ({
+  page,
+}) => {
+  const content = sampleContent();
+  content.airMenu.addonGroups = [
+    {
+      id: 'extras',
+      name: 'Extras',
+      displayName: 'Choose extras',
+      selection: 'multiple',
+      min: 1,
+      max: 2,
+      active: true,
+      assignedItemKeys: [],
+      options: [
+        { id: 'cheese', name: 'Cheese', price: 50, dietary: 'veg', active: true },
+        { id: 'olive', name: 'Olives', price: 30, dietary: 'veg', active: true },
+      ],
+    },
+  ];
+  await mockAdmin(page, { content });
+  await page.goto('/admin.html#tab-air-menu');
+
+  const group = page.locator('[data-addon-group="extras"]');
+  await expect(group).toBeVisible();
+  await expect(group.locator('[data-addon-field="min"]')).toHaveValue('1');
+  await expect(group.locator('[data-addon-field="max"]')).toHaveValue('2');
+  await group.locator('[data-addon-option="active"][data-option-index="1"]').uncheck();
+  await expect(group.locator('.addon-option-active').nth(1)).toContainText('No');
+  await group.locator('[data-addon-assign]').click();
+  await page.locator('#addon-assignment-list input').first().check();
+  await page.locator('.addon-assignment-save').click();
+  await expect(group.locator('[data-addon-assign] b')).toHaveText('1');
+
+  const saved = await page.locator('#air-addon-groups').inputValue();
+  expect(JSON.parse(saved)).toMatchObject([
+    {
+      id: 'extras',
+      min: 1,
+      max: 2,
+      selection: 'multiple',
+      assignedItemKeys: [expect.any(String)],
+      options: [
+        { id: 'cheese', price: 50, active: true },
+        { id: 'olive', price: 30, active: false },
+      ],
+    },
+  ]);
 });

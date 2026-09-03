@@ -18,7 +18,9 @@ async function expectContained(page, selector) {
         .filter((node) => {
           const style = getComputedStyle(node);
           const box = node.getBoundingClientRect();
-          return style.display !== 'none' && style.visibility !== 'hidden' && box.width && box.height;
+          return (
+            style.display !== 'none' && style.visibility !== 'hidden' && box.width && box.height
+          );
         })
         .filter((node) => {
           const box = node.getBoundingClientRect();
@@ -39,7 +41,10 @@ async function expectContained(page, selector) {
   expect(failures).toEqual([]);
 }
 
-async function mockCaptainApp(page, { orders = [], alerts = [], onKot, onServed } = {}) {
+async function mockCaptainApp(
+  page,
+  { orders = [], alerts = [], menuItems = [], onCounterOrder, onKot, onServed } = {}
+) {
   await page.route('**/api/**', async (route) => {
     const request = route.request(),
       url = new URL(request.url());
@@ -59,14 +64,23 @@ async function mockCaptainApp(page, { orders = [], alerts = [], onKot, onServed 
       };
     else if (url.pathname === '/api/orders/operations')
       body = { config: { tableAreas: [{ id: 'dining', name: 'DINING', from: 1, to: 3 }] } };
-    else if (url.pathname === '/api/orders/menu') body = [];
+    else if (url.pathname === '/api/orders/menu') body = menuItems;
     else if (url.pathname === '/api/orders') body = orders;
     else if (url.pathname === '/api/orders/availability') body = [];
     else if (url.pathname === '/api/captain/menu-insights') body = { items: [] };
     else if (url.pathname === '/api/captain/ready-alerts') body = { alerts };
     else if (/\/api\/captain\/orders\/[^/]+\/kot-progress$/.test(url.pathname))
       body = { rounds: [] };
-    else if (/\/api\/orders\/[^/]+\/kots$/.test(url.pathname)) {
+    else if (url.pathname === '/api/orders/counter') {
+      onCounterOrder?.(request);
+      status = 201;
+      body = {
+        id: 'captain-order-1',
+        status: 'accepted',
+        orderNumber: '01',
+        total: 160,
+      };
+    } else if (/\/api\/orders\/[^/]+\/kots$/.test(url.pathname)) {
       onKot?.(request);
       status = 201;
       body = { kotNumber: 12, tickets: [] };
@@ -86,14 +100,17 @@ async function signInCaptain(page) {
   await expect(page.locator('.captain-app')).toBeVisible();
 }
 
-async function mockCounterWorkspace(page, { onCounterOrder, onKot } = {}) {
+async function mockCounterWorkspace(
+  page,
+  { onCounterOrder, onKot, menuItems, orders = [], operationsConfig } = {}
+) {
   await page.route('**/api/**', async (route) => {
     const request = route.request();
     const url = new URL(request.url());
     let status = 200;
     let body = {};
     if (url.pathname === '/api/orders/menu') {
-      body = [
+      body = menuItems || [
         {
           name: 'Test Soup',
           category: 'SOUP',
@@ -103,7 +120,10 @@ async function mockCounterWorkspace(page, { onCounterOrder, onKot } = {}) {
       ];
     } else if (url.pathname === '/api/orders/availability') body = [];
     else if (url.pathname === '/api/orders/operations')
-      body = { config: { printers: [], routes: [], tableAreas: [] }, menu: [] };
+      body = {
+        config: operationsConfig || { printers: [], routes: [], tableAreas: [] },
+        menu: [],
+      };
     else if (url.pathname === '/api/orders/counter') {
       const override = await onCounterOrder?.(route, request);
       if (override === 'handled') return;
@@ -121,7 +141,7 @@ async function mockCounterWorkspace(page, { onCounterOrder, onKot } = {}) {
         tickets: [],
       };
       status = 201;
-    } else if (url.pathname === '/api/orders') body = [];
+    } else if (url.pathname === '/api/orders') body = orders;
     else if (url.pathname === '/api/orders/print-updates') body = { updates: [], cursor: null };
     await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
   });
@@ -164,7 +184,9 @@ test('orders page loads with expected title', async ({ page }) => {
   await expect(page.locator('#orders')).toHaveCount(1);
 });
 
-test('Send KOT clears the counter immediately while kitchen printing continues', async ({ page }) => {
+test('Send KOT clears the counter immediately while kitchen printing continues', async ({
+  page,
+}) => {
   let releaseKot;
   const kotBlocked = new Promise((resolve) => {
     releaseKot = resolve;
@@ -182,6 +204,198 @@ test('Send KOT clears the counter immediately while kitchen printing continues',
 
   releaseKot();
   await expect(page.locator('#counter-order-status')).toContainText('KOT sent');
+});
+
+test('required add-ons are selected, priced and sent with a counter order', async ({ page }) => {
+  let submitted;
+  await mockCounterWorkspace(page, {
+    menuItems: [
+      {
+        name: 'Test Soup',
+        category: 'SOUP',
+        menuType: 'food',
+        price: '₹110',
+        addonGroups: [
+          {
+            id: 'extras',
+            name: 'Extras',
+            displayName: 'Choose an extra',
+            selection: 'single',
+            min: 1,
+            max: 1,
+            active: true,
+            options: [{ id: 'cheese', name: 'Cheese', price: 50, active: true }],
+          },
+        ],
+      },
+    ],
+    onCounterOrder: async (_route, request) => {
+      submitted = request.postDataJSON();
+    },
+  });
+  await page.goto('/orders.html');
+  await page.locator('[data-orders-rail="counter"]').click();
+  await page.locator('.counter-menu-item').first().click();
+
+  await expect(page.locator('#counter-choice-add')).toBeDisabled();
+  await page.locator('[data-counter-addon-group="extras"] input[value="cheese"]').check();
+  await expect(page.locator('#counter-choice-add-price')).toHaveText('₹160');
+  await page.locator('#counter-choice-add').click();
+  await expect(page.locator('#counter-total')).toHaveText('₹160');
+  await page.locator('[data-dine-action="save"]').click();
+  await expect.poll(() => submitted).toBeTruthy();
+
+  expect(submitted.items[0]).toMatchObject({
+    modifierTotal: 50,
+    modifiers: [
+      {
+        groupId: 'extras',
+        options: [{ optionId: 'cheese', name: 'Cheese', price: 50, quantity: 1 }],
+      },
+    ],
+  });
+});
+
+test('QR ordering enforces, prices and submits assigned add-ons', async ({ page }) => {
+  let submitted;
+  await page.route('**/api/**', async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    let status = 200;
+    let body = {};
+    if (url.pathname === '/api/air-menu') {
+      body = {
+        mode: 'card',
+        pageTitle: 'Our Menu',
+        pageSubtitle: 'Test menu',
+        note: '',
+        showPrices: true,
+        directOrdersEnabled: true,
+        deliveryEnabled: true,
+        cardCallEnabled: false,
+        proximity: { required: false },
+        dishes: [
+          {
+            name: 'Test Soup',
+            category: 'SOUP',
+            type: 'food',
+            price: '₹110',
+            addonGroups: [
+              {
+                id: 'extras',
+                name: 'Extras',
+                displayName: 'Choose an extra',
+                selection: 'single',
+                min: 1,
+                max: 1,
+                active: true,
+                options: [{ id: 'cheese', name: 'Cheese', price: 50, active: true }],
+              },
+            ],
+          },
+        ],
+      };
+    } else if (url.pathname === '/api/direct-orders') {
+      submitted = request.postDataJSON();
+      status = 201;
+      body = {
+        id: 'qr-order-1',
+        orderNumber: '01',
+        autoAccepted: true,
+        trackingUrl: '/track-order?token=test',
+      };
+    } else if (url.pathname === '/api/loyalty') body = { points: 0 };
+    await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+  });
+
+  const expires = Date.now() + 60 * 60 * 1000;
+  await page.goto(`/air-menu.html?mode=card&expires=${expires}&signature=test-signature`);
+  await expect(page.locator('#menu-content .dish')).toContainText('Test Soup');
+  await page.locator('#menu-content [data-order-action="plus"]').click();
+  await expect(page.locator('.air-addon-dialog')).toBeVisible();
+  await expect(page.locator('#air-addon-add')).toBeDisabled();
+  await page.locator('[data-air-addon-group="extras"] input[value="cheese"]').check();
+  await expect(page.locator('#air-addon-add b')).toHaveText('₹160');
+  await page.locator('#air-addon-add').click();
+  await page.locator('#open-order-summary').click();
+  await expect(page.locator('#order-summary-items')).toContainText('Cheese');
+  await page.locator('#order-customer-phone').fill('9876543210');
+  await page.locator('#place-direct-order').click();
+  await expect(page.locator('#order-confirmation')).toBeVisible();
+  await expect.poll(() => submitted).toBeTruthy();
+
+  expect(submitted.items[0]).toMatchObject({
+    name: 'Test Soup',
+    modifierTotal: 50,
+    modifiers: [
+      {
+        groupId: 'extras',
+        options: [{ optionId: 'cheese', name: 'Cheese', price: 50, quantity: 1 }],
+      },
+    ],
+  });
+});
+
+test('live order history shows saved add-on snapshots and its fallback KOT prints them', async ({
+  page,
+}) => {
+  const order = {
+    id: 'addon-history-order',
+    mode: 'table',
+    table_area: 'DINING',
+    table_number: 1,
+    daily_order_number: 4,
+    status: 'accepted',
+    created_at: new Date().toISOString(),
+    customer_name: 'Test guest',
+    total: 160,
+    items: [
+      {
+        name: 'Test Soup',
+        category: 'SOUP',
+        portion: 'Regular',
+        quantity: 1,
+        price: '₹110',
+        modifierTotal: 50,
+        modifiers: [
+          {
+            groupId: 'extras',
+            groupName: 'Choose an extra',
+            options: [{ optionId: 'cheese', name: 'Cheese', price: 50, quantity: 1 }],
+          },
+        ],
+      },
+    ],
+  };
+  await mockCounterWorkspace(page, {
+    orders: [order],
+    operationsConfig: {
+      printers: [{ id: 'kitchen', name: 'Kitchen', deviceName: 'Kitchen Queue', type: 'kot' }],
+      routes: [{ id: 'all-kitchen', printerId: 'kitchen', category: '*', itemName: '' }],
+      tableAreas: [],
+    },
+  });
+  await page.goto('/orders.html');
+  await page.locator('[data-orders-rail="live"]').click();
+  await expect(page.locator('.order[data-order-id="addon-history-order"]')).toContainText(
+    '+ Cheese'
+  );
+  await page.evaluate(() => {
+    window.__fallbackKotHtml = '';
+    window.open = () => ({
+      document: {
+        write(value) {
+          window.__fallbackKotHtml += value;
+        },
+        close() {},
+      },
+      close() {},
+    });
+    window.printKot('addon-history-order', 'kitchen');
+  });
+  const fallbackKot = await page.evaluate(() => window.__fallbackKotHtml);
+  expect(fallbackKot).toContain('Test Soup');
+  expect(fallbackKot).toContain('+ Cheese');
 });
 
 test('an interrupted Send KOT retry reuses the same idempotency key', async ({ page }) => {
@@ -211,7 +425,9 @@ test('an interrupted Send KOT retry reuses the same idempotency key', async ({ p
   expect(requestIds[1]).toBe(requestIds[0]);
 });
 
-test('occupied table details and actions stay contained inside the table card', async ({ page }) => {
+test('occupied table details and actions stay contained inside the table card', async ({
+  page,
+}) => {
   await page.addInitScript(() => {
     localStorage.setItem(
       'red-lantern-table-allocation',
@@ -351,6 +567,151 @@ test('captain page loads with login screen', async ({ page }) => {
   await expect(page.locator('#captain-account-list')).toBeVisible();
 });
 
+test('Captain ordering enforces, prices and submits assigned add-ons', async ({ page }) => {
+  let submitted;
+  await mockCaptainApp(page, {
+    menuItems: [
+      {
+        key: 'test-soup',
+        name: 'Test Soup',
+        category: 'SOUP',
+        menuType: 'food',
+        price: '₹110',
+        addonGroups: [
+          {
+            id: 'extras',
+            name: 'Extras',
+            displayName: 'Choose an extra',
+            selection: 'single',
+            min: 1,
+            max: 1,
+            active: true,
+            options: [{ id: 'cheese', name: 'Cheese', price: 50, active: true }],
+          },
+        ],
+      },
+    ],
+    onCounterOrder: (request) => {
+      submitted = request.postDataJSON();
+    },
+  });
+  await signInCaptain(page);
+  await page.locator('#table-board .table-tile').first().click();
+  await expect(page.locator('#menu-screen')).toBeVisible();
+  await page.locator('#menu-list .menu-item').click();
+  await expect(page.locator('#choice-sheet')).toBeVisible();
+  await expect(page.locator('#choice-add')).toBeDisabled();
+  await page.locator('[data-captain-addon-group="extras"] input[value="cheese"]').check();
+  await expect(page.locator('#choice-add')).toContainText('₹160');
+  await page.locator('#choice-add').click();
+  await expect(page.locator('#order-dock-list')).toContainText('+ Cheese');
+  await expect(page.locator('#basket-total')).toHaveText('₹160');
+  await page.locator('#basket-bar').click();
+  await expect(page.locator('#review-total')).toHaveText('₹160');
+  await page.locator('#place-order').click();
+  await expect.poll(() => submitted).toBeTruthy();
+
+  expect(submitted.items[0]).toMatchObject({
+    name: 'Test Soup',
+    modifierTotal: 50,
+    modifiers: [
+      {
+        groupId: 'extras',
+        options: [{ optionId: 'cheese', name: 'Cheese', price: 50, quantity: 1 }],
+      },
+    ],
+  });
+});
+
+test('Normal and Smart KDS display the saved add-on choices to the kitchen', async ({ page }) => {
+  const modifiers = [
+    {
+      groupId: 'extras',
+      groupName: 'Choose an extra',
+      options: [{ optionId: 'cheese', name: 'Cheese', price: 50, quantity: 1 }],
+    },
+  ];
+  const order = {
+    id: 'kds-addon-order',
+    mode: 'table',
+    table_area: 'DINING',
+    table_number: 2,
+    daily_order_number: 8,
+    status: 'accepted',
+    created_at: new Date().toISOString(),
+    customer_name: 'Test guest',
+    items: [
+      {
+        name: 'Test Soup',
+        category: 'SOUP',
+        portion: 'Regular',
+        quantity: 1,
+        modifiers,
+      },
+    ],
+  };
+  await page.route('**/api/**', async (route) => {
+    const url = new URL(route.request().url());
+    let body = {};
+    if (url.pathname === '/api/orders') body = [order];
+    else if (url.pathname === '/api/orders/operations') {
+      body = {
+        config: {
+          printers: [{ id: 'kitchen', name: 'Kitchen', type: 'kot' }],
+          routes: [{ id: 'all', printerId: 'kitchen', category: '*', itemName: '' }],
+        },
+      };
+    } else if (url.pathname === '/api/orders/kot-history') body = [];
+    else if (url.pathname === '/api/orders/kitchen-statuses') body = [];
+    else if (url.pathname === '/api/orders/smart-kds/recommendations') {
+      body = {
+        schedulingMode: 'shadow',
+        realtimeCursor: 0,
+        recommendations: [
+          {
+            taskKey: 'kds-addon-task',
+            orderId: order.id,
+            orderNumber: 8,
+            itemName: 'Test Soup',
+            category: 'SOUP',
+            portion: 'Regular',
+            quantity: 1,
+            modifiers,
+            mode: 'table',
+            tableArea: 'DINING',
+            tableNumber: 2,
+            stationId: 'kitchen',
+            taskState: 'ordered',
+            capacityState: 'allocated',
+            baseAction: 'start-now',
+            action: 'start-now',
+            targetServeAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+          },
+        ],
+        taskStates: [],
+        batches: [],
+        stations: [{ id: 'kitchen', name: 'Kitchen', enabled: true }],
+        staleOrders: [],
+      };
+    } else if (url.pathname === '/api/orders/smart-kds/updates') {
+      body = { updates: [], cursor: 0 };
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(body),
+    });
+  });
+
+  await page.goto('/kds.html');
+  await expect(page.locator('#kds-grid')).toContainText('Test Soup');
+  await expect(page.locator('#kds-grid')).toContainText('+ Cheese');
+
+  await page.goto('/smart-kds.html');
+  await expect(page.locator('#kitchen-briefing')).toContainText('Test Soup · Regular + Cheese');
+  await expect(page.locator('#board')).toContainText('Test Soup · Regular + Cheese');
+});
+
 test('captain table board and menu cards stay contained on desktop and phone widths', async ({
   page,
 }) => {
@@ -415,7 +776,11 @@ test('captain table board and menu cards stay contained on desktop and phone wid
     } else if (url.pathname === '/api/captain/ready-alerts') {
       body = { alerts: [] };
     }
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(body),
+    });
   });
 
   await page.goto('/captain.html');
@@ -479,7 +844,9 @@ test('captain can release a saved table KOT without adding another item', async 
   await expect.poll(() => kotRequests).toBe(1);
 });
 
-test('captain keeps separate ready alerts for multiple KOT rounds on one table', async ({ page }) => {
+test('captain keeps separate ready alerts for multiple KOT rounds on one table', async ({
+  page,
+}) => {
   const served = [];
   await mockCaptainApp(page, {
     orders: [
@@ -546,7 +913,8 @@ test('a bill is sent once to every configured Bill printer with its own settings
   page,
 }) => {
   const billJobs = [];
-  await page.route('http://127.0.0.1:4173/api/orders/operations', async (route) => {
+  let printerDiscoveryRequests = 0;
+  await page.route(/\/api\/orders\/operations(?:\?.*)?$/, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -587,8 +955,21 @@ test('a bill is sent once to every configured Bill printer with its own settings
       body: JSON.stringify({
         id: 'order-1',
         created_at: '2026-08-31T12:00:00.000Z',
-        items: [{ name: 'Test item', quantity: 1, price: 100 }],
-        total: 100,
+        items: [
+          {
+            name: 'Test item',
+            quantity: 1,
+            price: 150,
+            modifiers: [
+              {
+                groupId: 'extras',
+                groupName: 'Extras',
+                options: [{ optionId: 'cheese', name: 'Cheese', price: 50, quantity: 1 }],
+              },
+            ],
+          },
+        ],
+        total: 150,
       }),
     });
   });
@@ -597,6 +978,7 @@ test('a bill is sent once to every configured Bill printer with its own settings
   await page.route('http://127.0.0.1:9124/**', async (route) => {
     const pathname = new URL(route.request().url()).pathname;
     if (pathname === '/v1/print-bill') billJobs.push(route.request().postDataJSON());
+    if (pathname === '/v1/printers') printerDiscoveryRequests += 1;
     await route.fulfill({
       status: pathname === '/v1/print-bill' ? 201 : 200,
       contentType: 'application/json',
@@ -607,21 +989,28 @@ test('a bill is sent once to every configured Bill printer with its own settings
   await page.evaluate(() => window.printOrder('order-1'));
 
   expect(billJobs).toHaveLength(2);
-  expect(billJobs.map((job) => job.printerName).sort()).toEqual([
-    'Backup Queue',
-    'Front Queue',
-  ]);
+  expect(printerDiscoveryRequests).toBe(0);
+  expect(billJobs.map((job) => job.printerName).sort()).toEqual(['Backup Queue', 'Front Queue']);
   expect(new Set(billJobs.map((job) => job.printJobId)).size).toBe(2);
   expect(billJobs.find((job) => job.printerName === 'Front Queue').settings.paperWidth).toBe(80);
   expect(billJobs.find((job) => job.printerName === 'Backup Queue').settings.paperWidth).toBe(58);
   expect(billJobs.find((job) => job.printerName === 'Backup Queue').settings.fontFamily).toBe(
     'Georgia'
   );
+  for (const job of billJobs) {
+    expect(job.order.items[0].modifiers[0].options[0]).toMatchObject({
+      optionId: 'cheese',
+      name: 'Cheese',
+      price: 50,
+    });
+  }
 });
 
-test('one routed KOT can be dispatched concurrently to multiple printer queues', async ({ page }) => {
+test('one routed KOT can be dispatched concurrently to multiple printer queues', async ({
+  page,
+}) => {
   const kotJobs = [];
-  await page.route('http://127.0.0.1:4173/api/orders/operations', async (route) => {
+  await page.route(/\/api\/orders\/operations(?:\?.*)?$/, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -650,7 +1039,18 @@ test('one routed KOT can be dispatched concurrently to multiple printer queues',
     });
   });
   await page.route('http://127.0.0.1:4173/api/orders/order-2/kots', async (route) => {
-    const item = { name: 'Mirrored item', category: 'STARTER', quantity: 1 };
+    const item = {
+      name: 'Mirrored item',
+      category: 'STARTER',
+      quantity: 1,
+      modifiers: [
+        {
+          groupId: 'extras',
+          groupName: 'Extras',
+          options: [{ optionId: 'cheese', name: 'Cheese', price: 50, quantity: 1 }],
+        },
+      ],
+    };
     await route.fulfill({
       status: 201,
       contentType: 'application/json',
@@ -696,4 +1096,145 @@ test('one routed KOT can be dispatched concurrently to multiple printer queues',
   expect(kotJobs.find((job) => job.printerName === 'Expo Queue').settings.fontFamily).toBe(
     'Consolas'
   );
+  for (const job of kotJobs) {
+    expect(job.items[0].modifiers[0].options[0]).toMatchObject({
+      optionId: 'cheese',
+      name: 'Cheese',
+      price: 50,
+    });
+  }
+});
+
+test('KOT creation starts immediately without waiting for Print Bridge health', async ({
+  page,
+}) => {
+  let healthRelease;
+  let kotStarted = false;
+  const waitForHealth = new Promise((resolve) => {
+    healthRelease = resolve;
+  });
+  await page.route(/\/api\/orders\/operations(?:\?.*)?$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ config: { printers: [], routes: [], tableAreas: [] }, menu: [] }),
+    });
+  });
+  await page.route('http://127.0.0.1:4173/api/orders/fast-kot/kots', async (route) => {
+    kotStarted = true;
+    await route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({ kotNumber: 1, order: { id: 'fast-kot' }, tickets: [] }),
+    });
+  });
+  await page.goto('/orders.html');
+  await page.unroute('http://127.0.0.1:9124/**');
+  await page.route('http://127.0.0.1:9124/**', async (route) => {
+    const pathname = new URL(route.request().url()).pathname;
+    if (pathname === '/health') await waitForHealth;
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      headers: { 'Access-Control-Allow-Origin': '*' },
+      body: JSON.stringify({ ok: true }),
+    });
+  });
+
+  const resultPromise = page.evaluate(() =>
+    window.autoPrintOrder({ id: 'fast-kot', mode: 'table', status: 'preparing' })
+  );
+  await expect.poll(() => kotStarted, { timeout: 500 }).toBe(true);
+  healthRelease();
+  expect((await resultPromise).ok).toBe(true);
+});
+
+test('an offline deferred Send KOT stays KOT-only when printing recovers', async ({ page }) => {
+  await page.route(/\/api\/orders\/operations(?:\?.*)?$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ config: { printers: [], routes: [], tableAreas: [] }, menu: [] }),
+    });
+  });
+  await page.route('http://127.0.0.1:4173/api/orders/deferred-kot/kots', async (route) => {
+    await route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({ kotNumber: 1, order: { id: 'deferred-kot' }, tickets: [] }),
+    });
+  });
+  await page.goto('/orders.html');
+  await page.unroute('http://127.0.0.1:9124/**');
+  await page.route('http://127.0.0.1:9124/**', async (route) => {
+    const pathname = new URL(route.request().url()).pathname;
+    await route.fulfill({
+      status: pathname === '/health' ? 503 : 200,
+      contentType: 'application/json',
+      headers: { 'Access-Control-Allow-Origin': '*' },
+      body: JSON.stringify({ ok: pathname !== '/health' }),
+    });
+  });
+
+  const result = await page.evaluate(() =>
+    window.autoPrintOrder(
+      { id: 'deferred-kot', mode: 'counter', status: 'accepted' },
+      { kotOnly: true }
+    )
+  );
+  expect(result.ok).toBe(false);
+  const saved = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem('red-lantern-deferred-prints') || '[]')
+  );
+  expect(saved).toEqual([
+    expect.objectContaining({ id: 'deferred-kot', mode: 'counter', kotOnly: true }),
+  ]);
+});
+
+test('takeaway menu renders from its saved snapshot while live refresh is pending', async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      'red-lantern-counter-menu-snapshot',
+      JSON.stringify({
+        menu: [
+          {
+            key: 'food::soup::cached soup',
+            name: 'Cached Soup',
+            category: 'SOUP',
+            menuType: 'food',
+            price: '₹110',
+          },
+        ],
+        availability: [],
+        savedAt: Date.now(),
+      })
+    );
+  });
+  let menuRelease;
+  const waitForMenu = new Promise((resolve) => {
+    menuRelease = resolve;
+  });
+  await page.route('**/api/**', async (route) => {
+    const url = new URL(route.request().url());
+    let body = {};
+    if (url.pathname === '/api/orders/menu') {
+      await waitForMenu;
+      body = [];
+    } else if (url.pathname === '/api/orders/availability') body = [];
+    else if (url.pathname === '/api/orders/operations')
+      body = { config: { printers: [], routes: [], tableAreas: [] }, menu: [] };
+    else if (url.pathname === '/api/orders') body = [];
+    else if (url.pathname === '/api/orders/print-updates') body = { updates: [], cursor: null };
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(body),
+    });
+  });
+  await page.goto('/orders.html');
+  await page.locator('[data-orders-rail="counter"]').click();
+  await expect(page.locator('.counter-menu-item')).toContainText('Cached Soup', { timeout: 500 });
+  menuRelease();
 });

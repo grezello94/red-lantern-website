@@ -2349,6 +2349,58 @@ body {
   outline: 0;
   box-shadow: 0 12px 24px #287ceb42;
 }
+
+.captain-addon-groups {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+.captain-addon-groups fieldset {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 13px;
+  border: 1px solid #dce5ef;
+  border-radius: 11px;
+}
+.captain-addon-groups legend {
+  padding: 0 5px;
+  font-weight: 900;
+}
+.captain-addon-groups legend small {
+  margin-left: 5px;
+  color: #71839a;
+}
+.captain-addon-groups label input {
+  position: absolute;
+  opacity: 0;
+}
+.captain-addon-groups label span {
+  display: flex;
+  min-height: 43px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 12px;
+  border: 1px solid #dce5ef;
+  border-radius: 8px;
+  font-weight: 800;
+}
+.captain-addon-groups label input:checked + span {
+  border-color: #c61f34;
+  color: #a51e31;
+  background: #fff5f6;
+}
+.captain-addon-groups label b,
+.cart-addon {
+  color: #168252;
+}
+.captain-addon-error {
+  min-height: 16px;
+  margin: 8px 0 0;
+  color: #b72035;
+  font-size: 12px;
+  font-weight: 800;
+}
 @media (max-width: 560px) {
   .choice-sheet {
     position: fixed;

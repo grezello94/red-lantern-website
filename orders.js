@@ -1,4 +1,5 @@
 const root = document.getElementById('orders');
+const Addons = window.RedLanternAddons;
 const defaultBillHeader =
   'Colva Goa\n9922853605 / 9049558369\n[Follow] Insta ID:\nred_lantern_restaurant';
 const defaultBillFooter =
@@ -30,6 +31,8 @@ let historyAll = false;
 let orderStatusFilter = 'all';
 let fulfillmentFilter = '';
 let operationsConfig = { printers: [], routes: [] };
+let printOperationsRequest = null;
+let printOperationsLoadedAt = 0;
 const {
   configuredPrintersFor,
   printerFormat,
@@ -82,6 +85,43 @@ function cacheOperationsConfig(config) {
       })
     );
   } catch (_) {}
+}
+async function getPrintOperationsConfig() {
+  const hasRecentConfig =
+    Date.now() - printOperationsLoadedAt < 60000 &&
+    Array.isArray(operationsConfig.printers) &&
+    Array.isArray(operationsConfig.routes);
+  if (hasRecentConfig) return operationsConfig;
+  if (printOperationsRequest) return printOperationsRequest;
+  printOperationsRequest = fetch('/api/orders/operations?configOnly=1', { cache: 'no-store' })
+    .then(async (response) => {
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'Printer configuration could not load.');
+      const next = data.config || {};
+      operationsConfig = {
+        printers: Array.isArray(next.printers) ? next.printers : [],
+        routes: Array.isArray(next.routes) ? next.routes : [],
+        tableAreas: Array.isArray(next.tableAreas)
+          ? next.tableAreas
+          : Array.isArray(operationsConfig.tableAreas)
+            ? operationsConfig.tableAreas
+            : [],
+      };
+      printOperationsLoadedAt = Date.now();
+      cacheOperationsConfig(operationsConfig);
+      return operationsConfig;
+    })
+    .catch((error) => {
+      // A previously loaded configuration is safe to use when a transient
+      // cloud read fails; job IDs still protect against duplicate output.
+      if (Array.isArray(operationsConfig.printers) && operationsConfig.printers.length)
+        return operationsConfig;
+      throw error;
+    })
+    .finally(() => {
+      printOperationsRequest = null;
+    });
+  return printOperationsRequest;
 }
 const tableOrderSnapshotKey = 'red-lantern-table-order-snapshot';
 function readCachedTableOrders() {
@@ -168,12 +208,19 @@ const ordersWorkspaceKey = 'red-lantern-orders-last-workspace';
 let counterSyncInProgress = false;
 let deferredPrintSyncInProgress = false;
 let bridgeLedgerPending = 0;
-const printBridgeOrigin = (typeof window !== 'undefined' && window.RED_LANTERN_CONFIG && window.RED_LANTERN_CONFIG.printBridgeOrigin) || 'http://127.0.0.1:9124';
+const printBridgeOrigin =
+  (typeof window !== 'undefined' &&
+    window.RED_LANTERN_CONFIG &&
+    window.RED_LANTERN_CONFIG.printBridgeOrigin) ||
+  'http://127.0.0.1:9124';
 
 // Bridge support for extracted browser bridge
-const bridgeSupport = typeof window !== 'undefined' && window.RedLanternOrders ? window.RedLanternOrders : null;
-const bridgeDispatch = bridgeSupport && bridgeSupport.sync ? bridgeSupport.sync.dispatchBridgeAction : null;
-const bridgeLedger = bridgeSupport && bridgeSupport.ledger ? bridgeSupport.ledger.flushBridgeLedger : null;
+const bridgeSupport =
+  typeof window !== 'undefined' && window.RedLanternOrders ? window.RedLanternOrders : null;
+const bridgeDispatch =
+  bridgeSupport && bridgeSupport.sync ? bridgeSupport.sync.dispatchBridgeAction : null;
+const bridgeLedger =
+  bridgeSupport && bridgeSupport.ledger ? bridgeSupport.ledger.flushBridgeLedger : null;
 
 const ordersDiagnosticRecent = new Map();
 const orderSearchPanel = document.querySelector('.order-search-panel');
@@ -228,13 +275,23 @@ function saveDeferredPrints(entries) {
     localStorage.setItem(deferredPrintsKey, JSON.stringify(entries.slice(-100)));
   } catch (_) {}
 }
-function deferAutomaticPrint(order) {
+function deferAutomaticPrint(order, { kotOnly = false } = {}) {
   if (!order?.id) return;
   const entries = deferredPrints();
-  if (!entries.some((entry) => entry.id === order.id)) {
-    entries.push({ id: order.id, mode: order.mode, status: order.status, queuedAt: new Date().toISOString() });
-    saveDeferredPrints(entries);
+  const existing = entries.find((entry) => entry.id === order.id);
+  if (existing) {
+    // A full order print request takes precedence over a KOT-only request.
+    existing.kotOnly = !!existing.kotOnly && !!kotOnly;
+  } else {
+    entries.push({
+      id: order.id,
+      mode: order.mode,
+      status: order.status,
+      kotOnly: !!kotOnly,
+      queuedAt: new Date().toISOString(),
+    });
   }
+  saveDeferredPrints(entries);
 }
 async function saveToBridgeLedger(payload) {
   const response = await fetch(`${printBridgeOrigin}/v1/ledger/actions`, {
@@ -753,17 +810,60 @@ function updateCounterChoiceTotal() {
   const addButton = document.getElementById('counter-choice-add');
   const addPrice = document.getElementById('counter-choice-add-price');
   if (!selectedPortion || !addButton || !addPrice) return;
+  (counterChoiceItem?.addonGroups || []).forEach((group) => {
+    const inputs = [
+      ...document.querySelectorAll(
+        `[data-counter-addon-group="${group.id}"] input[type="checkbox"]`
+      ),
+    ];
+    const atLimit = inputs.filter((input) => input.checked).length >= Number(group.max || 1);
+    inputs.forEach((input) => {
+      input.disabled = atLimit && !input.checked;
+    });
+  });
   const style = document.querySelector('input[name="counter-style"]:checked')?.value || '';
-  const total = Number(selectedPortion.dataset.counterChoicePrice || 0) + (style ? 10 : 0);
+  const modifierResult = Addons.validateSelections(
+    counterChoiceItem?.addonGroups || [],
+    readCounterModifierSelections()
+  );
+  const total =
+    Number(selectedPortion.dataset.counterChoicePrice || 0) +
+    (style ? 10 : 0) +
+    (modifierResult.ok ? modifierResult.total : 0);
   addPrice.textContent = counterMoney(total);
+  addButton.disabled = !modifierResult.ok;
+  const error = document.getElementById('counter-addon-error');
+  if (error) error.textContent = modifierResult.ok ? '' : modifierResult.error;
   addButton.setAttribute('aria-label', `Add to order for ${counterMoney(total)}`);
+}
+function readCounterModifierSelections() {
+  return (counterChoiceItem?.addonGroups || []).map((group) => ({
+    groupId: group.id,
+    options: [
+      ...document.querySelectorAll(`[data-counter-addon-group="${group.id}"] input:checked`),
+    ].map((input) => ({ optionId: input.value, quantity: 1 })),
+  }));
+}
+function counterAddonMarkup(groups = []) {
+  return groups
+    .map(
+      (group) =>
+        `<fieldset class="counter-addon-group" data-counter-addon-group="${esc(group.id)}"><legend>${esc(group.displayName || group.name)} <em>${group.min ? `Choose ${group.min}${group.max !== group.min ? `–${group.max}` : ''}` : `Optional · up to ${group.max}`}</em></legend>${group.options
+          .filter((option) => option.active !== false)
+          .map(
+            (option) =>
+              `<label><input type="${group.selection === 'single' ? 'radio' : 'checkbox'}" name="counter-addon-${esc(group.id)}" value="${esc(option.id)}"><span>${esc(option.name)}<b>${option.price ? `+${counterMoney(option.price)}` : 'Included'}</b></span></label>`
+          )
+          .join('')}</fieldset>`
+    )
+    .join('');
 }
 function openCounterChoice(item) {
   counterChoiceItem = item;
   const options = counterPortionOptions(item);
   const dialog = document.getElementById('counter-choice-dialog');
   document.getElementById('counter-choice-content').innerHTML =
-    `<div class="counter-choice-title"><span>${esc(item.category || 'Menu')}</span><h2>${esc(item.name)}</h2></div><section class="counter-portion-section" aria-label="Select portion"><div class="counter-choice-section-head"><h3>Select portion</h3><small>Required</small></div><div class="counter-choice-options">${options.map(([value, label, price], index) => `<label><input type="radio" name="counter-portion" value="${esc(value)}" data-counter-choice-price="${Number(String(price).replace(/[^0-9.]/g, ''))}" ${index === 0 ? 'checked' : ''}><span><i aria-hidden="true"></i><strong>${esc(label)}</strong><b>${counterMoney(String(price).replace(/[^0-9.]/g, ''))}</b></span></label>`).join('')}</div></section>${item.gravyStyleAvailable ? '<fieldset class="counter-style-options"><legend>Preparation style</legend><label><input type="radio" name="counter-style" value="" checked> Regular</label><label><input type="radio" name="counter-style" value="Gravy"> Gravy <b>+₹10</b></label><label><input type="radio" name="counter-style" value="Semi-gravy"> Semi-gravy <b>+₹10</b></label></fieldset>' : ''}<label class="counter-course-choice"><span>Kitchen course</span><select id="counter-choice-course">${smartKdsCourseOptions(item.defaultCourse || '')}</select></label><button type="button" id="counter-choice-add" class="counter-place-order"><span><i aria-hidden="true">+</i>Add to order</span><b id="counter-choice-add-price"></b></button>`;
+    `<div class="counter-choice-title"><span>${esc(item.category || 'Menu')}</span><h2>${esc(item.name)}</h2></div><section class="counter-portion-section" aria-label="Select portion"><div class="counter-choice-section-head"><h3>Select portion</h3><small>Required</small></div><div class="counter-choice-options">${options.map(([value, label, price], index) => `<label><input type="radio" name="counter-portion" value="${esc(value)}" data-counter-choice-price="${Number(String(price).replace(/[^0-9.]/g, ''))}" ${index === 0 ? 'checked' : ''}><span><i aria-hidden="true"></i><strong>${esc(label)}</strong><b>${counterMoney(String(price).replace(/[^0-9.]/g, ''))}</b></span></label>`).join('')}</div></section>${item.gravyStyleAvailable ? '<fieldset class="counter-style-options"><legend>Preparation style</legend><label><input type="radio" name="counter-style" value="" checked> Regular</label><label><input type="radio" name="counter-style" value="Gravy"> Gravy <b>+₹10</b></label><label><input type="radio" name="counter-style" value="Semi-gravy"> Semi-gravy <b>+₹10</b></label></fieldset>' : ''}${counterAddonMarkup(item.addonGroups)}<p id="counter-addon-error" class="counter-addon-error" aria-live="polite"></p><label class="counter-course-choice"><span>Kitchen course</span><select id="counter-choice-course">${smartKdsCourseOptions(item.defaultCourse || '')}</select></label><button type="button" id="counter-choice-add" class="counter-place-order"><span><i aria-hidden="true">+</i>Add to order</span><b id="counter-choice-add-price"></b></button>`;
   updateCounterChoiceTotal();
   if (typeof dialog.showModal === 'function') dialog.showModal();
 }
@@ -830,8 +930,9 @@ function renderCounterOrder() {
       .join('') || '<p class="counter-empty">No menu items match that search.</p>';
   const items = counterCart
     .map((line, index) => {
-      const unit = line.price + (line.style ? 10 : 0);
-      return `<div class="counter-cart-line"><div><b>${esc(line.name)}</b><small>${esc(line.portion || 'Regular')}${line.style ? ` · ${esc(line.style)}` : ''} · ${counterMoney(unit)} each</small><label class="counter-line-course">Course <select data-counter-course="${index}">${smartKdsCourseOptions(line.defaultCourse || '', line.courseOverride || '')}</select></label></div><div class="counter-quantity"><button type="button" data-counter-qty="${index}" data-counter-change="-1">−</button><b>${line.quantity}</b><button type="button" data-counter-qty="${index}" data-counter-change="1">+</button></div><strong>${counterMoney(unit * line.quantity)}</strong></div>`;
+      const unit = line.price + (line.style ? 10 : 0) + Addons.lineModifierTotal(line);
+      const modifierText = Addons.modifierText(line.modifiers);
+      return `<div class="counter-cart-line"><div><b>${esc(line.name)}</b><small>${esc(line.portion || 'Regular')}${line.style ? ` · ${esc(line.style)}` : ''} · ${counterMoney(unit)} each</small>${modifierText ? `<small class="counter-line-addons">+ ${esc(modifierText)}</small>` : ''}<label class="counter-line-course">Course <select data-counter-course="${index}">${smartKdsCourseOptions(line.defaultCourse || '', line.courseOverride || '')}</select></label></div><div class="counter-quantity"><button type="button" data-counter-qty="${index}" data-counter-change="-1">−</button><b>${line.quantity}</b><button type="button" data-counter-qty="${index}" data-counter-change="1">+</button></div><strong>${counterMoney(unit * line.quantity)}</strong></div>`;
     })
     .join('');
   document.getElementById('counter-cart-items').innerHTML =
@@ -842,7 +943,8 @@ function renderCounterOrder() {
     cartHeading.textContent = `Current order${itemCount ? ` · ${itemCount} item${itemCount === 1 ? '' : 's'}` : ''}`;
   }
   const subtotal = counterCart.reduce(
-    (sum, line) => sum + (line.price + (line.style ? 10 : 0)) * line.quantity,
+    (sum, line) =>
+      sum + (line.price + (line.style ? 10 : 0) + Addons.lineModifierTotal(line)) * line.quantity,
     0
   );
   const requestedPoints = Math.floor(
@@ -951,10 +1053,20 @@ async function openCounterOrder(table = null) {
   counterPanel.hidden = false;
   document.body.classList.add('is-counter-workspace');
   window.scrollTo(0, 0);
-  document.getElementById('counter-menu-items').innerHTML =
-    '<p class="counter-empty">Loading menu…</p>';
+  const snapshot = readOfflineMenuSnapshot();
+  if (!menuItems.length && snapshot) applyAvailabilityData(snapshot.menu, snapshot.availability);
+  if (menuItems.length) {
+    counterMenu = menuItems.filter((item) => !unavailable.has(item.key));
+    renderCounterOrder();
+  } else {
+    document.getElementById('counter-menu-items').innerHTML =
+      '<p class="counter-empty">Loading menu…</p>';
+  }
+  // Live order counts and current menu freshness update independently. Neither
+  // should keep the order-entry workspace blank while the other one responds.
+  void refreshCounterLiveStatus();
   try {
-    await Promise.all([loadAvailability(), refreshCounterLiveStatus()]);
+    await loadAvailability();
     counterMenu = menuItems.filter((item) => !unavailable.has(item.key));
     renderCounterOrder();
     counterPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -982,7 +1094,10 @@ let splitMode = 'equal',
   splitItemAssignments = [],
   splitPercentages = [50, 50];
 function counterItemTotal(item) {
-  return (Number(item.price) + (item.style ? 10 : 0)) * Number(item.quantity || 0);
+  return (
+    (Number(item.price) + (item.style ? 10 : 0) + Addons.lineModifierTotal(item)) *
+    Number(item.quantity || 0)
+  );
 }
 function splitParts(count) {
   return Array.from({ length: count }, (_, index) => ({ label: `Part ${index + 1}`, items: [] }));
@@ -1001,7 +1116,19 @@ function renderSplitBill() {
     counterCart.forEach((item) =>
       groups.find(([category]) => category === (item.category || 'Other'))[1].push(item)
     );
-    content.innerHTML = `<div class="split-panel"><b>Group items by menu category</b><p>Each category below will print as its own bill.</p><div class="split-group-list">${groups.map(([category, items]) => `<div class="split-group-row"><span><b>${esc(category)}</b><small>${items.map((item) => `${item.quantity}× ${esc(item.name)}`).join(', ')}</small></span><b>${counterMoney(items.reduce((sum, item) => sum + counterItemTotal(item), 0))}</b></div>`).join('')}</div></div>`;
+    content.innerHTML = `<div class="split-panel"><b>Group items by menu category</b><p>Each category below will print as its own bill.</p><div class="split-group-list">${groups
+      .map(
+        ([category, items]) =>
+          `<div class="split-group-row"><span><b>${esc(category)}</b><small>${items
+            .map((item) => {
+              const modifiers = Addons.modifierText(item.modifiers);
+              return `${item.quantity}× ${esc(item.name)}${modifiers ? ` + ${esc(modifiers)}` : ''}`;
+            })
+            .join(
+              ', '
+            )}</small></span><b>${counterMoney(items.reduce((sum, item) => sum + counterItemTotal(item), 0))}</b></div>`
+      )
+      .join('')}</div></div>`;
   } else {
     const options = splitParts(splitPartCount)
       .map((part, index) => `<option value="${index}">${part.label}</option>`)
@@ -1012,9 +1139,12 @@ function renderSplitBill() {
         (count) =>
           `<button type="button" data-split-count="${count}" class="${count === splitPartCount ? 'is-active' : ''}">${count} bills</button>`
       )
-      .join(
-        ''
-      )}</div></div><div class="split-item-list">${counterCart.map((item, index) => `<label class="split-item-row"><span><b>${Number(item.quantity)}× ${esc(item.name)}</b><small>${esc(item.category || 'Other')}${item.portion ? ` · ${esc(item.portion)}` : ''} · ${counterMoney(counterItemTotal(item))}</small></span><select data-split-item="${index}">${options.replace(`value="${splitItemAssignments[index] || 0}"`, `value="${splitItemAssignments[index] || 0}" selected`)}</select></label>`).join('')}</div></div>`;
+      .join('')}</div></div><div class="split-item-list">${counterCart
+      .map((item, index) => {
+        const modifiers = Addons.modifierText(item.modifiers);
+        return `<label class="split-item-row"><span><b>${Number(item.quantity)}× ${esc(item.name)}</b><small>${esc(item.category || 'Other')}${item.portion ? ` · ${esc(item.portion)}` : ''}${modifiers ? ` · + ${esc(modifiers)}` : ''} · ${counterMoney(counterItemTotal(item))}</small></span><select data-split-item="${index}">${options.replace(`value="${splitItemAssignments[index] || 0}"`, `value="${splitItemAssignments[index] || 0}" selected`)}</select></label>`;
+      })
+      .join('')}</div></div>`;
   }
   splitBillDialog
     .querySelectorAll('[data-split-mode]')
@@ -1164,45 +1294,59 @@ function renderTableView() {
     }
     return { state: 'running', label: String(order.status || 'Running'), order };
   };
-  const activeTables = tableOrders.filter((order) => !['completed', 'cancelled', 'rejected'].includes(String(order.status))).length;
+  const activeTables = tableOrders.filter(
+    (order) => !['completed', 'cancelled', 'rejected'].includes(String(order.status))
+  ).length;
   const activeCount = document.getElementById('table-view-active-count');
   if (activeCount) activeCount.textContent = String(activeTables);
-  const query = String(tableViewSearch || '').trim().toLowerCase();
-  const visibleAreas = tableViewAreaFilter === 'all'
-    ? areas
-    : areas.filter((area) => String(area.name) === String(tableViewAreaFilter));
+  const query = String(tableViewSearch || '')
+    .trim()
+    .toLowerCase();
+  const visibleAreas =
+    tableViewAreaFilter === 'all'
+      ? areas
+      : areas.filter((area) => String(area.name) === String(tableViewAreaFilter));
   const matchesSearch = (area, number, table) => {
     if (!query) return true;
     const order = table.order || {};
-    const haystack = [area, number, order.customer_name, order.customer_phone, ...(Array.isArray(order.items) ? order.items.map((item) => item.name) : [])]
+    const haystack = [
+      area,
+      number,
+      order.customer_name,
+      order.customer_phone,
+      ...(Array.isArray(order.items) ? order.items.map((item) => item.name) : []),
+    ]
       .join(' ')
       .toLowerCase();
     return haystack.includes(query);
   };
   const zoneTabs = `<div class="table-floor-toolbar"><div class="table-zone-tabs" role="tablist" aria-label="Dining areas"><button type="button" class="${tableViewAreaFilter === 'all' ? 'is-active' : ''}" data-table-area-filter="all" aria-pressed="${tableViewAreaFilter === 'all'}">All areas</button>${areas.map((area) => `<button type="button" class="${tableViewAreaFilter === area.name ? 'is-active' : ''}" data-table-area-filter="${esc(area.name)}" aria-pressed="${tableViewAreaFilter === area.name}">${esc(area.name)}</button>`).join('')}</div><label class="table-search"><span aria-hidden="true">⌕</span><input id="table-view-search" type="search" autocomplete="off" placeholder="Search table or guest" value="${esc(tableViewSearch)}"></label></div>`;
-  content.innerHTML = `${zoneTabs}<div class="table-view-legend" aria-label="Table status legend"><button type="button" class="table-move-toggle${moveKotItemsMode ? ' is-active' : ''}" data-toggle-move-kot aria-pressed="${moveKotItemsMode}"><i></i>Move KOT / Items</button>${legend.map(([state, label]) => `<span><i class="is-${state}"></i>${label}</span>`).join('')}</div>${visibleAreas
-    .map((area) => {
-      const tables = Array.from(
-        { length: Number(area.to) - Number(area.from) + 1 },
-        (_, index) => Number(area.from) + index
-      ).map((number) => ({ number, table: tableState(area.name, number) }))
-        .filter(({ number, table }) => matchesSearch(area.name, number, table));
-      if (!tables.length) return '';
-      const totalTables = Number(area.to) - Number(area.from) + 1;
-      return `<section class="table-area"><div class="table-area-head"><h3>${esc(area.name)}</h3><span>${totalTables} table${totalTables === 1 ? '' : 's'}</span></div><div class="table-grid">${tables
-        .map(({ number, table }) => {
-          const tableNumber = number,
-            active = table.state !== 'blank' && table.state !== 'paid',
-            movable = active && moveKotItemsMode,
-            settling = table.state === 'printed' && !moveKotItemsMode;
-          const guest = table.order?.customer_name || 'Walk-in customer';
-          const amount = Number(table.order?.total || 0);
-          const status = movable ? 'Select to move' : settling ? 'Settle & save' : table.label;
-          return `<button type="button" class="table-tile is-${table.state}${movable ? ' is-move-target' : ''}" data-dine-table-area="${esc(area.name)}" data-dine-table-number="${tableNumber}"${movable ? ` data-move-table-order="${esc(table.order.id)}"` : ''}${settling ? ` data-settle-table-order="${esc(table.order.id)}"` : ''} title="${esc(status)}"><div class="table-tile-top"><div><span>Table</span><b>${String(tableNumber).padStart(2, '0')}</b></div>${table.state !== 'blank' && table.state !== 'paid' ? `<em>${esc(status)}</em>` : ''}</div>${table.order && table.state !== 'paid' ? `<div class="table-tile-info"><small>${esc(guest)}</small><strong>${counterMoney(amount)}</strong></div>` : `<small>${esc(table.state === 'paid' ? 'Paid · available' : 'Available')}</small>`}</button>`;
-        })
-        .join('')}</div></section>`;
-    })
-    .join('') || '<div class="table-view-empty">No table or guest matches this search.</div>'}`;
+  content.innerHTML = `${zoneTabs}<div class="table-view-legend" aria-label="Table status legend"><button type="button" class="table-move-toggle${moveKotItemsMode ? ' is-active' : ''}" data-toggle-move-kot aria-pressed="${moveKotItemsMode}"><i></i>Move KOT / Items</button>${legend.map(([state, label]) => `<span><i class="is-${state}"></i>${label}</span>`).join('')}</div>${
+    visibleAreas
+      .map((area) => {
+        const tables = Array.from(
+          { length: Number(area.to) - Number(area.from) + 1 },
+          (_, index) => Number(area.from) + index
+        )
+          .map((number) => ({ number, table: tableState(area.name, number) }))
+          .filter(({ number, table }) => matchesSearch(area.name, number, table));
+        if (!tables.length) return '';
+        const totalTables = Number(area.to) - Number(area.from) + 1;
+        return `<section class="table-area"><div class="table-area-head"><h3>${esc(area.name)}</h3><span>${totalTables} table${totalTables === 1 ? '' : 's'}</span></div><div class="table-grid">${tables
+          .map(({ number, table }) => {
+            const tableNumber = number,
+              active = table.state !== 'blank' && table.state !== 'paid',
+              movable = active && moveKotItemsMode,
+              settling = table.state === 'printed' && !moveKotItemsMode;
+            const guest = table.order?.customer_name || 'Walk-in customer';
+            const amount = Number(table.order?.total || 0);
+            const status = movable ? 'Select to move' : settling ? 'Settle & save' : table.label;
+            return `<button type="button" class="table-tile is-${table.state}${movable ? ' is-move-target' : ''}" data-dine-table-area="${esc(area.name)}" data-dine-table-number="${tableNumber}"${movable ? ` data-move-table-order="${esc(table.order.id)}"` : ''}${settling ? ` data-settle-table-order="${esc(table.order.id)}"` : ''} title="${esc(status)}"><div class="table-tile-top"><div><span>Table</span><b>${String(tableNumber).padStart(2, '0')}</b></div>${table.state !== 'blank' && table.state !== 'paid' ? `<em>${esc(status)}</em>` : ''}</div>${table.order && table.state !== 'paid' ? `<div class="table-tile-info"><small>${esc(guest)}</small><strong>${counterMoney(amount)}</strong></div>` : `<small>${esc(table.state === 'paid' ? 'Paid · available' : 'Available')}</small>`}</button>`;
+          })
+          .join('')}</div></section>`;
+      })
+      .join('') || '<div class="table-view-empty">No table or guest matches this search.</div>'
+  }`;
   if (!moveKotItemsMode)
     content.querySelectorAll('.table-tile').forEach((tile) => {
       const table = tableState(tile.dataset.dineTableArea, Number(tile.dataset.dineTableNumber));
@@ -1315,7 +1459,14 @@ function renderMoveOptions() {
     content.innerHTML = `<p><b>KOT Wise:</b> choose KOTs to transfer.</p><div class="move-choice-list">${kots.length ? kots.map((kot) => `<label class="move-choice"><input type="checkbox" value="${esc(kot.kot_number)}"><span><b>KOT #${esc(kot.kot_number)}</b><small>${esc(new Date(kot.created_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }))}</small></span></label>`).join('') : '<p>No printed KOTs are available for this table.</p>'}</div>`;
     return;
   }
-  content.innerHTML = `<p><b>Item Wise:</b> choose individual items to transfer.</p><div class="move-choice-list">${(order.items || []).map((item, index) => `<label class="move-choice"><input type="checkbox" value="${index}"><span><b>${Number(item.quantity || 0)}× ${esc(item.name)}</b><small>${esc(item.portion || item.category || '')}</small></span></label>`).join('') || '<p>No items are available for this table.</p>'}</div>`;
+  content.innerHTML = `<p><b>Item Wise:</b> choose individual items to transfer.</p><div class="move-choice-list">${
+    (order.items || [])
+      .map((item, index) => {
+        const modifiers = Addons.modifierText(item.modifiers);
+        return `<label class="move-choice"><input type="checkbox" value="${index}"><span><b>${Number(item.quantity || 0)}× ${esc(item.name)}</b><small>${esc(item.portion || item.category || '')}${modifiers ? ` · + ${esc(modifiers)}` : ''}</small></span></label>`;
+      })
+      .join('') || '<p>No items are available for this table.</p>'
+  }</div>`;
 }
 moveTableDialog.addEventListener('click', async (event) => {
   if (event.target.closest('.move-table-close,.move-table-cancel')) {
@@ -1470,6 +1621,9 @@ counterChoiceCompactStyles.textContent = `
 #counter-choice-dialog{width:min(590px,calc(100vw - 32px)}#counter-choice-dialog .dialog-close{top:15px;right:16px;width:38px;height:38px;font-size:25px}.counter-choice-title{padding:20px 26px 16px}.counter-choice-title>span{font-size:10px}.counter-choice-dialog h2{margin-top:4px;font-size:26px}.counter-portion-section{padding:18px 26px 3px}.counter-choice-section-head{margin-bottom:11px}.counter-choice-section-head h3{font-size:15px}.counter-choice-options{gap:9px}.counter-choice-options span{min-height:64px;padding:11px 15px;gap:11px}.counter-choice-options span strong{font-size:17px}.counter-choice-options span b{font-size:19px}.counter-style-options{margin:14px 26px 0;padding:10px 12px}.counter-course-choice,#counter-choice-dialog .counter-course-choice{gap:6px;margin:15px 26px 0;font-size:14px}.counter-course-choice select,#counter-choice-dialog .counter-course-choice select{min-height:48px;padding-inline:14px;font-size:14px}.counter-choice-dialog #counter-choice-add{width:calc(100% - 52px);margin:18px 26px 24px;padding:14px 18px;font-size:16px}.counter-choice-dialog #counter-choice-add i{font-size:24px}.counter-choice-dialog #counter-choice-add b{font-size:19px}@media(max-width:560px){#counter-choice-dialog{width:calc(100vw - 20px)}.counter-choice-title{padding:19px 18px 15px}.counter-portion-section{padding-inline:18px}.counter-choice-options span{min-height:61px}.counter-style-options{margin-inline:18px}.counter-course-choice,#counter-choice-dialog .counter-course-choice{margin-inline:18px}.counter-choice-dialog #counter-choice-add{width:calc(100% - 36px);margin:18px 18px 20px}}
 `;
 document.head.appendChild(counterChoiceCompactStyles);
+const counterAddonStyles = document.createElement('style');
+counterAddonStyles.textContent = `.counter-addon-group{display:grid;gap:8px;margin:14px 26px 0;padding:13px;border:1px solid #dce5ef;border-radius:11px}.counter-addon-group legend{padding:0 5px;color:#1e2b42;font-size:13px;font-weight:900}.counter-addon-group legend em{margin-left:5px;color:#75849a;font-size:10px;font-style:normal}.counter-addon-group label{cursor:pointer}.counter-addon-group input{position:absolute;opacity:0}.counter-addon-group label span{display:flex;min-height:43px;align-items:center;justify-content:space-between;padding:9px 12px;border:1px solid #dce5ef;border-radius:8px;color:#34445d;font-size:12px;font-weight:800}.counter-addon-group label span b{color:#178554}.counter-addon-group input:checked+span{border-color:#c61f34;color:#a51e31;background:#fff5f6}.counter-addon-error{min-height:16px;margin:8px 26px 0;color:#ba2034;font-size:11px;font-weight:800}.counter-line-addons{color:#a1283b!important}@media(max-width:560px){.counter-addon-group{margin-inline:18px}.counter-addon-error{margin-inline:18px}}`;
+document.head.appendChild(counterAddonStyles);
 const counterWorkspaceStyles = document.createElement('style');
 counterWorkspaceStyles.textContent = `
 #counter-order-panel{max-width:none;margin:14px 12px 0;padding:0;overflow:hidden;border:1px solid #dfe6ef;border-radius:16px;background:#f7f9fc;box-shadow:0 12px 28px rgba(30,48,77,.08)}
@@ -1579,7 +1733,7 @@ const toPushKey = (value) => {
   return Uint8Array.from(raw, (character) => character.charCodeAt(0));
 };
 
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('/orders-sw.js?v=23');
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/orders-sw.js?v=24');
 document.getElementById('enable-notifications')?.addEventListener('click', async () => {
   closeOpenPanels();
   const button = document.getElementById('enable-notifications');
@@ -1671,7 +1825,8 @@ async function loadOrders() {
     if (orderView === 'current') known = ids;
     if (orderView === 'current') {
       const activeCount = String(
-        rows.filter((order) => !['completed', 'rejected', 'cancelled'].includes(order.status)).length
+        rows.filter((order) => !['completed', 'rejected', 'cancelled'].includes(order.status))
+          .length
       );
       document.querySelectorAll('#live-orders-count').forEach((count) => {
         count.textContent = activeCount;
@@ -1720,9 +1875,9 @@ async function loadOrders() {
             (order.mode === 'table' && ['preparing', 'ready'].includes(order.status))
         )
         .forEach(autoPrintOrder);
-      rows.filter((order) => order.mode === 'table' && order.service_state === 'bill_requested').forEach(
-        autoPrintRequestedTableBill
-      );
+      rows
+        .filter((order) => order.mode === 'table' && order.service_state === 'bill_requested')
+        .forEach(autoPrintRequestedTableBill);
     }
     if (!tableViewPanel.hidden) renderTableView();
     const clearButton = document.getElementById('clear-order-search');
@@ -1813,7 +1968,9 @@ function renderOrder(order) {
     (sum, item) =>
       sum +
       Number(item.quantity || 0) *
-        (Number(String(item.price || '').replace(/[^0-9.]/g, '')) + (item.style ? 10 : 0)),
+        (Number(String(item.price || '').replace(/[^0-9.]/g, '')) +
+          (item.style ? 10 : 0) +
+          Addons.lineModifierTotal(item)),
     0
   );
   const storedTotal = Number(order.total);
@@ -1854,7 +2011,14 @@ function renderOrder(order) {
     order.mode === 'table' && order.service_state && order.service_state !== 'active'
       ? `<div class="request">Table service: <b>${esc(String(order.service_state).replace('_', ' '))}</b> <button data-clear-service="${esc(order.id)}">Handled</button></div>`
       : '';
-  return `<article class="order" data-order-id="${esc(order.id)}"><div class="order-heading"><span class="daily-order-number">Order #${orderNumber}</span><span class="order-status">${esc(order.status)}</span></div><div class="order-reference">Ref ${esc(order.id)}</div><div class="order-time">${age} min ago</div><div class="placed-at"><span>Placed</span>${esc(placedAt)} <small>Goa time</small></div><div class="meta">${esc(order.customer_name || 'Walk-in customer')}${hasGuestContact ? ` · <b class="phone">${esc(order.customer_phone)}</b>` : ''}</div>${service}${hasGuestContact ? `<div class="customer-trust"><b>${orderCount === 1 ? 'New customer' : `${orderCount} orders from this number`}</b><span>${history}</span></div>` : ''}${order.special_request ? `<div class="request">Special request: ${esc(order.special_request)}</div>` : ''}${order.cancellation_reason ? `<div class="request">Cancelled: ${esc(order.cancellation_reason)}</div>` : ''}<div class="items">${items.map((item) => `<div><b>${Number(item.quantity || 0)}×</b> ${esc(item.name)} ${item.portion ? `(${esc(item.portion)})` : ''}${item.style ? ` — ${esc(item.style)} (+₹10)` : ''}</div>`).join('')}</div><div class="totals"><b>${itemCount} item${itemCount === 1 ? '' : 's'}</b><strong>Total ${money(total)}</strong></div><div class="actions">${controls}${canCancel ? `<button class="cancel-order" onclick="cancelOrder('${esc(order.id)}')">Cancel order</button>` : ''}${canModify ? `<button class="modify-order" data-modify-order="${esc(order.id)}">Modify order</button>` : ''}<button class="print" onclick="printOrder('${esc(order.id)}')">Print</button></div></article>`;
+  return `<article class="order" data-order-id="${esc(order.id)}"><div class="order-heading"><span class="daily-order-number">Order #${orderNumber}</span><span class="order-status">${esc(order.status)}</span></div><div class="order-reference">Ref ${esc(order.id)}</div><div class="order-time">${age} min ago</div><div class="placed-at"><span>Placed</span>${esc(placedAt)} <small>Goa time</small></div><div class="meta">${esc(order.customer_name || 'Walk-in customer')}${hasGuestContact ? ` · <b class="phone">${esc(order.customer_phone)}</b>` : ''}</div>${service}${hasGuestContact ? `<div class="customer-trust"><b>${orderCount === 1 ? 'New customer' : `${orderCount} orders from this number`}</b><span>${history}</span></div>` : ''}${order.special_request ? `<div class="request">Special request: ${esc(order.special_request)}</div>` : ''}${order.cancellation_reason ? `<div class="request">Cancelled: ${esc(order.cancellation_reason)}</div>` : ''}<div class="items">${items
+    .map((item) => {
+      const modifiers = Addons.modifierText(item.modifiers);
+      return `<div><b>${Number(item.quantity || 0)}×</b> ${esc(item.name)} ${item.portion ? `(${esc(item.portion)})` : ''}${item.style ? ` — ${esc(item.style)} (+₹10)` : ''}${modifiers ? `<small class="order-item-addons">+ ${esc(modifiers)}</small>` : ''}</div>`;
+    })
+    .join(
+      ''
+    )}</div><div class="totals"><b>${itemCount} item${itemCount === 1 ? '' : 's'}</b><strong>Total ${money(total)}</strong></div><div class="actions">${controls}${canCancel ? `<button class="cancel-order" onclick="cancelOrder('${esc(order.id)}')">Cancel order</button>` : ''}${canModify ? `<button class="modify-order" data-modify-order="${esc(order.id)}">Modify order</button>` : ''}<button class="print" onclick="printOrder('${esc(order.id)}')">Print</button></div></article>`;
 }
 
 function renderOrders(rows) {
@@ -1862,9 +2026,7 @@ function renderOrders(rows) {
     .replace(/\D/g, '')
     .slice(0, 16);
   const statusRows =
-    orderStatusFilter === 'all'
-      ? rows
-      : rows.filter((order) => order.status === orderStatusFilter);
+    orderStatusFilter === 'all' ? rows : rows.filter((order) => order.status === orderStatusFilter);
   const visibleRows = fulfillmentFilter
     ? statusRows.filter(
         (order) => String(order.fulfillment_type || '').toLowerCase() === fulfillmentFilter
@@ -2005,7 +2167,9 @@ function openModifyOrder(id) {
 function splitReceiptParts(receipt, split) {
   if (!split?.parts?.length) return [receipt];
   const priceOf = (item) =>
-    Number(String(item.price || 0).replace(/[^0-9.]/g, '')) + (item.style ? 10 : 0);
+    Number(String(item.price || 0).replace(/[^0-9.]/g, '')) +
+    (item.style ? 10 : 0) +
+    Addons.lineModifierTotal(item);
   const total = Math.max(
     0,
     Number(receipt.total) ||
@@ -2073,7 +2237,10 @@ async function printBillOnConfiguredPrinters(printers, order, printJobPrefix) {
           settings: printerFormat(printer, 'bill'),
         }),
       });
-      await requireCompletedBridgePrint(response, `${printer.name || printer.deviceName} did not accept the bill.`);
+      await requireCompletedBridgePrint(
+        response,
+        `${printer.name || printer.deviceName} did not accept the bill.`
+      );
       return printer;
     })
   );
@@ -2084,8 +2251,9 @@ async function printBillOnConfiguredPrinters(printers, order, printJobPrefix) {
     const printedCount = results.length - failed.length;
     const error = new Error(
       `${failed.length} of ${results.length} Bill printer${results.length === 1 ? '' : 's'} failed: ${failed
-        .map(({ printer, result }) =>
-          `${printer.name || printer.deviceName} (${result.reason?.message || 'unknown error'})`
+        .map(
+          ({ printer, result }) =>
+            `${printer.name || printer.deviceName} (${result.reason?.message || 'unknown error'})`
         )
         .join('; ')}`
     );
@@ -2098,20 +2266,21 @@ async function printBillOnConfiguredPrinters(printers, order, printJobPrefix) {
 
 async function printOrder(id, split = null) {
   let physicalPrintAttempted = false;
+  let preparedReceipt = null;
   try {
-    const bridgeResponse = await fetch(`${printBridgeOrigin}/v1/printers`, { cache: 'no-store' });
+    // Health, printer configuration, and receipt preparation are independent.
+    // Start all three on the click instead of discovering OS printers first.
+    const [bridgeResponse, printConfig, receiptResponse] = await Promise.all([
+      fetch(`${printBridgeOrigin}/health`, { cache: 'no-store' }),
+      getPrintOperationsConfig(),
+      fetch(`/api/orders/${encodeURIComponent(id)}/print`, { cache: 'no-store' }),
+    ]);
     if (!bridgeResponse.ok) throw new Error('Print Bridge is not available on this computer.');
-    const operationsResponse = await fetch('/api/orders/operations', { cache: 'no-store' });
-    const operations = await operationsResponse.json();
-    if (!operationsResponse.ok)
-      throw new Error(operations.error || 'Printer configuration could not load.');
-    const billPrinters = configuredPrintersFor(operations.config, 'bill');
+    const billPrinters = configuredPrintersFor(printConfig, 'bill');
     if (!billPrinters.length) throw new Error('No Bill printer is configured.');
-    const receiptResponse = await fetch(`/api/orders/${encodeURIComponent(id)}/print`, {
-      cache: 'no-store',
-    });
     const receipt = await receiptResponse.json();
     if (!receiptResponse.ok) throw new Error(receipt.error || 'Unable to prepare the receipt.');
+    preparedReceipt = receipt;
     const receipts = splitReceiptParts(receipt, split);
     if (!receipts.length) throw new Error('Assign at least one item to every split bill.');
     const printBatchId = Date.now();
@@ -2146,14 +2315,19 @@ async function printOrder(id, split = null) {
   }
   try {
     popup.document.write('<!doctype html><title>Preparing receipt…</title>');
-    const response = await fetch(`/api/orders/${encodeURIComponent(id)}/print`, {
-      cache: 'no-store',
-    });
-    const order = await response.json();
-    if (!response.ok) throw new Error(order.error || 'Unable to prepare this receipt.');
+    let order = preparedReceipt;
+    if (!order) {
+      const response = await fetch(`/api/orders/${encodeURIComponent(id)}/print`, {
+        cache: 'no-store',
+      });
+      order = await response.json();
+      if (!response.ok) throw new Error(order.error || 'Unable to prepare this receipt.');
+    }
     const items = Array.isArray(order.items) ? order.items : [];
     const itemPrice = (item) =>
-      Number(String(item.price || '').replace(/[^0-9.]/g, '')) + (item.style ? 10 : 0);
+      Number(String(item.price || '').replace(/[^0-9.]/g, '')) +
+      (item.style ? 10 : 0) +
+      Addons.lineModifierTotal(item);
     const quantity = items.reduce((total, item) => total + Number(item.quantity || 0), 0);
     const calculatedTotal = items.reduce(
       (total, item) => total + Number(item.quantity || 0) * itemPrice(item),
@@ -2183,7 +2357,8 @@ async function printOrder(id, split = null) {
             : 'QR ORDER';
     const itemRows = items
       .map((item) => {
-        const label = `${item.name || 'Item'}${item.portion ? ` (${item.portion})` : ''}${item.style ? ` — ${item.style}` : ''}`;
+        const modifierText = Addons.modifierText(item.modifiers);
+        const label = `${item.name || 'Item'}${item.portion ? ` (${item.portion})` : ''}${item.style ? ` — ${item.style}` : ''}${modifierText ? ` + ${modifierText}` : ''}`;
         const qty = Number(item.quantity || 0);
         return `<tr><td class="item-name">${esc(label)}</td><td>${qty}</td><td>${money(itemPrice(item))}</td><td>${money(qty * itemPrice(item))}</td></tr>`;
       })
@@ -2210,8 +2385,8 @@ const operationItemOptions = (item) => {
 };
 const routePrinters = (item) => {
   const printers = new Map(operationsConfig.printers.map((printer) => [printer.id, printer]));
-  const routes = operationsConfig.routes.filter(
-    (route) => printerSupports(printers.get(route.printerId), 'kot')
+  const routes = operationsConfig.routes.filter((route) =>
+    printerSupports(printers.get(route.printerId), 'kot')
   );
   return [
     ...new Map(
@@ -2281,36 +2456,35 @@ function renderPrinterManagement() {
         .filter((route) => route.printerId === printer.id && route.itemName)
         .map((route) => `${route.category}::${route.itemName}::${route.portion || ''}`)
     );
-    content.innerHTML =
-      isPrinterEdit
-        ? `<section class="printer-assignment printer-edit"><button type="button" class="assignment-back" data-assignment-back>‹ Back</button><h3>Edit ${editCapability === 'bill' ? 'Bill' : 'KOT'} settings · ${esc(printer.name)}</h3><p>Set the printer name, system device, paper, and ${editCapability === 'bill' ? 'receipt' : 'KOT'} format. These settings belong only to this queue.</p><div class="printer-edit-grid"><label>Printer name<input id="printer-edit-name" maxlength="60" value="${esc(printer.name)}"></label><label>System printer<select id="printer-edit-device"><option value="${esc(printer.deviceId || '')}">${esc(printer.deviceName || 'Keep current system printer')}</option>${installedSystemPrinters
-            .filter((item) => item.id !== printer.deviceId)
-            .map((item) => `<option value="${esc(item.id)}">${esc(item.name)}</option>`)
+    content.innerHTML = isPrinterEdit
+      ? `<section class="printer-assignment printer-edit"><button type="button" class="assignment-back" data-assignment-back>‹ Back</button><h3>Edit ${editCapability === 'bill' ? 'Bill' : 'KOT'} settings · ${esc(printer.name)}</h3><p>Set the printer name, system device, paper, and ${editCapability === 'bill' ? 'receipt' : 'KOT'} format. These settings belong only to this queue.</p><div class="printer-edit-grid"><label>Printer name<input id="printer-edit-name" maxlength="60" value="${esc(printer.name)}"></label><label>System printer<select id="printer-edit-device"><option value="${esc(printer.deviceId || '')}">${esc(printer.deviceName || 'Keep current system printer')}</option>${installedSystemPrinters
+          .filter((item) => item.id !== printer.deviceId)
+          .map((item) => `<option value="${esc(item.id)}">${esc(item.name)}</option>`)
+          .join(
+            ''
+          )}</select></label><label>Paper width<select id="printer-edit-paper"><option value="80" ${String(printer.paperWidth || 80) === '80' ? 'selected' : ''}>80 mm (recommended)</option><option value="58" ${String(printer.paperWidth) === '58' ? 'selected' : ''}>58 mm</option></select></label><label>Header text<textarea id="printer-edit-header" maxlength="160">${esc(printer.receiptHeader || defaultBillHeader)}</textarea></label><label>Footer text<textarea id="printer-edit-footer" maxlength="160">${esc(printer.receiptFooter || defaultBillFooter)}</textarea></label><label class="printer-edit-check"><input id="printer-edit-show-name" type="checkbox" ${printer.showRestaurantName !== false ? 'checked' : ''}> Show restaurant name</label><label class="printer-edit-check"><input id="printer-edit-show-serial" type="checkbox" ${printer.showItemSerial ? 'checked' : ''}> Show item serial numbers</label>${editCapability === 'kot' ? `<label class="printer-edit-check"><input id="printer-edit-customer" type="checkbox" ${printer.showCustomer !== false ? 'checked' : ''}> Show customer details</label><label>Extra bottom space<select id="printer-edit-space"><option value="0">None</option><option value="1" ${Number(printer.extraSpace) === 1 ? 'selected' : ''}>Small</option><option value="2" ${Number(printer.extraSpace) === 2 ? 'selected' : ''}>Large</option></select></label>` : ''}</div><div class="assignment-actions"><button type="button" data-assignment-back>Cancel</button><button type="button" class="operations-save" data-save-printer-edit>Save printer settings</button></div></section>`
+      : assignmentMode === 'choose'
+        ? `<section class="printer-assignment"><button type="button" class="assignment-back" data-assignment-back>‹ Back</button><h3>Printer capabilities · ${esc(printer.name)}</h3><p>Enable either capability or both. One physical queue can handle Bills and routed KOTs with separate format controls.</p><div class="assignment-choices"><button type="button" data-assign-bill><b>▤ ${printerSupports(printer, 'bill') ? 'Disable Bill printing' : 'Enable Bill printing'}</b><span>${printerSupports(printer, 'bill') ? 'Currently receives every final Bill' : 'Customer receipts and bills'}</span></button><button type="button" data-assign-kot><b>⌑ Configure KOT routing</b><span>${printerSupports(printer, 'kot') ? 'KOT capability enabled' : 'Kitchen order tickets'}</span></button>${printerSupports(printer, 'bill') ? '<button type="button" data-edit-printer-capability="bill"><b>✎ Edit Bill format</b><span>Paper, receipt layout and typography</span></button>' : ''}${printerSupports(printer, 'kot') ? '<button type="button" data-edit-printer-capability="kot"><b>✎ Edit KOT format</b><span>Ticket typography and paper feed</span></button><button type="button" data-disable-kot><b>× Disable KOT printing</b><span>Removes this queue\'s KOT routes</span></button>' : ''}</div></section>`
+        : `<section class="printer-assignment"><button type="button" class="assignment-back" data-assignment-back>‹ Back</button><h3>Assign KOT routing · ${esc(printer.name)}</h3><p>Assign whole categories, or expand a category and select only the dishes that belong on this station. Bone-in and boneless options can be routed separately.</p><label class="assignment-all-categories"><input type="checkbox" data-assignment-all-categories ${selected.has('*') ? 'checked' : ''}><span><b>All categories</b><small>Send every current and future menu category to this printer.</small></span></label><div class="assignment-category-grid">${categories
+            .map((category) => {
+              const items = operationsMenu
+                .filter((item) => item.category === category)
+                .sort((a, b) => a.name.localeCompare(b.name));
+              return `<details class="assignment-category-card"><summary><label><input type="checkbox" data-assignment-category value="${esc(category)}" ${selected.has(category) ? 'checked' : ''}><span>${esc(category)}</span></label><i aria-hidden="true">⌄</i></summary><div class="assignment-item-list"><b>Individual dishes</b>${
+                items
+                  .map((item) => {
+                    const variants = operationItemOptions(item);
+                    const allKey = `${category}::${item.name}::`;
+                    return variants.length
+                      ? `<div class="assignment-dish"><label><input type="checkbox" data-assignment-item data-category="${esc(category)}" value="${esc(item.name)}" ${selectedItems.has(allKey) ? 'checked' : ''}><span>${esc(item.name)} <small>all options</small></span></label><div class="assignment-variants">${variants.map((variant) => `<label><input type="checkbox" data-assignment-item data-category="${esc(category)}" data-portion="${esc(variant.portion)}" value="${esc(item.name)}" ${selectedItems.has(`${category}::${item.name}::${variant.portion}`) ? 'checked' : ''}><span>${esc(variant.label)}</span></label>`).join('')}</div></div>`
+                      : `<label><input type="checkbox" data-assignment-item data-category="${esc(category)}" value="${esc(item.name)}" ${selectedItems.has(allKey) ? 'checked' : ''}><span>${esc(item.name)}</span></label>`;
+                  })
+                  .join('') || '<small>No dishes in this category yet.</small>'
+              }</div></details>`;
+            })
             .join(
               ''
-              )}</select></label><label>Paper width<select id="printer-edit-paper"><option value="80" ${String(printer.paperWidth || 80) === '80' ? 'selected' : ''}>80 mm (recommended)</option><option value="58" ${String(printer.paperWidth) === '58' ? 'selected' : ''}>58 mm</option></select></label><label>Header text<textarea id="printer-edit-header" maxlength="160">${esc(printer.receiptHeader || defaultBillHeader)}</textarea></label><label>Footer text<textarea id="printer-edit-footer" maxlength="160">${esc(printer.receiptFooter || defaultBillFooter)}</textarea></label><label class="printer-edit-check"><input id="printer-edit-show-name" type="checkbox" ${printer.showRestaurantName !== false ? 'checked' : ''}> Show restaurant name</label><label class="printer-edit-check"><input id="printer-edit-show-serial" type="checkbox" ${printer.showItemSerial ? 'checked' : ''}> Show item serial numbers</label>${editCapability === 'kot' ? `<label class="printer-edit-check"><input id="printer-edit-customer" type="checkbox" ${printer.showCustomer !== false ? 'checked' : ''}> Show customer details</label><label>Extra bottom space<select id="printer-edit-space"><option value="0">None</option><option value="1" ${Number(printer.extraSpace) === 1 ? 'selected' : ''}>Small</option><option value="2" ${Number(printer.extraSpace) === 2 ? 'selected' : ''}>Large</option></select></label>` : ''}</div><div class="assignment-actions"><button type="button" data-assignment-back>Cancel</button><button type="button" class="operations-save" data-save-printer-edit>Save printer settings</button></div></section>`
-        : assignmentMode === 'choose'
-          ? `<section class="printer-assignment"><button type="button" class="assignment-back" data-assignment-back>‹ Back</button><h3>Printer capabilities · ${esc(printer.name)}</h3><p>Enable either capability or both. One physical queue can handle Bills and routed KOTs with separate format controls.</p><div class="assignment-choices"><button type="button" data-assign-bill><b>▤ ${printerSupports(printer, 'bill') ? 'Disable Bill printing' : 'Enable Bill printing'}</b><span>${printerSupports(printer, 'bill') ? 'Currently receives every final Bill' : 'Customer receipts and bills'}</span></button><button type="button" data-assign-kot><b>⌑ Configure KOT routing</b><span>${printerSupports(printer, 'kot') ? 'KOT capability enabled' : 'Kitchen order tickets'}</span></button>${printerSupports(printer, 'bill') ? '<button type="button" data-edit-printer-capability="bill"><b>✎ Edit Bill format</b><span>Paper, receipt layout and typography</span></button>' : ''}${printerSupports(printer, 'kot') ? '<button type="button" data-edit-printer-capability="kot"><b>✎ Edit KOT format</b><span>Ticket typography and paper feed</span></button><button type="button" data-disable-kot><b>× Disable KOT printing</b><span>Removes this queue\'s KOT routes</span></button>' : ''}</div></section>`
-          : `<section class="printer-assignment"><button type="button" class="assignment-back" data-assignment-back>‹ Back</button><h3>Assign KOT routing · ${esc(printer.name)}</h3><p>Assign whole categories, or expand a category and select only the dishes that belong on this station. Bone-in and boneless options can be routed separately.</p><label class="assignment-all-categories"><input type="checkbox" data-assignment-all-categories ${selected.has('*') ? 'checked' : ''}><span><b>All categories</b><small>Send every current and future menu category to this printer.</small></span></label><div class="assignment-category-grid">${categories
-              .map((category) => {
-                const items = operationsMenu
-                  .filter((item) => item.category === category)
-                  .sort((a, b) => a.name.localeCompare(b.name));
-                return `<details class="assignment-category-card"><summary><label><input type="checkbox" data-assignment-category value="${esc(category)}" ${selected.has(category) ? 'checked' : ''}><span>${esc(category)}</span></label><i aria-hidden="true">⌄</i></summary><div class="assignment-item-list"><b>Individual dishes</b>${
-                  items
-                    .map((item) => {
-                      const variants = operationItemOptions(item);
-                      const allKey = `${category}::${item.name}::`;
-                      return variants.length
-                        ? `<div class="assignment-dish"><label><input type="checkbox" data-assignment-item data-category="${esc(category)}" value="${esc(item.name)}" ${selectedItems.has(allKey) ? 'checked' : ''}><span>${esc(item.name)} <small>all options</small></span></label><div class="assignment-variants">${variants.map((variant) => `<label><input type="checkbox" data-assignment-item data-category="${esc(category)}" data-portion="${esc(variant.portion)}" value="${esc(item.name)}" ${selectedItems.has(`${category}::${item.name}::${variant.portion}`) ? 'checked' : ''}><span>${esc(variant.label)}</span></label>`).join('')}</div></div>`
-                        : `<label><input type="checkbox" data-assignment-item data-category="${esc(category)}" value="${esc(item.name)}" ${selectedItems.has(allKey) ? 'checked' : ''}><span>${esc(item.name)}</span></label>`;
-                    })
-                    .join('') || '<small>No dishes in this category yet.</small>'
-                }</div></details>`;
-              })
-              .join(
-                ''
-              )}</div><div class="assignment-actions"><button type="button" data-assignment-back>Cancel</button><button type="button" class="operations-save" data-save-kot-assignment>Save KOT routing</button></div></section>`;
+            )}</div><div class="assignment-actions"><button type="button" data-assignment-back>Cancel</button><button type="button" class="operations-save" data-save-kot-assignment>Save KOT routing</button></div></section>`;
     if (isPrinterEdit) {
       const grid = content.querySelector('.printer-edit-grid');
       const anchor = content.querySelector('#printer-edit-header')?.closest('label');
@@ -2567,9 +2741,8 @@ function renderPrinterManagement() {
             };
             const pt = (points, min, max) => Math.max(min, Math.min(max, points)) * 1.333;
             const paper = preview.querySelector('[data-kot-preview]');
-            const paperWidth = Number(document.getElementById('printer-edit-paper')?.value) === 58
-              ? 58
-              : 80;
+            const paperWidth =
+              Number(document.getElementById('printer-edit-paper')?.value) === 58 ? 58 : 80;
             // Keep the browser mock-up proportional to the paper selection so
             // staff can see the same wrapping difference before printing.
             paper.style.width = `${Math.round((280 * paperWidth) / 80)}px`;
@@ -2652,10 +2825,10 @@ function renderPrinterManagement() {
               const target = event.target.closest('[data-preview-target]')?.dataset.previewTarget;
               const input =
                 target === 'footer'
-                    ? document.getElementById('printer-edit-kotBottomFeedLines')
-                    : event.target.closest('.rp-rule')
-                      ? document.getElementById('printer-edit-separatorGap')
-                      : null;
+                  ? document.getElementById('printer-edit-kotBottomFeedLines')
+                  : event.target.closest('.rp-rule')
+                    ? document.getElementById('printer-edit-separatorGap')
+                    : null;
               if (!input) return;
               event.stopImmediatePropagation();
               input.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -2853,7 +3026,14 @@ function renderKitchenDisplay() {
         : stationStatus === 'preparing'
           ? ['ready', 'Mark food ready']
           : ['', 'Food is ready'];
-    return `<article class="kds-ticket" data-kds-status="${esc(stationStatus)}"><div class="kds-ticket-top"><div><span>KOT no.</span><b>${kot?.kot_number ? `#${esc(kot.kot_number)}` : 'Pending print'}</b></div><div class="kds-table-badge ${isTable ? '' : 'is-counter'}"><small>${isTable ? 'Table no.' : 'Order type'}</small><b>${esc(tableText || '—')}</b></div><div><span>Order</span><b>#${esc(String(ticket.order.daily_order_number || '').padStart(2, '0'))}</b></div></div><div class="kds-meta"><span>${esc(ticket.order.customer_name || 'Walk-in customer')}</span><b>◷ ${elapsed}</b></div><div class="kds-station">${esc(ticket.printer.name)} · ${esc(fulfillmentLabel(ticket.order))}</div><div class="kds-items">${kotItems.map((item) => `<div><span><b>${Number(item.quantity || 0)}×</b> ${esc(item.name)}${item.portion ? ` · ${esc(item.portion)}` : ''}</span></div>`).join('')}</div>${ticket.order.special_request ? `<p class="kds-note">Note: ${esc(ticket.order.special_request)}</p>` : ''}${action[0] && kot?.kot_number ? `<button type="button" class="kds-action ${action[0] === 'ready' ? 'is-ready' : ''}" data-kds-status-action="${esc(action[0])}" data-kds-order="${esc(ticket.order.id)}" data-kds-printer="${esc(ticket.printer.id)}" data-kds-kot="${esc(kot.kot_number)}">${action[1]}</button>` : `<button type="button" class="kds-action is-ready" disabled>${kot?.kot_number ? 'Food is ready' : 'Awaiting KOT'}</button>`}</article>`;
+    return `<article class="kds-ticket" data-kds-status="${esc(stationStatus)}"><div class="kds-ticket-top"><div><span>KOT no.</span><b>${kot?.kot_number ? `#${esc(kot.kot_number)}` : 'Pending print'}</b></div><div class="kds-table-badge ${isTable ? '' : 'is-counter'}"><small>${isTable ? 'Table no.' : 'Order type'}</small><b>${esc(tableText || '—')}</b></div><div><span>Order</span><b>#${esc(String(ticket.order.daily_order_number || '').padStart(2, '0'))}</b></div></div><div class="kds-meta"><span>${esc(ticket.order.customer_name || 'Walk-in customer')}</span><b>◷ ${elapsed}</b></div><div class="kds-station">${esc(ticket.printer.name)} · ${esc(fulfillmentLabel(ticket.order))}</div><div class="kds-items">${kotItems
+      .map((item) => {
+        const modifiers = Addons.modifierText(item.modifiers);
+        return `<div><span><b>${Number(item.quantity || 0)}×</b> ${esc(item.name)}${item.portion ? ` · ${esc(item.portion)}` : ''}${modifiers ? `<small>+ ${esc(modifiers)}</small>` : ''}</span></div>`;
+      })
+      .join(
+        ''
+      )}</div>${ticket.order.special_request ? `<p class="kds-note">Note: ${esc(ticket.order.special_request)}</p>` : ''}${action[0] && kot?.kot_number ? `<button type="button" class="kds-action ${action[0] === 'ready' ? 'is-ready' : ''}" data-kds-status-action="${esc(action[0])}" data-kds-order="${esc(ticket.order.id)}" data-kds-printer="${esc(ticket.printer.id)}" data-kds-kot="${esc(kot.kot_number)}">${action[1]}</button>` : `<button type="button" class="kds-action is-ready" disabled>${kot?.kot_number ? 'Food is ready' : 'Awaiting KOT'}</button>`}</article>`;
   };
   content.innerHTML = `<section class="kds"><div class="kds-head"><div><button type="button" class="assignment-back" data-operations-tab="home">‹ Back</button><h3>Kitchen display</h3><p>Choose which KOT-routed stations this screen should show. Printed KOTs continue as normal.</p><div class="kds-station-picker"><button type="button" class="${selectedStations.size ? '' : 'is-active'}" data-kds-station="all">All stations</button>${stations.map((station) => `<button type="button" class="${selectedStations.has(station.id) ? 'is-active' : ''}" data-kds-station="${esc(station.id)}">${esc(station.name)}</button>`).join('') || '<span>Configure a KOT route to add a kitchen station.</span>'}</div><div class="kds-legend"><span>Blue · accepted</span><span>Amber · preparing</span><span>Green · ready</span><span>Auto-refreshes every 3 seconds</span></div></div><button type="button" class="kds-fullscreen" data-kds-fullscreen>⛶ Full screen</button></div><div class="kds-grid">${visibleTickets.map(renderTicket).join('') || '<div class="kds-empty"><b>No active kitchen tickets for this screen</b><br>Choose another station above, or accept an order routed to this station.</div>'}</div></section>`;
 }
@@ -2930,7 +3110,14 @@ function renderOperations() {
               : elapsedMinutes < 60
                 ? `${elapsedMinutes} min`
                 : `${Math.floor(elapsedMinutes / 60)} hr ${elapsedMinutes % 60} min`;
-          return `<tr><td><b class="kot-number">${savedKot?.kot_number ? `#${esc(savedKot.kot_number)}` : '—'}</b><small>${savedKot ? 'Printed KOT' : 'Not printed yet'}</small></td><td><b>#${esc(orderNumber)}</b></td><td>${type}</td><td><b>${esc(ticket.order.customer_name || 'Guest')}</b><small>${esc(ticket.order.customer_phone || '—')}</small></td><td>${ticket.items.map((item) => `<span>${Number(item.quantity || 0)}× ${esc(item.name)}${item.portion ? ` · ${esc(item.portion)}` : ''}</span>`).join('')}</td><td>${createdAt ? new Date(createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—'}</td><td><b>${elapsed}</b></td><td><span class="printer-type kot">${esc(ticket.printer?.name || 'Unassigned')}</span></td><td><span class="kot-status">${esc(ticket.order.status || 'new')}</span></td><td><button type="button" class="kot-print-action" data-print-kot="${esc(ticket.order.id)}" data-printer-id="${esc(ticket.printer?.id || '')}">${savedKot ? 'Reprint KOT' : 'Print KOT'}</button></td></tr>`;
+          return `<tr><td><b class="kot-number">${savedKot?.kot_number ? `#${esc(savedKot.kot_number)}` : '—'}</b><small>${savedKot ? 'Printed KOT' : 'Not printed yet'}</small></td><td><b>#${esc(orderNumber)}</b></td><td>${type}</td><td><b>${esc(ticket.order.customer_name || 'Guest')}</b><small>${esc(ticket.order.customer_phone || '—')}</small></td><td>${ticket.items
+            .map((item) => {
+              const modifiers = Addons.modifierText(item.modifiers);
+              return `<span>${Number(item.quantity || 0)}× ${esc(item.name)}${item.portion ? ` · ${esc(item.portion)}` : ''}${modifiers ? `<small>+ ${esc(modifiers)}</small>` : ''}</span>`;
+            })
+            .join(
+              ''
+            )}</td><td>${createdAt ? new Date(createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—'}</td><td><b>${elapsed}</b></td><td><span class="printer-type kot">${esc(ticket.printer?.name || 'Unassigned')}</span></td><td><span class="kot-status">${esc(ticket.order.status || 'new')}</span></td><td><button type="button" class="kot-print-action" data-print-kot="${esc(ticket.order.id)}" data-printer-id="${esc(ticket.printer?.id || '')}">${savedKot ? 'Reprint KOT' : 'Print KOT'}</button></td></tr>`;
         })
         .join('') ||
       '<tr><td colspan="10" class="kot-table-empty">No live KOTs right now. New and active orders will appear here.</td></tr>'
@@ -3008,17 +3195,17 @@ function renderPrintBridgeSetup() {
         ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Assigned printer is missing</h3><p>${missingPrinters} saved printer ${missingPrinters === 1 ? 'queue is' : 'queues are'} no longer installed in Windows/macOS. Reassign the device before service.</p><button type="button" class="quiet-button" data-operations-tab="printers">Manage printers</button><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
         : status?.ok && unavailablePrinters
           ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Printer queue is offline</h3><p>${unavailablePrinters} configured printer ${unavailablePrinters === 1 ? 'queue is' : 'queues are'} reporting Offline or Error in the operating system. Check power, cable/Wi-Fi, and the saved printer port before service.</p><button type="button" class="quiet-button" data-operations-tab="printers">Manage printers</button><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
-        : status?.ok && unreachablePrinters
-          ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Network printer is unreachable</h3><p>${unreachablePrinters} configured LAN printer ${unreachablePrinters === 1 ? 'endpoint is' : 'endpoints are'} not accepting connections. Check printer power, Ethernet/Wi-Fi, unique IP/MAC settings, and RAW port 9100.</p><button type="button" class="quiet-button" data-operations-tab="printers">Manage printers</button><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
-        : status?.ok && unroutedItems
-          ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Menu routing is incomplete</h3><p>${unroutedItems} menu item${unroutedItems === 1 ? '' : 's'} ${unroutedItems === 1 ? 'has' : 'have'} no live KOT printer route${status.unroutedItems?.length ? `: ${esc(status.unroutedItems.slice(0, 5).join(', '))}${unroutedItems > 5 ? '…' : ''}` : ''}.</p><button type="button" class="quiet-button" data-operations-tab="printers">Manage printers</button></div>`
-          : status?.ok && !status.cloud
-            ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Cloud configuration is unavailable</h3><p>The local Bridge is running, but printer routes could not be checked against the live menu. Restore internet or sign in again, then check printing.</p><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
-      : status?.ok && configured
-        ? `<span class="printing-status-icon" aria-hidden="true">✓</span><div><h3>Printing is ready</h3><p>This computer is ready to print bills and kitchen orders${status.version ? ` · Bridge ${esc(status.version)}` : ''}.</p><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
-        : status?.ok
-          ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Finish printer setup</h3><p>Print Bridge is running, but this computer needs an assigned Bill printer and a KOT route attached to a real system printer before service.</p><button type="button" class="quiet-button" data-operations-tab="printers">Manage printers</button><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
-          : `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Set up printing</h3><p>${esc(status?.detail || `Install printing once on this ${platform} computer.`)}</p><a class="operations-save bridge-download" href="${download}">Set up printing</a><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`;
+          : status?.ok && unreachablePrinters
+            ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Network printer is unreachable</h3><p>${unreachablePrinters} configured LAN printer ${unreachablePrinters === 1 ? 'endpoint is' : 'endpoints are'} not accepting connections. Check printer power, Ethernet/Wi-Fi, unique IP/MAC settings, and RAW port 9100.</p><button type="button" class="quiet-button" data-operations-tab="printers">Manage printers</button><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
+            : status?.ok && unroutedItems
+              ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Menu routing is incomplete</h3><p>${unroutedItems} menu item${unroutedItems === 1 ? '' : 's'} ${unroutedItems === 1 ? 'has' : 'have'} no live KOT printer route${status.unroutedItems?.length ? `: ${esc(status.unroutedItems.slice(0, 5).join(', '))}${unroutedItems > 5 ? '…' : ''}` : ''}.</p><button type="button" class="quiet-button" data-operations-tab="printers">Manage printers</button></div>`
+              : status?.ok && !status.cloud
+                ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Cloud configuration is unavailable</h3><p>The local Bridge is running, but printer routes could not be checked against the live menu. Restore internet or sign in again, then check printing.</p><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
+                : status?.ok && configured
+                  ? `<span class="printing-status-icon" aria-hidden="true">✓</span><div><h3>Printing is ready</h3><p>This computer is ready to print bills and kitchen orders${status.version ? ` · Bridge ${esc(status.version)}` : ''}.</p><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
+                  : status?.ok
+                    ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Finish printer setup</h3><p>Print Bridge is running, but this computer needs an assigned Bill printer and a KOT route attached to a real system printer before service.</p><button type="button" class="quiet-button" data-operations-tab="printers">Manage printers</button><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
+                    : `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Set up printing</h3><p>${esc(status?.detail || `Install printing once on this ${platform} computer.`)}</p><a class="operations-save bridge-download" href="${download}">Set up printing</a><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`;
   content.innerHTML = `<section class="simple-printing-setup"><button type="button" class="assignment-back" data-operations-tab="home">‹ Back</button><span class="eyebrow">Printing</span><div class="simple-printing-card">${card}</div></section>`;
 }
 
@@ -3043,8 +3230,7 @@ function unroutedOperationItems(menu, config) {
             ((!route.itemName && !route.portion) ||
               (route.itemName === item.name && (!route.portion || route.portion === portion)))
       );
-      if (!routed)
-        missing.push(`${item.name || 'Unnamed item'}${portion ? ` (${portion})` : ''}`);
+      if (!routed) missing.push(`${item.name || 'Unnamed item'}${portion ? ` (${portion})` : ''}`);
     });
   });
   return [...new Set(missing)];
@@ -3080,9 +3266,7 @@ async function checkPrintBridgeSetup() {
     if (!response.ok || !data.ok)
       throw new Error(data.detail || data.error || 'The local service did not complete its check.');
     const cloudData = await cloudCheck,
-      unrouted = cloudData
-        ? unroutedOperationItems(cloudData.menu, cloudData.config)
-        : [];
+      unrouted = cloudData ? unroutedOperationItems(cloudData.menu, cloudData.config) : [];
     printBridgeSetupStatus = {
       ...data,
       cloud: !!cloudData,
@@ -3097,7 +3281,18 @@ async function checkPrintBridgeSetup() {
     // Only the authenticated cloud response may refresh the machine's durable
     // printer routing. A failed/unauthenticated page load must never replace it
     // with the browser's empty startup defaults.
-    if (cloudData?.config) void syncOperationsToPrintBridge(cloudData.config);
+    if (cloudData?.config) {
+      operationsConfig = {
+        printers: Array.isArray(cloudData.config.printers) ? cloudData.config.printers : [],
+        routes: Array.isArray(cloudData.config.routes) ? cloudData.config.routes : [],
+        tableAreas: Array.isArray(cloudData.config.tableAreas)
+          ? cloudData.config.tableAreas
+          : operationsConfig.tableAreas || [],
+      };
+      printOperationsLoadedAt = Date.now();
+      cacheOperationsConfig(operationsConfig);
+      void syncOperationsToPrintBridge(operationsConfig);
+    }
   } catch (error) {
     printBridgeSetupStatus = {
       ok: false,
@@ -3373,7 +3568,14 @@ function printKot(orderId, printerId) {
       : `Order: ${fulfillmentLabel(order)}`;
   const guestLine = `Guest: ${order.customer_name || 'Walk-in customer'}`;
   popup.document.write(
-    `<!doctype html><title>KOT #${esc(number)}</title><style>@page{size:80mm auto;margin:4mm}body{width:72mm;margin:0;font:12px Arial;color:#111}.center{text-align:center}.name{font-size:17px;font-weight:800}.rule{border:0;border-top:3px solid #111;margin:7px 0}.item{padding:3px 0;font-size:13px}.item b{font-size:15px}</style><div class="center"><div class="name">${esc(printer?.name || 'Unassigned')}</div></div><hr class="rule"><b>KOT # ${esc(number)}</b><br>${esc(tableLine)}<br>${esc(guestLine)}<hr class="rule">${items.map((item) => `<div class="item"><b>${Number(item.quantity || 0)}×</b> ${esc(item.name)}${item.portion ? ` (${esc(item.portion)})` : ''}${item.style ? ` · ${esc(item.style)}` : ''}</div>`).join('')}${order.special_request ? `<div class="item"><b>Note:</b> ${esc(order.special_request)}</div>` : ''}<hr class="rule"><script>window.onload=()=>setTimeout(()=>window.print(),120);window.onafterprint=()=>window.close();<\/script>`
+    `<!doctype html><title>KOT #${esc(number)}</title><style>@page{size:80mm auto;margin:4mm}body{width:72mm;margin:0;font:12px Arial;color:#111}.center{text-align:center}.name{font-size:17px;font-weight:800}.rule{border:0;border-top:3px solid #111;margin:7px 0}.item{padding:3px 0;font-size:13px}.item b{font-size:15px}.modifier{display:block;margin-left:20px;font-size:11px;font-weight:700}</style><div class="center"><div class="name">${esc(printer?.name || 'Unassigned')}</div></div><hr class="rule"><b>KOT # ${esc(number)}</b><br>${esc(tableLine)}<br>${esc(guestLine)}<hr class="rule">${items
+      .map((item) => {
+        const modifiers = Addons.modifierText(item.modifiers);
+        return `<div class="item"><b>${Number(item.quantity || 0)}×</b> ${esc(item.name)}${item.portion ? ` (${esc(item.portion)})` : ''}${item.style ? ` · ${esc(item.style)}` : ''}${modifiers ? `<span class="modifier">+ ${esc(modifiers)}</span>` : ''}</div>`;
+      })
+      .join(
+        ''
+      )}${order.special_request ? `<div class="item"><b>Note:</b> ${esc(order.special_request)}</div>` : ''}<hr class="rule"><script>window.onload=()=>setTimeout(()=>window.print(),120);window.onafterprint=()=>window.close();<\/script>`
   );
   popup.document.close();
 }
@@ -3407,9 +3609,7 @@ async function dispatchKot(orderId, printerId) {
           printerName: ticket.printerName,
           printerLabel: ticket.printerLabel,
           settings: printerFormat(
-            operationsConfig.printers.find(
-              (printer) => printer.deviceName === ticket.printerName
-            ),
+            operationsConfig.printers.find((printer) => printer.deviceName === ticket.printerName),
             'kot'
           ),
           items: ticket.items,
@@ -3448,19 +3648,22 @@ async function autoPrintRequestedTableBill(order) {
     return;
   requestedTableBillInFlight.add(order.id);
   try {
-    const bridge = await fetch(`${printBridgeOrigin}/health`, { cache: 'no-store' }).catch(() => null);
+    const [bridge, printConfig] = await Promise.all([
+      fetch(`${printBridgeOrigin}/health`, { cache: 'no-store' }).catch(() => null),
+      getPrintOperationsConfig(),
+    ]);
     if (!bridge?.ok) return;
-    const operationsResponse = await fetch('/api/orders/operations', { cache: 'no-store' });
-    const operations = await operationsResponse.json().catch(() => ({}));
-    if (!operationsResponse.ok)
-      throw new Error(operations.error || 'Printer configuration could not load.');
-    const billPrinters = configuredPrintersFor(operations.config, 'bill');
+    const billPrinters = configuredPrintersFor(printConfig, 'bill');
     if (!billPrinters.length) throw new Error('No Bill printer is assigned in Operations.');
-    const claimResponse = await fetch(`/api/orders/${encodeURIComponent(order.id)}/bill-print/claim`, {
-      method: 'POST',
-    });
+    const claimResponse = await fetch(
+      `/api/orders/${encodeURIComponent(order.id)}/bill-print/claim`,
+      {
+        method: 'POST',
+      }
+    );
     const claim = await claimResponse.json().catch(() => ({}));
-    if (!claimResponse.ok) throw new Error(claim.error || 'Unable to reserve this bill for printing.');
+    if (!claimResponse.ok)
+      throw new Error(claim.error || 'Unable to reserve this bill for printing.');
     if (!claim.claimed) return;
     try {
       const receiptResponse = await fetch(`/api/orders/${encodeURIComponent(order.id)}/print`, {
@@ -3468,18 +3671,15 @@ async function autoPrintRequestedTableBill(order) {
       });
       const receipt = await receiptResponse.json().catch(() => ({}));
       if (!receiptResponse.ok) throw new Error(receipt.error || 'Unable to prepare the receipt.');
-      await printBillOnConfiguredPrinters(
-        billPrinters,
-        receipt,
-        `captain-bill:${order.id}`
-      );
+      await printBillOnConfiguredPrinters(billPrinters, receipt, `captain-bill:${order.id}`);
       await fetch(`/api/orders/${encodeURIComponent(order.id)}/bill-print/complete`, {
         method: 'POST',
       });
       const marked = await fetch(`/api/orders/${encodeURIComponent(order.id)}/bill-printed`, {
         method: 'POST',
       });
-      if (!marked.ok) throw new Error('Bill printed, but the table could not be marked for settlement.');
+      if (!marked.ok)
+        throw new Error('Bill printed, but the table could not be marked for settlement.');
       await fetch(`/api/orders/${encodeURIComponent(order.id)}/service`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -3508,18 +3708,25 @@ async function flushDeferredAutomaticPrints() {
   if (!entries.length) return;
   deferredPrintSyncInProgress = true;
   try {
-    const health = await fetch(`${printBridgeOrigin}/health`, { cache: 'no-store' }).catch(() => null);
+    const health = await fetch(`${printBridgeOrigin}/health`, { cache: 'no-store' }).catch(
+      () => null
+    );
     if (!health?.ok) return;
     const remaining = [];
     for (const entry of entries) {
-      const result = await autoPrintOrder(entry, { deferred: true });
+      const result = await autoPrintOrder(entry, {
+        deferred: true,
+        kotOnly: !!entry.kotOnly,
+      });
       if (!result?.ok) {
         // Keep retrying only if the Bridge disappeared again. A reachable
         // Bridge that reports a printer/driver failure records that job for
         // staff review; repeatedly sending it could create duplicate slips.
-        const bridgeStillOffline = !(await fetch(`${printBridgeOrigin}/health`, {
-          cache: 'no-store',
-        }).catch(() => null))?.ok;
+        const bridgeStillOffline = !(
+          await fetch(`${printBridgeOrigin}/health`, {
+            cache: 'no-store',
+          }).catch(() => null)
+        )?.ok;
         if (bridgeStillOffline) remaining.push(entry);
       }
     }
@@ -3543,10 +3750,29 @@ async function autoPrintOrder(order, { deferred = false, kotOnly = false } = {})
     return { ok: false, reason: 'This order is not ready to print yet.' };
   autoPrintInFlight.add(order.id);
   try {
-    const bridge = await fetch(`${printBridgeOrigin}/health`, { cache: 'no-store' }).catch(() => null);
+    // Start cloud KOT creation and config loading immediately. The Bridge
+    // health result still gates physical output, but no longer delays the
+    // durable KOT request.
+    const bridgePromise = fetch(`${printBridgeOrigin}/health`, { cache: 'no-store' }).catch(
+      () => null
+    );
+    const operationsPromise = getPrintOperationsConfig().then(
+      (config) => ({ config }),
+      (error) => ({ error })
+    );
+    const createdPromise = fetch(`/api/orders/${encodeURIComponent(order.id)}/kots`, {
+      method: 'POST',
+    }).then(
+      (response) => ({ response }),
+      (error) => ({ error })
+    );
+    const bridge = await bridgePromise;
     if (!bridge?.ok) {
+      // The KOT request was already dispatched. Consume it so a rejected
+      // request cannot become an unhandled promise; retry remains idempotent.
+      void createdPromise;
       const reason = 'Print Bridge is not available on this counter computer.';
-      deferAutomaticPrint(order);
+      deferAutomaticPrint(order, { kotOnly });
       reportOrdersDiagnostic({
         level: 'warning',
         message: `Automatic printing skipped: ${reason}`,
@@ -3554,19 +3780,11 @@ async function autoPrintOrder(order, { deferred = false, kotOnly = false } = {})
       });
       return { ok: false, reason };
     }
-    const operationsPromise = fetch('/api/orders/operations', { cache: 'no-store' }).then(
-      async (response) => {
-        const operations = await response.json();
-        if (!response.ok)
-          throw new Error(operations.error || 'Printer configuration could not load.');
-        return Array.isArray(operations.config?.printers) ? operations.config.printers : [];
-      }
-    );
     const kotPromise = (async () => {
       try {
-        const created = await fetch(`/api/orders/${encodeURIComponent(order.id)}/kots`, {
-          method: 'POST',
-        });
+        const createdResult = await createdPromise;
+        if (createdResult.error) throw createdResult.error;
+        const created = createdResult.response;
         const kot = await created.json().catch(() => ({}));
         const savedKot =
           !created.ok && created.status === 409 && kot.latestKot
@@ -3577,7 +3795,11 @@ async function autoPrintOrder(order, { deferred = false, kotOnly = false } = {})
               }
             : kot;
         if (created.ok || savedKot.kotNumber) {
-          const printers = await operationsPromise;
+          const operationsResult = await operationsPromise;
+          if (operationsResult.error) throw operationsResult.error;
+          const printers = Array.isArray(operationsResult.config?.printers)
+            ? operationsResult.config.printers
+            : [];
           await Promise.all(
             (savedKot.tickets || []).map(async (ticket) => {
               const settings = printerFormat(
@@ -3631,8 +3853,9 @@ async function autoPrintOrder(order, { deferred = false, kotOnly = false } = {})
       return kotResult.ok ? { ok: true, kotOnly: true } : kotResult;
     }
     // The bill starts at the same time as the KOT. Neither printer can delay the other.
-    const billPromise = operationsPromise.then(async (printers) => {
-      const billPrinters = configuredPrintersFor({ printers }, 'bill');
+    const billPromise = operationsPromise.then(async (operationsResult) => {
+      if (operationsResult.error) throw operationsResult.error;
+      const billPrinters = configuredPrintersFor(operationsResult.config, 'bill');
       if (!billPrinters.length) {
         const reason = 'No Bill printer is assigned in Operations.';
         reportOrdersDiagnostic({
@@ -3696,6 +3919,10 @@ function readOfflineMenuSnapshot() {
     return null;
   }
 }
+function applyAvailabilityData(menu, availability) {
+  menuItems = menu;
+  unavailable = new Map(availability.map((item) => [item.item_key, item.unavailable_until]));
+}
 async function loadAvailability() {
   try {
     const [menuResponse, availabilityResponse] = await Promise.all([
@@ -3708,16 +3935,12 @@ async function loadAvailability() {
       availability = await availabilityResponse.json();
     if (!Array.isArray(menu) || !Array.isArray(availability))
       throw new Error('Menu availability could not be read.');
-    menuItems = menu;
-    unavailable = new Map(availability.map((item) => [item.item_key, item.unavailable_until]));
+    applyAvailabilityData(menu, availability);
     saveOfflineMenuSnapshot(menu, availability);
   } catch (error) {
     const snapshot = readOfflineMenuSnapshot();
     if (!snapshot) throw error;
-    menuItems = snapshot.menu;
-    unavailable = new Map(
-      snapshot.availability.map((item) => [item.item_key, item.unavailable_until])
-    );
+    applyAvailabilityData(snapshot.menu, snapshot.availability);
   }
   renderAvailability();
 }
@@ -3878,7 +4101,11 @@ document.getElementById('view-table-kot')?.addEventListener('click', () => {
                     String(candidate.portion || '') === String(item.portion || '') &&
                     Number(candidate.quantity || 0) > 0
                 );
-                return `<div><b>${Number(item.quantity || 0)}×</b> ${esc(item.name)}${item.portion ? ` · ${esc(item.portion)}` : ''}<span>₹${Number(String(item.price || 0).replace(/[^0-9.]/g, '') || 0).toFixed(0)}</span>${index >= 0 ? `<button type="button" class="view-kot-edit" data-view-kot-edit="${index}">Edit qty</button><button type="button" class="view-kot-delete" data-view-kot-delete="${index}">Delete</button>` : ''}</div>`;
+                const modifiers = Addons.modifierText(item.modifiers);
+                const unitPrice =
+                  Number(String(item.price || 0).replace(/[^0-9.]/g, '') || 0) +
+                  Addons.lineModifierTotal(item);
+                return `<div><b>${Number(item.quantity || 0)}×</b> ${esc(item.name)}${item.portion ? ` · ${esc(item.portion)}` : ''}${modifiers ? `<small>+ ${esc(modifiers)}</small>` : ''}<span>₹${unitPrice.toFixed(0)}</span>${index >= 0 ? `<button type="button" class="view-kot-edit" data-view-kot-edit="${index}">Edit qty</button><button type="button" class="view-kot-delete" data-view-kot-delete="${index}">Delete</button>` : ''}</div>`;
               })
               .join('')}</section>`
         )
@@ -4179,7 +4406,7 @@ document.getElementById('counter-menu-items')?.addEventListener('click', (event)
   const item = counterMenu[Number(button.dataset.counterItem)];
   if (!item) return;
   const options = counterPortionOptions(item);
-  if (options.length > 1 || item.gravyStyleAvailable) {
+  if (options.length > 1 || item.gravyStyleAvailable || item.addonGroups?.length) {
     openCounterChoice(item);
     return;
   }
@@ -4216,7 +4443,11 @@ document.getElementById('counter-menu-items')?.addEventListener('click', (event)
   renderCounterOrder();
 });
 document.getElementById('counter-choice-dialog')?.addEventListener('change', (event) => {
-  if (event.target.matches('input[name="counter-portion"], input[name="counter-style"]'))
+  if (
+    event.target.matches(
+      'input[name="counter-portion"], input[name="counter-style"], .counter-addon-group input'
+    )
+  )
     updateCounterChoiceTotal();
 });
 document.getElementById('counter-choice-dialog')?.addEventListener('click', (event) => {
@@ -4230,6 +4461,17 @@ document.getElementById('counter-choice-dialog')?.addEventListener('click', (eve
     price = Number(portionInput?.dataset.counterChoicePrice || 0);
   const style = document.querySelector('input[name="counter-style"]:checked')?.value || '';
   const courseOverride = document.getElementById('counter-choice-course')?.value || '';
+  const modifierResult = Addons.validateSelections(
+    counterChoiceItem.addonGroups || [],
+    readCounterModifierSelections()
+  );
+  if (!modifierResult.ok) {
+    document.getElementById('counter-addon-error').textContent = modifierResult.error;
+    return;
+  }
+  const modifiers = modifierResult.modifiers;
+  const modifierTotal = modifierResult.total;
+  const modifierFingerprint = Addons.selectionFingerprint(modifiers);
   const existing = counterCart.find(
     (line) =>
       line.name === counterChoiceItem.name &&
@@ -4237,7 +4479,8 @@ document.getElementById('counter-choice-dialog')?.addEventListener('click', (eve
       line.menuType === counterChoiceItem.menuType &&
       line.portion === portion &&
       line.style === style &&
-      String(line.courseOverride || '') === courseOverride
+      String(line.courseOverride || '') === courseOverride &&
+      Addons.selectionFingerprint(line.modifiers) === modifierFingerprint
   );
   if (existing) existing.quantity += 1;
   else
@@ -4250,6 +4493,8 @@ document.getElementById('counter-choice-dialog')?.addEventListener('click', (eve
       defaultCourse: counterChoiceItem.defaultCourse || '',
       courseOverride,
       price,
+      modifiers,
+      modifierTotal,
       quantity: 1,
     });
   counterBillSplit = null;
@@ -4368,9 +4613,7 @@ async function submitDineInAction(action) {
       updateConnectivity();
     }
     if (action === 'kot-print') {
-      const savedOrderLabel = isDineIn
-        ? orderLabel
-        : `Takeaway order #${result.orderNumber}`;
+      const savedOrderLabel = isDineIn ? orderLabel : `Takeaway order #${result.orderNumber}`;
       counterBillSplit = null;
       counterCart = [];
       resetCounterRequestAttempt();
@@ -4381,17 +4624,17 @@ async function submitDineInAction(action) {
       document.getElementById('counter-wallet-redeem').value = '0';
       counterWallet.hidden = true;
       renderCounterOrder();
-      setCounterOrderStatus(
-        `${savedOrderLabel} saved. Sending the KOT to the kitchen…`,
-        'sending'
-      );
+      setCounterOrderStatus(`${savedOrderLabel} saved. Sending the KOT to the kitchen…`, 'sending');
       // Saving to the database is the success boundary for the POS. Printer
       // discovery and physical output continue without blocking the counter.
-      void autoPrintOrder({
-        id: result.id,
-        mode: isDineIn ? 'table' : 'counter',
-        status: result.status || 'accepted',
-      }, { kotOnly: true }).then((printing) => {
+      void autoPrintOrder(
+        {
+          id: result.id,
+          mode: isDineIn ? 'table' : 'counter',
+          status: result.status || 'accepted',
+        },
+        { kotOnly: true }
+      ).then((printing) => {
         if (operationId !== counterOrderOperation) return;
         if (printing?.ok)
           setCounterOrderStatus(
@@ -4461,8 +4704,7 @@ async function submitDineInAction(action) {
       setCounterOrderStatus(
         !error.status && /failed to fetch|network\s*error/i.test(String(error.message || ''))
           ? 'Unable to confirm the save because the connection was interrupted. Your order is still here—press Send KOT again.'
-          : error.message ||
-              `Unable to save this ${isDineIn ? 'dine-in bill' : 'takeaway order'}.`,
+          : error.message || `Unable to save this ${isDineIn ? 'dine-in bill' : 'takeaway order'}.`,
         'error'
       );
   } finally {
@@ -5034,9 +5276,7 @@ document.getElementById('operations-content')?.addEventListener('click', async (
       .slice(0, 160);
     const restaurantNameControl = document.getElementById('printer-edit-restaurant-name');
     if (restaurantNameControl)
-      format.restaurantName = String(
-        restaurantNameControl.value || 'Red Lantern Restaurant'
-      )
+      format.restaurantName = String(restaurantNameControl.value || 'Red Lantern Restaurant')
         .trim()
         .slice(0, 60);
     format.showRestaurantName = !!document.getElementById('printer-edit-show-name')?.checked;
@@ -5136,7 +5376,9 @@ document.getElementById('operations-content')?.addEventListener('click', async (
     setPrinterFormat(
       printer,
       capability,
-      Object.fromEntries(formatKeys.filter((key) => format[key] !== undefined).map((key) => [key, format[key]]))
+      Object.fromEntries(
+        formatKeys.filter((key) => format[key] !== undefined).map((key) => [key, format[key]])
+      )
     );
     try {
       await saveOperations();

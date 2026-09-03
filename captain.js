@@ -3,6 +3,7 @@ const recentKey = 'red-lantern-captain-recent-items',
   activityKey = 'red-lantern-captain-last-activity',
   loginSelectionKey = 'red-lantern-captain-login-selection',
   readyKey = 'red-lantern-captain-ready-seen';
+const Addons = window.RedLanternAddons;
 const $ = (selector) => document.querySelector(selector);
 const esc = (value) =>
   String(value ?? '').replace(
@@ -110,7 +111,7 @@ function showCaptainToast(message, type = 'success') {
   }, 4200);
 }
 const itemKey = (line) =>
-  `${line.menuType || 'food'}::${line.name}::${line.category}::${line.portion}::${line.style}::${line.note || ''}::${line.courseOverride || ''}`;
+  `${line.menuType || 'food'}::${line.name}::${line.category}::${line.portion}::${line.style}::${line.note || ''}::${line.courseOverride || ''}::${Addons.selectionFingerprint(line.modifiers)}`;
 const courseOptions = (defaultCourse = '', selected = '') =>
   `<option value="">Default${defaultCourse ? ` (${esc(defaultCourse)})` : ''}</option>${['drink', 'soup', 'starter', 'main', 'side', 'dessert', 'other'].map((course) => `<option value="${course}" ${selected === course ? 'selected' : ''}>${course[0].toUpperCase() + course.slice(1)}</option>`).join('')}`;
 const captainHeaders = () =>
@@ -668,7 +669,10 @@ function priceOptions(item) {
 }
 function total() {
   return state.cart.reduce(
-    (sum, line) => sum + line.quantity * (line.price + (line.style ? 10 : 0)),
+    (sum, line) =>
+      sum +
+      line.quantity *
+        (line.price + (line.style ? 10 : 0) + Addons.lineModifierTotal(line)),
     0
   );
 }
@@ -1242,7 +1246,7 @@ function renderCart() {
       ? state.cart
           .map(
             (line, index) =>
-              `<article class="cart-line"><span><b>${esc(line.name)}${line.portion ? ` · ${esc(line.portion)}` : ''}${line.style ? ` · ${esc(line.style)}` : ''}</b>${line.note ? `<small class="cart-note">↳ ${esc(line.note)}</small>` : ''}<small>${money(line.price)} each${line.style ? ' + ₹10 preparation' : ''}</small><label class="cart-course">Course <select data-cart-course="${index}">${courseOptions(line.defaultCourse || '', line.courseOverride || '')}</select></label><button type="button" class="cart-note-button" data-cart-note="${index}">${line.note ? 'Edit note' : 'Add note'}</button></span><div class="quantity"><button type="button" data-cart-change="-1" data-cart-index="${index}" aria-label="Remove one">−</button><b>${line.quantity}</b><button type="button" data-cart-change="1" data-cart-index="${index}" aria-label="Add one">+</button></div><b>${money(line.quantity * (line.price + (line.style ? 10 : 0)))}</b></article>`
+              `<article class="cart-line"><span><b>${esc(line.name)}${line.portion ? ` · ${esc(line.portion)}` : ''}${line.style ? ` · ${esc(line.style)}` : ''}</b>${Addons.modifierText(line.modifiers) ? `<small class="cart-addon">+ ${esc(Addons.modifierText(line.modifiers))}</small>` : ''}${line.note ? `<small class="cart-note">↳ ${esc(line.note)}</small>` : ''}<small>${money(line.price + Addons.lineModifierTotal(line))} each${line.style ? ' + ₹10 preparation' : ''}</small><label class="cart-course">Course <select data-cart-course="${index}">${courseOptions(line.defaultCourse || '', line.courseOverride || '')}</select></label><button type="button" class="cart-note-button" data-cart-note="${index}">${line.note ? 'Edit note' : 'Add note'}</button></span><div class="quantity"><button type="button" data-cart-change="-1" data-cart-index="${index}" aria-label="Remove one">−</button><b>${line.quantity}</b><button type="button" data-cart-change="1" data-cart-index="${index}" aria-label="Add one">+</button></div><b>${money(line.quantity * (line.price + (line.style ? 10 : 0) + Addons.lineModifierTotal(line)))}</b></article>`
           )
           .join('')
       : '<p class="cart-empty">No items yet. Add dishes from the menu.</p>';
@@ -1310,17 +1314,53 @@ function openChoice(item) {
   style.querySelector('input[value=""]').checked = true;
   $('#choice-note').value = '';
   $('#choice-course').innerHTML = courseOptions(item.defaultCourse || '');
+  $('#captain-addon-groups').innerHTML = (item.addonGroups || []).map((group) => `<fieldset data-captain-addon-group="${esc(group.id)}"><legend>${esc(group.displayName || group.name)} <small>${group.min ? `Choose ${group.min}${group.max !== group.min ? `–${group.max}` : ''}` : `Optional · up to ${group.max}`}</small></legend>${group.options.filter((option) => option.active !== false).map((option) => `<label><input type="${group.selection === 'single' ? 'radio' : 'checkbox'}" name="captain-addon-${esc(group.id)}" value="${esc(option.id)}"><span>${esc(option.name)}<b>${option.price ? `+${money(option.price)}` : 'Included'}</b></span></label>`).join('')}</fieldset>`).join('');
+  $('#captain-addon-error').textContent = '';
+  updateCaptainChoiceSummary();
   $('#choice-sheet').showModal();
+}
+function captainModifierSelections(item) {
+  return (item.addonGroups || []).map((group) => ({
+    groupId: group.id,
+    options: [...document.querySelectorAll(`[data-captain-addon-group="${group.id}"] input:checked`)].map((input) => ({ optionId: input.value, quantity: 1 })),
+  }));
+}
+function updateCaptainChoiceSummary() {
+  if (!state.choice) return;
+  (state.choice.item.addonGroups || []).forEach((group) => {
+    const inputs = [...document.querySelectorAll(`[data-captain-addon-group="${group.id}"] input[type="checkbox"]`)];
+    const atLimit = inputs.filter((input) => input.checked).length >= Number(group.max || 1);
+    inputs.forEach((input) => { input.disabled = atLimit && !input.checked; });
+  });
+  const result = Addons.validateSelections(
+    state.choice.item.addonGroups || [],
+    captainModifierSelections(state.choice.item)
+  );
+  const styleCharge = $('input[name="captain-style"]:checked')?.value ? 10 : 0;
+  const price = Number(state.choice.option?.[1] || 0) + styleCharge + (result.ok ? result.total : 0);
+  $('#choice-add').textContent = `Add to order · ${money(price)}`;
+  $('#choice-add').disabled = !result.ok;
+  $('#captain-addon-error').textContent = result.ok ? '' : result.error;
 }
 function addChoice() {
   const choice = state.choice;
   if (!choice) return;
   clearSavedKotRelease();
+  const modifierResult = Addons.validateSelections(
+    choice.item.addonGroups || [],
+    captainModifierSelections(choice.item)
+  );
+  if (!modifierResult.ok) {
+    $('#captain-addon-error').textContent = modifierResult.error;
+    return;
+  }
   const style = $('input[name="captain-style"]:checked')?.value || '',
     note = $('#choice-note').value.trim(),
     courseOverride = $('#choice-course').value || '',
     [portion, price] = choice.option,
-    key = itemKey({ menuType: choice.item.menuType, name: choice.item.name, category: choice.item.category, portion, style, note, courseOverride }),
+    modifiers = modifierResult.modifiers,
+    modifierTotal = modifierResult.total,
+    key = itemKey({ menuType: choice.item.menuType, name: choice.item.name, category: choice.item.category, portion, style, note, courseOverride, modifiers }),
     existing = state.cart.find((line) => line.key === key);
   if (existing) existing.quantity = Math.min(20, existing.quantity + 1);
   else
@@ -1335,6 +1375,8 @@ function addChoice() {
       defaultCourse: choice.item.defaultCourse || '',
       courseOverride,
       price,
+      modifiers,
+      modifierTotal,
       quantity: 1,
     });
   rememberItem(choice.item);
@@ -1716,7 +1758,7 @@ document.addEventListener(
 function changeMenuItem(item, delta) {
   const options = priceOptions(item);
   if (delta > 0) {
-    if (options.length === 1 && !item.gravyStyleAvailable) addSimpleItem(item);
+    if (options.length === 1 && !item.gravyStyleAvailable && !item.addonGroups?.length) addSimpleItem(item);
     else openChoice(item);
     return;
   }
@@ -1740,7 +1782,7 @@ $('#menu-list').addEventListener('click', (event) => {
     return;
   }
   const options = priceOptions(item);
-  if (options.length === 1 && !item.gravyStyleAvailable) addSimpleItem(item);
+  if (options.length === 1 && !item.gravyStyleAvailable && !item.addonGroups?.length) addSimpleItem(item);
   else openChoice(item);
 });
 $('#menu-list').addEventListener('keydown', (event) => {
@@ -1750,7 +1792,7 @@ $('#menu-list').addEventListener('keydown', (event) => {
   if (!item) return;
   event.preventDefault();
   const options = priceOptions(item);
-  if (options.length === 1 && !item.gravyStyleAvailable) addSimpleItem(item);
+  if (options.length === 1 && !item.gravyStyleAvailable && !item.addonGroups?.length) addSimpleItem(item);
   else openChoice(item);
 });
 $('#menu-quick-picks').addEventListener('click', (event) => {
@@ -1758,17 +1800,21 @@ $('#menu-quick-picks').addEventListener('click', (event) => {
     item = state.menu[Number(button?.dataset.menuIndex)];
   if (!item) return;
   const options = priceOptions(item);
-  if (options.length === 1 && !item.gravyStyleAvailable) addSimpleItem(item);
+  if (options.length === 1 && !item.gravyStyleAvailable && !item.addonGroups?.length) addSimpleItem(item);
   else openChoice(item);
 });
 $('#choice-options').addEventListener('click', (event) => {
   const button = event.target.closest('[data-choice-index]');
   if (!button || !state.choice) return;
   state.choice.option = priceOptions(state.choice.item)[Number(button.dataset.choiceIndex)];
-  $('#choice-add').textContent = `Add ${state.choice.option[0]} · ${money(state.choice.option[1])}`;
+  updateCaptainChoiceSummary();
   [...$('#choice-options').querySelectorAll('.choice-option')].forEach((option) =>
     option.classList.toggle('is-selected', option === button)
   );
+});
+$('#choice-sheet').addEventListener('change', (event) => {
+  if (event.target.matches('[data-captain-addon-group] input, input[name="captain-style"]'))
+    updateCaptainChoiceSummary();
 });
 $('#choice-add').addEventListener('click', addChoice);
 $('#choice-close').addEventListener('click', () => $('#choice-sheet').close());

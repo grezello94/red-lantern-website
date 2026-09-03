@@ -16,7 +16,15 @@ function compareTasks(left, right) {
 }
 
 function modifierFingerprint(task = {}) {
-  return [task.portion, task.style, task.note]
+  const addonFingerprint = (Array.isArray(task.modifiers) ? task.modifiers : [])
+    .flatMap((group) =>
+      (group.options || []).map(
+        (option) => `${group.groupId || group.groupName}:${option.optionId || option.name}:${option.quantity || 1}`
+      )
+    )
+    .sort()
+    .join('|');
+  return [task.portion, task.style, task.note, addonFingerprint]
     .map((value) => String(value || '').trim().toLowerCase())
     .join('::');
 }
@@ -79,6 +87,7 @@ function buildBatches({ now = new Date(), recommendations = [], atomicTasks = fa
           orderId: entry.task.orderId,
           orderNumber: entry.task.orderNumber,
           itemName: entry.task.itemName,
+          modifiers: entry.task.modifiers,
           quantity,
           rank: entry.task.rank,
         });

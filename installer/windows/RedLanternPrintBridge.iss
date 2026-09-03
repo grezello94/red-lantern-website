@@ -1,5 +1,5 @@
 #define AppName "Red Lantern Print Bridge"
-#define AppVersion "1.0.11"
+#define AppVersion "1.0.12"
 #ifndef NodeRuntime
   #error NodeRuntime must point to a Node.js 22 node.exe file
 #endif
@@ -18,6 +18,7 @@ SolidCompression=yes
 WizardStyle=modern
 
 [Files]
+Source: "..\..\addons-domain.js"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\printer-domain.js"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\print-bridge.js"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\print-bridge-supervisor.js"; DestDir: "{app}"; Flags: ignoreversion

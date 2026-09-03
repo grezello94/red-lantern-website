@@ -1,33 +1,241 @@
 const $ = (selector) => document.querySelector(selector);
 const lists = { table: $('#tables-list'), parcel: $('#parcels-list') };
-const money = (value) => new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:2}).format(Number(value || 0));
-const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
-const elapsed = (date) => { const min = Math.max(0, Math.floor((Date.now() - new Date(date).getTime()) / 60000)); return min < 60 ? `${min}m` : `${Math.floor(min / 60)}h ${min % 60}m`; };
+const money = (value) =>
+  new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    maximumFractionDigits: 2,
+  }).format(Number(value || 0));
+const escapeHtml = (value) =>
+  String(value ?? '').replace(
+    /[&<>'"]/g,
+    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[c]
+  );
+const elapsed = (date) => {
+  const min = Math.max(0, Math.floor((Date.now() - new Date(date).getTime()) / 60000));
+  return min < 60 ? `${min}m` : `${Math.floor(min / 60)}h ${min % 60}m`;
+};
 let orders = [];
-function icon(name){return name === 'print' ? '⎙' : '◉ View';}
-function active(order){return !['rejected','cancelled'].includes(order.status);}
+function icon(name) {
+  return name === 'print' ? '⎙' : '◉ View';
+}
+function active(order) {
+  return !['rejected', 'cancelled'].includes(order.status);
+}
 function displayOrder(order, kind) {
   const settled = order.status === 'completed';
   const table = kind === 'table';
   const needsAcceptance = !table && order.status === 'new';
-  const identifier = order.customer_phone || `Token #TK-${String(order.daily_order_number || '').padStart(3,'0')}`;
-  const tableNumber = String(order.table_number || '').padStart(2,'0');
-  const name = table ? (order.customer_name || order.table_area || 'Dine-in') : (order.customer_name || 'Counter Pick');
-  const captainNames = table ? String(order.captain_names || '').split(',').map((value) => value.trim()).filter(Boolean) : [];
-  const captainLabel = captainNames.length ? `${captainNames.length === 1 ? 'Captain' : 'Captains'}: ${captainNames.join(' · ')}` : '';
-  const paid = order.settlement_type ? `Paid via ${String(order.settlement_type).toUpperCase()}` : 'Settled';
+  const identifier =
+    order.customer_phone || `Token #TK-${String(order.daily_order_number || '').padStart(3, '0')}`;
+  const tableNumber = String(order.table_number || '').padStart(2, '0');
+  const name = table
+    ? order.customer_name || order.table_area || 'Dine-in'
+    : order.customer_name || 'Counter Pick';
+  const captainNames = table
+    ? String(order.captain_names || '')
+        .split(',')
+        .map((value) => value.trim())
+        .filter(Boolean)
+    : [];
+  const captainLabel = captainNames.length
+    ? `${captainNames.length === 1 ? 'Captain' : 'Captains'}: ${captainNames.join(' · ')}`
+    : '';
+  const paid = order.settlement_type
+    ? `Paid via ${String(order.settlement_type).toUpperCase()}`
+    : 'Settled';
   const tableIdentity = `<div class="table-identity"><div class="token"><span>Table</span><b>${escapeHtml(tableNumber)}</b></div>${captainLabel ? `<small class="captain-assignment">${escapeHtml(captainLabel)}</small>` : ''}</div>`;
-  return `<article class="order-strip ${table ? '' : 'parcel-strip'} ${settled ? 'settled' : ''} ${needsAcceptance ? 'needs-acceptance' : ''}">${table ? tableIdentity : `<div class="token">${escapeHtml(identifier)}</div>`}<div class="meta"><b>${escapeHtml(name)}${settled ? ` <small>• ${escapeHtml(paid)}</small>` : ''}</b><small>${needsAcceptance ? 'New order · waiting for acceptance' : settled ? 'Settled' : (table ? 'Occupied' : 'Counter Pick')} • ${elapsed(order.created_at)}</small></div><div class="amount">${money(order.total)}</div><div class="actions">${needsAcceptance ? `<button class="accept-order" data-accept="${order.id}">✓ Accept</button>` : settled ? `<button class="clear" data-clear="${order.id}">✓ Ready to Clear</button><button class="icon" data-reprint="${order.id}" title="Reprint receipt">${icon('print')}</button>` : `<button data-view="${order.id}">${icon('view')}</button><button class="icon" data-reprint="${order.id}" title="Reprint existing bill">${icon('print')}</button><span class="pay-group"><button data-pay="cash" data-id="${order.id}">Cash</button><button data-pay="upi" data-id="${order.id}">UPI</button><button data-pay="zomato" data-id="${order.id}">Zomato</button></span>`}</div></article>`;
+  return `<article class="order-strip ${table ? '' : 'parcel-strip'} ${settled ? 'settled' : ''} ${needsAcceptance ? 'needs-acceptance' : ''}">${table ? tableIdentity : `<div class="token">${escapeHtml(identifier)}</div>`}<div class="meta"><b>${escapeHtml(name)}${settled ? ` <small>• ${escapeHtml(paid)}</small>` : ''}</b><small>${needsAcceptance ? 'New order · waiting for acceptance' : settled ? 'Settled' : table ? 'Occupied' : 'Counter Pick'} • ${elapsed(order.created_at)}</small></div><div class="amount">${money(order.total)}</div><div class="actions">${needsAcceptance ? `<button class="accept-order" data-accept="${order.id}">✓ Accept</button>` : settled ? `<button class="clear" data-clear="${order.id}">✓ Ready to Clear</button><button class="icon" data-reprint="${order.id}" title="Reprint receipt">${icon('print')}</button>` : `<button data-view="${order.id}">${icon('view')}</button><button class="icon" data-reprint="${order.id}" title="Reprint existing bill">${icon('print')}</button><span class="pay-group"><button data-pay="cash" data-id="${order.id}">Cash</button><button data-pay="upi" data-id="${order.id}">UPI</button><button data-pay="zomato" data-id="${order.id}">Zomato</button></span>`}</div></article>`;
 }
-function render(){const tables=orders.filter(o=>active(o)&&o.mode==='table'), parcels=orders.filter(o=>active(o)&&o.mode!=='table'); lists.table.innerHTML=tables.map(o=>displayOrder(o,'table')).join('') || $('#empty-template').innerHTML; lists.parcel.innerHTML=parcels.map(o=>displayOrder(o,'parcel')).join('') || $('#empty-template').innerHTML; const activeTables=tables.filter(o=>o.status!=='completed').length, activeParcels=parcels.filter(o=>o.status!=='completed').length; $('#active-tables').textContent=`${activeTables} Active`; $('#pending-parcels').textContent=`${activeParcels} Pending`; $('#table-badge').textContent=`${activeTables} Active`; $('#parcel-badge').textContent=`${activeParcels} Pending`;}
-async function load(){try{const response=await fetch('/api/orders',{cache:'no-store'}); const data=await response.json(); if(!response.ok) throw new Error(data.error); orders=Array.isArray(data)?data:[]; $('#connection-dot').style.background='#10b981'; $('#connection-label').textContent='Live'; render();}catch(error){$('#connection-dot').style.background='#f43f5e'; $('#connection-label').textContent='Offline';}}
-const savedItemTotal=(item)=>Number(item.quantity||0)*(Number(String(item.price||'').replace(/[^0-9.]/g,''))+(item.style?10:0));
-async function receipt(id, print=false){const response=await fetch(`/api/orders/${encodeURIComponent(id)}/print`,{cache:'no-store'});const order=await response.json();if(!response.ok)throw new Error(order.error||'Unable to load bill.'); if(print){const popup=window.open('','red-lantern-receipt','popup=yes,width=420,height=720'); if(!popup)throw new Error('Allow pop-ups to reprint the receipt.'); popup.document.write(`<!doctype html><title>Receipt</title><style>body{font:13px Arial;padding:18px;color:#111}h2{margin:0}.row{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px dashed #aaa}</style><h2>Red Lantern Restaurant</h2><p>Order #${escapeHtml(order.daily_order_number)}</p>${(order.items||[]).map(i=>`<div class=row><span>${escapeHtml(i.quantity)}× ${escapeHtml(i.name)}</span><b>${money(savedItemTotal(i))}</b></div>`).join('')}<h3>Total: ${money(order.total)}</h3><script>onload=()=>print()<\/script>`);popup.document.close();return;} $('#bill-content').innerHTML=`<div class=bill><h2>Bill #${escapeHtml(order.daily_order_number)}</h2><p>${escapeHtml(order.mode==='table'?`Table ${order.table_number||''}`:(order.customer_phone||'Counter parcel'))} · ${escapeHtml(order.customer_name||'Counter Pick')}</p><div class=bill-items>${(order.items||[]).map(i=>`<div class=bill-item><span>${escapeHtml(i.quantity)}× ${escapeHtml(i.name)}<small>${i.portion?` · ${escapeHtml(i.portion)}`:''}</small></span><b>${money(savedItemTotal(i))}</b></div>`).join('')}</div><div class=bill-total><span><span>GST</span><span>Included</span></span><span><b>Total</b><b>${money(order.total)}</b></span></div><button class=reprint-receipt data-reprint="${escapeHtml(id)}">⎙ Reprint Receipt Only</button></div>`; $('#bill-modal').showModal();}
-let paymentOrder=null,paymentType='';
-function paymentName(type){return ({cash:'Cash',upi:'UPI / GPay',card:'Card',other:'Other'}[type]||'Not recorded');}
-function updatePaymentPreview(){if(!paymentOrder)return;const due=Number(paymentOrder.total||0),received=Number(document.getElementById('payment-received').value||0),preview=document.getElementById('payment-preview'),confirm=document.getElementById('payment-confirm');if(!Number.isFinite(received)||received<due){preview.textContent=`Still due: ${money(Math.max(0,due-(Number.isFinite(received)?received:0)))}`;preview.dataset.state='due';confirm.disabled=true;return;}const difference=received-due;confirm.disabled=false;if(paymentType==='cash'){preview.textContent=difference?`Return change: ${money(difference)}`:'Exact cash received.';preview.dataset.state=difference?'change':'exact';}else if(paymentType==='upi'){preview.textContent=difference?`Tip to record: ${money(difference)}`:'Exact UPI payment received.';preview.dataset.state=difference?'tip':'exact';}else{preview.textContent='Payment amount matches the bill.';preview.dataset.state='exact';}}
-function openPayment(id,type){const order=orders.find(o=>String(o.id)===String(id));if(!order)return;paymentOrder=order;paymentType=type==='zomato'?'other':type;document.getElementById('payment-title').textContent=`${paymentName(paymentType)} payment`;document.getElementById('payment-order').textContent=`${order.mode==='table'?`Table ${String(order.table_number||'').padStart(2,'0')}`:'Parcel'} · Bill #${String(order.daily_order_number||'').padStart(2,'0')}`;document.getElementById('payment-due').textContent=money(order.total);document.getElementById('payment-received-label').textContent=paymentType==='cash'?'Cash received from customer':paymentType==='upi'?'UPI / GPay received':'Amount received';document.getElementById('payment-received').value=Number(order.total||0).toFixed(2);document.getElementById('payment-confirm').textContent=`Save ${paymentName(paymentType)} payment`;updatePaymentPreview();document.getElementById('payment-modal').showModal();document.getElementById('payment-received').focus();document.getElementById('payment-received').select();}
-async function savePayment(){if(!paymentOrder)return;const received=Number(document.getElementById('payment-received').value||0),response=await fetch(`/api/orders/${encodeURIComponent(paymentOrder.id)}/settle`,{method:'POST',headers:{'Content-Type':'application/json','X-Settlement-Id':`register-${paymentOrder.id}-${Date.now()}`},body:JSON.stringify({paymentType,amount:Number(paymentOrder.total||0),paymentReceived:received})}),data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.error||'Payment could not be saved.');document.getElementById('payment-modal').close();paymentOrder=null;await load();}
-async function printSummary(){const response=await fetch('/api/register/summary',{cache:'no-store'}),data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.error||'Unable to prepare the register summary.');const rows=Array.isArray(data.orders)?data.orders:[],sales=rows.reduce((sum,order)=>sum+Number(order.total||0),0),tips=rows.reduce((sum,order)=>sum+Number(order.tip_amount||0),0),popup=window.open('','red-lantern-register-summary','popup=yes,width=1000,height=720');if(!popup)throw new Error('Allow pop-ups to print the register summary.');popup.document.write(`<!doctype html><title>Register summary</title><style>body{font:12px Arial;padding:22px;color:#111}h1,p{margin:0 0 7px}table{width:100%;border-collapse:collapse;margin-top:18px}th,td{padding:8px;text-align:left;border-bottom:1px solid #ddd}th{font-size:10px;text-transform:uppercase;background:#f3f3f3}.right{text-align:right}.total{margin-top:18px;font-size:14px;font-weight:bold}</style><h1>Red Lantern Restaurant — Register Summary</h1><p>Date: ${escapeHtml(data.day||'')}</p><table><thead><tr><th>Bill</th><th>Type</th><th>Table / Parcel</th><th>Customer</th><th>Payment</th><th class=right>Bill total</th><th class=right>Received</th><th class=right>Change</th><th class=right>Tip</th></tr></thead><tbody>${rows.map(order=>`<tr><td>#${escapeHtml(order.daily_order_number)}</td><td>${order.mode==='table'?'Dine-in':'Parcel'}</td><td>${escapeHtml(order.mode==='table'?`Table ${String(order.table_number||'').padStart(2,'0')}`:(order.customer_phone||'Walk-in'))}</td><td>${escapeHtml(order.customer_name||'Walk-in customer')}</td><td>${escapeHtml(paymentName(order.settlement_type))}</td><td class=right>${money(order.total)}</td><td class=right>${money(order.payment_received??order.settlement_amount??order.total)}</td><td class=right>${money(order.change_due)}</td><td class=right>${money(order.tip_amount)}</td></tr>`).join('')||'<tr><td colspan=9>No completed payments for this date.</td></tr>'}</tbody></table><p class=total>Sales: ${money(sales)} &nbsp; | &nbsp; Tips: ${money(tips)}</p><script>onload=()=>print()<\/script>`);popup.document.close();}
-async function acceptOrder(id){const response=await fetch(`/api/orders/${encodeURIComponent(id)}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:'accepted'})});const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.error||'Order could not be accepted.');await load();}
-document.addEventListener('click',async event=>{const target=event.target.closest('button');if(!target)return;try{if(target.dataset.view)await receipt(target.dataset.view);if(target.dataset.reprint)await receipt(target.dataset.reprint,true);if(target.dataset.pay)openPayment(target.dataset.id,target.dataset.pay);if(target.dataset.accept)await acceptOrder(target.dataset.accept);if(target.dataset.clear){orders=orders.filter(o=>String(o.id)!==target.dataset.clear);render();}if(target.id==='payment-confirm')await savePayment();if(target.id==='print-summary')await printSummary();if(target.closest('.payment-close,.payment-cancel'))document.getElementById('payment-modal').close();}catch(error){alert(error.message);}});$('.modal-close').addEventListener('click',()=>$('#bill-modal').close());document.getElementById('payment-received').addEventListener('input',updatePaymentPreview);function tick(){$('#clock').textContent=new Intl.DateTimeFormat('en-IN',{timeZone:'Asia/Kolkata',hour:'2-digit',minute:'2-digit',hour12:true}).format(new Date());}tick();setInterval(tick,1000);load();setInterval(load,15000);
+function render() {
+  const tables = orders.filter((o) => active(o) && o.mode === 'table'),
+    parcels = orders.filter((o) => active(o) && o.mode !== 'table');
+  lists.table.innerHTML =
+    tables.map((o) => displayOrder(o, 'table')).join('') || $('#empty-template').innerHTML;
+  lists.parcel.innerHTML =
+    parcels.map((o) => displayOrder(o, 'parcel')).join('') || $('#empty-template').innerHTML;
+  const activeTables = tables.filter((o) => o.status !== 'completed').length,
+    activeParcels = parcels.filter((o) => o.status !== 'completed').length;
+  $('#active-tables').textContent = `${activeTables} Active`;
+  $('#pending-parcels').textContent = `${activeParcels} Pending`;
+  $('#table-badge').textContent = `${activeTables} Active`;
+  $('#parcel-badge').textContent = `${activeParcels} Pending`;
+}
+async function load() {
+  try {
+    const response = await fetch('/api/orders', { cache: 'no-store' });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error);
+    orders = Array.isArray(data) ? data : [];
+    $('#connection-dot').style.background = '#10b981';
+    $('#connection-label').textContent = 'Live';
+    render();
+  } catch (error) {
+    $('#connection-dot').style.background = '#f43f5e';
+    $('#connection-label').textContent = 'Offline';
+  }
+}
+const savedItemTotal = (item) =>
+  Number(item.quantity || 0) *
+  (Number(String(item.price || '').replace(/[^0-9.]/g, '')) +
+    (item.style ? 10 : 0) +
+    (window.RedLanternAddons?.lineModifierTotal(item) || 0));
+const savedItemLabel = (item) => {
+  const extras = window.RedLanternAddons?.modifierText(item.modifiers) || '';
+  return `${item.quantity}× ${item.name}${item.portion ? ` · ${item.portion}` : ''}${extras ? ` + ${extras}` : ''}`;
+};
+async function receipt(id, print = false) {
+  const response = await fetch(`/api/orders/${encodeURIComponent(id)}/print`, {
+    cache: 'no-store',
+  });
+  const order = await response.json();
+  if (!response.ok) throw new Error(order.error || 'Unable to load bill.');
+  if (print) {
+    const popup = window.open('', 'red-lantern-receipt', 'popup=yes,width=420,height=720');
+    if (!popup) throw new Error('Allow pop-ups to reprint the receipt.');
+    popup.document.write(
+      `<!doctype html><title>Receipt</title><style>body{font:13px Arial;padding:18px;color:#111}h2{margin:0}.row{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px dashed #aaa}</style><h2>Red Lantern Restaurant</h2><p>Order #${escapeHtml(order.daily_order_number)}</p>${(order.items || []).map((i) => `<div class=row><span>${escapeHtml(savedItemLabel(i))}</span><b>${money(savedItemTotal(i))}</b></div>`).join('')}<h3>Total: ${money(order.total)}</h3><script>onload=()=>print()<\/script>`
+    );
+    popup.document.close();
+    return;
+  }
+  $('#bill-content').innerHTML =
+    `<div class=bill><h2>Bill #${escapeHtml(order.daily_order_number)}</h2><p>${escapeHtml(order.mode === 'table' ? `Table ${order.table_number || ''}` : order.customer_phone || 'Counter parcel')} · ${escapeHtml(order.customer_name || 'Counter Pick')}</p><div class=bill-items>${(order.items || []).map((i) => `<div class=bill-item><span>${escapeHtml(savedItemLabel(i))}</span><b>${money(savedItemTotal(i))}</b></div>`).join('')}</div><div class=bill-total><span><span>GST</span><span>Included</span></span><span><b>Total</b><b>${money(order.total)}</b></span></div><button class=reprint-receipt data-reprint="${escapeHtml(id)}">⎙ Reprint Receipt Only</button></div>`;
+  $('#bill-modal').showModal();
+}
+let paymentOrder = null,
+  paymentType = '';
+function paymentName(type) {
+  return { cash: 'Cash', upi: 'UPI / GPay', card: 'Card', other: 'Other' }[type] || 'Not recorded';
+}
+function updatePaymentPreview() {
+  if (!paymentOrder) return;
+  const due = Number(paymentOrder.total || 0),
+    received = Number(document.getElementById('payment-received').value || 0),
+    preview = document.getElementById('payment-preview'),
+    confirm = document.getElementById('payment-confirm');
+  if (!Number.isFinite(received) || received < due) {
+    preview.textContent = `Still due: ${money(Math.max(0, due - (Number.isFinite(received) ? received : 0)))}`;
+    preview.dataset.state = 'due';
+    confirm.disabled = true;
+    return;
+  }
+  const difference = received - due;
+  confirm.disabled = false;
+  if (paymentType === 'cash') {
+    preview.textContent = difference
+      ? `Return change: ${money(difference)}`
+      : 'Exact cash received.';
+    preview.dataset.state = difference ? 'change' : 'exact';
+  } else if (paymentType === 'upi') {
+    preview.textContent = difference
+      ? `Tip to record: ${money(difference)}`
+      : 'Exact UPI payment received.';
+    preview.dataset.state = difference ? 'tip' : 'exact';
+  } else {
+    preview.textContent = 'Payment amount matches the bill.';
+    preview.dataset.state = 'exact';
+  }
+}
+function openPayment(id, type) {
+  const order = orders.find((o) => String(o.id) === String(id));
+  if (!order) return;
+  paymentOrder = order;
+  paymentType = type === 'zomato' ? 'other' : type;
+  document.getElementById('payment-title').textContent = `${paymentName(paymentType)} payment`;
+  document.getElementById('payment-order').textContent =
+    `${order.mode === 'table' ? `Table ${String(order.table_number || '').padStart(2, '0')}` : 'Parcel'} · Bill #${String(order.daily_order_number || '').padStart(2, '0')}`;
+  document.getElementById('payment-due').textContent = money(order.total);
+  document.getElementById('payment-received-label').textContent =
+    paymentType === 'cash'
+      ? 'Cash received from customer'
+      : paymentType === 'upi'
+        ? 'UPI / GPay received'
+        : 'Amount received';
+  document.getElementById('payment-received').value = Number(order.total || 0).toFixed(2);
+  document.getElementById('payment-confirm').textContent =
+    `Save ${paymentName(paymentType)} payment`;
+  updatePaymentPreview();
+  document.getElementById('payment-modal').showModal();
+  document.getElementById('payment-received').focus();
+  document.getElementById('payment-received').select();
+}
+async function savePayment() {
+  if (!paymentOrder) return;
+  const received = Number(document.getElementById('payment-received').value || 0),
+    response = await fetch(`/api/orders/${encodeURIComponent(paymentOrder.id)}/settle`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Settlement-Id': `register-${paymentOrder.id}-${Date.now()}`,
+      },
+      body: JSON.stringify({
+        paymentType,
+        amount: Number(paymentOrder.total || 0),
+        paymentReceived: received,
+      }),
+    }),
+    data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || 'Payment could not be saved.');
+  document.getElementById('payment-modal').close();
+  paymentOrder = null;
+  await load();
+}
+async function printSummary() {
+  const response = await fetch('/api/register/summary', { cache: 'no-store' }),
+    data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || 'Unable to prepare the register summary.');
+  const rows = Array.isArray(data.orders) ? data.orders : [],
+    sales = rows.reduce((sum, order) => sum + Number(order.total || 0), 0),
+    tips = rows.reduce((sum, order) => sum + Number(order.tip_amount || 0), 0),
+    popup = window.open('', 'red-lantern-register-summary', 'popup=yes,width=1000,height=720');
+  if (!popup) throw new Error('Allow pop-ups to print the register summary.');
+  popup.document.write(
+    `<!doctype html><title>Register summary</title><style>body{font:12px Arial;padding:22px;color:#111}h1,p{margin:0 0 7px}table{width:100%;border-collapse:collapse;margin-top:18px}th,td{padding:8px;text-align:left;border-bottom:1px solid #ddd}th{font-size:10px;text-transform:uppercase;background:#f3f3f3}.right{text-align:right}.total{margin-top:18px;font-size:14px;font-weight:bold}</style><h1>Red Lantern Restaurant — Register Summary</h1><p>Date: ${escapeHtml(data.day || '')}</p><table><thead><tr><th>Bill</th><th>Type</th><th>Table / Parcel</th><th>Customer</th><th>Payment</th><th class=right>Bill total</th><th class=right>Received</th><th class=right>Change</th><th class=right>Tip</th></tr></thead><tbody>${rows.map((order) => `<tr><td>#${escapeHtml(order.daily_order_number)}</td><td>${order.mode === 'table' ? 'Dine-in' : 'Parcel'}</td><td>${escapeHtml(order.mode === 'table' ? `Table ${String(order.table_number || '').padStart(2, '0')}` : order.customer_phone || 'Walk-in')}</td><td>${escapeHtml(order.customer_name || 'Walk-in customer')}</td><td>${escapeHtml(paymentName(order.settlement_type))}</td><td class=right>${money(order.total)}</td><td class=right>${money(order.payment_received ?? order.settlement_amount ?? order.total)}</td><td class=right>${money(order.change_due)}</td><td class=right>${money(order.tip_amount)}</td></tr>`).join('') || '<tr><td colspan=9>No completed payments for this date.</td></tr>'}</tbody></table><p class=total>Sales: ${money(sales)} &nbsp; | &nbsp; Tips: ${money(tips)}</p><script>onload=()=>print()<\/script>`
+  );
+  popup.document.close();
+}
+async function acceptOrder(id) {
+  const response = await fetch(`/api/orders/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: 'accepted' }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || 'Order could not be accepted.');
+  await load();
+}
+document.addEventListener('click', async (event) => {
+  const target = event.target.closest('button');
+  if (!target) return;
+  try {
+    if (target.dataset.view) await receipt(target.dataset.view);
+    if (target.dataset.reprint) await receipt(target.dataset.reprint, true);
+    if (target.dataset.pay) openPayment(target.dataset.id, target.dataset.pay);
+    if (target.dataset.accept) await acceptOrder(target.dataset.accept);
+    if (target.dataset.clear) {
+      orders = orders.filter((o) => String(o.id) !== target.dataset.clear);
+      render();
+    }
+    if (target.id === 'payment-confirm') await savePayment();
+    if (target.id === 'print-summary') await printSummary();
+    if (target.closest('.payment-close,.payment-cancel'))
+      document.getElementById('payment-modal').close();
+  } catch (error) {
+    alert(error.message);
+  }
+});
+$('.modal-close').addEventListener('click', () => $('#bill-modal').close());
+document.getElementById('payment-received').addEventListener('input', updatePaymentPreview);
+function tick() {
+  $('#clock').textContent = new Intl.DateTimeFormat('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  }).format(new Date());
+}
+tick();
+setInterval(tick, 1000);
+load();
+setInterval(load, 15000);

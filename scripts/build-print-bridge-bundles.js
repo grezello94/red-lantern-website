@@ -9,6 +9,7 @@ const outputDir = path.join(root, 'downloads');
 const stageDir = path.join(outputDir, '.bridge-stage');
 const bundleName = 'Red-Lantern-Print-Bridge';
 const bridgeFiles = [
+  'addons-domain.js',
   'printer-domain.js',
   'print-bridge.js',
   'print-bridge-supervisor.js',

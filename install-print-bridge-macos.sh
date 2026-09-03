@@ -17,7 +17,7 @@ agent_dir="$HOME/Library/LaunchAgents"
 plist="$agent_dir/$label.plist"
 install_dir="$HOME/Library/Application Support/Red Lantern Print Bridge"
 
-for required in printer-domain.js print-bridge.js; do
+for required in addons-domain.js printer-domain.js print-bridge.js; do
   if [ ! -f "$source_dir/$required" ]; then
     echo "$required was not found in $source_dir"
     exit 1
@@ -28,6 +28,7 @@ mkdir -p "$agent_dir" "$install_dir"
 # Always replace the installed runtime. The downloaded/extracted setup folder
 # can then be moved or deleted without breaking the LaunchAgent.
 install -m 0644 "$source_dir/printer-domain.js" "$install_dir/printer-domain.js"
+install -m 0644 "$source_dir/addons-domain.js" "$install_dir/addons-domain.js"
 install -m 0644 "$source_dir/print-bridge.js" "$install_dir/print-bridge.js"
 if [ -f "$source_dir/print-bridge-supervisor.js" ]; then
   install -m 0644 "$source_dir/print-bridge-supervisor.js" "$install_dir/print-bridge-supervisor.js"

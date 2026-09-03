@@ -1,12 +1,13 @@
 // Offline app shell only. Live operational data is handled by Captain's
 // account-scoped snapshot in local storage, never cached as a shared API response.
-const CACHE = 'red-lantern-captain-v23';
+const CACHE = 'red-lantern-captain-v24';
 const STATIC_ASSETS = [
   '/captain',
   '/captain.css',
   '/captain-ux.css',
   '/captain-modern.css',
   '/captain.js',
+  '/addons-domain.js',
   '/captain.webmanifest',
   '/images/red-lantern-logo-600.webp',
 ];
@@ -49,7 +50,7 @@ self.addEventListener('fetch', (event) => {
   // arrive immediately, with a cache fallback only when the device is offline.
   const isStaticAsset =
     url.pathname === '/captain' ||
-    /\/(captain(?:-ux|-modern)?\.css|captain\.js|captain\.webmanifest)$/.test(url.pathname) ||
+    /\/(captain(?:-ux|-modern)?\.css|captain\.js|captain\.webmanifest|addons-domain\.js)$/.test(url.pathname) ||
     url.pathname === '/images/red-lantern-logo-600.webp';
   if (!isStaticAsset) return;
 
