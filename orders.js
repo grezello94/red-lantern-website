@@ -5790,10 +5790,18 @@ if ('serviceWorker' in navigator)
   navigator.serviceWorker.addEventListener('message', (event) => {
     if (event.data?.type === 'order-update') requestFastOrdersRefresh();
   });
-setInterval(loadOrders, 3000);
+// Same-instance SSE and the durable event cursor trigger immediate refreshes.
+// This is only a quiet fallback, so avoid re-downloading the full order list
+// every three seconds on every open register, tablet, and admin screen.
+setInterval(() => {
+  if (document.visibilityState === 'visible' && navigator.onLine) void loadOrders();
+}, 15000);
 // Same-instance SSE is effectively immediate. This small persisted-event poll
 // covers serverless instance changes and reconnects without reloading all orders.
 setInterval(pollPrintUpdates, 1000);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && navigator.onLine) requestFastOrdersRefresh();
+});
 // Cloud reconciliation is deliberately slower than the live table refresh:
 // it retries durable local work promptly without flooding the API or printers.
 setInterval(() => {

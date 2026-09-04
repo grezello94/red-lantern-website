@@ -11,6 +11,7 @@ const {
   defaultSmartKdsConfig,
   normalizeSmartKdsConfig,
   smartKdsMenuItemKey,
+  inferDefaultCourse,
   defaultMenuProductionProfile,
   normalizeMenuProductionProfile,
   COURSE_TYPES,
@@ -28,6 +29,7 @@ const { reasonCodesForRecommendation } = require('./smart-kds-reasons');
 const { buildKitchenMetrics } = require('./smart-kds-metrics');
 const { printerCapabilities, printerSupports } = require('./printer-domain');
 const Addons = require('./addons-domain');
+const { schemaProbe } = require('./database-readiness');
 
 const envPath = path.join(__dirname, '.env');
 if (fs.existsSync(envPath)) {
@@ -56,14 +58,16 @@ const neonIpv4Agent = new Agent({
   connect: {
     lookup(hostname, options, callback) {
       dns.resolve4(hostname, (error, addresses) => {
-        const address = addresses?.[0] || neonIpv4Fallbacks[neonIpv4Cursor++ % neonIpv4Fallbacks.length];
+        const address =
+          addresses?.[0] || neonIpv4Fallbacks[neonIpv4Cursor++ % neonIpv4Fallbacks.length];
         if (options?.all) return callback(null, [{ address, family: 4 }]);
         callback(null, address, 4);
       });
     },
   },
 });
-neonConfig.fetchFunction = (url, options) => undiciFetch(url, { ...options, dispatcher: neonIpv4Agent });
+neonConfig.fetchFunction = (url, options) =>
+  undiciFetch(url, { ...options, dispatcher: neonIpv4Agent });
 
 function cleanEnvUrl(name) {
   if (!process.env[name]) return '';
@@ -236,7 +240,13 @@ function qrScanDetails(req, mode) {
   };
 }
 
-function distanceInMetres(aLat, aLng, bLat, bLng) { const r=(value)=>value*Math.PI/180, dLat=r(bLat-aLat), dLng=r(bLng-aLng), a=Math.sin(dLat/2)**2+Math.cos(r(aLat))*Math.cos(r(bLat))*Math.sin(dLng/2)**2; return 6371000*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a)); }
+function distanceInMetres(aLat, aLng, bLat, bLng) {
+  const r = (value) => (value * Math.PI) / 180,
+    dLat = r(bLat - aLat),
+    dLng = r(bLng - aLng),
+    a = Math.sin(dLat / 2) ** 2 + Math.cos(r(aLat)) * Math.cos(r(bLat)) * Math.sin(dLng / 2) ** 2;
+  return 6371000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
 
 function diagnosticSolution(category, message = '') {
   const text = String(message).toLowerCase();
@@ -280,24 +290,33 @@ function diagnosticLocation(category, pathValue = '', details = {}) {
 async function ensureDiagnosticsTable() {
   if (!sql) return false;
   if (!diagnosticsTablePromise) {
-    diagnosticsTablePromise = sql`
-      CREATE TABLE IF NOT EXISTS website_diagnostics (
-        id BIGSERIAL PRIMARY KEY,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        level TEXT NOT NULL,
-        category TEXT NOT NULL,
-        message TEXT NOT NULL,
-        solution TEXT,
-        location TEXT,
-        method TEXT,
-        path TEXT,
-        status_code INTEGER,
-        duration_ms INTEGER,
-        ip_hash TEXT,
-        user_agent TEXT,
-        details JSONB NOT NULL DEFAULT '{}'::jsonb
-      );
-    `;
+    diagnosticsTablePromise = (async () => {
+      if (
+        await schemaProbe(
+          () =>
+            sql`SELECT id,created_at,level,category,message,solution,location,method,path,status_code,duration_ms,ip_hash,user_agent,details FROM website_diagnostics LIMIT 0`
+        )
+      )
+        return;
+      await sql`
+        CREATE TABLE IF NOT EXISTS website_diagnostics (
+          id BIGSERIAL PRIMARY KEY,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          level TEXT NOT NULL,
+          category TEXT NOT NULL,
+          message TEXT NOT NULL,
+          solution TEXT,
+          location TEXT,
+          method TEXT,
+          path TEXT,
+          status_code INTEGER,
+          duration_ms INTEGER,
+          ip_hash TEXT,
+          user_agent TEXT,
+          details JSONB NOT NULL DEFAULT '{}'::jsonb
+        );
+      `;
+    })();
   }
   await diagnosticsTablePromise;
   return true;
@@ -370,7 +389,10 @@ const trustedContactUpload = multer({
   limits: { fileSize: 5 * 1024 * 1024, files: 1 },
   fileFilter: (req, file, cb) => {
     const extension = path.extname(file.originalname).toLowerCase();
-    cb(extension === '.xlsx' ? null : new Error('Upload an Excel (.xlsx) contacts file.'), extension === '.xlsx');
+    cb(
+      extension === '.xlsx' ? null : new Error('Upload an Excel (.xlsx) contacts file.'),
+      extension === '.xlsx'
+    );
   },
 });
 
@@ -765,6 +787,15 @@ let kotStationStatusTableReady = null;
 let kotRoundStatusTableReady = null;
 let orderEventsTableReady = null;
 let smartKdsTablesReady = null;
+const smartKdsReadCacheMs = Number(process.env.SMART_KDS_READ_CACHE_MS || 5000);
+let smartKdsFoundationCache = null;
+let smartKdsMenuProfilesCache = null;
+
+function clearSmartKdsReadCaches({ foundation = true, profiles = true } = {}) {
+  if (foundation) smartKdsFoundationCache = null;
+  if (profiles) smartKdsMenuProfilesCache = null;
+}
+
 // Smart KDS screens receive same-instance updates through SSE. A persisted
 // event cursor below covers serverless instance changes and reconnects.
 const smartKdsStreamClients = new Set();
@@ -782,6 +813,13 @@ async function ensureOrderEventsTable() {
   if (!sql) throw new Error('Orders database is not configured.');
   if (!orderEventsTableReady)
     orderEventsTableReady = (async () => {
+      if (
+        await schemaProbe(
+          () =>
+            sql`SELECT event_id,order_id,event_type,details,created_at FROM order_events LIMIT 0`
+        )
+      )
+        return;
       await sql`CREATE TABLE IF NOT EXISTS order_events (event_id BIGSERIAL PRIMARY KEY, order_id TEXT NOT NULL, event_type TEXT NOT NULL, details JSONB NOT NULL DEFAULT '{}'::jsonb, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;
       await sql`CREATE INDEX IF NOT EXISTS order_events_order_created_index ON order_events (order_id, created_at DESC)`;
       await sql`CREATE INDEX IF NOT EXISTS order_events_created_index ON order_events (created_at DESC)`;
@@ -799,13 +837,18 @@ async function recordOrderEvent(orderId, eventType, details = {}) {
   }
 }
 function smartKdsOperator(req) {
-  const supplied = String(req.get('x-kitchen-operator') || req.body?.operatorName || '').trim().replace(/\s+/g, ' ');
+  const supplied = String(req.get('x-kitchen-operator') || req.body?.operatorName || '')
+    .trim()
+    .replace(/\s+/g, ' ');
   return supplied ? supplied.slice(0, 100) : 'Kitchen console';
 }
 async function requireSmartKdsManualMode(res) {
   const foundation = await getSmartKdsFoundation();
   if (foundation.config.mode === 'manual') return true;
-  res.status(409).json({ error: 'Smart KDS is in Shadow mode. Switch Scheduling mode to Manual before changing kitchen work.' });
+  res.status(409).json({
+    error:
+      'Smart KDS is in Shadow mode. Switch Scheduling mode to Manual before changing kitchen work.',
+  });
   return false;
 }
 // Smart KDS uses the same managed database as the order console.  A single
@@ -822,16 +865,39 @@ async function forEachSmartKdsLimited(items = [], worker, concurrency = 12) {
 async function ensureKotStationStatusTable() {
   if (!sql) throw new Error('Orders database is not configured.');
   if (!kotStationStatusTableReady)
-    kotStationStatusTableReady = sql`CREATE TABLE IF NOT EXISTS order_kot_station_status (order_id TEXT NOT NULL, printer_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'accepted', updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (order_id, printer_id))`;
+    kotStationStatusTableReady = (async () => {
+      if (
+        await schemaProbe(
+          () =>
+            sql`SELECT order_id,printer_id,status,updated_at FROM order_kot_station_status LIMIT 0`
+        )
+      )
+        return;
+      await sql`CREATE TABLE IF NOT EXISTS order_kot_station_status (order_id TEXT NOT NULL, printer_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'accepted', updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (order_id, printer_id))`;
+    })();
   return kotStationStatusTableReady;
 }
 async function ensureKotRoundStatusTable() {
   if (!sql) throw new Error('Orders database is not configured.');
   if (!kotRoundStatusTableReady)
-    kotRoundStatusTableReady = sql`CREATE TABLE IF NOT EXISTS order_kot_round_status (order_id TEXT NOT NULL, kot_number INTEGER NOT NULL, printer_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'accepted', updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (order_id, kot_number, printer_id))`;
+    kotRoundStatusTableReady = (async () => {
+      if (
+        await schemaProbe(
+          () =>
+            sql`SELECT order_id,kot_number,printer_id,status,updated_at FROM order_kot_round_status LIMIT 0`
+        )
+      )
+        return;
+      await sql`CREATE TABLE IF NOT EXISTS order_kot_round_status (order_id TEXT NOT NULL, kot_number INTEGER NOT NULL, printer_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'accepted', updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (order_id, kot_number, printer_id))`;
+    })();
   return kotRoundStatusTableReady;
 }
-async function ensureKotTicketStatuses(orderId, kotNumber, tickets = [], { newRound = false } = {}) {
+async function ensureKotTicketStatuses(
+  orderId,
+  kotNumber,
+  tickets = [],
+  { newRound = false } = {}
+) {
   const validTickets = (Array.isArray(tickets) ? tickets : []).filter(
     (ticket) => ticket && ticket.printerId
   );
@@ -850,19 +916,62 @@ async function ensureKotTicketStatuses(orderId, kotNumber, tickets = [], { newRo
 async function ensureOrderPrintJobsTable() {
   if (!sql) throw new Error('Orders database is not configured.');
   if (!orderPrintJobsTableReady)
-    orderPrintJobsTableReady = sql`CREATE TABLE IF NOT EXISTS order_print_jobs (order_id TEXT NOT NULL, job_type TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'queued', lease_expires_at TIMESTAMPTZ, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (order_id, job_type))`;
+    orderPrintJobsTableReady = (async () => {
+      if (
+        await schemaProbe(
+          () =>
+            sql`SELECT order_id,job_type,status,lease_expires_at,updated_at FROM order_print_jobs LIMIT 0`
+        )
+      )
+        return;
+      await sql`CREATE TABLE IF NOT EXISTS order_print_jobs (order_id TEXT NOT NULL, job_type TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'queued', lease_expires_at TIMESTAMPTZ, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (order_id, job_type))`;
+    })();
   return orderPrintJobsTableReady;
 }
 async function ensureOperationsConfigTable() {
   if (!sql) throw new Error('Orders database is not configured.');
   if (!operationsConfigTableReady)
-    operationsConfigTableReady = sql`CREATE TABLE IF NOT EXISTS order_operations_config (config_key TEXT PRIMARY KEY, config JSONB NOT NULL DEFAULT '{"printers":[],"routes":[]}'::jsonb, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;
+    operationsConfigTableReady = (async () => {
+      if (
+        await schemaProbe(
+          () => sql`SELECT config_key,config,updated_at FROM order_operations_config LIMIT 0`
+        )
+      )
+        return;
+      await sql`CREATE TABLE IF NOT EXISTS order_operations_config (config_key TEXT PRIMARY KEY, config JSONB NOT NULL DEFAULT '{"printers":[],"routes":[]}'::jsonb, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;
+    })();
   return operationsConfigTableReady;
 }
 async function ensureSmartKdsTables() {
   if (!sql) throw new Error('Orders database is not configured.');
   if (!smartKdsTablesReady)
     smartKdsTablesReady = (async () => {
+      if (
+        await schemaProbe(
+          () => sql`
+            SELECT profiles.target_adjustment_minutes,
+              courses.latest_acceptable_serve_at,
+              tasks.sent_to_kitchen_at,tasks.active_batch_id,
+              tasks.latest_acceptable_serve_at,tasks.latest_safe_start_at,
+              overrides.details
+            FROM kitchen_scheduling_config config
+            CROSS JOIN kitchen_stations stations
+            CROSS JOIN menu_production_profiles profiles
+            CROSS JOIN kitchen_order_courses courses
+            CROSS JOIN kitchen_service_events service_events
+            CROSS JOIN kitchen_production_tasks tasks
+            CROSS JOIN kitchen_task_events task_events
+            CROSS JOIN kitchen_batches batches
+            CROSS JOIN kitchen_batch_allocations allocations
+            CROSS JOIN kitchen_manual_overrides overrides
+            CROSS JOIN kitchen_scheduler_decisions decisions
+            CROSS JOIN kitchen_station_state station_state
+            CROSS JOIN kitchen_realtime_events realtime_events
+            LIMIT 0
+          `
+        )
+      )
+        return;
       await sql`CREATE TABLE IF NOT EXISTS kitchen_scheduling_config (config_key TEXT PRIMARY KEY, config JSONB NOT NULL, config_version INTEGER NOT NULL DEFAULT 1, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;
       await sql`CREATE TABLE IF NOT EXISTS kitchen_stations (station_id TEXT PRIMARY KEY, station_name TEXT NOT NULL, printer_id TEXT, enabled BOOLEAN NOT NULL DEFAULT TRUE, max_concurrent_tasks INTEGER NOT NULL DEFAULT 1 CHECK (max_concurrent_tasks BETWEEN 1 AND 50), config JSONB NOT NULL DEFAULT '{}'::jsonb, version INTEGER NOT NULL DEFAULT 1, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;
       await sql`CREATE TABLE IF NOT EXISTS menu_production_profiles (item_key TEXT PRIMARY KEY, menu_type TEXT NOT NULL, category TEXT NOT NULL, item_name TEXT NOT NULL, course_type TEXT NOT NULL, station_id TEXT, prep_time_estimate INTEGER NOT NULL CHECK (prep_time_estimate BETWEEN 1 AND 240), min_prep_time INTEGER NOT NULL CHECK (min_prep_time BETWEEN 1 AND 240), max_prep_time INTEGER NOT NULL CHECK (max_prep_time BETWEEN 1 AND 300), plating_time INTEGER NOT NULL DEFAULT 0 CHECK (plating_time BETWEEN 0 AND 60), handoff_buffer INTEGER NOT NULL DEFAULT 0 CHECK (handoff_buffer BETWEEN 0 AND 60), target_adjustment_minutes INTEGER NOT NULL DEFAULT 0 CHECK (target_adjustment_minutes BETWEEN -60 AND 60), batchable BOOLEAN NOT NULL DEFAULT FALSE, batch_group_id TEXT, max_batch_size INTEGER NOT NULL DEFAULT 1 CHECK (max_batch_size BETWEEN 1 AND 100), optimal_batch_size INTEGER NOT NULL DEFAULT 1 CHECK (optimal_batch_size BETWEEN 1 AND 100), batch_window_seconds INTEGER NOT NULL DEFAULT 0 CHECK (batch_window_seconds BETWEEN 0 AND 3600), parallel_capacity_cost INTEGER NOT NULL DEFAULT 1 CHECK (parallel_capacity_cost BETWEEN 1 AND 50), long_prep_item BOOLEAN NOT NULL DEFAULT FALSE, requires_previous_course BOOLEAN NOT NULL DEFAULT FALSE, can_pre_prep BOOLEAN NOT NULL DEFAULT FALSE, can_hold_after_cooking BOOLEAN NOT NULL DEFAULT FALSE, max_hold_time INTEGER NOT NULL DEFAULT 0 CHECK (max_hold_time BETWEEN 0 AND 240), priority_modifier INTEGER NOT NULL DEFAULT 0 CHECK (priority_modifier BETWEEN -100 AND 100), profile_version INTEGER NOT NULL DEFAULT 1, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), CHECK (min_prep_time <= prep_time_estimate AND prep_time_estimate <= max_prep_time), CHECK (optimal_batch_size <= max_batch_size))`;
@@ -880,7 +989,8 @@ async function ensureSmartKdsTables() {
       await sql`ALTER TABLE kitchen_production_tasks ADD COLUMN IF NOT EXISTS latest_acceptable_serve_at TIMESTAMPTZ`;
       await sql`ALTER TABLE kitchen_production_tasks ADD COLUMN IF NOT EXISTS latest_safe_start_at TIMESTAMPTZ`;
       await sql`UPDATE kitchen_production_tasks SET latest_safe_start_at=eligible_at WHERE latest_safe_start_at IS NULL AND eligible_at IS NOT NULL AND target_serve_at IS NOT NULL`;
-      const taskStateConstraint = await sql`SELECT 1 FROM pg_constraint WHERE conname='kitchen_production_tasks_state_check' LIMIT 1`;
+      const taskStateConstraint =
+        await sql`SELECT 1 FROM pg_constraint WHERE conname='kitchen_production_tasks_state_check' LIMIT 1`;
       if (!taskStateConstraint.length)
         await sql`ALTER TABLE kitchen_production_tasks ADD CONSTRAINT kitchen_production_tasks_state_check CHECK (task_state IN ('ordered','held','eligible','scheduled','fired','preparing','ready','expo','served','cancelled','superseded')) NOT VALID`;
       await sql`CREATE INDEX IF NOT EXISTS kitchen_production_tasks_active_index ON kitchen_production_tasks (station_id, task_state, created_at) WHERE task_state NOT IN ('served','cancelled','superseded')`;
@@ -909,7 +1019,8 @@ async function recordSmartKdsRealtimeEvent(eventType, details = {}) {
   const reason = String(eventType || 'updated').slice(0, 80);
   try {
     await ensureSmartKdsTables();
-    const rows = await sql`INSERT INTO kitchen_realtime_events (event_type,details) VALUES (${reason},${JSON.stringify(details || {})}) RETURNING event_id,created_at`;
+    const rows =
+      await sql`INSERT INTO kitchen_realtime_events (event_type,details) VALUES (${reason},${JSON.stringify(details || {})}) RETURNING event_id,created_at`;
     publishSmartKdsUpdate(reason);
     return rows[0] || null;
   } catch (error) {
@@ -923,18 +1034,20 @@ async function getSmartKdsActiveOverrides(taskKeys = []) {
   const keys = [...new Set(taskKeys.map((key) => String(key || '')).filter(Boolean))];
   if (!keys.length) return new Map();
   await ensureSmartKdsTables();
-  const rows = await sql`SELECT task_id,order_id,override_action,reason,details,created_at FROM kitchen_manual_overrides WHERE task_id = ANY(${keys}) AND active=TRUE AND (expires_at IS NULL OR expires_at>NOW()) ORDER BY created_at DESC`;
+  const rows =
+    await sql`SELECT task_id,order_id,override_action,reason,details,created_at FROM kitchen_manual_overrides WHERE task_id = ANY(${keys}) AND active=TRUE AND (expires_at IS NULL OR expires_at>NOW()) ORDER BY created_at DESC`;
   const overrides = new Map();
   for (const row of rows) {
     if (!overrides.has(row.task_id)) overrides.set(row.task_id, row);
   }
   return overrides;
 }
-async function getSmartKdsFoundation() {
+async function buildSmartKdsFoundation() {
   await Promise.all([ensureSmartKdsTables(), ensureOperationsConfigTable()]);
-  const [configRows, operationsRows] = await Promise.all([
+  const [configRows, operationsRows, savedStations] = await Promise.all([
     sql`SELECT config FROM kitchen_scheduling_config WHERE config_key='default' LIMIT 1`,
     sql`SELECT config FROM order_operations_config WHERE config_key='default' LIMIT 1`,
+    sql`SELECT station_id,station_name,printer_id,enabled,max_concurrent_tasks,config,updated_at FROM kitchen_stations ORDER BY station_name,station_id`,
   ]);
   const config = normalizeSmartKdsConfig(configRows[0]?.config || defaultSmartKdsConfig());
   if (!configRows.length)
@@ -942,15 +1055,46 @@ async function getSmartKdsFoundation() {
   const printers = Array.isArray(operationsRows[0]?.config?.printers)
     ? operationsRows[0].config.printers
     : [];
-  for (const printer of printers) {
-    if (!printerSupports(printer, 'kot') || !String(printer.id || '').trim()) continue;
-    const stationId = String(printer.id).trim().slice(0, 120);
-    const stationName = String(printer.name || stationId).trim().slice(0, 120);
-    await sql`INSERT INTO kitchen_stations (station_id,station_name,printer_id) VALUES (${stationId},${stationName},${stationId}) ON CONFLICT (station_id) DO NOTHING`;
-    await sql`INSERT INTO kitchen_station_state (station_id) VALUES (${stationId}) ON CONFLICT (station_id) DO NOTHING`;
-  }
-  const stations = await sql`SELECT station_id,station_name,printer_id,enabled,max_concurrent_tasks,config,updated_at FROM kitchen_stations ORDER BY station_name,station_id`;
+  const savedStationIds = new Set(savedStations.map((station) => String(station.station_id)));
+  const missingPrinters = printers.filter(
+    (printer) =>
+      printerSupports(printer, 'kot') &&
+      String(printer.id || '').trim() &&
+      !savedStationIds.has(String(printer.id).trim().slice(0, 120))
+  );
+  await Promise.all(
+    missingPrinters.flatMap((printer) => {
+      const stationId = String(printer.id).trim().slice(0, 120);
+      const stationName = String(printer.name || stationId)
+        .trim()
+        .slice(0, 120);
+      return [
+        sql`INSERT INTO kitchen_stations (station_id,station_name,printer_id) VALUES (${stationId},${stationName},${stationId}) ON CONFLICT (station_id) DO NOTHING`,
+        sql`INSERT INTO kitchen_station_state (station_id) VALUES (${stationId}) ON CONFLICT (station_id) DO NOTHING`,
+      ];
+    })
+  );
+  const stations = missingPrinters.length
+    ? await sql`SELECT station_id,station_name,printer_id,enabled,max_concurrent_tasks,config,updated_at FROM kitchen_stations ORDER BY station_name,station_id`
+    : savedStations;
   return { config, stations };
+}
+
+async function getSmartKdsFoundation() {
+  const now = Date.now();
+  if (smartKdsFoundationCache?.value && smartKdsFoundationCache.expiresAt > now)
+    return smartKdsFoundationCache.value;
+  if (smartKdsFoundationCache?.promise) return smartKdsFoundationCache.promise;
+  const promise = buildSmartKdsFoundation();
+  smartKdsFoundationCache = { promise, expiresAt: 0 };
+  try {
+    const value = await promise;
+    smartKdsFoundationCache = { value, expiresAt: Date.now() + smartKdsReadCacheMs };
+    return value;
+  } catch (error) {
+    smartKdsFoundationCache = null;
+    throw error;
+  }
 }
 function smartKdsStationForMenuItem(item, routes = []) {
   const exact = routes.find(
@@ -1014,11 +1158,15 @@ async function attachSmartKdsOrderItemProfiles(lines = [], { preserveSnapshots =
         ? line.productionProfile
         : null;
     const sourceProfile = savedSnapshot || profilesByKey.get(item.itemKey) || {};
-    const productionProfile = normalizeMenuProductionProfile(sourceProfile, item, profileData.config);
+    const productionProfile = normalizeMenuProductionProfile(
+      sourceProfile,
+      item,
+      profileData.config
+    );
     return { ...line, menuType, productionProfile };
   });
 }
-async function getSmartKdsMenuProfiles() {
+async function buildSmartKdsMenuProfiles() {
   const [foundation, menu, operationsRows] = await Promise.all([
     getSmartKdsFoundation(),
     getSection('airMenu'),
@@ -1027,10 +1175,14 @@ async function getSmartKdsMenuProfiles() {
       return sql`SELECT config FROM order_operations_config WHERE config_key='default' LIMIT 1`;
     })(),
   ]);
-  const routes = Array.isArray(operationsRows[0]?.config?.routes) ? operationsRows[0].config.routes : [];
+  const routes = Array.isArray(operationsRows[0]?.config?.routes)
+    ? operationsRows[0].config.routes
+    : [];
   const menuItems = [
     ...(Array.isArray(menu.items) ? menu.items.map((item) => ({ ...item, menuType: 'food' })) : []),
-    ...(Array.isArray(menu.barItems) ? menu.barItems.map((item) => ({ ...item, menuType: 'bar' })) : []),
+    ...(Array.isArray(menu.barItems)
+      ? menu.barItems.map((item) => ({ ...item, menuType: 'bar' }))
+      : []),
   ]
     .map((item) => ({
       itemKey: smartKdsMenuItemKey(item.menuType, item.category, item.name),
@@ -1053,10 +1205,11 @@ async function getSmartKdsMenuProfiles() {
     await sql`INSERT INTO menu_production_profiles (item_key,menu_type,category,item_name,course_type,station_id,prep_time_estimate,min_prep_time,max_prep_time,plating_time,handoff_buffer,target_adjustment_minutes,batchable,batch_group_id,max_batch_size,optimal_batch_size,batch_window_seconds,parallel_capacity_cost,long_prep_item,requires_previous_course,can_pre_prep,can_hold_after_cooking,max_hold_time,priority_modifier,profile_version) VALUES (${item.itemKey},${item.menuType},${item.category},${item.name},${baseline.course},${baseline.stationId || null},${baseline.prepTimeEstimate},${baseline.minPrepTime},${baseline.maxPrepTime},${baseline.platingTime},${baseline.handoffBuffer},${baseline.targetAdjustmentMinutes},${baseline.batchable},${baseline.batchGroupId || null},${baseline.maxBatchSize},${baseline.optimalBatchSize},${baseline.batchWindowSeconds},${baseline.parallelCapacityCost},${baseline.longPrepItem},${baseline.requiresPreviousCourse},${baseline.canPrePrep},${baseline.canHoldAfterCooking},${baseline.maxHoldTime},${baseline.priorityModifier},${baseline.version}) ON CONFLICT (item_key) DO NOTHING`;
   });
   const activeKeys = new Set(menuItems.map((item) => item.itemKey));
-  if (missingMenuItems.length)
-    rows = await sql`SELECT * FROM menu_production_profiles`;
+  if (missingMenuItems.length) rows = await sql`SELECT * FROM menu_production_profiles`;
   const profilesByKey = new Map(
-    rows.filter((row) => activeKeys.has(row.item_key)).map((row) => [row.item_key, smartKdsProfileRow(row)])
+    rows
+      .filter((row) => activeKeys.has(row.item_key))
+      .map((row) => [row.item_key, smartKdsProfileRow(row)])
   );
   const items = menuItems.map((item) => ({ ...item, profile: profilesByKey.get(item.itemKey) }));
   const coverage = {
@@ -1073,14 +1226,36 @@ async function getSmartKdsMenuProfiles() {
     coverage,
   };
 }
+
+async function getSmartKdsMenuProfiles() {
+  const now = Date.now();
+  if (smartKdsMenuProfilesCache?.value && smartKdsMenuProfilesCache.expiresAt > now)
+    return smartKdsMenuProfilesCache.value;
+  if (smartKdsMenuProfilesCache?.promise) return smartKdsMenuProfilesCache.promise;
+  const promise = buildSmartKdsMenuProfiles();
+  smartKdsMenuProfilesCache = { promise, expiresAt: 0 };
+  try {
+    const value = await promise;
+    smartKdsMenuProfilesCache = { value, expiresAt: Date.now() + smartKdsReadCacheMs };
+    return value;
+  } catch (error) {
+    smartKdsMenuProfilesCache = null;
+    throw error;
+  }
+}
 function withPersistedSmartKdsTiming(timing, persisted, now, config) {
-  if (!persisted?.target_serve_at || !persisted?.latest_acceptable_serve_at || !persisted?.latest_safe_start_at)
+  if (
+    !persisted?.target_serve_at ||
+    !persisted?.latest_acceptable_serve_at ||
+    !persisted?.latest_safe_start_at
+  )
     return timing;
   const targetServeAt = new Date(persisted.target_serve_at).toISOString();
   const latestAcceptableServeAt = new Date(persisted.latest_acceptable_serve_at).toISOString();
   const latestSafeStartAt = new Date(persisted.latest_safe_start_at).toISOString();
   const criticalAt = new Date(
-    new Date(latestAcceptableServeAt).getTime() + Math.max(1, Number(config.riskThresholds?.criticalOverdueMinutes || 10)) * 60_000
+    new Date(latestAcceptableServeAt).getTime() +
+      Math.max(1, Number(config.riskThresholds?.criticalOverdueMinutes || 10)) * 60_000
   ).toISOString();
   return {
     ...timing,
@@ -1126,7 +1301,10 @@ async function getSmartKdsTimingPreview() {
   // An order left open from a previous shift must never be treated as food to
   // fire now. Keep it visible as an operations cleanup item, but leave it out
   // of the live kitchen calculation until staff resolve it in the normal KDS.
-  const activeOrderAgeMinutes = Math.max(60, Math.min(7 * 24 * 60, Number(process.env.SMART_KDS_ACTIVE_ORDER_MAX_AGE_MINUTES || 720)));
+  const activeOrderAgeMinutes = Math.max(
+    60,
+    Math.min(7 * 24 * 60, Number(process.env.SMART_KDS_ACTIVE_ORDER_MAX_AGE_MINUTES || 720))
+  );
   const oldestLiveActivity = now.getTime() - activeOrderAgeMinutes * 60_000;
   const staleOrders = savedOrders
     .filter((order) => {
@@ -1142,7 +1320,12 @@ async function getSmartKdsTimingPreview() {
       customerName: order.customer_name || 'Walk-in customer',
       status: order.status,
       lastActivityAt: order.updated_at || order.created_at,
-      ageMinutes: Math.max(0, Math.floor((now.getTime() - new Date(order.updated_at || order.created_at).getTime()) / 60_000)),
+      ageMinutes: Math.max(
+        0,
+        Math.floor(
+          (now.getTime() - new Date(order.updated_at || order.created_at).getTime()) / 60_000
+        )
+      ),
     }));
   const staleOrderIds = new Set(staleOrders.map((order) => String(order.id)));
   const orders = savedOrders.filter((order) => !staleOrderIds.has(String(order.id)));
@@ -1179,7 +1362,8 @@ async function getSmartKdsTimingPreview() {
           profileData.config
         );
         const categoryAdjustment = Number(
-          profileData.config.timing?.categoryTargetAdjustments?.[`${menuType}::${line.category}`] || 0
+          profileData.config.timing?.categoryTargetAdjustments?.[`${menuType}::${line.category}`] ||
+            0
         );
         const itemAdjustment = Number(profile.targetAdjustmentMinutes || 0);
         return {
@@ -1202,10 +1386,14 @@ async function getSmartKdsTimingPreview() {
         };
       })
       .filter((line) => line.name);
-    const presentCourses = [...new Set(lines.map((line) => {
-      const persisted = persistedTimingByTask.get(`${order.id}:${line.sourceLineId}`);
-      return persisted?.course_type || line.courseOverride || line.profile.course;
-    }))];
+    const presentCourses = [
+      ...new Set(
+        lines.map((line) => {
+          const persisted = persistedTimingByTask.get(`${order.id}:${line.sourceLineId}`);
+          return persisted?.course_type || line.courseOverride || line.profile.course;
+        })
+      ),
+    ];
     const tasks = lines.flatMap((line) => {
       const baseTaskKey = `${order.id}:${line.sourceLineId}`;
       const basePersisted = persistedTimingByTask.get(baseTaskKey);
@@ -1213,13 +1401,21 @@ async function getSmartKdsTimingPreview() {
       const baseProfile = {
         ...line.profile,
         stationId: baseStationId,
-        handoffBuffer: Math.max(0, Number(line.profile.handoffBuffer || 0) + Number(profileData.config.timing?.stationHandoffAdjustments?.[baseStationId] || 0)),
+        handoffBuffer: Math.max(
+          0,
+          Number(line.profile.handoffBuffer || 0) +
+            Number(profileData.config.timing?.stationHandoffAdjustments?.[baseStationId] || 0)
+        ),
       };
       const quantities = splitSmartKdsProductionQuantity(line.quantity, baseProfile);
       return quantities.map((quantity, index) => {
         const taskKey = quantities.length > 1 ? `${baseTaskKey}:part-${index + 1}` : baseTaskKey;
         const persisted = persistedTimingByTask.get(taskKey);
-        const course = persisted?.course_type || basePersisted?.course_type || line.courseOverride || baseProfile.course;
+        const course =
+          persisted?.course_type ||
+          basePersisted?.course_type ||
+          line.courseOverride ||
+          baseProfile.course;
         const stationId = persisted?.station_id || baseStationId;
         const profile = { ...baseProfile, stationId };
         const calculatedTiming = calculateProductionTiming({
@@ -1228,7 +1424,9 @@ async function getSmartKdsTimingPreview() {
           course,
           presentCourses,
           profile,
-          targetAdjustmentMinutes: line.targetAdjustmentMinutes + Number(profileData.config.timing?.stationTargetAdjustments?.[stationId] || 0),
+          targetAdjustmentMinutes:
+            line.targetAdjustmentMinutes +
+            Number(profileData.config.timing?.stationTargetAdjustments?.[stationId] || 0),
           config: profileData.config,
           now,
         });
@@ -1265,34 +1463,54 @@ async function getSmartKdsTimingPreview() {
   });
   await reconcileSmartKdsProductionTasks(projections);
   const allTasks = projections.flatMap((order) => order.tasks);
-  const summary = ['safe', 'watch', 'start-soon', 'start-now', 'at-risk', 'overdue', 'critical'].reduce(
-    (result, state) => ({ ...result, [state]: allTasks.filter((task) => task.state === state).length }),
+  const summary = [
+    'safe',
+    'watch',
+    'start-soon',
+    'start-now',
+    'at-risk',
+    'overdue',
+    'critical',
+  ].reduce(
+    (result, state) => ({
+      ...result,
+      [state]: allTasks.filter((task) => task.state === state).length,
+    }),
     { orders: projections.length, tasks: allTasks.length, staleOrders: staleOrders.length }
   );
-  return { generatedAt: now.toISOString(), config: profileData.config, orders: projections, staleOrders, summary };
+  return {
+    generatedAt: now.toISOString(),
+    config: profileData.config,
+    orders: projections,
+    staleOrders,
+    summary,
+  };
 }
 async function ensureSmartKdsOrderCourses(orders = [], config = defaultSmartKdsConfig()) {
   const courseOrder = Array.isArray(config.courseOrder) ? config.courseOrder : COURSE_TYPES;
   const courseEntries = orders.flatMap((order) => {
-    const uniqueCourses = [...new Set((order.tasks || []).map((task) => String(task.course || 'other')))];
+    const uniqueCourses = [
+      ...new Set((order.tasks || []).map((task) => String(task.course || 'other'))),
+    ];
     return uniqueCourses.map((course) => ({ order, course }));
   });
   await forEachSmartKdsLimited(courseEntries, async ({ order, course }) => {
-      const sequence = Math.max(0, courseOrder.indexOf(course)) + 1;
-      const courseTask = (order.tasks || []).find((task) => task.course === course) || {};
-      await Promise.all([
-        sql`INSERT INTO kitchen_order_courses (course_id,order_id,course_type,course_sequence,course_state,target_serve_at,latest_acceptable_serve_at) VALUES (${`${order.id}:${course}`},${order.id},${course},${sequence},'ordered',${courseTask.targetServeAt || null},${courseTask.latestAcceptableServeAt || null}) ON CONFLICT (course_id) DO UPDATE SET target_serve_at=EXCLUDED.target_serve_at,latest_acceptable_serve_at=EXCLUDED.latest_acceptable_serve_at,updated_at=NOW() WHERE kitchen_order_courses.course_state<>'served' AND (kitchen_order_courses.target_serve_at IS DISTINCT FROM EXCLUDED.target_serve_at OR kitchen_order_courses.latest_acceptable_serve_at IS DISTINCT FROM EXCLUDED.latest_acceptable_serve_at)`,
+    const sequence = Math.max(0, courseOrder.indexOf(course)) + 1;
+    const courseTask = (order.tasks || []).find((task) => task.course === course) || {};
+    await Promise.all([
+      sql`INSERT INTO kitchen_order_courses (course_id,order_id,course_type,course_sequence,course_state,target_serve_at,latest_acceptable_serve_at) VALUES (${`${order.id}:${course}`},${order.id},${course},${sequence},'ordered',${courseTask.targetServeAt || null},${courseTask.latestAcceptableServeAt || null}) ON CONFLICT (course_id) DO UPDATE SET target_serve_at=EXCLUDED.target_serve_at,latest_acceptable_serve_at=EXCLUDED.latest_acceptable_serve_at,updated_at=NOW() WHERE kitchen_order_courses.course_state<>'served' AND (kitchen_order_courses.target_serve_at IS DISTINCT FROM EXCLUDED.target_serve_at OR kitchen_order_courses.latest_acceptable_serve_at IS DISTINCT FROM EXCLUDED.latest_acceptable_serve_at)`,
       // A guest may add another item to a course that was already served.
       // Reopen that course only when a real unserved production task exists;
       // a board refresh can never reopen a finished course by itself.
-        sql`UPDATE kitchen_order_courses c SET course_state='ordered',version=version+1,updated_at=NOW() WHERE c.order_id=${order.id} AND c.course_type=${course} AND c.course_state='served' AND EXISTS (SELECT 1 FROM kitchen_production_tasks t WHERE t.order_id=c.order_id AND t.course_type=c.course_type AND t.task_state NOT IN ('served','cancelled','superseded'))`,
-      ]);
+      sql`UPDATE kitchen_order_courses c SET course_state='ordered',version=version+1,updated_at=NOW() WHERE c.order_id=${order.id} AND c.course_type=${course} AND c.course_state='served' AND EXISTS (SELECT 1 FROM kitchen_production_tasks t WHERE t.order_id=c.order_id AND t.course_type=c.course_type AND t.task_state NOT IN ('served','cancelled','superseded'))`,
+    ]);
   });
 }
 async function smartKdsCourseStatesByOrder(orders = []) {
   const ids = [...new Set(orders.map((order) => String(order.id || '')).filter(Boolean))];
   if (!ids.length) return new Map();
-  const rows = await sql`SELECT order_id,course_type,course_state,served_at FROM kitchen_order_courses WHERE order_id = ANY(${ids}) ORDER BY updated_at DESC`;
+  const rows =
+    await sql`SELECT order_id,course_type,course_state,served_at FROM kitchen_order_courses WHERE order_id = ANY(${ids}) ORDER BY updated_at DESC`;
   const states = new Map();
   rows.forEach((row) => {
     const orderId = String(row.order_id);
@@ -1303,29 +1521,43 @@ async function smartKdsCourseStatesByOrder(orders = []) {
 }
 async function markSmartKdsCoursesServedFromKot(orderId, kotNumber) {
   await Promise.all([ensureSmartKdsTables(), ensureKotsTable()]);
-  const rows = await sql`SELECT tickets FROM order_kots WHERE order_id=${orderId} AND COALESCE(daily_kot_number,kot_number)=${kotNumber} LIMIT 1`;
+  const rows =
+    await sql`SELECT tickets FROM order_kots WHERE order_id=${orderId} AND COALESCE(daily_kot_number,kot_number)=${kotNumber} LIMIT 1`;
   const lines = (Array.isArray(rows[0]?.tickets) ? rows[0].tickets : []).flatMap((ticket) =>
     Array.isArray(ticket.items) ? ticket.items : []
   );
   if (!lines.length) return;
-  const sourceLineIds = new Set(lines.map((line) => String(line.lineId || '').trim()).filter(Boolean));
+  const sourceLineIds = new Set(
+    lines.map((line) => String(line.lineId || '').trim()).filter(Boolean)
+  );
   const persistedTasks = sourceLineIds.size
     ? await sql`SELECT DISTINCT course_type FROM kitchen_production_tasks WHERE order_id=${orderId} AND source_line_id = ANY(${[...sourceLineIds]}) AND course_type IS NOT NULL`
     : [];
   const profileData = await getSmartKdsMenuProfiles();
   const profiles = new Map(
-    profileData.items.map((item) => [`${String(item.category).toLowerCase()}::${String(item.name).toLowerCase()}`, item.profile])
+    profileData.items.map((item) => [
+      `${String(item.category).toLowerCase()}::${String(item.name).toLowerCase()}`,
+      item.profile,
+    ])
   );
-  const courseOrder = Array.isArray(profileData.config.courseOrder) ? profileData.config.courseOrder : COURSE_TYPES;
+  const courseOrder = Array.isArray(profileData.config.courseOrder)
+    ? profileData.config.courseOrder
+    : COURSE_TYPES;
   const fallbackCourses = lines.map((line) => {
     const override = String(line.courseOverride || '').toLowerCase();
     if (COURSE_TYPES.includes(override)) return override;
     const key = `${String(line.category || '').toLowerCase()}::${String(line.name || '').toLowerCase()}`;
-    return profiles.get(key)?.course || defaultMenuProductionProfile({ category: line.category, name: line.name }, profileData.config).course;
+    return (
+      profiles.get(key)?.course ||
+      defaultMenuProductionProfile({ category: line.category, name: line.name }, profileData.config)
+        .course
+    );
   });
   // Prefer the saved production-task course: it includes the course selected
   // when this order was taken and is unaffected by later menu edits.
-  const courses = new Set(persistedTasks.length ? persistedTasks.map((task) => task.course_type) : fallbackCourses);
+  const courses = new Set(
+    persistedTasks.length ? persistedTasks.map((task) => task.course_type) : fallbackCourses
+  );
   for (const course of courses) {
     const sequence = Math.max(0, courseOrder.indexOf(course)) + 1;
     if (sourceLineIds.size) {
@@ -1338,7 +1570,8 @@ async function markSmartKdsCoursesServedFromKot(orderId, kotNumber) {
       // rather than leaving an old served ticket permanently open.
       await sql`UPDATE kitchen_production_tasks SET task_state='served',active_batch_id=NULL,served_at=NOW(),version=version+1,updated_at=NOW() WHERE order_id=${orderId} AND course_type=${course} AND task_state NOT IN ('served','cancelled','superseded')`;
     }
-    const remaining = await sql`SELECT COUNT(*)::integer AS count FROM kitchen_production_tasks WHERE order_id=${orderId} AND course_type=${course} AND task_state NOT IN ('served','cancelled','superseded')`;
+    const remaining =
+      await sql`SELECT COUNT(*)::integer AS count FROM kitchen_production_tasks WHERE order_id=${orderId} AND course_type=${course} AND task_state NOT IN ('served','cancelled','superseded')`;
     if (Number(remaining[0]?.count || 0)) {
       await sql`INSERT INTO kitchen_order_courses (course_id,order_id,course_type,course_sequence,course_state,updated_at) VALUES (${`${orderId}:${course}`},${orderId},${course},${sequence},'ordered',NOW()) ON CONFLICT (course_id) DO UPDATE SET course_state='ordered',version=kitchen_order_courses.version+1,updated_at=NOW()`;
     } else {
@@ -1349,62 +1582,101 @@ async function markSmartKdsCoursesServedFromKot(orderId, kotNumber) {
   }
 }
 async function getSmartKdsPacingPreview(providedTiming = null) {
-  const timing = providedTiming || await getSmartKdsTimingPreview();
+  const timing = providedTiming || (await getSmartKdsTimingPreview());
   await ensureSmartKdsOrderCourses(timing.orders, timing.config);
   const courseStates = await smartKdsCourseStatesByOrder(timing.orders);
   const pacing = buildCoursePacingPreview({
-    orders: timing.orders.map((order) => ({ ...order, courseStates: courseStates.get(String(order.id)) || {} })),
+    orders: timing.orders.map((order) => ({
+      ...order,
+      courseStates: courseStates.get(String(order.id)) || {},
+    })),
     config: timing.config,
     now: timing.generatedAt,
   });
   return { generatedAt: timing.generatedAt, ...pacing };
 }
 async function getSmartKdsSchedulerPreview({ pacing: providedPacing = null } = {}) {
-  const pacing = providedPacing || await getSmartKdsPacingPreview();
+  const pacing = providedPacing || (await getSmartKdsPacingPreview());
   const taskKeys = pacing.orders.flatMap((order) => order.tasks.map((task) => task.taskKey));
-  const [stateRows, overrides] = await Promise.all([smartKdsTaskStates(taskKeys), getSmartKdsActiveOverrides(taskKeys)]);
+  const [stateRows, overrides] = await Promise.all([
+    smartKdsTaskStates(taskKeys),
+    getSmartKdsActiveOverrides(taskKeys),
+  ]);
   const taskStates = new Map(stateRows.map((task) => [task.task_id, task.task_state]));
-  const allTasks = pacing.orders.flatMap((order) =>
-    order.tasks.map((task) => {
-      const override = overrides.get(task.taskKey);
-      const details = override?.details && typeof override.details === 'object' ? override.details : {};
-      const course = override?.override_action === 'change-course' && COURSE_TYPES.includes(String(details.course || '').toLowerCase())
-        ? String(details.course).toLowerCase() : task.course;
-      const stationId = override?.override_action === 'move-station' && String(details.stationId || '').trim()
-        ? String(details.stationId).trim() : task.stationId;
-      const rushed = ['rush', 'fire-now'].includes(override?.override_action);
-      return {
-      ...task,
-      course,
-      stationId,
-      profile: { ...task.profile, stationId },
-      state: rushed ? 'start-now' : task.state,
-      targetServeAt: task.pacingTargetServeAt || task.targetServeAt,
-      latestAcceptableServeAt: task.pacingLatestAcceptableServeAt || task.latestAcceptableServeAt,
-      latestSafeStartAt: rushed ? pacing.generatedAt : task.pacingLatestSafeStartAt || task.latestSafeStartAt,
-      orderId: order.id,
-      orderNumber: order.orderNumber,
-      orderedAt: task.orderedAt || order.orderedAt,
-      mode: order.mode,
-      fulfillmentType: order.fulfillmentType,
-      tableArea: order.tableArea,
-      tableNumber: order.tableNumber,
-      customerName: order.customerName,
-      pacingState: task.pacingState,
-      pacingReason: task.pacingReason,
-      taskState: taskStates.get(task.taskKey) || 'ordered',
-      manualOverride: override ? { action: override.override_action, reason: override.reason || '' } : null,
-    }; })
-  ).filter((task) => !['served', 'cancelled', 'superseded'].includes(task.taskState));
+  const allTasks = pacing.orders
+    .flatMap((order) =>
+      order.tasks.map((task) => {
+        const override = overrides.get(task.taskKey);
+        const details =
+          override?.details && typeof override.details === 'object' ? override.details : {};
+        const course =
+          override?.override_action === 'change-course' &&
+          COURSE_TYPES.includes(String(details.course || '').toLowerCase())
+            ? String(details.course).toLowerCase()
+            : task.course;
+        const stationId =
+          override?.override_action === 'move-station' && String(details.stationId || '').trim()
+            ? String(details.stationId).trim()
+            : task.stationId;
+        const rushed = ['rush', 'fire-now'].includes(override?.override_action);
+        return {
+          ...task,
+          course,
+          stationId,
+          profile: { ...task.profile, stationId },
+          state: rushed ? 'start-now' : task.state,
+          targetServeAt: task.pacingTargetServeAt || task.targetServeAt,
+          latestAcceptableServeAt:
+            task.pacingLatestAcceptableServeAt || task.latestAcceptableServeAt,
+          latestSafeStartAt: rushed
+            ? pacing.generatedAt
+            : task.pacingLatestSafeStartAt || task.latestSafeStartAt,
+          orderId: order.id,
+          orderNumber: order.orderNumber,
+          orderedAt: task.orderedAt || order.orderedAt,
+          mode: order.mode,
+          fulfillmentType: order.fulfillmentType,
+          tableArea: order.tableArea,
+          tableNumber: order.tableNumber,
+          customerName: order.customerName,
+          pacingState: task.pacingState,
+          pacingReason: task.pacingReason,
+          taskState: taskStates.get(task.taskKey) || 'ordered',
+          manualOverride: override
+            ? { action: override.override_action, reason: override.reason || '' }
+            : null,
+        };
+      })
+    )
+    .filter((task) => !['served', 'cancelled', 'superseded'].includes(task.taskState));
   // getSmartKdsTimingPreview has already materialized these tasks before
   // pacing is calculated. Keeping this calculation read-only avoids a second
   // full set of database writes on every board refresh.
-  const scheduledTasks = allTasks.filter((task) => ['ordered', 'eligible', 'scheduled'].includes(task.taskState) && !['hold-for-course', 'manual-hold', 'served'].includes(task.pacingState));
-  const heldTasks = allTasks.filter((task) => ['hold-for-course', 'manual-hold'].includes(task.pacingState) || task.taskState === 'held');
-  const workflowTasks = allTasks.filter((task) => ['fired', 'preparing', 'ready', 'expo'].includes(task.taskState));
-  const scheduledRecommendations = scheduleKitchen({ now: pacing.generatedAt, tasks: scheduledTasks }).map((task) => ({
+  const scheduledTasks = allTasks.filter(
+    (task) =>
+      ['ordered', 'eligible', 'scheduled'].includes(task.taskState) &&
+      !['hold-for-course', 'manual-hold', 'served'].includes(task.pacingState)
+  );
+  const heldTasks = allTasks.filter(
+    (task) =>
+      ['hold-for-course', 'manual-hold'].includes(task.pacingState) || task.taskState === 'held'
+  );
+  const workflowTasks = allTasks.filter((task) =>
+    ['fired', 'preparing', 'ready', 'expo'].includes(task.taskState)
+  );
+  const scheduledRecommendations = scheduleKitchen({
+    now: pacing.generatedAt,
+    tasks: scheduledTasks,
+  }).map((task) => ({
     ...task,
-    action: task.taskState === 'held' ? 'manual-hold' : task.taskState === 'preparing' ? 'in-progress' : task.taskState === 'ready' ? 'ready-for-expo' : task.action,
+    action:
+      task.taskState === 'held'
+        ? 'manual-hold'
+        : task.taskState === 'preparing'
+          ? 'in-progress'
+          : task.taskState === 'ready'
+            ? 'ready-for-expo'
+            : task.action,
     reasons: task.pacingState === 'pre-prep' ? [...task.reasons, task.pacingReason] : task.reasons,
   }));
   const recommendations = [
@@ -1412,18 +1684,37 @@ async function getSmartKdsSchedulerPreview({ pacing: providedPacing = null } = {
     ...heldTasks.map((task, index) => ({
       ...task,
       rank: scheduledRecommendations.length + index + 1,
-      action: task.taskState === 'held' || task.pacingState === 'manual-hold' ? 'manual-hold' : 'hold-for-course',
+      action:
+        task.taskState === 'held' || task.pacingState === 'manual-hold'
+          ? 'manual-hold'
+          : 'hold-for-course',
       priorityReason: task.pacingReason,
       reasons: [task.pacingReason],
     })),
     ...workflowTasks.map((task, index) => {
-      const action = task.taskState === 'fired' ? 'fired'
-        : task.taskState === 'preparing' ? 'in-progress'
-          : task.taskState === 'ready' ? 'ready-for-expo' : 'at-expo';
-      const reason = task.taskState === 'fired' ? 'Food has been fired and is awaiting preparation'
-        : task.taskState === 'preparing' ? 'Preparation is in progress'
-          : task.taskState === 'ready' ? 'Food is ready for expo' : 'Food is waiting at expo for service';
-      return { ...task, rank: scheduledRecommendations.length + heldTasks.length + index + 1, action, priorityReason: reason, reasons: [reason] };
+      const action =
+        task.taskState === 'fired'
+          ? 'fired'
+          : task.taskState === 'preparing'
+            ? 'in-progress'
+            : task.taskState === 'ready'
+              ? 'ready-for-expo'
+              : 'at-expo';
+      const reason =
+        task.taskState === 'fired'
+          ? 'Food has been fired and is awaiting preparation'
+          : task.taskState === 'preparing'
+            ? 'Preparation is in progress'
+            : task.taskState === 'ready'
+              ? 'Food is ready for expo'
+              : 'Food is waiting at expo for service';
+      return {
+        ...task,
+        rank: scheduledRecommendations.length + heldTasks.length + index + 1,
+        action,
+        priorityReason: reason,
+        reasons: [reason],
+      };
     }),
   ];
   const summary = recommendations.reduce(
@@ -1432,7 +1723,10 @@ async function getSmartKdsSchedulerPreview({ pacing: providedPacing = null } = {
   );
   return { generatedAt: pacing.generatedAt, recommendations, summary };
 }
-async function getSmartKdsFairnessPreview({ scheduler: providedScheduler = null, foundation: providedFoundation = null } = {}) {
+async function getSmartKdsFairnessPreview({
+  scheduler: providedScheduler = null,
+  foundation: providedFoundation = null,
+} = {}) {
   const [scheduler, foundation] = await Promise.all([
     providedScheduler ? Promise.resolve(providedScheduler) : getSmartKdsSchedulerPreview(),
     providedFoundation ? Promise.resolve(providedFoundation) : getSmartKdsFoundation(),
@@ -1461,38 +1755,82 @@ async function getSmartKdsUnifiedPreview() {
   // hard station limits and course/manual holds.
   const riskAwareFairness = {
     ...fairness,
-    recommendations: applyServiceRiskPriority({ recommendations: fairness.recommendations, risks: serviceRisk.risks }),
+    recommendations: applyServiceRiskPriority({
+      recommendations: fairness.recommendations,
+      risks: serviceRisk.risks,
+    }),
   };
   const capacity = await getSmartKdsCapacityPreview({
-    scheduler: { generatedAt: fairness.generatedAt, recommendations: riskAwareFairness.recommendations },
+    scheduler: {
+      generatedAt: fairness.generatedAt,
+      recommendations: riskAwareFairness.recommendations,
+    },
     foundation,
   });
   await persistSmartKdsBatches(capacity.batches || []);
   const batchByTask = new Map();
-  (capacity.batches || []).forEach((batch) => (batch.allocations || []).forEach((allocation) => batchByTask.set(allocation.taskKey, batch)));
-  const unified = buildUnifiedRecommendations({ fairness: riskAwareFairness, capacity, serviceRisk });
+  (capacity.batches || []).forEach((batch) =>
+    (batch.allocations || []).forEach((allocation) => batchByTask.set(allocation.taskKey, batch))
+  );
+  const unified = buildUnifiedRecommendations({
+    fairness: riskAwareFairness,
+    capacity,
+    serviceRisk,
+  });
   const recommendations = unified.recommendations.map((task) => {
     const batch = batchByTask.get(task.taskKey);
-    const enriched = { ...task, batchId: batch?.batchId || null, batchAction: batch?.action || null };
+    const enriched = {
+      ...task,
+      batchId: batch?.batchId || null,
+      batchAction: batch?.action || null,
+    };
     return { ...enriched, reasonCodes: reasonCodesForRecommendation(enriched) };
   });
   await persistSmartKdsSchedulerDecisions(recommendations);
-  return { generatedAt: fairness.generatedAt, batches: capacity.batches || [], staleOrders: timing.staleOrders || [], ...unified, recommendations };
+  return {
+    generatedAt: fairness.generatedAt,
+    batches: capacity.batches || [],
+    staleOrders: timing.staleOrders || [],
+    ...unified,
+    recommendations,
+  };
 }
 async function persistSmartKdsSchedulerDecisions(recommendations = []) {
   await ensureSmartKdsTables();
   await forEachSmartKdsLimited(recommendations, async (task) => {
     if (!task?.taskKey || !task?.orderId) return;
     const snapshot = {
-      action: task.action, baseAction: task.baseAction, rank: task.finalRank, capacityState: task.capacityState,
-      serviceRisk: task.serviceRisk, serviceRiskSeverity: task.serviceRiskSeverity, taskState: task.taskState,
-      reasonCodes: task.reasonCodes || [], orderedAt: task.orderedAt || null, targetServeAt: task.targetServeAt || null,
-      latestAcceptableServeAt: task.latestAcceptableServeAt || null, latestSafeStartAt: task.latestSafeStartAt || null,
-      plannedStartAt: task.plannedStartAt || null, pacingState: task.pacingState || null,
-      stationId: task.stationId || null, course: task.course || null, quantity: Number(task.quantity || 0),
+      action: task.action,
+      baseAction: task.baseAction,
+      rank: task.finalRank,
+      capacityState: task.capacityState,
+      serviceRisk: task.serviceRisk,
+      serviceRiskSeverity: task.serviceRiskSeverity,
+      taskState: task.taskState,
+      reasonCodes: task.reasonCodes || [],
+      orderedAt: task.orderedAt || null,
+      targetServeAt: task.targetServeAt || null,
+      latestAcceptableServeAt: task.latestAcceptableServeAt || null,
+      latestSafeStartAt: task.latestSafeStartAt || null,
+      plannedStartAt: task.plannedStartAt || null,
+      pacingState: task.pacingState || null,
+      stationId: task.stationId || null,
+      course: task.course || null,
+      quantity: Number(task.quantity || 0),
       profileVersion: Number(task.profile?.version || 0) || null,
     };
-    const fingerprint = crypto.createHash('sha256').update(JSON.stringify({ taskKey: task.taskKey, snapshot, target: task.targetServeAt, latest: task.latestSafeStartAt })).digest('hex').slice(0, 48);
+    const fingerprint = crypto
+      .createHash('sha256')
+      .update(
+        JSON.stringify({
+          taskKey: task.taskKey,
+          snapshot,
+          target: task.targetServeAt,
+          latest: task.latestSafeStartAt,
+        })
+      )
+      .digest('hex')
+      .slice(0, 48);
     await sql`INSERT INTO kitchen_scheduler_decisions (decision_id,task_id,order_id,action,priority_rank,reason_codes,input_snapshot,target_serve_at,latest_safe_start_at) VALUES (${`decision-${fingerprint}`},${task.taskKey},${task.orderId},${task.action || 'monitor'},${Number(task.finalRank || 0) || null},${JSON.stringify(task.reasonCodes || [])},${JSON.stringify(snapshot)},${task.targetServeAt || null},${task.latestSafeStartAt || null}) ON CONFLICT (decision_id) DO NOTHING`;
   });
 }
@@ -1500,39 +1838,66 @@ async function getSmartKdsMetrics(days = 30) {
   await Promise.all([ensureSmartKdsTables(), ensureDirectOrdersTable(), ensureOrderEventsTable()]);
   const safeDays = Math.max(1, Math.min(365, Number.parseInt(days, 10) || 30));
   const rangeStart = new Date(Date.now() - safeDays * 24 * 60 * 60 * 1000);
-  const [orders, courses, tasks, batches, events, decisions, orderEvents, serviceEvents, stations] = await Promise.all([
-    sql`SELECT id,mode,created_at FROM direct_orders WHERE created_at>=${rangeStart} ORDER BY created_at DESC`,
-    sql`SELECT c.order_id,c.course_type,c.course_state,c.target_serve_at,c.latest_acceptable_serve_at,c.served_at FROM kitchen_order_courses c JOIN direct_orders o ON o.id=c.order_id WHERE o.created_at>=${rangeStart} ORDER BY c.updated_at DESC`,
-    sql`SELECT t.task_id,t.order_id,t.station_id,t.profile_snapshot,t.created_at,t.preparing_at,t.ready_at,t.served_at,t.cancelled_at FROM kitchen_production_tasks t JOIN direct_orders o ON o.id=t.order_id WHERE o.created_at>=${rangeStart} ORDER BY t.updated_at DESC`,
-    sql`SELECT b.batch_id,b.station_id,b.config_snapshot,b.fired_at FROM kitchen_batches b WHERE b.created_at>=${rangeStart} ORDER BY b.created_at DESC`,
-    sql`SELECT e.task_id,e.order_id,e.event_type,e.details,e.actor_id,e.created_at FROM kitchen_task_events e WHERE e.created_at>=${rangeStart} ORDER BY e.created_at DESC`,
-    sql`SELECT d.task_id,d.order_id,d.action,d.priority_rank,d.reason_codes,d.input_snapshot,d.calculated_at FROM kitchen_scheduler_decisions d WHERE d.calculated_at>=${rangeStart} ORDER BY d.calculated_at DESC`,
-    sql`SELECT e.order_id,e.event_type,e.details,e.created_at FROM order_events e JOIN direct_orders o ON o.id=e.order_id WHERE o.created_at>=${rangeStart} ORDER BY e.created_at DESC`,
-    sql`SELECT e.order_id,e.course_type,e.served_at,e.actor_type,e.actor_id FROM kitchen_service_events e JOIN direct_orders o ON o.id=e.order_id WHERE o.created_at>=${rangeStart} ORDER BY e.served_at DESC`,
-    sql`SELECT station_id,station_name,max_concurrent_tasks FROM kitchen_stations ORDER BY station_name`,
-  ]);
-  return { rangeDays: safeDays, rangeStart: rangeStart.toISOString(), ...buildKitchenMetrics({ orders, courses, tasks, batches, events, decisions, orderEvents, serviceEvents, stations, rangeStart }) };
+  const [orders, courses, tasks, batches, events, decisions, orderEvents, serviceEvents, stations] =
+    await Promise.all([
+      sql`SELECT id,mode,created_at FROM direct_orders WHERE created_at>=${rangeStart} ORDER BY created_at DESC`,
+      sql`SELECT c.order_id,c.course_type,c.course_state,c.target_serve_at,c.latest_acceptable_serve_at,c.served_at FROM kitchen_order_courses c JOIN direct_orders o ON o.id=c.order_id WHERE o.created_at>=${rangeStart} ORDER BY c.updated_at DESC`,
+      sql`SELECT t.task_id,t.order_id,t.station_id,t.profile_snapshot,t.created_at,t.preparing_at,t.ready_at,t.served_at,t.cancelled_at FROM kitchen_production_tasks t JOIN direct_orders o ON o.id=t.order_id WHERE o.created_at>=${rangeStart} ORDER BY t.updated_at DESC`,
+      sql`SELECT b.batch_id,b.station_id,b.config_snapshot,b.fired_at FROM kitchen_batches b WHERE b.created_at>=${rangeStart} ORDER BY b.created_at DESC`,
+      sql`SELECT e.task_id,e.order_id,e.event_type,e.details,e.actor_id,e.created_at FROM kitchen_task_events e WHERE e.created_at>=${rangeStart} ORDER BY e.created_at DESC`,
+      sql`SELECT d.task_id,d.order_id,d.action,d.priority_rank,d.reason_codes,d.input_snapshot,d.calculated_at FROM kitchen_scheduler_decisions d WHERE d.calculated_at>=${rangeStart} ORDER BY d.calculated_at DESC`,
+      sql`SELECT e.order_id,e.event_type,e.details,e.created_at FROM order_events e JOIN direct_orders o ON o.id=e.order_id WHERE o.created_at>=${rangeStart} ORDER BY e.created_at DESC`,
+      sql`SELECT e.order_id,e.course_type,e.served_at,e.actor_type,e.actor_id FROM kitchen_service_events e JOIN direct_orders o ON o.id=e.order_id WHERE o.created_at>=${rangeStart} ORDER BY e.served_at DESC`,
+      sql`SELECT station_id,station_name,max_concurrent_tasks FROM kitchen_stations ORDER BY station_name`,
+    ]);
+  return {
+    rangeDays: safeDays,
+    rangeStart: rangeStart.toISOString(),
+    ...buildKitchenMetrics({
+      orders,
+      courses,
+      tasks,
+      batches,
+      events,
+      decisions,
+      orderEvents,
+      serviceEvents,
+      stations,
+      rangeStart,
+    }),
+  };
 }
 async function ensureSmartKdsProductionTasks(recommendations = []) {
   await forEachSmartKdsLimited(recommendations, async (task) => {
     if (!task?.taskKey || !task?.orderId) return;
-    const canBecomeEligible = task.pacingState && !['hold-for-course', 'manual-hold', 'served'].includes(String(task.pacingState));
+    const canBecomeEligible =
+      task.pacingState &&
+      !['hold-for-course', 'manual-hold', 'served'].includes(String(task.pacingState));
     await sql`INSERT INTO kitchen_production_tasks (task_id,order_id,source_line_id,course_type,station_id,requested_quantity,profile_snapshot,sent_to_kitchen_at,target_serve_at,latest_acceptable_serve_at,latest_safe_start_at,eligible_at,task_state) VALUES (${task.taskKey},${task.orderId},${task.sourceLineId || task.taskKey},${task.course || null},${task.stationId || null},${Math.max(1, Number(task.quantity || 1))},${JSON.stringify(task.profile || {})},NOW(),${task.targetServeAt || null},${task.latestAcceptableServeAt || null},${task.latestSafeStartAt || null},${canBecomeEligible ? new Date() : null},'ordered') ON CONFLICT (task_id) DO UPDATE SET source_line_id=EXCLUDED.source_line_id,course_type=EXCLUDED.course_type,station_id=EXCLUDED.station_id,requested_quantity=EXCLUDED.requested_quantity,profile_snapshot=EXCLUDED.profile_snapshot,target_serve_at=EXCLUDED.target_serve_at,latest_acceptable_serve_at=EXCLUDED.latest_acceptable_serve_at,latest_safe_start_at=EXCLUDED.latest_safe_start_at,eligible_at=COALESCE(kitchen_production_tasks.eligible_at,EXCLUDED.eligible_at),version=kitchen_production_tasks.version+1,updated_at=NOW() WHERE kitchen_production_tasks.source_line_id IS DISTINCT FROM EXCLUDED.source_line_id OR kitchen_production_tasks.course_type IS DISTINCT FROM EXCLUDED.course_type OR kitchen_production_tasks.station_id IS DISTINCT FROM EXCLUDED.station_id OR kitchen_production_tasks.requested_quantity IS DISTINCT FROM EXCLUDED.requested_quantity OR kitchen_production_tasks.profile_snapshot IS DISTINCT FROM EXCLUDED.profile_snapshot OR kitchen_production_tasks.target_serve_at IS DISTINCT FROM EXCLUDED.target_serve_at OR kitchen_production_tasks.latest_acceptable_serve_at IS DISTINCT FROM EXCLUDED.latest_acceptable_serve_at OR kitchen_production_tasks.latest_safe_start_at IS DISTINCT FROM EXCLUDED.latest_safe_start_at OR (kitchen_production_tasks.eligible_at IS NULL AND EXCLUDED.eligible_at IS NOT NULL)`;
   });
 }
 async function reconcileSmartKdsProductionTasks(orders = []) {
   await ensureSmartKdsTables();
   await ensureSmartKdsProductionTasks(
-    orders.flatMap((order) => (Array.isArray(order.tasks) ? order.tasks : []).map((task) => ({ ...task, orderId: order.id })))
+    orders.flatMap((order) =>
+      (Array.isArray(order.tasks) ? order.tasks : []).map((task) => ({
+        ...task,
+        orderId: order.id,
+      }))
+    )
   );
   await forEachSmartKdsLimited(orders, async (order) => {
     const tasks = Array.isArray(order.tasks) ? order.tasks : [];
     const active = new Set(tasks.map((task) => task.taskKey));
-    const existing = await sql`SELECT task_id,task_state FROM kitchen_production_tasks WHERE order_id=${order.id} AND task_state NOT IN ('served','cancelled','superseded')`;
-    await forEachSmartKdsLimited(existing.filter((task) => !active.has(task.task_id)), async (task) => {
-      await sql`UPDATE kitchen_production_tasks SET task_state='cancelled',active_batch_id=NULL,cancelled_at=NOW(),version=version+1,updated_at=NOW() WHERE task_id=${task.task_id} AND task_state NOT IN ('served','cancelled','superseded')`;
-      await sql`INSERT INTO kitchen_task_events (task_id,order_id,event_type,details,actor_type,actor_id) VALUES (${task.task_id},${order.id},'source-line-removed','{}','system','smart-kds')`;
-    });
+    const existing =
+      await sql`SELECT task_id,task_state FROM kitchen_production_tasks WHERE order_id=${order.id} AND task_state NOT IN ('served','cancelled','superseded')`;
+    await forEachSmartKdsLimited(
+      existing.filter((task) => !active.has(task.task_id)),
+      async (task) => {
+        await sql`UPDATE kitchen_production_tasks SET task_state='cancelled',active_batch_id=NULL,cancelled_at=NOW(),version=version+1,updated_at=NOW() WHERE task_id=${task.task_id} AND task_state NOT IN ('served','cancelled','superseded')`;
+        await sql`INSERT INTO kitchen_task_events (task_id,order_id,event_type,details,actor_type,actor_id) VALUES (${task.task_id},${order.id},'source-line-removed','{}','system','smart-kds')`;
+      }
+    );
   });
 }
 async function materializeSmartKdsOrderTiming(orderId) {
@@ -1543,7 +1908,8 @@ async function materializeSmartKdsOrderTiming(orderId) {
 }
 async function cancelSmartKdsOrderTasks(orderId, reason = 'order-no-longer-active') {
   await ensureSmartKdsTables();
-  const rows = await sql`UPDATE kitchen_production_tasks SET task_state='cancelled',active_batch_id=NULL,cancelled_at=NOW(),version=version+1,updated_at=NOW() WHERE order_id=${orderId} AND task_state NOT IN ('served','cancelled','superseded') RETURNING task_id`;
+  const rows =
+    await sql`UPDATE kitchen_production_tasks SET task_state='cancelled',active_batch_id=NULL,cancelled_at=NOW(),version=version+1,updated_at=NOW() WHERE order_id=${orderId} AND task_state NOT IN ('served','cancelled','superseded') RETURNING task_id`;
   for (const task of rows)
     await sql`INSERT INTO kitchen_task_events (task_id,order_id,event_type,details,actor_type,actor_id) VALUES (${task.task_id},${orderId},'${reason}',${JSON.stringify({ reason })},'system','smart-kds')`;
 }
@@ -1553,11 +1919,17 @@ async function smartKdsTaskStates(taskKeys = []) {
   return sql`SELECT task_id,task_state,preparing_at,ready_at,expo_at FROM kitchen_production_tasks WHERE task_id = ANY(${keys})`;
 }
 async function getSmartKdsServiceRiskPreview({ timing: providedTiming = null } = {}) {
-  const timing = providedTiming || await getSmartKdsTimingPreview();
+  const timing = providedTiming || (await getSmartKdsTimingPreview());
   if (!providedTiming) await ensureSmartKdsOrderCourses(timing.orders, timing.config);
-  const orderIds = [...new Set(timing.orders.map((order) => String(order.id || '')).filter(Boolean))];
+  const orderIds = [
+    ...new Set(timing.orders.map((order) => String(order.id || '')).filter(Boolean)),
+  ];
   const ids = new Set(orderIds);
-  if (!orderIds.length) return { generatedAt: timing.generatedAt, ...evaluateServiceRisk({ orders: [], config: timing.config, now: timing.generatedAt }) };
+  if (!orderIds.length)
+    return {
+      generatedAt: timing.generatedAt,
+      ...evaluateServiceRisk({ orders: [], config: timing.config, now: timing.generatedAt }),
+    };
   const [courseRows, serviceRows] = await Promise.all([
     sql`SELECT order_id,course_type,course_state,served_at FROM kitchen_order_courses WHERE order_id = ANY(${orderIds}) ORDER BY updated_at DESC`,
     sql`SELECT order_id,course_type,served_at FROM kitchen_service_events WHERE order_id = ANY(${orderIds}) ORDER BY served_at DESC`,
@@ -1568,7 +1940,9 @@ async function getSmartKdsServiceRiskPreview({ timing: providedTiming = null } =
     if (!ids.has(String(row.order_id))) return;
     const orderId = String(row.order_id);
     if (!courseEvents.has(orderId)) courseEvents.set(orderId, []);
-    courseEvents.get(orderId).push({ course: row.course_type, state: row.course_state, servedAt: row.served_at });
+    courseEvents
+      .get(orderId)
+      .push({ course: row.course_type, state: row.course_state, servedAt: row.served_at });
   };
   courseRows.forEach((row) => {
     if (!ids.has(String(row.order_id))) return;
@@ -1593,12 +1967,19 @@ async function getSmartKdsServiceRiskPreview({ timing: providedTiming = null } =
 function buildSmartKdsBatchPreview(scheduler) {
   // Server-side tasks are pre-split to each profile's maximum batch size. Keep
   // those task records atomic so a saved allocation can always be started.
-  const batches = buildBatches({ now: scheduler.generatedAt, recommendations: scheduler.recommendations, atomicTasks: true });
+  const batches = buildBatches({
+    now: scheduler.generatedAt,
+    recommendations: scheduler.recommendations,
+    atomicTasks: true,
+  });
   const summary = batches.reduce(
     (result, batch) => ({ ...result, [batch.action]: Number(result[batch.action] || 0) + 1 }),
     { batches: batches.length, 'fire-batch': 0, 'wait-for-batch': 0, allocatedItems: 0 }
   );
-  summary.allocatedItems = batches.reduce((sum, batch) => sum + Number(batch.totalQuantity || 0), 0);
+  summary.allocatedItems = batches.reduce(
+    (sum, batch) => sum + Number(batch.totalQuantity || 0),
+    0
+  );
   return { generatedAt: scheduler.generatedAt, batches, summary };
 }
 async function persistSmartKdsBatches(batches = []) {
@@ -1607,7 +1988,17 @@ async function persistSmartKdsBatches(batches = []) {
   for (const batch of batches) {
     const allocations = Array.isArray(batch.allocations) ? batch.allocations : [];
     if (!allocations.length) continue;
-    const fingerprint = crypto.createHash('sha256').update(JSON.stringify({ stationId: batch.stationId, group: batch.batchGroupId, allocations: allocations.map((item) => [item.taskKey, item.quantity]) })).digest('hex').slice(0, 40);
+    const fingerprint = crypto
+      .createHash('sha256')
+      .update(
+        JSON.stringify({
+          stationId: batch.stationId,
+          group: batch.batchGroupId,
+          allocations: allocations.map((item) => [item.taskKey, item.quantity]),
+        })
+      )
+      .digest('hex')
+      .slice(0, 40);
     const batchId = `batch-${fingerprint}`;
     batch.batchId = batchId;
     activeBatchIds.add(batchId);
@@ -1615,7 +2006,8 @@ async function persistSmartKdsBatches(batches = []) {
     for (const allocation of allocations)
       await sql`INSERT INTO kitchen_batch_allocations (batch_id,task_id,allocated_quantity) VALUES (${batchId},${allocation.taskKey},${Math.max(1, Number(allocation.quantity || 1))}) ON CONFLICT (batch_id,task_id) DO UPDATE SET allocated_quantity=EXCLUDED.allocated_quantity`;
   }
-  const openBatches = await sql`SELECT batch_id FROM kitchen_batches WHERE batch_state IN ('planned','ready-to-fire')`;
+  const openBatches =
+    await sql`SELECT batch_id FROM kitchen_batches WHERE batch_state IN ('planned','ready-to-fire')`;
   for (const saved of openBatches) {
     if (activeBatchIds.has(saved.batch_id)) continue;
     await sql`UPDATE kitchen_batches SET batch_state='superseded',version=version+1,updated_at=NOW() WHERE batch_id=${saved.batch_id} AND batch_state IN ('planned','ready-to-fire')`;
@@ -1626,7 +2018,10 @@ async function getSmartKdsBatchPreview() {
   await persistSmartKdsBatches(preview.batches);
   return preview;
 }
-async function getSmartKdsCapacityPreview({ scheduler: providedScheduler = null, foundation: providedFoundation = null } = {}) {
+async function getSmartKdsCapacityPreview({
+  scheduler: providedScheduler = null,
+  foundation: providedFoundation = null,
+} = {}) {
   const [scheduler, foundation] = await Promise.all([
     providedScheduler ? Promise.resolve(providedScheduler) : getSmartKdsSchedulerPreview(),
     providedFoundation ? Promise.resolve(providedFoundation) : getSmartKdsFoundation(),
@@ -1640,7 +2035,15 @@ async function getSmartKdsCapacityPreview({ scheduler: providedScheduler = null,
   ]);
   const stateByStation = new Map(stationState.map((state) => [state.station_id, state]));
   const occupiedByStation = new Map();
-  [...preparing.map((row) => [row.printer_id, row.occupied_capacity]), ...smartPreparing.map((row) => [row.station_id, row.occupied_capacity])].forEach(([stationId, count]) => occupiedByStation.set(stationId, Number(occupiedByStation.get(stationId) || 0) + Number(count || 0)));
+  [
+    ...preparing.map((row) => [row.printer_id, row.occupied_capacity]),
+    ...smartPreparing.map((row) => [row.station_id, row.occupied_capacity]),
+  ].forEach(([stationId, count]) =>
+    occupiedByStation.set(
+      stationId,
+      Number(occupiedByStation.get(stationId) || 0) + Number(count || 0)
+    )
+  );
   const stations = foundation.stations.map((station) => ({
     ...station,
     enabled: stateByStation.get(station.station_id)?.enabled ?? station.enabled,
@@ -1663,7 +2066,8 @@ async function getSmartKdsCapacityPreview({ scheduler: providedScheduler = null,
     generatedAt: scheduler.generatedAt,
     batches: batches.batches.map((batch) => ({
       ...batch,
-      stationCapacityVersion: capacityWorkByBatch.get(batch.batchKey)?.stationCapacityVersion ?? null,
+      stationCapacityVersion:
+        capacityWorkByBatch.get(batch.batchKey)?.stationCapacityVersion ?? null,
     })),
     ...capacity,
     summary: {
@@ -1679,13 +2083,44 @@ async function getSmartKdsCapacityPreview({ scheduler: providedScheduler = null,
 async function ensureMenuAvailabilityTable() {
   if (!sql) throw new Error('Orders database is not configured.');
   if (!menuAvailabilityTableReady)
-    menuAvailabilityTableReady = sql`CREATE TABLE IF NOT EXISTS menu_availability (item_key TEXT PRIMARY KEY, unavailable_until TIMESTAMPTZ NOT NULL)`;
+    menuAvailabilityTableReady = (async () => {
+      if (
+        await schemaProbe(
+          () => sql`SELECT item_key,unavailable_until FROM menu_availability LIMIT 0`
+        )
+      )
+        return;
+      await sql`CREATE TABLE IF NOT EXISTS menu_availability (item_key TEXT PRIMARY KEY, unavailable_until TIMESTAMPTZ NOT NULL)`;
+    })();
   return menuAvailabilityTableReady;
 }
 async function ensureDirectOrdersTable() {
   if (!sql) throw new Error('Orders database is not configured.');
   if (!directOrdersTableReady)
     directOrdersTableReady = (async () => {
+      if (
+        await schemaProbe(
+          () => sql`
+            SELECT orders.order_day,orders.daily_order_number,orders.bill_year,
+              orders.bill_number,orders.tracking_token,orders.cancellation_reason,
+              orders.cancelled_at,orders.loyalty_points_redeemed,
+              orders.loyalty_points_earned,orders.loyalty_awarded_at,
+              orders.fulfillment_type,orders.course_mode,orders.client_request_id,
+              orders.table_area,orders.table_number,orders.bill_printed_at,
+              orders.settled_at,orders.settlement_type,orders.settlement_amount,
+              orders.payment_received,orders.change_due,orders.tip_amount,
+              orders.settlement_request_id,orders.service_state,
+              orders.service_requested_at,order_counters.next_number,
+              bill_counters.next_number,captain_requests.request_id
+            FROM direct_orders orders
+            CROSS JOIN direct_order_counters order_counters
+            CROSS JOIN direct_order_bill_counters bill_counters
+            CROSS JOIN captain_order_requests captain_requests
+            LIMIT 0
+          `
+        )
+      )
+        return;
       await sql`CREATE TABLE IF NOT EXISTS direct_orders (id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'new', mode TEXT NOT NULL, customer_name TEXT, customer_phone TEXT NOT NULL, special_request TEXT, items JSONB NOT NULL, total NUMERIC NOT NULL DEFAULT 0, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;
       await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS order_day DATE`;
       await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS daily_order_number INTEGER`;
@@ -1734,6 +2169,13 @@ async function ensureKotsTable() {
   if (!sql) throw new Error('Orders database is not configured.');
   if (!kotsTableReady)
     kotsTableReady = (async () => {
+      if (
+        await schemaProbe(
+          () =>
+            sql`SELECT kots.kot_number,kots.order_id,kots.order_number,kots.tickets,kots.item_fingerprint,kots.kot_day,kots.daily_kot_number,kots.created_at,counters.next_number FROM order_kots kots CROSS JOIN order_kot_counters counters LIMIT 0`
+        )
+      )
+        return;
       await sql`CREATE TABLE IF NOT EXISTS order_kots (kot_number BIGSERIAL PRIMARY KEY, order_id TEXT NOT NULL, order_number INTEGER, tickets JSONB NOT NULL DEFAULT '[]'::jsonb, item_fingerprint TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;
       await sql`ALTER TABLE order_kots ADD COLUMN IF NOT EXISTS item_fingerprint TEXT`;
       await sql`ALTER TABLE order_kots ADD COLUMN IF NOT EXISTS kot_day DATE`;
@@ -1750,6 +2192,13 @@ async function ensureLoyaltyTable() {
   if (!sql) throw new Error('Orders database is not configured.');
   if (!loyaltyTableReady)
     loyaltyTableReady = (async () => {
+      if (
+        await schemaProbe(
+          () =>
+            sql`SELECT customer_phone,points,total_earned,total_redeemed,updated_at FROM loyalty_accounts LIMIT 0`
+        )
+      )
+        return;
       await sql`CREATE TABLE IF NOT EXISTS loyalty_accounts (customer_phone TEXT PRIMARY KEY, points INTEGER NOT NULL DEFAULT 0 CHECK (points >= 0), total_earned INTEGER NOT NULL DEFAULT 0, total_redeemed INTEGER NOT NULL DEFAULT 0, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;
       await sql`ALTER TABLE loyalty_accounts ADD COLUMN IF NOT EXISTS total_earned INTEGER NOT NULL DEFAULT 0`;
       await sql`ALTER TABLE loyalty_accounts ADD COLUMN IF NOT EXISTS total_redeemed INTEGER NOT NULL DEFAULT 0`;
@@ -1762,6 +2211,13 @@ async function ensureTrustedContactsTable() {
   await ensureDirectOrdersTable();
   if (!trustedContactsTableReady)
     trustedContactsTableReady = (async () => {
+      if (
+        await schemaProbe(
+          () =>
+            sql`SELECT customer_phone,customer_name,blocked,created_at,updated_at FROM trusted_contacts LIMIT 0`
+        )
+      )
+        return;
       await sql`CREATE TABLE IF NOT EXISTS trusted_contacts (customer_phone TEXT PRIMARY KEY, customer_name TEXT NOT NULL DEFAULT '', blocked BOOLEAN NOT NULL DEFAULT FALSE, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;
       await sql`CREATE INDEX IF NOT EXISTS trusted_contacts_active_index ON trusted_contacts (blocked, updated_at DESC)`;
       await sql`INSERT INTO trusted_contacts (customer_phone,customer_name) SELECT DISTINCT ON (customer_phone) customer_phone,COALESCE(customer_name,'') FROM direct_orders WHERE status='completed' ORDER BY customer_phone,created_at DESC ON CONFLICT (customer_phone) DO NOTHING`;
@@ -1771,7 +2227,15 @@ async function ensureTrustedContactsTable() {
 async function ensureCreditTable() {
   if (!sql) throw new Error('Orders database is not configured.');
   if (!creditTableReady)
-    creditTableReady = sql`CREATE TABLE IF NOT EXISTS customer_credit (customer_phone TEXT PRIMARY KEY, balance NUMERIC NOT NULL DEFAULT 0 CHECK (balance >= 0), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;
+    creditTableReady = (async () => {
+      if (
+        await schemaProbe(
+          () => sql`SELECT customer_phone,balance,updated_at FROM customer_credit LIMIT 0`
+        )
+      )
+        return;
+      await sql`CREATE TABLE IF NOT EXISTS customer_credit (customer_phone TEXT PRIMARY KEY, balance NUMERIC NOT NULL DEFAULT 0 CHECK (balance >= 0), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;
+    })();
   return creditTableReady;
 }
 function kolkataOrderDay(date = new Date()) {
@@ -1810,7 +2274,16 @@ async function nextDailyKotNumber() {
 async function ensurePushSubscriptionsTable() {
   if (!sql) throw new Error('Orders database is not configured.');
   if (!pushSubscriptionsTableReady)
-    pushSubscriptionsTableReady = sql`CREATE TABLE IF NOT EXISTS order_push_subscriptions (endpoint TEXT PRIMARY KEY, subscription JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;
+    pushSubscriptionsTableReady = (async () => {
+      if (
+        await schemaProbe(
+          () =>
+            sql`SELECT endpoint,subscription,created_at,updated_at FROM order_push_subscriptions LIMIT 0`
+        )
+      )
+        return;
+      await sql`CREATE TABLE IF NOT EXISTS order_push_subscriptions (endpoint TEXT PRIMARY KEY, subscription JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;
+    })();
   return pushSubscriptionsTableReady;
 }
 let pushEnabled = false;
@@ -1854,9 +2327,20 @@ async function notifyDirectOrder(order) {
   }
 }
 const publicContentCacheMs = Number(process.env.PUBLIC_CONTENT_CACHE_MS || 60000);
+const sectionContentCacheMs = Number(process.env.SECTION_CONTENT_CACHE_MS || 30000);
+const sectionContentCache = new Map();
 
 function clearPublicContentCache() {
   publicContentCache = null;
+}
+
+function cloneContent(value) {
+  return JSON.parse(JSON.stringify(value || {}));
+}
+
+function clearSectionContentCache(section) {
+  if (section) sectionContentCache.delete(section);
+  else sectionContentCache.clear();
 }
 
 const asArray = (value) => {
@@ -1884,10 +2368,27 @@ const indexedFile = (files, name, index) => {
 
 async function getSection(section) {
   if (!sql) return {};
-  try {
+  const now = Date.now();
+  const cached = sectionContentCache.get(section);
+  if (cached?.value && cached.expiresAt > now) return cloneContent(cached.value);
+  if (cached?.promise) return cloneContent(await cached.promise);
+
+  const promise = (async () => {
     const rows = await sql`SELECT data FROM website_content WHERE id = ${collections[section]}`;
     return rows.length ? rows[0].data || {} : {};
+  })();
+  sectionContentCache.set(section, { promise, expiresAt: 0 });
+  try {
+    const value = await promise;
+    sectionContentCache.set(section, {
+      value: cloneContent(value),
+      expiresAt:
+        Date.now() +
+        (section === 'airMenu' ? Math.min(sectionContentCacheMs, 5000) : sectionContentCacheMs),
+    });
+    return cloneContent(value);
   } catch (err) {
+    sectionContentCache.delete(section);
     console.error('Neon DB Error:', err);
     return {};
   }
@@ -1897,6 +2398,13 @@ async function ensureContentRevisionsTable() {
   if (!sql) throw new Error('Neon is not configured.');
   if (!contentRevisionsTableReady)
     contentRevisionsTableReady = (async () => {
+      if (
+        await schemaProbe(
+          () =>
+            sql`SELECT revision_id,section,data,created_at FROM website_content_revisions LIMIT 0`
+        )
+      )
+        return;
       await sql`CREATE TABLE IF NOT EXISTS website_content_revisions (revision_id BIGSERIAL PRIMARY KEY, section TEXT NOT NULL, data JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;
       await sql`CREATE INDEX IF NOT EXISTS website_content_revisions_section_created_index ON website_content_revisions (section, created_at DESC)`;
     })();
@@ -1917,6 +2425,9 @@ async function saveSection(section, data) {
     VALUES (${collections[section]}, ${merged})
     ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data
   `;
+  clearSectionContentCache(section);
+  clearPublicContentCache();
+  if (section === 'airMenu') clearSmartKdsReadCaches({ foundation: false });
   if (section === 'airMenu') ordersOperatingStatusCache.expiresAt = 0;
 }
 
@@ -2042,7 +2553,26 @@ function normalizeAirMenu(body) {
     tableQrDisabled = {};
   }
   const isValidTime = (value) => /^([01]\d|2[0-3]):[0-5]\d$/.test(String(value || ''));
-  const proximity={ latitude:Number.isFinite(Number(body.airProximityLatitude))&&Number(body.airProximityLatitude)>=-90&&Number(body.airProximityLatitude)<=90?Number(body.airProximityLatitude):null, longitude:Number.isFinite(Number(body.airProximityLongitude))&&Number(body.airProximityLongitude)>=-180&&Number(body.airProximityLongitude)<=180?Number(body.airProximityLongitude):null, tableRadius:Math.max(0,Math.min(100000,Math.floor(Number(body.airTableProximityRadius)||0))), cardRadius:Math.max(0,Math.min(100000,Math.floor(Number(body.airCardProximityRadius)||0))), locked:body.airProximityLocked === 'on' };
+  const proximity = {
+    latitude:
+      Number.isFinite(Number(body.airProximityLatitude)) &&
+      Number(body.airProximityLatitude) >= -90 &&
+      Number(body.airProximityLatitude) <= 90
+        ? Number(body.airProximityLatitude)
+        : null,
+    longitude:
+      Number.isFinite(Number(body.airProximityLongitude)) &&
+      Number(body.airProximityLongitude) >= -180 &&
+      Number(body.airProximityLongitude) <= 180
+        ? Number(body.airProximityLongitude)
+        : null,
+    tableRadius: Math.max(
+      0,
+      Math.min(100000, Math.floor(Number(body.airTableProximityRadius) || 0))
+    ),
+    cardRadius: Math.max(0, Math.min(100000, Math.floor(Number(body.airCardProximityRadius) || 0))),
+    locked: body.airProximityLocked === 'on',
+  };
   const scheduleWasSubmitted = [
     'airService1Open',
     'airService1Close',
@@ -2354,7 +2884,9 @@ function addonGroupsForMenuItem(menu, item) {
 }
 
 function menuPortionPrice(item = {}, portion = '') {
-  const key = String(portion || '').trim().toLowerCase();
+  const key = String(portion || '')
+    .trim()
+    .toLowerCase();
   const variants = {
     half: item.halfPrice,
     full: item.fullPrice,
@@ -3011,7 +3543,7 @@ function temporaryClosureExpired(menu = {}, now = new Date()) {
 
 function restaurantStatus(menu, now = new Date()) {
   const localReopen = temporaryClosureReopenAt(menu);
-    const closureMessage =
+  const closureMessage =
     String(menu.closureMessage || '').trim() || 'The restaurant is currently closed.';
   if (menu.restaurantClosed === true && (!localReopen || localReopen > now)) {
     const reopen = localReopen
@@ -3836,9 +4368,13 @@ app.get('/api/air-menu', async (req, res) => {
       ? await resolveTableQr(req.query.area, req.query.table)
       : null;
   if (req.query.mode === 'table' && (req.query.area || req.query.table) && !tableQr)
-    return res.status(410).json({ unavailable: true, redirect: 'https://www.redlanternrestaurant.in/menu' });
+    return res
+      .status(410)
+      .json({ unavailable: true, redirect: 'https://www.redlanternrestaurant.in/menu' });
   if (tableQr && menu.tableQrDisabled?.[tableQr.key])
-    return res.status(410).json({ unavailable: true, redirect: 'https://www.redlanternrestaurant.in/menu' });
+    return res
+      .status(410)
+      .json({ unavailable: true, redirect: 'https://www.redlanternrestaurant.in/menu' });
   const dishes = [
     ...(Array.isArray(menu.items) ? menu.items : []),
     ...(Array.isArray(menu.barItems)
@@ -3906,7 +4442,19 @@ app.get('/api/air-menu', async (req, res) => {
     deliveryEnabled: menu.deliveryEnabled !== false,
     cardCallEnabled: isCard && menu.cardCallEnabled === true,
     cardOrderPhone: String(menu.cardOrderPhone || ''),
-    proximity:{required:Boolean(Number(isCard?menu.proximity?.cardRadius:menu.proximity?.tableRadius)>0&&Number.isFinite(Number(menu.proximity?.latitude))&&Number.isFinite(Number(menu.proximity?.longitude))),radius:Math.max(0,Number(isCard?menu.proximity?.cardRadius:menu.proximity?.tableRadius)||0),latitude:Number(menu.proximity?.latitude),longitude:Number(menu.proximity?.longitude)},
+    proximity: {
+      required: Boolean(
+        Number(isCard ? menu.proximity?.cardRadius : menu.proximity?.tableRadius) > 0 &&
+        Number.isFinite(Number(menu.proximity?.latitude)) &&
+        Number.isFinite(Number(menu.proximity?.longitude))
+      ),
+      radius: Math.max(
+        0,
+        Number(isCard ? menu.proximity?.cardRadius : menu.proximity?.tableRadius) || 0
+      ),
+      latitude: Number(menu.proximity?.latitude),
+      longitude: Number(menu.proximity?.longitude),
+    },
     tableLabel: tableQr ? `${tableQr.name} Table ${tableQr.number}` : '',
     tableArea: tableQr?.name || '',
     tableNumber: tableQr?.number || null,
@@ -3933,7 +4481,8 @@ app.post('/api/direct-orders', async (req, res) => {
       customerPhone,
       customerName,
       specialRequest,
-      fulfillmentType, proximity,
+      fulfillmentType,
+      proximity,
       items = [],
     } = req.body || {};
     const clientRequestId = String(req.get('X-Direct-Order-Id') || req.body?.clientRequestId || '')
@@ -3947,8 +4496,33 @@ app.post('/api/direct-orders', async (req, res) => {
       mode === 'card' ? menu.cardDirectOrders !== false : menu.tableDirectOrders === true;
     if (!enabled)
       return res.status(403).json({ error: 'Direct ordering is unavailable for this QR menu.' });
-    const requiredRadius=Math.max(0,Number(mode==='card'?menu.proximity?.cardRadius:menu.proximity?.tableRadius)||0), restaurantLatitude=Number(menu.proximity?.latitude), restaurantLongitude=Number(menu.proximity?.longitude);
-    if(requiredRadius>0&&Number.isFinite(restaurantLatitude)&&Number.isFinite(restaurantLongitude)){const latitude=Number(proximity?.latitude),longitude=Number(proximity?.longitude),accuracy=Number(proximity?.accuracy);if(!Number.isFinite(latitude)||!Number.isFinite(longitude))return res.status(403).json({error:'Location permission is required to place an order from this QR code.'});const tolerance=Math.min(100,Math.max(0,Number.isFinite(accuracy)?accuracy:0));if(distanceInMetres(restaurantLatitude,restaurantLongitude,latitude,longitude)>requiredRadius+tolerance)return res.status(403).json({error:`You need to be within ${requiredRadius} m of the restaurant to place this order.`});}
+    const requiredRadius = Math.max(
+        0,
+        Number(mode === 'card' ? menu.proximity?.cardRadius : menu.proximity?.tableRadius) || 0
+      ),
+      restaurantLatitude = Number(menu.proximity?.latitude),
+      restaurantLongitude = Number(menu.proximity?.longitude);
+    if (
+      requiredRadius > 0 &&
+      Number.isFinite(restaurantLatitude) &&
+      Number.isFinite(restaurantLongitude)
+    ) {
+      const latitude = Number(proximity?.latitude),
+        longitude = Number(proximity?.longitude),
+        accuracy = Number(proximity?.accuracy);
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude))
+        return res
+          .status(403)
+          .json({ error: 'Location permission is required to place an order from this QR code.' });
+      const tolerance = Math.min(100, Math.max(0, Number.isFinite(accuracy) ? accuracy : 0));
+      if (
+        distanceInMetres(restaurantLatitude, restaurantLongitude, latitude, longitude) >
+        requiredRadius + tolerance
+      )
+        return res.status(403).json({
+          error: `You need to be within ${requiredRadius} m of the restaurant to place this order.`,
+        });
+    }
     const operatingStatus = restaurantStatus(menu);
     if (!operatingStatus.open)
       return res
@@ -3976,8 +4550,12 @@ app.post('/api/direct-orders', async (req, res) => {
         .replace(/\s+/g, ' ')
         .trim();
     const menuItems = [
-      ...(Array.isArray(menu.items) ? menu.items.map((item) => ({ ...item, menuType: 'food' })) : []),
-      ...(Array.isArray(menu.barItems) ? menu.barItems.map((item) => ({ ...item, menuType: 'bar' })) : []),
+      ...(Array.isArray(menu.items)
+        ? menu.items.map((item) => ({ ...item, menuType: 'food' }))
+        : []),
+      ...(Array.isArray(menu.barItems)
+        ? menu.barItems.map((item) => ({ ...item, menuType: 'bar' }))
+        : []),
     ];
     const portionPrice = menuPortionPrice;
     const submittedItems = Array.isArray(items)
@@ -4031,13 +4609,11 @@ app.post('/api/direct-orders', async (req, res) => {
       cleanItems.length !== submittedItems.length ||
       cleanItems.some((item) => !item.name || item.modifierError)
     )
-      return res
-        .status(400)
-        .json({
-          error:
-            cleanItems.find((item) => item.modifierError)?.modifierError ||
-            'One or more selected items are no longer available. Refresh the menu and try again.',
-        });
+      return res.status(400).json({
+        error:
+          cleanItems.find((item) => item.modifierError)?.modifierError ||
+          'One or more selected items are no longer available. Refresh the menu and try again.',
+      });
     await ensureDirectOrdersTable();
     if (clientRequestId) {
       const existing =
@@ -4058,11 +4634,9 @@ app.post('/api/direct-orders', async (req, res) => {
       await sql`SELECT item_key FROM menu_availability WHERE unavailable_until > NOW()`;
     const unavailableKeys = new Set(unavailableRows.map((row) => row.item_key));
     if (cleanItems.some((item) => unavailableKeys.has(item.availabilityKey)))
-      return res
-        .status(409)
-        .json({
-          error: 'One or more selected items have just gone out of stock. Please refresh the menu.',
-        });
+      return res.status(409).json({
+        error: 'One or more selected items have just gone out of stock. Please refresh the menu.',
+      });
     const loyalty = {
       enabled: menu.loyalty?.enabled !== false,
       spend: Math.max(1, Number(menu.loyalty?.spend) || 10),
@@ -4076,7 +4650,8 @@ app.post('/api/direct-orders', async (req, res) => {
     // Saved contacts and customers with a completed earlier order are trusted for
     // auto-acceptance. A blocked number always remains a new order for the counter.
     await ensureTrustedContactsTable();
-    const trustedCustomerRows = await sql`SELECT EXISTS (SELECT 1 FROM direct_orders WHERE customer_phone=${phone} AND status='completed') AS has_completed_order, COALESCE((SELECT blocked FROM trusted_contacts WHERE customer_phone=${phone}),FALSE) AS is_blocked, EXISTS (SELECT 1 FROM trusted_contacts WHERE customer_phone=${phone} AND blocked=FALSE) AS is_saved_contact`;
+    const trustedCustomerRows =
+      await sql`SELECT EXISTS (SELECT 1 FROM direct_orders WHERE customer_phone=${phone} AND status='completed') AS has_completed_order, COALESCE((SELECT blocked FROM trusted_contacts WHERE customer_phone=${phone}),FALSE) AS is_blocked, EXISTS (SELECT 1 FROM trusted_contacts WHERE customer_phone=${phone} AND blocked=FALSE) AS is_saved_contact`;
     const trustedCustomer = trustedCustomerRows[0] || {};
     const isBlockedCustomer =
       trustedCustomer.is_blocked === true || trustedCustomer.is_blocked === 't';
@@ -4152,7 +4727,9 @@ app.post('/api/direct-orders', async (req, res) => {
       await materializeSmartKdsOrderTiming(id).catch((error) =>
         console.warn('Smart KDS timing materialisation failed:', error.message)
       );
-    const suppliedName = String(customerName || '').trim().slice(0, 80);
+    const suppliedName = String(customerName || '')
+      .trim()
+      .slice(0, 80);
     if (suppliedName)
       await sql`UPDATE trusted_contacts SET customer_name=${suppliedName},updated_at=NOW() WHERE customer_phone=${phone} AND customer_name=''`;
     // The order is already safely stored. Push delivery must never delay or block it.
@@ -4232,8 +4809,12 @@ app.post('/api/orders/counter', async (req, res) => {
         .replace(/\s+/g, ' ')
         .trim();
     const menuItems = [
-      ...(Array.isArray(menu.items) ? menu.items.map((item) => ({ ...item, menuType: 'food' })) : []),
-      ...(Array.isArray(menu.barItems) ? menu.barItems.map((item) => ({ ...item, menuType: 'bar' })) : []),
+      ...(Array.isArray(menu.items)
+        ? menu.items.map((item) => ({ ...item, menuType: 'food' }))
+        : []),
+      ...(Array.isArray(menu.barItems)
+        ? menu.barItems.map((item) => ({ ...item, menuType: 'bar' }))
+        : []),
     ];
     const portionPrice = menuPortionPrice;
     const submitted = Array.isArray(items)
@@ -4265,7 +4846,9 @@ app.post('/api/orders/counter', async (req, res) => {
           (source.gravyStyleAvailable || source.gravyAvailable || source.semiGravyAvailable)
             ? String(item.style).trim()
             : '';
-        const courseOverride = COURSE_TYPES.includes(String(item.courseOverride || '').toLowerCase())
+        const courseOverride = COURSE_TYPES.includes(
+          String(item.courseOverride || '').toLowerCase()
+        )
           ? String(item.courseOverride).toLowerCase()
           : '';
         return {
@@ -4288,7 +4871,11 @@ app.post('/api/orders/counter', async (req, res) => {
         };
       })
       .filter(Boolean);
-    if (!clean.length || clean.length !== submitted.length || clean.some((item) => item.modifierError))
+    if (
+      !clean.length ||
+      clean.length !== submitted.length ||
+      clean.some((item) => item.modifierError)
+    )
       return res.status(400).json({
         error:
           clean.find((item) => item.modifierError)?.modifierError ||
@@ -4357,11 +4944,9 @@ app.post('/api/orders/counter', async (req, res) => {
         requestedLoyaltyPoints < loyalty.minRedeem ||
         requestedLoyaltyPoints * loyalty.pointValue > subtotal)
     )
-      return res
-        .status(400)
-        .json({
-          error: `Use a valid mobile number and at least ${loyalty.minRedeem} points, up to the order total.`,
-        });
+      return res.status(400).json({
+        error: `Use a valid mobile number and at least ${loyalty.minRedeem} points, up to the order total.`,
+      });
     const dineInArea = String(tableArea || '')
         .trim()
         .slice(0, 60),
@@ -4409,35 +4994,35 @@ app.post('/api/orders/counter', async (req, res) => {
       expectedTableOrderId &&
       (!activeTable.length || activeTable[0].id !== expectedTableOrderId)
     )
-      return res
-        .status(409)
-        .json({
-          error:
-            'This table changed while the order was being prepared. Review the offline order before merging it.',
-          code: 'table_changed',
-          conflict: tableConflict,
-        });
+      return res.status(409).json({
+        error:
+          'This table changed while the order was being prepared. Review the offline order before merging it.',
+        code: 'table_changed',
+        conflict: tableConflict,
+      });
     if (captain && !expectedTableOrderId && activeTable.length)
-      return res
-        .status(409)
-        .json({
-          error: 'This table is now active. Review the offline order before merging it.',
-          code: 'table_changed',
-          conflict: tableConflict,
-        });
+      return res.status(409).json({
+        error: 'This table is now active. Review the offline order before merging it.',
+        code: 'table_changed',
+        conflict: tableConflict,
+      });
     if (activeTable.length && !captain)
-      return res
-        .status(409)
-        .json({
-          error:
-            'This table is already active. Add items from the Orders console to keep one bill and one KOT flow.',
-        });
+      return res.status(409).json({
+        error:
+          'This table is already active. Add items from the Orders console to keep one bill and one KOT flow.',
+      });
     const orderMode = isDineIn ? 'table' : 'counter',
       fulfillment = isDineIn ? 'dine_in' : 'takeaway';
-    const requestedCourseMode = String(courseMode || '').trim().toLowerCase();
-    const resolvedCourseMode = isDineIn && ['normal_coursing', 'serve_together', 'as_ready', 'manual_fire'].includes(requestedCourseMode)
-      ? requestedCourseMode
-      : isDineIn ? 'normal_coursing' : 'as_ready';
+    const requestedCourseMode = String(courseMode || '')
+      .trim()
+      .toLowerCase();
+    const resolvedCourseMode =
+      isDineIn &&
+      ['normal_coursing', 'serve_together', 'as_ready', 'manual_fire'].includes(requestedCourseMode)
+        ? requestedCourseMode
+        : isDineIn
+          ? 'normal_coursing'
+          : 'as_ready';
     // Counter and table orders can both be deliberately saved or held before
     // the kitchen is notified. Other actions create an accepted order.
     const stagedAction = ['save', 'hold'].includes(String(action)) ? String(action) : 'submit';
@@ -4449,7 +5034,9 @@ app.post('/api/orders/counter', async (req, res) => {
           loyalty.earn
         : 0;
     if (activeTable.length && captain) {
-      const addonNote = String(specialRequest || '').trim().slice(0, 240),
+      const addonNote = String(specialRequest || '')
+          .trim()
+          .slice(0, 240),
         addonSubtotal = saved.reduce(
           (sum, item) =>
             sum +
@@ -4582,15 +5169,13 @@ app.post('/api/orders/counter', async (req, res) => {
       itemCount: saved.reduce((count, item) => count + Number(item.quantity || 0), 0),
       ...(captain ? { captainId: captain.id, captainName: captain.name } : {}),
     });
-    res
-      .status(201)
-      .json({
-        id,
-        status: initialStatus,
-        autoAccepted: initialStatus === 'accepted',
-        orderNumber: String(number).padStart(2, '0'),
-        total,
-      });
+    res.status(201).json({
+      id,
+      status: initialStatus,
+      autoAccepted: initialStatus === 'accepted',
+      orderNumber: String(number).padStart(2, '0'),
+      total,
+    });
     if (initialStatus === 'accepted') {
       // Database confirmation is the POS success boundary. Smart KDS
       // materialisation and notifications are follow-up work and must not
@@ -4607,11 +5192,13 @@ app.post('/api/orders/counter', async (req, res) => {
     }
   } catch (error) {
     if (error?.code === '23505' && counterTableContext) {
-      const conflict = await sql`SELECT id,status,daily_order_number,items FROM direct_orders WHERE order_day=${counterTableContext.orderDay}::date AND mode='table' AND table_area=${counterTableContext.tableArea} AND table_number=${counterTableContext.tableNumber} AND status IN ('saved','held','accepted','preparing','ready') LIMIT 1`.catch(
-        () => []
-      );
+      const conflict =
+        await sql`SELECT id,status,daily_order_number,items FROM direct_orders WHERE order_day=${counterTableContext.orderDay}::date AND mode='table' AND table_area=${counterTableContext.tableArea} AND table_number=${counterTableContext.tableNumber} AND status IN ('saved','held','accepted','preparing','ready') LIMIT 1`.catch(
+          () => []
+        );
       return res.status(409).json({
-        error: 'This table became active while the order was being saved. Review it before merging.',
+        error:
+          'This table became active while the order was being saved. Review it before merging.',
         code: 'table_changed',
         conflict: conflict[0] || null,
       });
@@ -4636,6 +5223,7 @@ app.post('/api/orders/counter', async (req, res) => {
 });
 app.get('/api/orders', async (req, res) => {
   try {
+    const operatingStatusPromise = getOrdersOperatingStatus();
     await Promise.all([ensureDirectOrdersTable(), ensureOrderEventsTable()]);
     const search = String(req.query.search || '')
       .replace(/\D/g, '')
@@ -4646,32 +5234,32 @@ app.get('/api/orders', async (req, res) => {
     const requestedDay = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.date || ''))
       ? String(req.query.date)
       : '';
-    const operatingStatus = await getOrdersOperatingStatus();
     const select = req.captain
       ? "SELECT o.id,o.status,o.mode,o.customer_name,o.items,o.total,o.created_at,o.updated_at,o.order_day,o.daily_order_number,o.fulfillment_type,o.course_mode,o.table_area,o.table_number,o.bill_printed_at,o.service_state,o.service_requested_at,COALESCE((SELECT e.details->>'captainId' FROM order_events e WHERE e.order_id=o.id AND e.event_type='created' ORDER BY e.created_at ASC LIMIT 1),'') AS captain_id FROM direct_orders o"
       : "SELECT o.*, (SELECT COUNT(*) FROM direct_orders h WHERE h.customer_phone=o.customer_phone) AS customer_order_count, (SELECT MAX(h.created_at) FROM direct_orders h WHERE h.customer_phone=o.customer_phone AND h.id<>o.id) AS customer_last_order_at, COALESCE((SELECT e.details->>'captainId' FROM order_events e WHERE e.order_id=o.id AND e.event_type='created' ORDER BY e.created_at ASC LIMIT 1),'') AS captain_id, COALESCE((SELECT string_agg(DISTINCT NULLIF(TRIM(e.details->>'captainName'), ''), ', ') FROM order_events e WHERE e.order_id=o.id AND e.event_type IN ('created','captain-items-added')),'') AS captain_names FROM direct_orders o";
+    let ordersPromise;
+    if (history && !requestedDay)
+      ordersPromise = sql(
+        `${select} WHERE ($1='' OR o.customer_phone LIKE $2 OR CAST(o.daily_order_number AS TEXT) LIKE $2) ORDER BY o.created_at DESC LIMIT 100`,
+        [search, like]
+      );
+    else if (history)
+      ordersPromise = sql(
+        `${select} WHERE o.order_day=$1::date AND ($2='' OR o.customer_phone LIKE $3 OR CAST(o.daily_order_number AS TEXT) LIKE $3) ORDER BY o.created_at DESC LIMIT 100`,
+        [requestedDay || today, search, like]
+      );
+    else
+      ordersPromise = sql(
+        `${select} WHERE o.order_day=$1::date AND ($2='' OR o.customer_phone LIKE $3 OR CAST(o.daily_order_number AS TEXT) LIKE $3) ORDER BY o.created_at DESC LIMIT 100`,
+        [today, search, like]
+      );
+    let [orders, operatingStatus] = await Promise.all([ordersPromise, operatingStatusPromise]);
     res.set({
       'Cache-Control': 'no-store',
       'X-Orders-Day': today,
       'X-Orders-View': history ? 'history' : 'current',
       'X-Orders-Session': operatingStatus.open ? 'open' : 'closed',
     });
-    let orders;
-    if (history && !requestedDay)
-      orders = await sql(
-        `${select} WHERE ($1='' OR o.customer_phone LIKE $2 OR CAST(o.daily_order_number AS TEXT) LIKE $2) ORDER BY o.created_at DESC LIMIT 100`,
-        [search, like]
-      );
-    else if (history)
-      orders = await sql(
-        `${select} WHERE o.order_day=$1::date AND ($2='' OR o.customer_phone LIKE $3 OR CAST(o.daily_order_number AS TEXT) LIKE $3) ORDER BY o.created_at DESC LIMIT 100`,
-        [requestedDay || today, search, like]
-      );
-    else
-      orders = await sql(
-        `${select} WHERE o.order_day=$1::date AND ($2='' OR o.customer_phone LIKE $3 OR CAST(o.daily_order_number AS TEXT) LIKE $3) ORDER BY o.created_at DESC LIMIT 100`,
-        [today, search, like]
-      );
     if (req.captain) {
       const areas = Array.isArray(req.captain.areas) ? req.captain.areas : [];
       orders = orders.filter(
@@ -4801,11 +5389,9 @@ app.post('/api/order-tracking/:token/cancel', async (req, res) => {
     const alreadyCancelled =
       await sql`SELECT id FROM direct_orders WHERE tracking_token=${token} AND status='cancelled'`;
     if (!alreadyCancelled.length)
-      return res
-        .status(409)
-        .json({
-          error: 'This order is already being handled. Please call the restaurant for help.',
-        });
+      return res.status(409).json({
+        error: 'This order is already being handled. Please call the restaurant for help.',
+      });
     res.json({ ok: true, unchanged: true });
   } catch (error) {
     res.status(500).json({ error: 'Unable to cancel this order. Please call the restaurant.' });
@@ -4846,22 +5432,18 @@ app.patch('/api/orders/:id/items', async (req, res) => {
       ? Math.max(0, Number(originalRows[0].loyalty_points_redeemed || 0))
       : 0;
     if (redeemed * loyalty.pointValue > subtotal)
-      return res
-        .status(409)
-        .json({
-          error: 'This change would make the redeemed loyalty points larger than the order total.',
-        });
+      return res.status(409).json({
+        error: 'This change would make the redeemed loyalty points larger than the order total.',
+      });
     const total = subtotal - redeemed * loyalty.pointValue;
     const earned = loyalty.enabled ? Math.floor(total / loyalty.spend) * loyalty.earn : 0;
     const rows =
       await sql`UPDATE direct_orders SET items=${JSON.stringify(items)}, total=${total}, loyalty_points_earned=${earned}, updated_at=NOW() WHERE id=${req.params.id} AND created_at >= NOW() - INTERVAL '10 minutes' AND status IN ('new','accepted','preparing') RETURNING id`;
     if (!rows.length)
-      return res
-        .status(409)
-        .json({
-          error:
-            'Orders can only be modified during the first 10 minutes while they are being handled.',
-        });
+      return res.status(409).json({
+        error:
+          'Orders can only be modified during the first 10 minutes while they are being handled.',
+      });
     await recordOrderEvent(req.params.id, 'items-updated', {
       itemCount: items.reduce((count, item) => count + Number(item.quantity || 0), 0),
       total,
@@ -4915,11 +5497,9 @@ app.patch('/api/orders/:id', async (req, res) => {
     const previous = String(currentRows[0].status || '');
     if (previous === status) return res.json({ ok: true, unchanged: true, status });
     if (!transitions[previous]?.includes(status))
-      return res
-        .status(409)
-        .json({
-          error: `An order cannot move from ${previous || 'its current state'} to ${status || 'that state'}.`,
-        });
+      return res.status(409).json({
+        error: `An order cannot move from ${previous || 'its current state'} to ${status || 'that state'}.`,
+      });
     if (status === 'cancelled' && cancellationReason.length < 3)
       return res.status(400).json({ error: 'Enter a brief reason for cancelling this order.' });
     const [changed] = await sql.transaction((tx) => [
@@ -4943,7 +5523,14 @@ app.patch('/api/orders/:id', async (req, res) => {
     if (status === 'completed') {
       await ensureTrustedContactsTable();
       const customer = currentRows[0];
-      await sql`INSERT INTO trusted_contacts (customer_phone,customer_name) VALUES (${customer.customer_phone},${String(customer.customer_name || '').trim().slice(0, 80)}) ON CONFLICT (customer_phone) DO UPDATE SET customer_name=CASE WHEN trusted_contacts.customer_name='' AND EXCLUDED.customer_name<>'' THEN EXCLUDED.customer_name ELSE trusted_contacts.customer_name END, updated_at=NOW()`;
+      await sql`INSERT INTO trusted_contacts (customer_phone,customer_name) VALUES (${customer.customer_phone},${String(
+        customer.customer_name || ''
+      )
+        .trim()
+        .slice(
+          0,
+          80
+        )}) ON CONFLICT (customer_phone) DO UPDATE SET customer_name=CASE WHEN trusted_contacts.customer_name='' AND EXCLUDED.customer_name<>'' THEN EXCLUDED.customer_name ELSE trusted_contacts.customer_name END, updated_at=NOW()`;
     }
     if (['completed', 'rejected', 'cancelled'].includes(status))
       await cancelSmartKdsOrderTasks(req.params.id, `order-${status}`);
@@ -5007,7 +5594,9 @@ app.post('/api/orders/:id/settle', async (req, res) => {
       ? Math.max(0, suppliedReceived)
       : requestedAmount || total;
     if (['cash', 'upi', 'card', 'other'].includes(paymentType) && paymentReceived < total)
-      return res.status(400).json({ error: 'Payment received cannot be less than the order total.' });
+      return res
+        .status(400)
+        .json({ error: 'Payment received cannot be less than the order total.' });
     const changeDue = paymentType === 'cash' ? Math.max(0, paymentReceived - total) : 0;
     const tipAmount = paymentType === 'upi' ? Math.max(0, paymentReceived - total) : 0;
     const [rows] = await sql.transaction((tx) => [
@@ -5017,7 +5606,14 @@ app.post('/api/orders/:id/settle', async (req, res) => {
     if (!rows.length)
       return res.status(409).json({ error: 'This table is not waiting for settlement.' });
     await ensureTrustedContactsTable();
-    await sql`INSERT INTO trusted_contacts (customer_phone,customer_name) VALUES (${rows[0].customer_phone},${String(rows[0].customer_name || '').trim().slice(0, 80)}) ON CONFLICT (customer_phone) DO UPDATE SET customer_name=CASE WHEN trusted_contacts.customer_name='' AND EXCLUDED.customer_name<>'' THEN EXCLUDED.customer_name ELSE trusted_contacts.customer_name END, updated_at=NOW()`;
+    await sql`INSERT INTO trusted_contacts (customer_phone,customer_name) VALUES (${rows[0].customer_phone},${String(
+      rows[0].customer_name || ''
+    )
+      .trim()
+      .slice(
+        0,
+        80
+      )}) ON CONFLICT (customer_phone) DO UPDATE SET customer_name=CASE WHEN trusted_contacts.customer_name='' AND EXCLUDED.customer_name<>'' THEN EXCLUDED.customer_name ELSE trusted_contacts.customer_name END, updated_at=NOW()`;
     await recordOrderEvent(req.params.id, 'settled', {
       paymentType,
       amount: total,
@@ -5056,16 +5652,19 @@ app.get('/api/orders/availability', async (req, res) => {
 });
 app.get('/api/orders/menu', async (req, res) => {
   try {
-    const [menu, profileData] = await Promise.all([
+    const [menu, profileRows] = await Promise.all([
       getSection('airMenu'),
-      getSmartKdsMenuProfiles().catch((error) => {
+      (async () => {
+        await ensureSmartKdsTables();
+        return sql`SELECT item_key,course_type FROM menu_production_profiles`;
+      })().catch((error) => {
         console.warn('Smart KDS menu courses unavailable:', error.message);
-        return { items: [] };
+        return [];
       }),
     ]);
     const order = Array.isArray(menu.categoryOrder) ? menu.categoryOrder : [];
     const coursesByKey = new Map(
-      profileData.items.map((item) => [item.itemKey, String(item.profile?.course || '')])
+      profileRows.map((item) => [item.item_key, String(item.course_type || '')])
     );
     const format = (items, menuType) =>
       items
@@ -5075,7 +5674,8 @@ app.get('/api/orders/menu', async (req, res) => {
           menuType,
           key: `${String(item.category || '').toLowerCase()}::${String(item.name || '').toLowerCase()}`,
           defaultCourse:
-            coursesByKey.get(smartKdsMenuItemKey(menuType, item.category, item.name)) || '',
+            coursesByKey.get(smartKdsMenuItemKey(menuType, item.category, item.name)) ||
+            inferDefaultCourse(item.category, item.name, menuType),
           categoryOrderIndex: order.indexOf(item.category),
           price: item.price,
           halfPrice: item.halfPrice,
@@ -5211,13 +5811,11 @@ app.post('/api/orders/:id/kots', async (req, res) => {
           console.warn('Smart KDS timing materialisation failed:', error.message)
         );
       }
-      return res
-        .status(409)
-        .json({
-          error: 'No new items to send.',
-          latestKot: latest[0] || null,
-          order: orderRows[0],
-        });
+      return res.status(409).json({
+        error: 'No new items to send.',
+        latestKot: latest[0] || null,
+        order: orderRows[0],
+      });
     }
     const groups = new Map();
     for (const item of pending) {
@@ -5262,25 +5860,19 @@ app.post('/api/orders/:id/kots', async (req, res) => {
         await sql`SELECT COALESCE(daily_kot_number, kot_number) AS kot_number, tickets FROM order_kots WHERE order_id=${orderRows[0].id} AND item_fingerprint=${fingerprint} LIMIT 1`;
       if (!existing.length)
         throw new Error('The existing KOT could not be recovered. Please retry.');
-      await ensureKotTicketStatuses(
-        orderRows[0].id,
-        existing[0].kot_number,
-        existing[0].tickets
-      );
+      await ensureKotTicketStatuses(orderRows[0].id, existing[0].kot_number, existing[0].tickets);
       if (req.captain && ['saved', 'held'].includes(orderRows[0].status)) {
         await sql`UPDATE direct_orders SET status='accepted',updated_at=NOW() WHERE id=${orderRows[0].id} AND status IN ('saved','held')`;
         await materializeSmartKdsOrderTiming(orderRows[0].id).catch((error) =>
           console.warn('Smart KDS timing materialisation failed:', error.message)
         );
       }
-      return res
-        .status(200)
-        .json({
-          kotNumber: existing[0].kot_number,
-          order: orderRows[0],
-          tickets: existing[0].tickets,
-          reused: true,
-        });
+      return res.status(200).json({
+        kotNumber: existing[0].kot_number,
+        order: orderRows[0],
+        tickets: existing[0].tickets,
+        reused: true,
+      });
     }
     await ensureKotTicketStatuses(orderRows[0].id, created[0].kot_number, tickets, {
       newRound: true,
@@ -5319,7 +5911,7 @@ app.get('/api/orders/kot-history', async (req, res) => {
       ? String(req.query.date)
       : kolkataOrderDay();
     const rows =
-      await sql`SELECT o.id,o.daily_order_number,o.mode,o.customer_name,o.customer_phone,o.fulfillment_type,o.status,o.completed_at,COALESCE(k.daily_kot_number,k.kot_number) AS kot_number,k.tickets,k.created_at FROM order_kots k JOIN direct_orders o ON o.id=k.order_id WHERE o.order_day=${day}::date ORDER BY k.created_at DESC,k.kot_number DESC LIMIT 400`;
+      await sql`SELECT o.id,o.daily_order_number,o.mode,o.customer_name,o.customer_phone,o.fulfillment_type,o.status,CASE WHEN o.status='completed' THEN o.updated_at ELSE NULL END AS completed_at,COALESCE(k.daily_kot_number,k.kot_number) AS kot_number,k.tickets,k.created_at FROM order_kots k JOIN direct_orders o ON o.id=k.order_id WHERE o.order_day=${day}::date ORDER BY k.created_at DESC,k.kot_number DESC LIMIT 400`;
     res.set('Cache-Control', 'no-store');
     res.json(rows);
   } catch (error) {
@@ -5411,7 +6003,8 @@ app.patch('/api/orders/:id/kitchen-status/:printerId', async (req, res) => {
     await sql`INSERT INTO order_kot_station_status (order_id,printer_id,status) VALUES (${req.params.id},${printerId},${status}) ON CONFLICT (order_id,printer_id) DO UPDATE SET status=EXCLUDED.status,updated_at=NOW()`;
     if (status === 'preparing' || status === 'ready') {
       await ensureSmartKdsTables();
-      const changedTasks = await sql`UPDATE kitchen_production_tasks SET task_state=${status},active_batch_id=NULL,eligible_at=COALESCE(eligible_at,NOW()),scheduled_at=CASE WHEN ${status}='preparing' THEN COALESCE(scheduled_at,NOW()) ELSE scheduled_at END,fired_at=CASE WHEN ${status}='preparing' THEN COALESCE(fired_at,NOW()) ELSE fired_at END,preparing_at=CASE WHEN ${status}='preparing' THEN COALESCE(preparing_at,NOW()) ELSE preparing_at END,ready_at=CASE WHEN ${status}='ready' THEN NOW() ELSE ready_at END,version=version+1,updated_at=NOW() WHERE order_id=${req.params.id} AND station_id=${printerId} AND task_state IN ('ordered','eligible','scheduled','preparing') RETURNING task_id,order_id`;
+      const changedTasks =
+        await sql`UPDATE kitchen_production_tasks SET task_state=${status},active_batch_id=NULL,eligible_at=COALESCE(eligible_at,NOW()),scheduled_at=CASE WHEN ${status}='preparing' THEN COALESCE(scheduled_at,NOW()) ELSE scheduled_at END,fired_at=CASE WHEN ${status}='preparing' THEN COALESCE(fired_at,NOW()) ELSE fired_at END,preparing_at=CASE WHEN ${status}='preparing' THEN COALESCE(preparing_at,NOW()) ELSE preparing_at END,ready_at=CASE WHEN ${status}='ready' THEN NOW() ELSE ready_at END,version=version+1,updated_at=NOW() WHERE order_id=${req.params.id} AND station_id=${printerId} AND task_state IN ('ordered','eligible','scheduled','preparing') RETURNING task_id,order_id`;
       const operator = smartKdsOperator(req);
       for (const task of changedTasks)
         await sql`INSERT INTO kitchen_task_events (task_id,order_id,event_type,details,actor_type,actor_id) VALUES (${task.task_id},${task.order_id},${`status-${status}`},${JSON.stringify({ printerId, kotNumber })},'kitchen',${operator})`;
@@ -5426,34 +6019,56 @@ app.post('/api/orders/smart-kds/actions', async (req, res) => {
   try {
     await ensureSmartKdsTables();
     if (!(await requireSmartKdsManualMode(res))) return;
-    const orderId = String(req.body?.orderId || '').trim().slice(0, 120);
-    const stationId = String(req.body?.stationId || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80);
-    const taskKey = String(req.body?.taskKey || '').trim().slice(0, 180);
+    const orderId = String(req.body?.orderId || '')
+      .trim()
+      .slice(0, 120);
+    const stationId = String(req.body?.stationId || '')
+      .replace(/[^a-zA-Z0-9_-]/g, '')
+      .slice(0, 80);
+    const taskKey = String(req.body?.taskKey || '')
+      .trim()
+      .slice(0, 180);
     const action = String(req.body?.action || '');
     const operator = smartKdsOperator(req);
     const transition = transitionForAction(action);
     const status = transition?.to || '';
     const expectedStatus = transition?.from || '';
     const expectedStates = Array.isArray(expectedStatus) ? expectedStatus : [expectedStatus];
-    if (!orderId || !stationId || !taskKey || !transition) return res.status(400).json({ error: 'Choose a valid Smart KDS action.' });
+    if (!orderId || !stationId || !taskKey || !transition)
+      return res.status(400).json({ error: 'Choose a valid Smart KDS action.' });
     const preview = await getSmartKdsUnifiedPreview();
-    const recommendation = preview.recommendations.find((task) => task.taskKey === taskKey && task.orderId === orderId && task.stationId === stationId);
-    if (!recommendation) return res.status(404).json({ error: 'This production task is no longer active.' });
+    const recommendation = preview.recommendations.find(
+      (task) => task.taskKey === taskKey && task.orderId === orderId && task.stationId === stationId
+    );
+    if (!recommendation)
+      return res.status(404).json({ error: 'This production task is no longer active.' });
     const alreadyFired = recommendation.taskState === 'fired';
-    if (action === 'start' && !alreadyFired && recommendation.capacityState !== 'allocated') return res.status(409).json({ error: recommendation.finalReason || 'Station capacity is not available for this task.' });
+    if (action === 'start' && !alreadyFired && recommendation.capacityState !== 'allocated')
+      return res.status(409).json({
+        error: recommendation.finalReason || 'Station capacity is not available for this task.',
+      });
     await ensureSmartKdsProductionTasks([recommendation]);
     if (action === 'start' && !alreadyFired) {
       const capacityVersion = Number.parseInt(recommendation.stationCapacityVersion, 10);
       const claim = Number.isInteger(capacityVersion)
         ? await sql`UPDATE kitchen_station_state SET version=version+1,updated_at=NOW() WHERE station_id=${stationId} AND version=${capacityVersion} RETURNING version`
         : [];
-      if (!claim.length) return res.status(409).json({ error: 'Station capacity changed on another kitchen screen. Refresh before starting this item.' });
+      if (!claim.length)
+        return res.status(409).json({
+          error:
+            'Station capacity changed on another kitchen screen. Refresh before starting this item.',
+        });
     }
-    const updated = await sql`UPDATE kitchen_production_tasks SET task_state=${status},active_batch_id=NULL,eligible_at=COALESCE(eligible_at,NOW()),scheduled_at=CASE WHEN ${status}='preparing' THEN COALESCE(scheduled_at,NOW()) ELSE scheduled_at END,fired_at=CASE WHEN ${status}='preparing' THEN COALESCE(fired_at,NOW()) ELSE fired_at END,preparing_at=CASE WHEN ${status}='preparing' THEN NOW() ELSE preparing_at END,ready_at=CASE WHEN ${status}='ready' THEN NOW() ELSE ready_at END,expo_at=CASE WHEN ${status}='expo' THEN NOW() ELSE expo_at END,served_at=CASE WHEN ${status}='served' THEN NOW() ELSE served_at END,version=version+1,updated_at=NOW() WHERE task_id=${taskKey} AND order_id=${orderId} AND station_id=${stationId} AND task_state = ANY(${expectedStates}) RETURNING task_id,source_line_id,course_type`;
-    if (!updated.length) return res.status(409).json({ error: 'This item is no longer in the required production state.' });
+    const updated =
+      await sql`UPDATE kitchen_production_tasks SET task_state=${status},active_batch_id=NULL,eligible_at=COALESCE(eligible_at,NOW()),scheduled_at=CASE WHEN ${status}='preparing' THEN COALESCE(scheduled_at,NOW()) ELSE scheduled_at END,fired_at=CASE WHEN ${status}='preparing' THEN COALESCE(fired_at,NOW()) ELSE fired_at END,preparing_at=CASE WHEN ${status}='preparing' THEN NOW() ELSE preparing_at END,ready_at=CASE WHEN ${status}='ready' THEN NOW() ELSE ready_at END,expo_at=CASE WHEN ${status}='expo' THEN NOW() ELSE expo_at END,served_at=CASE WHEN ${status}='served' THEN NOW() ELSE served_at END,version=version+1,updated_at=NOW() WHERE task_id=${taskKey} AND order_id=${orderId} AND station_id=${stationId} AND task_state = ANY(${expectedStates}) RETURNING task_id,source_line_id,course_type`;
+    if (!updated.length)
+      return res
+        .status(409)
+        .json({ error: 'This item is no longer in the required production state.' });
     if (action === 'serve' && updated[0].course_type) {
       await sql`INSERT INTO kitchen_service_events (service_event_id,order_id,course_type,source_line_ids,actor_type,actor_id) VALUES (${crypto.randomUUID()},${orderId},${updated[0].course_type},${JSON.stringify([updated[0].source_line_id].filter(Boolean))},'kitchen',${operator})`;
-      const remaining = await sql`SELECT COUNT(*)::integer AS count FROM kitchen_production_tasks WHERE order_id=${orderId} AND course_type=${updated[0].course_type} AND task_state NOT IN ('served','cancelled','superseded')`;
+      const remaining =
+        await sql`SELECT COUNT(*)::integer AS count FROM kitchen_production_tasks WHERE order_id=${orderId} AND course_type=${updated[0].course_type} AND task_state NOT IN ('served','cancelled','superseded')`;
       if (!Number(remaining[0]?.count || 0))
         await sql`UPDATE kitchen_order_courses SET course_state='served',served_at=COALESCE(served_at,NOW()),version=version+1,updated_at=NOW() WHERE order_id=${orderId} AND course_type=${updated[0].course_type}`;
     }
@@ -5468,33 +6083,75 @@ app.post('/api/orders/smart-kds/batches/:batchId/start', async (req, res) => {
   try {
     await ensureSmartKdsTables();
     if (!(await requireSmartKdsManualMode(res))) return;
-    const batchId = String(req.params.batchId || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80);
-    const reason = String(req.body?.reason || '').trim().slice(0, 240);
+    const batchId = String(req.params.batchId || '')
+      .replace(/[^a-zA-Z0-9_-]/g, '')
+      .slice(0, 80);
+    const reason = String(req.body?.reason || '')
+      .trim()
+      .slice(0, 240);
     const operator = smartKdsOperator(req);
-    if (!batchId || reason.length < 3) return res.status(400).json({ error: 'Enter a brief reason before starting a batch.' });
-    const batches = await sql`SELECT batch_id,station_id,batch_state,config_snapshot FROM kitchen_batches WHERE batch_id=${batchId} LIMIT 1`;
-    if (!batches.length || !['planned','ready-to-fire'].includes(batches[0].batch_state)) return res.status(409).json({ error: 'This batch is no longer available to start.' });
+    if (!batchId || reason.length < 3)
+      return res.status(400).json({ error: 'Enter a brief reason before starting a batch.' });
+    const batches =
+      await sql`SELECT batch_id,station_id,batch_state,config_snapshot FROM kitchen_batches WHERE batch_id=${batchId} LIMIT 1`;
+    if (!batches.length || !['planned', 'ready-to-fire'].includes(batches[0].batch_state))
+      return res.status(409).json({ error: 'This batch is no longer available to start.' });
     const liveCapacity = await getSmartKdsCapacityPreview();
     await persistSmartKdsBatches(liveCapacity.batches || []);
     const currentBatch = (liveCapacity.batches || []).find((batch) => batch.batchId === batchId);
-    const currentAllocation = (liveCapacity.allocated || []).find((work) => work.kind === 'batch' && work.workKey === currentBatch?.batchKey);
-    if (!currentBatch || currentBatch.action !== 'fire-batch' || !currentAllocation || currentAllocation.capacityState !== 'allocated')
-      return res.status(409).json({ error: 'Station capacity or the batch plan has changed. Refresh the board before starting this batch.' });
-    const allocations = await sql`SELECT a.task_id,a.allocated_quantity,t.order_id,t.requested_quantity,t.task_state,t.station_id FROM kitchen_batch_allocations a JOIN kitchen_production_tasks t ON t.task_id=a.task_id WHERE a.batch_id=${batchId} ORDER BY a.task_id`;
-    if (!allocations.length || allocations.some((row) => !['ordered','eligible','scheduled'].includes(String(row.task_state)) || row.station_id !== batches[0].station_id || Number(row.allocated_quantity) !== Number(row.requested_quantity)))
-      return res.status(409).json({ error: 'This batch changed before it was started. Refresh the board and use the new recommendation.' });
+    const currentAllocation = (liveCapacity.allocated || []).find(
+      (work) => work.kind === 'batch' && work.workKey === currentBatch?.batchKey
+    );
+    if (
+      !currentBatch ||
+      currentBatch.action !== 'fire-batch' ||
+      !currentAllocation ||
+      currentAllocation.capacityState !== 'allocated'
+    )
+      return res.status(409).json({
+        error:
+          'Station capacity or the batch plan has changed. Refresh the board before starting this batch.',
+      });
+    const allocations =
+      await sql`SELECT a.task_id,a.allocated_quantity,t.order_id,t.requested_quantity,t.task_state,t.station_id FROM kitchen_batch_allocations a JOIN kitchen_production_tasks t ON t.task_id=a.task_id WHERE a.batch_id=${batchId} ORDER BY a.task_id`;
+    if (
+      !allocations.length ||
+      allocations.some(
+        (row) =>
+          !['ordered', 'eligible', 'scheduled'].includes(String(row.task_state)) ||
+          row.station_id !== batches[0].station_id ||
+          Number(row.allocated_quantity) !== Number(row.requested_quantity)
+      )
+    )
+      return res.status(409).json({
+        error:
+          'This batch changed before it was started. Refresh the board and use the new recommendation.',
+      });
     const capacityVersion = Number.parseInt(currentAllocation.stationCapacityVersion, 10);
     const claim = Number.isInteger(capacityVersion)
       ? await sql`UPDATE kitchen_station_state SET version=version+1,updated_at=NOW() WHERE station_id=${batches[0].station_id} AND version=${capacityVersion} RETURNING version`
       : [];
-    if (!claim.length) return res.status(409).json({ error: 'Station capacity changed on another kitchen screen. Refresh before starting this batch.' });
+    if (!claim.length)
+      return res.status(409).json({
+        error:
+          'Station capacity changed on another kitchen screen. Refresh before starting this batch.',
+      });
     const taskIds = allocations.map((row) => row.task_id);
-    const updated = await sql`UPDATE kitchen_production_tasks SET task_state='preparing',active_batch_id=${batchId},eligible_at=COALESCE(eligible_at,NOW()),scheduled_at=COALESCE(scheduled_at,NOW()),fired_at=NOW(),preparing_at=NOW(),version=version+1,updated_at=NOW() WHERE task_id = ANY(${taskIds}) AND task_state IN ('ordered','eligible','scheduled') RETURNING task_id,order_id`;
-    if (updated.length !== allocations.length) return res.status(409).json({ error: 'A batch item was changed by another kitchen screen. Refresh and try again.' });
+    const updated =
+      await sql`UPDATE kitchen_production_tasks SET task_state='preparing',active_batch_id=${batchId},eligible_at=COALESCE(eligible_at,NOW()),scheduled_at=COALESCE(scheduled_at,NOW()),fired_at=NOW(),preparing_at=NOW(),version=version+1,updated_at=NOW() WHERE task_id = ANY(${taskIds}) AND task_state IN ('ordered','eligible','scheduled') RETURNING task_id,order_id`;
+    if (updated.length !== allocations.length)
+      return res.status(409).json({
+        error: 'A batch item was changed by another kitchen screen. Refresh and try again.',
+      });
     await sql`UPDATE kitchen_batches SET batch_state='fired',fired_at=NOW(),version=version+1,updated_at=NOW() WHERE batch_id=${batchId}`;
     for (const row of updated) {
       await sql`INSERT INTO kitchen_task_events (task_id,order_id,event_type,details,actor_type,actor_id) VALUES (${row.task_id},${row.order_id},'batch-start',${JSON.stringify({ batchId, reason, stationId: batches[0].station_id })},'kitchen',${operator})`;
-      await recordOrderEvent(row.order_id, 'smart-kds-batch-start', { batchId, taskKey: row.task_id, reason, operator });
+      await recordOrderEvent(row.order_id, 'smart-kds-batch-start', {
+        batchId,
+        taskKey: row.task_id,
+        reason,
+        operator,
+      });
     }
     res.json({ ok: true, batchId, tasksStarted: updated.length });
   } catch (error) {
@@ -5505,48 +6162,87 @@ app.post('/api/orders/smart-kds/overrides', async (req, res) => {
   try {
     await ensureSmartKdsTables();
     if (!(await requireSmartKdsManualMode(res))) return;
-    const orderId = String(req.body?.orderId || '').trim().slice(0, 120);
-    const taskKey = String(req.body?.taskKey || '').trim().slice(0, 180);
-    const action = String(req.body?.action || '').trim().toLowerCase();
-    const reason = String(req.body?.reason || '').trim().slice(0, 240);
+    const orderId = String(req.body?.orderId || '')
+      .trim()
+      .slice(0, 120);
+    const taskKey = String(req.body?.taskKey || '')
+      .trim()
+      .slice(0, 180);
+    const action = String(req.body?.action || '')
+      .trim()
+      .toLowerCase();
+    const reason = String(req.body?.reason || '')
+      .trim()
+      .slice(0, 240);
     const operator = smartKdsOperator(req);
-    const permitted = new Set(['hold', 'resume', 'rush', 'fire-now', 'defer', 'change-course', 'move-station', 'refire', 'served']);
+    const permitted = new Set([
+      'hold',
+      'resume',
+      'rush',
+      'fire-now',
+      'defer',
+      'change-course',
+      'move-station',
+      'refire',
+      'served',
+    ]);
     if (!orderId || !taskKey || !permitted.has(action) || reason.length < 3)
       return res.status(400).json({ error: 'Choose a valid override and enter a brief reason.' });
-    const rows = await sql`SELECT task_id,task_state,source_line_id,course_type,station_id FROM kitchen_production_tasks WHERE task_id=${taskKey} AND order_id=${orderId} LIMIT 1`;
-    if (!rows.length) return res.status(404).json({ error: 'This production task is no longer available.' });
+    const rows =
+      await sql`SELECT task_id,task_state,source_line_id,course_type,station_id FROM kitchen_production_tasks WHERE task_id=${taskKey} AND order_id=${orderId} LIMIT 1`;
+    if (!rows.length)
+      return res.status(404).json({ error: 'This production task is no longer available.' });
     const livePreview = await getSmartKdsUnifiedPreview();
-    const original = livePreview.recommendations.find((task) => task.taskKey === taskKey && task.orderId === orderId);
+    const original = livePreview.recommendations.find(
+      (task) => task.taskKey === taskKey && task.orderId === orderId
+    );
     const details = {
-      originalRecommendation: original ? {
-        action: original.action, baseAction: original.baseAction, rank: original.finalRank,
-        finalReason: original.finalReason, reasonCodes: original.reasonCodes || [],
-        taskState: original.taskState, pacingState: original.pacingState, capacityState: original.capacityState,
-        orderedAt: original.orderedAt || null, targetServeAt: original.targetServeAt || null,
-        latestAcceptableServeAt: original.latestAcceptableServeAt || null,
-        latestSafeStartAt: original.latestSafeStartAt || null, stationId: original.stationId || null,
-        capturedAt: livePreview.generatedAt,
-      } : null,
+      originalRecommendation: original
+        ? {
+            action: original.action,
+            baseAction: original.baseAction,
+            rank: original.finalRank,
+            finalReason: original.finalReason,
+            reasonCodes: original.reasonCodes || [],
+            taskState: original.taskState,
+            pacingState: original.pacingState,
+            capacityState: original.capacityState,
+            orderedAt: original.orderedAt || null,
+            targetServeAt: original.targetServeAt || null,
+            latestAcceptableServeAt: original.latestAcceptableServeAt || null,
+            latestSafeStartAt: original.latestSafeStartAt || null,
+            stationId: original.stationId || null,
+            capturedAt: livePreview.generatedAt,
+          }
+        : null,
     };
     if (action === 'change-course') {
-      const course = String(req.body?.course || '').trim().toLowerCase();
-      if (!COURSE_TYPES.includes(course)) return res.status(400).json({ error: 'Choose a valid course.' });
+      const course = String(req.body?.course || '')
+        .trim()
+        .toLowerCase();
+      if (!COURSE_TYPES.includes(course))
+        return res.status(400).json({ error: 'Choose a valid course.' });
       details.course = course;
       await sql`UPDATE kitchen_production_tasks SET course_type=${course},target_serve_at=NULL,latest_acceptable_serve_at=NULL,latest_safe_start_at=NULL,version=version+1,updated_at=NOW() WHERE order_id=${orderId} AND source_line_id=${rows[0].source_line_id}`;
       const order = await sql`SELECT items FROM direct_orders WHERE id=${orderId} LIMIT 1`;
       if (order.length) {
         const items = Array.isArray(order[0].items) ? order[0].items : [];
-        const nextItems = items.map((item, index) => (
+        const nextItems = items.map((item, index) =>
           String(item.lineId || `legacy-${index}`) === String(rows[0].source_line_id || '')
-            ? { ...item, courseOverride: course } : item
-        ));
+            ? { ...item, courseOverride: course }
+            : item
+        );
         await sql`UPDATE direct_orders SET items=${JSON.stringify(nextItems)},updated_at=NOW() WHERE id=${orderId}`;
       }
     }
     if (action === 'move-station') {
-      const stationId = String(req.body?.stationId || '').trim().slice(0, 120);
-      const station = await sql`SELECT station_id FROM kitchen_stations WHERE station_id=${stationId} AND enabled=TRUE LIMIT 1`;
-      if (!station.length) return res.status(400).json({ error: 'Choose an available kitchen station.' });
+      const stationId = String(req.body?.stationId || '')
+        .trim()
+        .slice(0, 120);
+      const station =
+        await sql`SELECT station_id FROM kitchen_stations WHERE station_id=${stationId} AND enabled=TRUE LIMIT 1`;
+      if (!station.length)
+        return res.status(400).json({ error: 'Choose an available kitchen station.' });
       details.stationId = stationId;
       await sql`UPDATE kitchen_production_tasks SET station_id=${stationId},target_serve_at=NULL,latest_acceptable_serve_at=NULL,latest_safe_start_at=NULL,version=version+1,updated_at=NOW() WHERE order_id=${orderId} AND source_line_id=${rows[0].source_line_id}`;
     }
@@ -5555,25 +6251,39 @@ app.post('/api/orders/smart-kds/overrides', async (req, res) => {
     if (action === 'resume')
       await sql`UPDATE kitchen_production_tasks SET task_state='ordered',active_batch_id=NULL,version=version+1,updated_at=NOW() WHERE task_id=${taskKey} AND task_state='held'`;
     if (action === 'fire-now') {
-      const recommendation = livePreview.recommendations.find((task) => task.taskKey === taskKey && task.orderId === orderId && task.stationId === rows[0].station_id);
+      const recommendation = livePreview.recommendations.find(
+        (task) =>
+          task.taskKey === taskKey &&
+          task.orderId === orderId &&
+          task.stationId === rows[0].station_id
+      );
       if (!recommendation || recommendation.capacityState !== 'allocated')
-        return res.status(409).json({ error: recommendation?.finalReason || 'Station capacity is not available for this item. Use Rush to prioritise it, then start it when capacity is free.' });
+        return res.status(409).json({
+          error:
+            recommendation?.finalReason ||
+            'Station capacity is not available for this item. Use Rush to prioritise it, then start it when capacity is free.',
+        });
       const capacityVersion = Number.parseInt(recommendation.stationCapacityVersion, 10);
       const claim = Number.isInteger(capacityVersion)
         ? await sql`UPDATE kitchen_station_state SET version=version+1,updated_at=NOW() WHERE station_id=${rows[0].station_id} AND version=${capacityVersion} RETURNING version`
         : [];
-      if (!claim.length) return res.status(409).json({ error: 'Station capacity changed on another kitchen screen. Refresh and try again.' });
+      if (!claim.length)
+        return res.status(409).json({
+          error: 'Station capacity changed on another kitchen screen. Refresh and try again.',
+        });
       await sql`UPDATE kitchen_production_tasks SET task_state='preparing',active_batch_id=NULL,eligible_at=COALESCE(eligible_at,NOW()),scheduled_at=COALESCE(scheduled_at,NOW()),fired_at=NOW(),preparing_at=NOW(),version=version+1,updated_at=NOW() WHERE task_id=${taskKey} AND task_state IN ('ordered','eligible','scheduled')`;
     }
     if (action === 'refire')
       await sql`UPDATE kitchen_production_tasks SET task_state='ordered',active_batch_id=NULL,preparing_at=NULL,ready_at=NULL,served_at=NULL,cancelled_at=NULL,version=version+1,updated_at=NOW() WHERE task_id=${taskKey} AND task_state IN ('ready','served','held')`;
-    const servedTasks = action === 'served'
-      ? await sql`UPDATE kitchen_production_tasks SET task_state='served',active_batch_id=NULL,served_at=NOW(),version=version+1,updated_at=NOW() WHERE task_id=${taskKey} AND task_state NOT IN ('served','cancelled','superseded') RETURNING task_id,source_line_id,course_type`
-      : [];
+    const servedTasks =
+      action === 'served'
+        ? await sql`UPDATE kitchen_production_tasks SET task_state='served',active_batch_id=NULL,served_at=NOW(),version=version+1,updated_at=NOW() WHERE task_id=${taskKey} AND task_state NOT IN ('served','cancelled','superseded') RETURNING task_id,source_line_id,course_type`
+        : [];
     if (action === 'served' && rows[0].course_type) {
       if (servedTasks.length)
         await sql`INSERT INTO kitchen_service_events (service_event_id,order_id,course_type,source_line_ids,actor_type,actor_id) VALUES (${crypto.randomUUID()},${orderId},${rows[0].course_type},${JSON.stringify([rows[0].source_line_id].filter(Boolean))},'kitchen',${operator})`;
-      const remaining = await sql`SELECT COUNT(*)::integer AS count FROM kitchen_production_tasks WHERE order_id=${orderId} AND course_type=${rows[0].course_type} AND task_state NOT IN ('served','cancelled','superseded')`;
+      const remaining =
+        await sql`SELECT COUNT(*)::integer AS count FROM kitchen_production_tasks WHERE order_id=${orderId} AND course_type=${rows[0].course_type} AND task_state NOT IN ('served','cancelled','superseded')`;
       if (!Number(remaining[0]?.count || 0))
         await sql`UPDATE kitchen_order_courses SET course_state='served',served_at=COALESCE(served_at,NOW()),version=version+1,updated_at=NOW() WHERE order_id=${orderId} AND course_type=${rows[0].course_type}`;
     }
@@ -5649,8 +6359,12 @@ function sanitizePrinterFormat(source = {}) {
       .trim()
       .slice(0, 60),
     paperWidth: Number(source.paperWidth) === 58 ? 58 : 80,
-    receiptHeader: String(source.receiptHeader || '').trim().slice(0, 160),
-    receiptFooter: String(source.receiptFooter || '').trim().slice(0, 160),
+    receiptHeader: String(source.receiptHeader || '')
+      .trim()
+      .slice(0, 160),
+    receiptFooter: String(source.receiptFooter || '')
+      .trim()
+      .slice(0, 160),
     showRestaurantName: source.showRestaurantName !== false,
     showItemSerial: !!source.showItemSerial,
     showCustomer: source.showCustomer !== false,
@@ -5794,11 +6508,9 @@ app.put('/api/orders/operations', async (req, res) => {
     for (const route of routes) {
       const target = `${route.printerId}::${route.category}::${route.itemName || '*'}::${route.portion || '*'}`;
       if (assignedTargets.has(target))
-        return res
-          .status(400)
-          .json({
-            error: `${route.itemName || route.category}${route.portion ? ` (${route.portion})` : ''} is already routed to this printer.`,
-          });
+        return res.status(400).json({
+          error: `${route.itemName || route.category}${route.portion ? ` (${route.portion})` : ''} is already routed to this printer.`,
+        });
       assignedTargets.add(target);
     }
     const tableAreas = (Array.isArray(source.tableAreas) ? source.tableAreas : [])
@@ -5825,6 +6537,7 @@ app.put('/api/orders/operations', async (req, res) => {
       );
     const config = { printers, routes, tableAreas };
     await sql`INSERT INTO order_operations_config (config_key, config, updated_at) VALUES ('default', ${JSON.stringify(config)}, NOW()) ON CONFLICT (config_key) DO UPDATE SET config=EXCLUDED.config, updated_at=NOW()`;
+    clearSmartKdsReadCaches();
     res.json({ ok: true, config });
   } catch (error) {
     res.status(500).json({ error: 'Unable to save Operations configuration.' });
@@ -6015,35 +6728,44 @@ app.post('/api/admin/air-menu/gravy-style', async (req, res) => {
   }
 });
 
-app.patch('/api/admin/air-menu/addons/:groupId/options/:optionId/availability', async (req, res) => {
-  try {
-    const menu = await getSection('airMenu');
-    const groups = Addons.normalizeGroups(menu.addonGroups || []);
-    const group = groups.find((entry) => entry.id === String(req.params.groupId || ''));
-    const option = group?.options.find((entry) => entry.id === String(req.params.optionId || ''));
-    if (!group || !option) return res.status(404).json({ error: 'Add-on choice not found.' });
-    option.active = req.body?.active === true;
-    await saveSection('airMenu', { addonGroups: groups });
-    clearPublicContentCache();
-    res.json({
-      ok: true,
-      groupId: group.id,
-      optionId: option.id,
-      active: option.active,
-      updatedAt: new Date().toISOString(),
-    });
-  } catch (error) {
-    res.status(500).json({ error: 'Unable to update add-on availability.' });
+app.patch(
+  '/api/admin/air-menu/addons/:groupId/options/:optionId/availability',
+  async (req, res) => {
+    try {
+      const menu = await getSection('airMenu');
+      const groups = Addons.normalizeGroups(menu.addonGroups || []);
+      const group = groups.find((entry) => entry.id === String(req.params.groupId || ''));
+      const option = group?.options.find((entry) => entry.id === String(req.params.optionId || ''));
+      if (!group || !option) return res.status(404).json({ error: 'Add-on choice not found.' });
+      option.active = req.body?.active === true;
+      await saveSection('airMenu', { addonGroups: groups });
+      clearPublicContentCache();
+      res.json({
+        ok: true,
+        groupId: group.id,
+        optionId: option.id,
+        active: option.active,
+        updatedAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      res.status(500).json({ error: 'Unable to update add-on availability.' });
+    }
   }
-});
+);
 
 app.patch('/api/admin/air-menu/proximity-lock', async (req, res) => {
   try {
     const menu = await getSection('airMenu');
     const locked = req.body?.locked === true;
     const proximity = { ...(menu.proximity || {}), locked };
-    if (locked && (!Number.isFinite(Number(proximity.latitude)) || !Number.isFinite(Number(proximity.longitude))))
-      return res.status(400).json({ error: 'Save a valid restaurant latitude and longitude before locking them.' });
+    if (
+      locked &&
+      (!Number.isFinite(Number(proximity.latitude)) ||
+        !Number.isFinite(Number(proximity.longitude)))
+    )
+      return res
+        .status(400)
+        .json({ error: 'Save a valid restaurant latitude and longitude before locking them.' });
     await saveSection('airMenu', { proximity });
     clearPublicContentCache();
     res.json({ ok: true, locked });
@@ -6105,7 +6827,12 @@ app.get('/api/admin/table-qr-codes', async (req, res) => {
       Array.from({ length: Math.max(0, Number(area.to) - Number(area.from) + 1) }, (_, index) => {
         const number = Number(area.from) + index;
         const key = tableQrKey(area.id, number);
-        return { areaId: String(area.id), areaName: String(area.name), tableNumber: number, enabled: !menu.tableQrDisabled?.[key] };
+        return {
+          areaId: String(area.id),
+          areaName: String(area.name),
+          tableNumber: number,
+          enabled: !menu.tableQrDisabled?.[key],
+        };
       })
     );
     res.set('Cache-Control', 'no-store');
@@ -6218,15 +6945,23 @@ app.get('/api/content', async (req, res) => {
 app.get('/api/admin/trusted-contacts', async (req, res) => {
   try {
     await Promise.all([ensureTrustedContactsTable(), ensureDirectOrdersTable()]);
-    const search = String(req.query.search || '').trim().slice(0, 80);
+    const search = String(req.query.search || '')
+      .trim()
+      .slice(0, 80);
     const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
     const limit = Math.min(100, Math.max(20, Number.parseInt(req.query.limit, 10) || 50));
     const offset = (page - 1) * limit;
     const like = `%${search}%`;
     const select = `SELECT c.customer_phone,c.customer_name,c.blocked,c.created_at,c.updated_at,last_order.items AS last_items,last_order.total AS last_total,last_order.created_at AS last_order_at,last_order.status AS last_order_status FROM trusted_contacts c LEFT JOIN LATERAL (SELECT items,total,created_at,status FROM direct_orders WHERE customer_phone=c.customer_phone AND status NOT IN ('cancelled','rejected') ORDER BY created_at DESC LIMIT 1) last_order ON TRUE`;
     const contacts = search
-      ? await sql(`${select} WHERE c.customer_phone LIKE $1 OR c.customer_name ILIKE $1 ORDER BY c.blocked,c.customer_name NULLS LAST,c.updated_at DESC LIMIT $2 OFFSET $3`, [like, limit, offset])
-      : await sql(`${select} ORDER BY c.blocked,c.customer_name NULLS LAST,c.updated_at DESC LIMIT $1 OFFSET $2`, [limit, offset]);
+      ? await sql(
+          `${select} WHERE c.customer_phone LIKE $1 OR c.customer_name ILIKE $1 ORDER BY c.blocked,c.customer_name NULLS LAST,c.updated_at DESC LIMIT $2 OFFSET $3`,
+          [like, limit, offset]
+        )
+      : await sql(
+          `${select} ORDER BY c.blocked,c.customer_name NULLS LAST,c.updated_at DESC LIMIT $1 OFFSET $2`,
+          [limit, offset]
+        );
     const countRows = search
       ? await sql`SELECT COUNT(*)::int AS count FROM trusted_contacts WHERE customer_phone LIKE ${like} OR customer_name ILIKE ${like}`
       : await sql`SELECT COUNT(*)::int AS count FROM trusted_contacts`;
@@ -6245,7 +6980,9 @@ app.post('/api/admin/trusted-contacts', async (req, res) => {
       .slice(0, 1000)
       .map((contact) => ({
         phone: String(contact.phone || contact.customerPhone || '').replace(/\D/g, ''),
-        name: String(contact.name || contact.customerName || '').trim().slice(0, 80),
+        name: String(contact.name || contact.customerName || '')
+          .trim()
+          .slice(0, 80),
       }))
       .filter((contact) => contact.phone.length >= 7 && contact.phone.length <= 16);
     if (!contacts.length)
@@ -6278,41 +7015,56 @@ app.get('/api/admin/trusted-contacts/template', async (req, res) => {
   res.end();
 });
 
-app.post('/api/admin/trusted-contacts/import', trustedContactUpload.single('contactsFile'), async (req, res) => {
-  try {
-    if (!req.file?.buffer) return res.status(400).json({ error: 'Choose an Excel contacts file first.' });
-    const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.load(req.file.buffer);
-    const sheet = workbook.worksheets[0];
-    if (!sheet) return res.status(400).json({ error: 'The Excel file has no worksheet.' });
-    const headers = {};
-    sheet.getRow(1).eachCell((cell, column) => {
-      headers[String(cell.text || '').trim().toLowerCase().replace(/[^a-z]/g, '')] = column;
-    });
-    const phoneColumn = headers.mobilenumber || headers.mobile || headers.phone || headers.phonenumber;
-    const nameColumn = headers.name || headers.customername;
-    if (!phoneColumn)
-      return res.status(400).json({ error: 'Use a “Mobile Number” column in the first row.' });
-    const contacts = [];
-    sheet.eachRow((row, rowNumber) => {
-      if (rowNumber === 1 || contacts.length >= 1000) return;
-      const phone = String(row.getCell(phoneColumn).text || '').replace(/\D/g, '');
-      if (phone.length >= 7 && phone.length <= 16)
-        contacts.push({
-          phone,
-          name: nameColumn ? String(row.getCell(nameColumn).text || '').trim().slice(0, 80) : '',
-        });
-    });
-    if (!contacts.length)
-      return res.status(400).json({ error: 'No valid mobile numbers were found in the file.' });
-    await ensureTrustedContactsTable();
-    for (const contact of contacts)
-      await sql`INSERT INTO trusted_contacts (customer_phone,customer_name) VALUES (${contact.phone},${contact.name}) ON CONFLICT (customer_phone) DO UPDATE SET customer_name=CASE WHEN EXCLUDED.customer_name='' THEN trusted_contacts.customer_name ELSE EXCLUDED.customer_name END, blocked=FALSE, updated_at=NOW()`;
-    res.status(201).json({ ok: true, added: contacts.length });
-  } catch (error) {
-    res.status(400).json({ error: error.message || 'Unable to import this contacts file.' });
+app.post(
+  '/api/admin/trusted-contacts/import',
+  trustedContactUpload.single('contactsFile'),
+  async (req, res) => {
+    try {
+      if (!req.file?.buffer)
+        return res.status(400).json({ error: 'Choose an Excel contacts file first.' });
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(req.file.buffer);
+      const sheet = workbook.worksheets[0];
+      if (!sheet) return res.status(400).json({ error: 'The Excel file has no worksheet.' });
+      const headers = {};
+      sheet.getRow(1).eachCell((cell, column) => {
+        headers[
+          String(cell.text || '')
+            .trim()
+            .toLowerCase()
+            .replace(/[^a-z]/g, '')
+        ] = column;
+      });
+      const phoneColumn =
+        headers.mobilenumber || headers.mobile || headers.phone || headers.phonenumber;
+      const nameColumn = headers.name || headers.customername;
+      if (!phoneColumn)
+        return res.status(400).json({ error: 'Use a “Mobile Number” column in the first row.' });
+      const contacts = [];
+      sheet.eachRow((row, rowNumber) => {
+        if (rowNumber === 1 || contacts.length >= 1000) return;
+        const phone = String(row.getCell(phoneColumn).text || '').replace(/\D/g, '');
+        if (phone.length >= 7 && phone.length <= 16)
+          contacts.push({
+            phone,
+            name: nameColumn
+              ? String(row.getCell(nameColumn).text || '')
+                  .trim()
+                  .slice(0, 80)
+              : '',
+          });
+      });
+      if (!contacts.length)
+        return res.status(400).json({ error: 'No valid mobile numbers were found in the file.' });
+      await ensureTrustedContactsTable();
+      for (const contact of contacts)
+        await sql`INSERT INTO trusted_contacts (customer_phone,customer_name) VALUES (${contact.phone},${contact.name}) ON CONFLICT (customer_phone) DO UPDATE SET customer_name=CASE WHEN EXCLUDED.customer_name='' THEN trusted_contacts.customer_name ELSE EXCLUDED.customer_name END, blocked=FALSE, updated_at=NOW()`;
+      res.status(201).json({ ok: true, added: contacts.length });
+    } catch (error) {
+      res.status(400).json({ error: error.message || 'Unable to import this contacts file.' });
+    }
   }
-});
+);
 
 app.patch('/api/admin/trusted-contacts/:phone', async (req, res) => {
   try {
@@ -6320,9 +7072,12 @@ app.patch('/api/admin/trusted-contacts/:phone', async (req, res) => {
     const phone = String(req.params.phone || '').replace(/\D/g, '');
     if (phone.length < 7 || phone.length > 16)
       return res.status(400).json({ error: 'Invalid mobile number.' });
-    const name = String(req.body?.name || '').trim().slice(0, 80);
+    const name = String(req.body?.name || '')
+      .trim()
+      .slice(0, 80);
     const blocked = req.body?.blocked === true;
-    const saved = await sql`UPDATE trusted_contacts SET customer_name=${name},blocked=${blocked},updated_at=NOW() WHERE customer_phone=${phone} RETURNING customer_phone`;
+    const saved =
+      await sql`UPDATE trusted_contacts SET customer_name=${name},blocked=${blocked},updated_at=NOW() WHERE customer_phone=${phone} RETURNING customer_phone`;
     if (!saved.length) return res.status(404).json({ error: 'Contact not found.' });
     res.json({ ok: true });
   } catch (error) {
@@ -6419,6 +7174,7 @@ app.put('/api/admin/smart-kds/config', async (req, res) => {
     await ensureSmartKdsTables();
     const config = normalizeSmartKdsConfig(req.body?.config || req.body || {});
     await sql`INSERT INTO kitchen_scheduling_config (config_key,config,config_version,updated_at) VALUES ('default',${JSON.stringify(config)},${config.version},NOW()) ON CONFLICT (config_key) DO UPDATE SET config=EXCLUDED.config,config_version=EXCLUDED.config_version,updated_at=NOW()`;
+    clearSmartKdsReadCaches();
     await recordSmartKdsRealtimeEvent('configuration-updated');
     res.json({ ok: true, config, schedulerActive: true, staffControlled: true });
   } catch (error) {
@@ -6429,7 +7185,12 @@ app.get('/api/admin/smart-kds/metrics', async (req, res) => {
   try {
     const metrics = await getSmartKdsMetrics(req.query?.days);
     res.set('Cache-Control', 'no-store');
-    res.json({ ...metrics, phase: 13, message: 'Metrics are calculated from saved kitchen task, course, batch, decision, and action records.' });
+    res.json({
+      ...metrics,
+      phase: 13,
+      message:
+        'Metrics are calculated from saved kitchen task, course, batch, decision, and action records.',
+    });
   } catch (error) {
     console.error('Smart KDS metrics load failed:', error);
     res.status(500).json({ error: 'Unable to load Smart KDS metrics.' });
@@ -6440,15 +7201,27 @@ app.put('/api/admin/smart-kds/stations', async (req, res) => {
     await ensureSmartKdsTables();
     const stations = Array.isArray(req.body?.stations) ? req.body.stations.slice(0, 250) : [];
     for (const source of stations) {
-      const stationId = String(source?.station_id || '').trim().slice(0, 120);
+      const stationId = String(source?.station_id || '')
+        .trim()
+        .slice(0, 120);
       if (!stationId) continue;
-      const stationName = String(source.station_name || stationId).trim().slice(0, 120) || stationId;
-      const printerId = String(source.printer_id || '').trim().slice(0, 120) || null;
-      const capacity = Math.max(1, Math.min(50, Number.parseInt(source.max_concurrent_tasks, 10) || 1));
+      const stationName =
+        String(source.station_name || stationId)
+          .trim()
+          .slice(0, 120) || stationId;
+      const printerId =
+        String(source.printer_id || '')
+          .trim()
+          .slice(0, 120) || null;
+      const capacity = Math.max(
+        1,
+        Math.min(50, Number.parseInt(source.max_concurrent_tasks, 10) || 1)
+      );
       const enabled = source.enabled !== false;
       await sql`INSERT INTO kitchen_stations (station_id,station_name,printer_id,enabled,max_concurrent_tasks,updated_at) VALUES (${stationId},${stationName},${printerId},${enabled},${capacity},NOW()) ON CONFLICT (station_id) DO UPDATE SET station_name=EXCLUDED.station_name,printer_id=EXCLUDED.printer_id,enabled=EXCLUDED.enabled,max_concurrent_tasks=EXCLUDED.max_concurrent_tasks,version=kitchen_stations.version+1,updated_at=NOW()`;
       await sql`INSERT INTO kitchen_station_state (station_id,enabled,available_capacity,updated_at) VALUES (${stationId},${enabled},${capacity},NOW()) ON CONFLICT (station_id) DO UPDATE SET enabled=EXCLUDED.enabled,available_capacity=EXCLUDED.available_capacity,version=kitchen_station_state.version+1,updated_at=NOW()`;
     }
+    clearSmartKdsReadCaches();
     const foundation = await getSmartKdsFoundation();
     await recordSmartKdsRealtimeEvent('stations-updated');
     res.json({ ok: true, stations: foundation.stations, schedulerActive: false });
@@ -6465,7 +7238,8 @@ app.get('/api/admin/smart-kds/menu-profiles', async (req, res) => {
       ...data,
       phase: 2,
       schedulerActive: false,
-      message: 'Profiles are saved for future deterministic scheduling. Current KOT routing is unchanged.',
+      message:
+        'Profiles are saved for future deterministic scheduling. Current KOT routing is unchanged.',
     });
   } catch (error) {
     console.error('Smart KDS profiles load failed:', error);
@@ -6476,20 +7250,23 @@ app.put('/api/admin/smart-kds/menu-profiles', async (req, res) => {
   try {
     await ensureSmartKdsTables();
     const incoming = Array.isArray(req.body?.profiles) ? req.body.profiles.slice(0, 250) : [];
-    if (!incoming.length) return res.status(400).json({ error: 'Choose at least one menu profile to save.' });
+    if (!incoming.length)
+      return res.status(400).json({ error: 'Choose at least one menu profile to save.' });
     const current = await getSmartKdsMenuProfiles();
     const items = new Map(current.items.map((item) => [item.itemKey, item]));
     const stationIds = new Set(current.stations.map((station) => station.station_id));
     const saved = [];
     for (const source of incoming) {
       const item = items.get(String(source?.itemKey || ''));
-      if (!item) return res.status(400).json({ error: 'One of the selected menu items no longer exists.' });
+      if (!item)
+        return res.status(400).json({ error: 'One of the selected menu items no longer exists.' });
       const profile = normalizeMenuProductionProfile(source, item, current.config);
       if (profile.stationId && !stationIds.has(profile.stationId))
         return res.status(400).json({ error: `${item.name} has an unknown kitchen station.` });
       await upsertMenuProductionProfile(item, profile);
       saved.push({ itemKey: item.itemKey, profile });
     }
+    clearSmartKdsReadCaches({ foundation: false });
     await recordSmartKdsRealtimeEvent('production-profiles-updated');
     res.json({ ok: true, saved, schedulerActive: false });
   } catch (error) {
@@ -6522,7 +7299,8 @@ app.get('/api/admin/smart-kds/scheduler-preview', async (req, res) => {
       ...preview,
       phase: 4,
       schedulerActive: false,
-      message: 'Priority recommendations are read-only. Smart KDS has not changed KOT firing or kitchen order.',
+      message:
+        'Priority recommendations are read-only. Smart KDS has not changed KOT firing or kitchen order.',
     });
   } catch (error) {
     console.error('Smart KDS scheduler preview failed:', error);
@@ -6538,7 +7316,8 @@ app.get('/api/admin/smart-kds/batch-preview', async (req, res) => {
       ...preview,
       phase: 5,
       schedulerActive: false,
-      message: 'Batch recommendations are read-only. No KOT has been combined, delayed, or fired by Smart KDS.',
+      message:
+        'Batch recommendations are read-only. No KOT has been combined, delayed, or fired by Smart KDS.',
     });
   } catch (error) {
     console.error('Smart KDS batch preview failed:', error);
@@ -6570,7 +7349,8 @@ app.get('/api/admin/smart-kds/pacing-preview', async (req, res) => {
       ...preview,
       phase: 7,
       schedulerActive: false,
-      message: 'Course pacing is read-only. It does not change KOT firing, serving, or kitchen order.',
+      message:
+        'Course pacing is read-only. It does not change KOT firing, serving, or kitchen order.',
     });
   } catch (error) {
     console.error('Smart KDS pacing preview failed:', error);
@@ -6602,7 +7382,8 @@ app.get('/api/admin/smart-kds/recommendations-preview', async (req, res) => {
       ...preview,
       phase: 8,
       schedulerActive: false,
-      message: 'Final Smart KDS recommendations are read-only. No live KOT action has been changed.',
+      message:
+        'Final Smart KDS recommendations are read-only. No live KOT action has been changed.',
     });
   } catch (error) {
     console.error('Smart KDS unified recommendations failed:', error);
@@ -6615,11 +7396,17 @@ app.get('/api/orders/smart-kds/recommendations', async (req, res) => {
     // Read the cursor before the snapshot. Any event after this point is
     // fetched by the reconnect/poll channel; anything before it is included
     // in the freshly calculated snapshot. This prevents an initial-load gap.
-    const cursorRows = await sql`SELECT event_id FROM kitchen_realtime_events ORDER BY event_id DESC LIMIT 1`;
+    const cursorRows =
+      await sql`SELECT event_id FROM kitchen_realtime_events ORDER BY event_id DESC LIMIT 1`;
     const realtimeCursor = Number(cursorRows[0]?.event_id || 0);
-    const [preview, foundation] = await Promise.all([getSmartKdsUnifiedPreview(), getSmartKdsFoundation()]);
+    const [preview, foundation] = await Promise.all([
+      getSmartKdsUnifiedPreview(),
+      getSmartKdsFoundation(),
+    ]);
     await ensureSmartKdsProductionTasks(preview.recommendations);
-    const taskStates = await smartKdsTaskStates(preview.recommendations.map((task) => task.taskKey));
+    const taskStates = await smartKdsTaskStates(
+      preview.recommendations.map((task) => task.taskKey)
+    );
     res.set('Cache-Control', 'no-store');
     res.json({
       ...preview,
@@ -6627,7 +7414,11 @@ app.get('/api/orders/smart-kds/recommendations', async (req, res) => {
       schedulingMode: foundation.config.mode,
       displayMode: foundation.config.displayMode,
       taskStates,
-      stations: foundation.stations.map((station) => ({ id: station.station_id, name: station.station_name, enabled: station.enabled !== false })),
+      stations: foundation.stations.map((station) => ({
+        id: station.station_id,
+        name: station.station_name,
+        enabled: station.enabled !== false,
+      })),
       message: 'Smart KDS recommendations are staff-controlled. No KOT fires automatically.',
     });
   } catch (error) {
@@ -6638,20 +7429,33 @@ app.get('/api/orders/smart-kds/recommendations', async (req, res) => {
 app.get('/api/orders/smart-kds/orders/:orderId/timeline', async (req, res) => {
   try {
     await ensureSmartKdsTables();
-    const orderId = String(req.params.orderId || '').trim().slice(0, 120);
+    const orderId = String(req.params.orderId || '')
+      .trim()
+      .slice(0, 120);
     if (!orderId) return res.status(400).json({ error: 'Choose a valid order.' });
     const [orders, tasks, events] = await Promise.all([
       sql`SELECT id,daily_order_number,mode,fulfillment_type,table_area,table_number,customer_name,created_at,items FROM direct_orders WHERE id=${orderId} LIMIT 1`,
       sql`SELECT task_id,source_line_id,course_type,station_id,requested_quantity,task_state,created_at,sent_to_kitchen_at,eligible_at,scheduled_at,fired_at,preparing_at,ready_at,expo_at,served_at,cancelled_at FROM kitchen_production_tasks WHERE order_id=${orderId} ORDER BY created_at,task_id`,
       sql`SELECT task_id,event_type,details,actor_type,actor_id,created_at FROM kitchen_task_events WHERE order_id=${orderId} ORDER BY created_at,event_id`,
     ]);
-    if (!orders.length) return res.status(404).json({ error: 'This order is no longer available.' });
+    if (!orders.length)
+      return res.status(404).json({ error: 'This order is no longer available.' });
     const order = orders[0];
-    const names = new Map((Array.isArray(order.items) ? order.items : []).map((item, index) => [String(item.lineId || `legacy-${index}`), String(item.name || 'Menu item')]));
+    const names = new Map(
+      (Array.isArray(order.items) ? order.items : []).map((item, index) => [
+        String(item.lineId || `legacy-${index}`),
+        String(item.name || 'Menu item'),
+      ])
+    );
     const eventsByTask = new Map();
     events.forEach((event) => {
       if (!eventsByTask.has(event.task_id)) eventsByTask.set(event.task_id, []);
-      eventsByTask.get(event.task_id).push({ at: event.created_at, type: event.event_type, details: event.details || {}, actor: event.actor_id || event.actor_type || '' });
+      eventsByTask.get(event.task_id).push({
+        at: event.created_at,
+        type: event.event_type,
+        details: event.details || {},
+        actor: event.actor_id || event.actor_type || '',
+      });
     });
     const timeline = tasks.map((task) => ({
       taskKey: task.task_id,
@@ -6672,11 +7476,26 @@ app.get('/api/orders/smart-kds/orders/:orderId/timeline', async (req, res) => {
         task.served_at ? { at: task.served_at, type: 'served' } : null,
         task.cancelled_at ? { at: task.cancelled_at, type: 'cancelled' } : null,
         ...(eventsByTask.get(task.task_id) || []),
-      ].filter(Boolean).sort((left, right) => new Date(left.at) - new Date(right.at) || String(left.type).localeCompare(String(right.type))),
+      ]
+        .filter(Boolean)
+        .sort(
+          (left, right) =>
+            new Date(left.at) - new Date(right.at) ||
+            String(left.type).localeCompare(String(right.type))
+        ),
     }));
     res.set('Cache-Control', 'no-store');
     res.json({
-      order: { id: order.id, orderNumber: order.daily_order_number, mode: order.mode, fulfillmentType: order.fulfillment_type, tableArea: order.table_area, tableNumber: order.table_number, customerName: order.customer_name, orderedAt: order.created_at },
+      order: {
+        id: order.id,
+        orderNumber: order.daily_order_number,
+        mode: order.mode,
+        fulfillmentType: order.fulfillment_type,
+        tableArea: order.table_area,
+        tableNumber: order.table_number,
+        customerName: order.customer_name,
+        orderedAt: order.created_at,
+      },
       timeline,
     });
   } catch (error) {
@@ -6690,10 +7509,12 @@ app.get('/api/orders/smart-kds/updates', async (req, res) => {
     const hasCursor = /^\d+$/.test(rawCursor);
     const after = hasCursor ? Math.max(0, Math.min(Number(rawCursor), Number.MAX_SAFE_INTEGER)) : 0;
     if (!hasCursor) {
-      const latest = await sql`SELECT event_id FROM kitchen_realtime_events ORDER BY event_id DESC LIMIT 1`;
+      const latest =
+        await sql`SELECT event_id FROM kitchen_realtime_events ORDER BY event_id DESC LIMIT 1`;
       return res.json({ cursor: Number(latest[0]?.event_id || 0), events: [] });
     }
-    const events = await sql`SELECT event_id,event_type,created_at FROM kitchen_realtime_events WHERE event_id>${after} ORDER BY event_id ASC LIMIT 100`;
+    const events =
+      await sql`SELECT event_id,event_type,created_at FROM kitchen_realtime_events WHERE event_id>${after} ORDER BY event_id ASC LIMIT 100`;
     const cursor = events.length ? Number(events[events.length - 1].event_id) : after;
     res.set('Cache-Control', 'no-store');
     res.json({
@@ -6743,7 +7564,12 @@ app.get('/api/admin/smart-kds/service-risk-preview', async (req, res) => {
     await ensureSmartKdsTables();
     const preview = await getSmartKdsServiceRiskPreview();
     res.set('Cache-Control', 'no-store');
-    res.json({ ...preview, phase: 9, schedulerActive: false, message: 'Service-risk detection is read-only. No KOT or service action has been changed.' });
+    res.json({
+      ...preview,
+      phase: 9,
+      schedulerActive: false,
+      message: 'Service-risk detection is read-only. No KOT or service action has been changed.',
+    });
   } catch (error) {
     console.error('Smart KDS service-risk preview failed:', error);
     res.status(500).json({ error: 'Unable to calculate Smart KDS service risk.' });
@@ -6946,9 +7772,7 @@ app.post('/api/captain/login', async (req, res) => {
     if (loginFailures.failures.length >= captainLoginFailureLimit) {
       const retryAfter = Math.max(
         1,
-        Math.ceil(
-          (captainLoginWindowMs - (Date.now() - loginFailures.failures[0])) / 1000
-        )
+        Math.ceil((captainLoginWindowMs - (Date.now() - loginFailures.failures[0])) / 1000)
       );
       res.set('Retry-After', String(retryAfter));
       return res.status(429).json({ error: 'Too many incorrect PIN attempts. Please wait.' });
@@ -7046,7 +7870,8 @@ app.post('/api/captain/orders/:id/kots/:kotNumber/served', async (req, res) => {
       await sql`UPDATE order_kot_round_status SET status='served',updated_at=NOW() WHERE order_id=${req.params.id} AND kot_number=${kotNumber} AND status='ready' RETURNING printer_id`;
     if (!served.length)
       return res.status(409).json({ error: 'This KOT round is not ready to serve.' });
-    const round = await sql`SELECT COUNT(*) FILTER (WHERE status<>'served')::integer AS outstanding FROM order_kot_round_status WHERE order_id=${req.params.id} AND kot_number=${kotNumber}`;
+    const round =
+      await sql`SELECT COUNT(*) FILTER (WHERE status<>'served')::integer AS outstanding FROM order_kot_round_status WHERE order_id=${req.params.id} AND kot_number=${kotNumber}`;
     if (!Number(round[0]?.outstanding || 0))
       await markSmartKdsCoursesServedFromKot(req.params.id, kotNumber).catch((error) =>
         console.warn('Smart KDS course-state update failed:', error.message)
@@ -7185,7 +8010,9 @@ app.post('/api/captain/orders/:id/move', async (req, res) => {
   if (!tableArea || !Number.isInteger(tableNumber) || tableNumber < 1)
     return res.status(400).json({ error: 'Choose a valid destination table.' });
   if (captain.areas.length && !captain.areas.includes(tableArea))
-    return res.status(403).json({ error: 'That table area is not assigned to your Captain account.' });
+    return res
+      .status(403)
+      .json({ error: 'That table area is not assigned to your Captain account.' });
   try {
     await Promise.all([
       ensureDirectOrdersTable(),
@@ -7212,7 +8039,7 @@ app.post('/api/captain/orders/:id/move', async (req, res) => {
     )
       return res.status(400).json({ error: 'Choose an allocated table.' });
     const occupied =
-        await sql`SELECT id FROM direct_orders WHERE order_day=${orderDay}::date AND mode='table' AND table_area=${tableArea} AND table_number=${tableNumber} AND status IN ('saved','held','accepted','preparing','ready') AND id<>${req.params.id} LIMIT 1`;
+      await sql`SELECT id FROM direct_orders WHERE order_day=${orderDay}::date AND mode='table' AND table_area=${tableArea} AND table_number=${tableNumber} AND status IN ('saved','held','accepted','preparing','ready') AND id<>${req.params.id} LIMIT 1`;
     if (occupied.length)
       return res.status(409).json({ error: 'That table already has an active order.' });
     await sql`UPDATE direct_orders SET table_area=${tableArea},table_number=${tableNumber},updated_at=NOW() WHERE id=${req.params.id} AND order_day=${orderDay}::date`;
