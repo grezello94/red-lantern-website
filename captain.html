@@ -12,7 +12,7 @@
     <title>Captain · Red Lantern</title>
     <link rel="stylesheet" href="/captain.css?v=2" />
     <link rel="stylesheet" href="/captain-ux.css?v=52" />
-    <link rel="stylesheet" href="/captain-modern.css?v=2" />
+    <link rel="stylesheet" href="/captain-modern.css?v=3" />
   </head>
   <body>
     <header class="captain-header">
@@ -257,7 +257,7 @@
         </div>
         <div id="cart-list" class="cart-list"></div>
         <details class="guest-details">
-          <summary>Guest details &amp; kitchen note <span>Optional</span></summary>
+          <summary><strong>Guest details &amp; kitchen note</strong><span>Optional</span></summary>
           <div>
             <label
               >Name<input
@@ -400,7 +400,7 @@
     </dialog>
     <script src="/client-config.js"></script>
     <script src="/addons-domain.js?v=1"></script>
-    <script src="/captain.js?v=57"></script>
+    <script src="/captain.js?v=58"></script>
     <script>
       if ('serviceWorker' in navigator) {
         let reloadedForCaptainWorker = false;
@@ -411,7 +411,7 @@
           }
         });
         navigator.serviceWorker
-          .register('/captain-sw.js?v=24')
+          .register('/captain-sw.js?v=26')
           .then((registration) => {
             registration.update().catch(() => {});
             if (registration.waiting) registration.waiting.postMessage({ type: 'SKIP_WAITING' });

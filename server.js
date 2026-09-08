@@ -30,6 +30,7 @@ const { buildKitchenMetrics } = require('./smart-kds-metrics');
 const { printerCapabilities, printerSupports } = require('./printer-domain');
 const Addons = require('./addons-domain');
 const { schemaProbe } = require('./database-readiness');
+const TrustedContacts = require('./trusted-contacts-domain');
 
 const envPath = path.join(__dirname, '.env');
 if (fs.existsSync(envPath)) {
@@ -386,7 +387,7 @@ const menuFileUpload = multer({
 });
 const trustedContactUpload = multer({
   storage,
-  limits: { fileSize: 5 * 1024 * 1024, files: 1 },
+  limits: { fileSize: 20 * 1024 * 1024, files: 1 },
   fileFilter: (req, file, cb) => {
     const extension = path.extname(file.originalname).toLowerCase();
     cb(
@@ -6972,24 +6973,105 @@ app.get('/api/admin/trusted-contacts', async (req, res) => {
   }
 });
 
+async function insertNewTrustedContacts(contacts) {
+  let inserted = 0;
+  for (const batch of TrustedContacts.chunks(contacts, 500)) {
+    const parameters = [];
+    const values = batch.map((contact, index) => {
+      parameters.push(contact.phone, contact.name);
+      return `($${index * 2 + 1},$${index * 2 + 2})`;
+    });
+    const rows = await sql(
+      `INSERT INTO trusted_contacts (customer_phone,customer_name) VALUES ${values.join(
+        ','
+      )} ON CONFLICT (customer_phone) DO NOTHING RETURNING customer_phone`,
+      parameters
+    );
+    inserted += rows.length;
+  }
+  return inserted;
+}
+
+function trustedContactSheetColumns(sheet) {
+  const maxHeaderRow = Math.min(Math.max(1, sheet.actualRowCount || 1), 20);
+  for (let rowNumber = 1; rowNumber <= maxHeaderRow; rowNumber += 1) {
+    const columns = [];
+    sheet.getRow(rowNumber).eachCell((cell, column) => {
+      const key = TrustedContacts.cellText(cell)
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, '');
+      if (key) columns.push({ key, column });
+    });
+    const phone = columns.find(({ key }) =>
+      [
+        'mobile',
+        'mobilenumber',
+        'mobilephone',
+        'phone',
+        'phonenumber',
+        'contact',
+        'contactnumber',
+        'contacts',
+      ].includes(key)
+    );
+    const exportedPhone = columns.find(
+      ({ key }) =>
+        (key.includes('phone') || key.includes('mobile')) &&
+        !key.includes('type') &&
+        (key.includes('value') || key.includes('number'))
+    );
+    const phoneColumn = phone?.column || exportedPhone?.column;
+    if (!phoneColumn) continue;
+    const name = columns.find(({ key }) =>
+      ['name', 'nameoptional', 'customername', 'displayname', 'fullname'].includes(key)
+    );
+    return { headerRow: rowNumber, phoneColumn, nameColumn: name?.column || 0 };
+  }
+  return null;
+}
+
+function trustedContactsFromWorkbook(workbook) {
+  const rows = [];
+  let matchedSheets = 0;
+  for (const sheet of workbook.worksheets) {
+    const columns = trustedContactSheetColumns(sheet);
+    if (!columns) continue;
+    matchedSheets += 1;
+    sheet.eachRow((row, rowNumber) => {
+      if (rowNumber <= columns.headerRow) return;
+      rows.push({
+        phone: TrustedContacts.cellText(row.getCell(columns.phoneColumn)),
+        name: columns.nameColumn
+          ? TrustedContacts.cellText(row.getCell(columns.nameColumn))
+          : '',
+      });
+    });
+  }
+  return { rows, matchedSheets };
+}
+
 app.post('/api/admin/trusted-contacts', async (req, res) => {
   try {
     await ensureTrustedContactsTable();
     const rawContacts = Array.isArray(req.body?.contacts) ? req.body.contacts : [req.body || {}];
-    const contacts = rawContacts
-      .slice(0, 1000)
-      .map((contact) => ({
-        phone: String(contact.phone || contact.customerPhone || '').replace(/\D/g, ''),
-        name: String(contact.name || contact.customerName || '')
-          .trim()
-          .slice(0, 80),
+    const prepared = TrustedContacts.prepareTrustedContacts(
+      rawContacts.map((contact) => ({
+        phone: contact.phone || contact.customerPhone || '',
+        name: contact.name || contact.customerName || '',
       }))
-      .filter((contact) => contact.phone.length >= 7 && contact.phone.length <= 16);
-    if (!contacts.length)
+    );
+    if (!prepared.contacts.length)
       return res.status(400).json({ error: 'Add at least one valid mobile number.' });
-    for (const contact of contacts)
-      await sql`INSERT INTO trusted_contacts (customer_phone,customer_name) VALUES (${contact.phone},${contact.name}) ON CONFLICT (customer_phone) DO UPDATE SET customer_name=CASE WHEN EXCLUDED.customer_name='' THEN trusted_contacts.customer_name ELSE EXCLUDED.customer_name END, blocked=FALSE, updated_at=NOW()`;
-    res.status(201).json({ ok: true, added: contacts.length });
+    const added = await insertNewTrustedContacts(prepared.contacts);
+    const alreadySaved = prepared.contacts.length - added;
+    res.status(201).json({
+      ok: true,
+      added,
+      duplicates: prepared.duplicateRows + alreadySaved,
+      duplicatesInFile: prepared.duplicateRows,
+      alreadySaved,
+      invalid: prepared.invalidRows,
+    });
   } catch (error) {
     res.status(500).json({ error: 'Unable to save verified contacts.' });
   }
@@ -7002,11 +7084,17 @@ app.get('/api/admin/trusted-contacts/template', async (req, res) => {
     { header: 'Name (Optional)', key: 'name', width: 28 },
     { header: 'Mobile Number', key: 'phone', width: 20 },
   ];
+  sheet.views = [{ state: 'frozen', ySplit: 1 }];
+  sheet.autoFilter = 'A1:B1';
+  sheet.getColumn('B').numFmt = '@';
   sheet.getRow(1).font = { bold: true };
   sheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FDE68A' } };
-  sheet.addRow({ name: 'Example Customer', phone: '9876543210' });
-  sheet.getCell('A3').value = 'Leave the name blank if you do not have it.';
-  sheet.mergeCells('A3:B3');
+  const instructions = workbook.addWorksheet('Instructions');
+  instructions.columns = [{ width: 100 }];
+  instructions.addRow(['Add one customer per row in the Trusted Contacts sheet.']);
+  instructions.addRow(['The name is optional. The mobile number is required.']);
+  instructions.addRow(['Keep the Mobile Number column formatted as Text so every digit is preserved.']);
+  instructions.addRow(['Duplicate mobile numbers are skipped and are never saved twice.']);
   res.set({
     'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     'Content-Disposition': 'attachment; filename="red-lantern-trusted-contacts-template.xlsx"',
@@ -7024,42 +7112,30 @@ app.post(
         return res.status(400).json({ error: 'Choose an Excel contacts file first.' });
       const workbook = new ExcelJS.Workbook();
       await workbook.xlsx.load(req.file.buffer);
-      const sheet = workbook.worksheets[0];
-      if (!sheet) return res.status(400).json({ error: 'The Excel file has no worksheet.' });
-      const headers = {};
-      sheet.getRow(1).eachCell((cell, column) => {
-        headers[
-          String(cell.text || '')
-            .trim()
-            .toLowerCase()
-            .replace(/[^a-z]/g, '')
-        ] = column;
-      });
-      const phoneColumn =
-        headers.mobilenumber || headers.mobile || headers.phone || headers.phonenumber;
-      const nameColumn = headers.name || headers.customername;
-      if (!phoneColumn)
-        return res.status(400).json({ error: 'Use a “Mobile Number” column in the first row.' });
-      const contacts = [];
-      sheet.eachRow((row, rowNumber) => {
-        if (rowNumber === 1 || contacts.length >= 1000) return;
-        const phone = String(row.getCell(phoneColumn).text || '').replace(/\D/g, '');
-        if (phone.length >= 7 && phone.length <= 16)
-          contacts.push({
-            phone,
-            name: nameColumn
-              ? String(row.getCell(nameColumn).text || '')
-                  .trim()
-                  .slice(0, 80)
-              : '',
-          });
-      });
-      if (!contacts.length)
+      if (!workbook.worksheets.length)
+        return res.status(400).json({ error: 'The Excel file has no worksheet.' });
+      const extracted = trustedContactsFromWorkbook(workbook);
+      if (!extracted.matchedSheets)
+        return res.status(400).json({
+          error: 'Use a “Mobile Number” column near the top of at least one worksheet.',
+        });
+      const prepared = TrustedContacts.prepareTrustedContacts(extracted.rows);
+      if (!prepared.contacts.length)
         return res.status(400).json({ error: 'No valid mobile numbers were found in the file.' });
       await ensureTrustedContactsTable();
-      for (const contact of contacts)
-        await sql`INSERT INTO trusted_contacts (customer_phone,customer_name) VALUES (${contact.phone},${contact.name}) ON CONFLICT (customer_phone) DO UPDATE SET customer_name=CASE WHEN EXCLUDED.customer_name='' THEN trusted_contacts.customer_name ELSE EXCLUDED.customer_name END, blocked=FALSE, updated_at=NOW()`;
-      res.status(201).json({ ok: true, added: contacts.length });
+      const added = await insertNewTrustedContacts(prepared.contacts);
+      const alreadySaved = prepared.contacts.length - added;
+      res.status(201).json({
+        ok: true,
+        added,
+        rowsRead: extracted.rows.length - prepared.blankRows,
+        uniqueValid: prepared.contacts.length,
+        duplicates: prepared.duplicateRows + alreadySaved,
+        duplicatesInFile: prepared.duplicateRows,
+        alreadySaved,
+        invalid: prepared.invalidRows,
+        sheetsRead: extracted.matchedSheets,
+      });
     } catch (error) {
       res.status(400).json({ error: error.message || 'Unable to import this contacts file.' });
     }
@@ -8718,7 +8794,13 @@ app.use((error, req, res, next) => {
     details: { stack: error.stack },
   });
   if (res.headersSent) return next(error);
-  res.status(error.status || 500).send(error.message || 'Server error.');
+  const status = error.code === 'LIMIT_FILE_SIZE' ? 413 : error.status || 500;
+  const message =
+    error.code === 'LIMIT_FILE_SIZE'
+      ? 'The uploaded file is larger than 20 MB. Split it into smaller Excel files and retry.'
+      : error.message || 'Server error.';
+  if (req.path.startsWith('/api/')) return res.status(status).json({ error: message });
+  res.status(status).send(message);
 });
 
 // Only start server automatically if not running in a Vercel serverless environment

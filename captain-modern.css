@@ -963,3 +963,367 @@ summary:focus-visible {
 #captain-order-action-list button:nth-child(2) .captain-action-icon {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' fill='none' stroke='white' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cellipse cx='16' cy='11' rx='10' ry='4'/%3E%3Cpath d='M6 11c0 5 20 5 20 0M16 15v10m-5 2h10'/%3E%3C/svg%3E");
 }
+
+/* Mobile reliability pass: keep dense ordering controls readable without horizontal overflow. */
+html {
+  overflow-x: hidden;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+body {
+  overflow-x: hidden;
+}
+.captain-app,
+.captain-app .screen,
+.screen-head > *,
+.pending-sync-head > *,
+.pending-sync-list article > *,
+.cart-line > *,
+.guest-details summary > * {
+  min-width: 0;
+}
+
+/* Pending/offline orders are structured cards, not a continuous sentence. */
+.captain-pending-sync {
+  gap: 12px;
+  padding: 15px;
+  overflow: hidden;
+}
+.pending-sync-head {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+}
+.pending-sync-head > span {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: 50%;
+  color: #79590f;
+  background: #f8dda0;
+  font-size: 16px;
+  font-weight: 950;
+}
+.pending-sync-head b,
+.pending-sync-head small,
+.pending-sync-list article b,
+.pending-sync-list article small,
+.pending-sync-list article em,
+.pending-sync-list article span {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.pending-sync-head b {
+  color: #65480c;
+  font-size: 14px;
+  line-height: 1.3;
+}
+.pending-sync-head small {
+  margin-top: 4px;
+  color: #755f2d;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.pending-sync-head > button {
+  align-self: center;
+  min-height: 38px;
+  white-space: nowrap;
+}
+.pending-sync-list {
+  display: grid;
+  gap: 9px;
+}
+.pending-sync-list article {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid #ecd596;
+  border-radius: 11px;
+  background: #fffdf7;
+}
+.pending-sync-list article b {
+  font-size: 13px;
+  line-height: 1.35;
+}
+.pending-sync-list article small,
+.pending-sync-list article em,
+.pending-sync-list article span {
+  margin-top: 4px;
+  color: #725f39;
+  font-size: 11px;
+  line-height: 1.45;
+}
+.pending-sync-list article > div:last-child {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  justify-content: flex-end;
+}
+.pending-sync-list article button {
+  min-height: 36px;
+  white-space: nowrap;
+}
+
+/* Existing bill summary stays compact even when an order has many lines. */
+.active-bill-summary {
+  overflow: hidden;
+}
+.active-bill-summary summary {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 13px 14px;
+  color: #26384f;
+  font-size: 13px;
+  font-weight: 850;
+  line-height: 1.35;
+  cursor: pointer;
+}
+.active-bill-summary summary span {
+  flex: none;
+  color: #176f48;
+}
+#active-bill-items {
+  display: grid;
+  padding: 0 14px 9px;
+}
+#active-bill-items p {
+  margin: 0;
+  padding: 8px 0;
+  border-top: 1px solid #edf1f5;
+  color: #33455d;
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+#active-bill-items p > small {
+  display: block;
+  margin: 3px 0 0 19px;
+  color: #6d7d91;
+}
+.active-kot-progress {
+  padding: 12px 14px;
+  color: #33455d;
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+/* Final-order rows and feedback must always remain inside the viewport. */
+.cart-line > span {
+  min-width: 0;
+}
+.cart-line > span > b,
+.cart-line > span > small,
+.order-status,
+.captain-toast {
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+.guest-details summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: center;
+}
+.guest-details summary strong {
+  min-width: 0;
+  line-height: 1.35;
+}
+.guest-details summary span {
+  margin: 0;
+  white-space: nowrap;
+}
+.order-status:not(:empty) {
+  padding: 11px 12px;
+  border: 1px solid #dce6f2;
+  border-radius: 11px;
+  background: #f6f9fd;
+  line-height: 1.45;
+}
+
+@media (max-width: 620px) {
+  .captain-app {
+    width: 100%;
+    padding-right: 14px;
+    padding-left: 14px;
+  }
+  .captain-pending-sync {
+    margin-bottom: 18px;
+    padding: 13px;
+  }
+  .pending-sync-head {
+    grid-template-columns: 30px minmax(0, 1fr);
+    gap: 9px;
+  }
+  .pending-sync-head > span {
+    width: 30px;
+    height: 30px;
+  }
+  .pending-sync-head > button {
+    grid-column: 2;
+    justify-self: start;
+    margin-top: 2px;
+  }
+  .pending-sync-list article {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+    padding: 11px;
+  }
+  .pending-sync-list article > div:last-child {
+    justify-content: flex-start;
+  }
+  .pending-sync-list article button {
+    flex: 1 1 120px;
+  }
+  .active-bill-summary summary {
+    padding: 12px;
+    font-size: 12px;
+  }
+  #active-bill-items {
+    padding: 0 12px 8px;
+  }
+  #active-bill-items p {
+    padding: 8px 0;
+    font-size: 12px;
+  }
+  #captain-table-service:not([hidden]) {
+    gap: 7px;
+    margin-bottom: 13px;
+  }
+  #captain-table-service button {
+    flex: 1 1 30%;
+    min-width: 96px;
+    min-height: 40px;
+    padding: 7px 9px;
+    font-size: 12px;
+  }
+  #review-screen {
+    width: 100%;
+    max-width: none;
+    padding-bottom: 145px;
+  }
+  #review-screen .screen-head {
+    margin-bottom: 12px;
+    padding-bottom: 13px;
+  }
+  #review-screen .screen-head h1 {
+    font-size: clamp(24px, 7vw, 28px);
+    line-height: 1.08;
+  }
+  #review-screen .screen-head p {
+    font-size: 13px;
+    line-height: 1.4;
+  }
+  .cart-list {
+    gap: 9px;
+  }
+  .cart-line {
+    grid-template-columns: minmax(0, 1fr) 91px;
+    gap: 9px;
+    min-height: 0;
+    padding: 13px;
+    border-radius: 14px;
+  }
+  .cart-line > span > b {
+    font-size: 15px;
+    line-height: 1.3;
+  }
+  .cart-line > span > small {
+    margin-top: 5px;
+    font-size: 12px;
+    line-height: 1.35;
+  }
+  .cart-course {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 6px;
+    max-width: 100%;
+    margin-top: 7px;
+  }
+  .cart-course select {
+    min-width: 0;
+    max-width: 100%;
+    font-size: 11px;
+  }
+  .cart-note-button {
+    margin-top: 7px;
+    font-size: 12px;
+  }
+  .quantity {
+    width: 91px;
+    grid-template-columns: 29px 19px 29px;
+    gap: 4px;
+    padding: 3px;
+  }
+  .quantity button {
+    width: 29px;
+    height: 38px;
+    font-size: 20px;
+  }
+  .guest-details {
+    margin-top: 10px;
+  }
+  .guest-details summary {
+    min-height: 54px;
+    padding: 14px;
+    font-size: 13px;
+  }
+  .guest-details > div {
+    grid-template-columns: 1fr;
+  }
+  .send-kot {
+    bottom: calc(63px + env(safe-area-inset-bottom)) !important;
+    min-height: 55px;
+    padding: 10px 14px;
+  }
+  .send-kot input {
+    width: 23px;
+    height: 23px;
+    flex: none;
+  }
+  .send-kot b {
+    font-size: 14px;
+    line-height: 1.25;
+  }
+  #review-screen::after {
+    height: calc(63px + env(safe-area-inset-bottom));
+  }
+  #review-screen > .send-button {
+    right: 10px;
+    bottom: max(8px, env(safe-area-inset-bottom));
+    left: 10px;
+    min-height: 47px;
+    border-radius: 12px;
+    font-size: 15px;
+  }
+  body[data-captain-screen='review'] .captain-toast {
+    right: 14px;
+    bottom: calc(128px + env(safe-area-inset-bottom));
+    left: 14px;
+    width: auto;
+    font-size: 12px;
+    line-height: 1.4;
+    transform: none;
+  }
+}
+
+@media (max-width: 380px) {
+  .cart-line {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .quantity {
+    grid-column: 1;
+    grid-row: auto;
+    justify-self: start;
+  }
+  .guest-details summary {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 3px;
+  }
+}

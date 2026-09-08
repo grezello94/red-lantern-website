@@ -54,6 +54,7 @@ const state = {
   syncingPending: false,
   pendingError: '',
   kotRetry: null,
+  submittingRequestId: '',
 };
 const requestId = () =>
   `captain-${Date.now()}-${crypto.getRandomValues(new Uint32Array(1))[0].toString(36)}`;
@@ -253,6 +254,7 @@ function draftFields() {
   };
 }
 function saveDraft() {
+  if (state.submittingRequestId) return;
   const key = draftKey();
   if (!key) return;
   const fields = draftFields();
@@ -312,6 +314,32 @@ function restoreDraft() {
   notice.hidden = false;
   notice.textContent = `Restored unsent draft from ${new Date(draft.savedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}.`;
 }
+function clearMatchingDraftForPending(entry) {
+  const payload = entry?.payload;
+  if (!state.captain || !payload?.clientRequestId) return;
+  const area = String(payload.tableArea || ''),
+    number = Number(payload.tableNumber || 0),
+    key = `red-lantern-captain-draft:${captainDay()}:${state.captain.id}:${area}:${number}`,
+    draft = readLocalJSON(key, null),
+    signature = (items) =>
+      (Array.isArray(items) ? items : [])
+        .map((line) => `${itemKey(line)}::${Math.max(0, Number(line.quantity || 0))}`)
+        .join('|');
+  if (!draft || signature(draft.cart) !== signature(payload.items)) return;
+  try {
+    localStorage.removeItem(key);
+    const contextKey = `red-lantern-captain-draft-context:${captainDay()}:${state.captain.id}`,
+      context = readLocalJSON(contextKey, null),
+      table = context?.table;
+    if (
+      table &&
+      String(table.area || '') === area &&
+      Number(table.number || 0) === number &&
+      String(table.mode || '') === String(payload.mode || '')
+    )
+      localStorage.removeItem(contextKey);
+  } catch {}
+}
 function pendingItemCount(entry) {
   return (Array.isArray(entry?.payload?.items) ? entry.payload.items : []).reduce(
     (sum, item) => sum + Number(item.quantity || 0),
@@ -345,6 +373,7 @@ function loadPending() {
   state.pending = normalisePending(
     Array.isArray(stored) ? stored : Array.isArray(stored?.entries) ? stored.entries : []
   );
+  state.pending.forEach(clearMatchingDraftForPending);
   state.pendingUpdatedAt = Array.isArray(stored) ? 0 : Number(stored?.updatedAt || 0);
   renderPendingSync();
   void readPendingJournal();
@@ -373,10 +402,11 @@ function renderPendingSync(message = '') {
     count = state.pending.length,
     reviews = state.pending.filter((entry) => entry.status === 'review').length,
     kotRetries = state.pending.filter((entry) => entry.kind === 'kot-retry').length,
+    syncable = state.pending.some((entry) => entry.status !== 'review'),
     detail = message || state.pendingError;
   root.hidden = !count && !detail;
   root.innerHTML = count
-    ? `<div class="pending-sync-head"><span aria-hidden="true">${reviews ? '!' : kotRetries ? 'K' : '↻'}</span><div><b>${reviews ? `${reviews} order${reviews === 1 ? '' : 's'} need table review` : kotRetries ? `${kotRetries} saved KOT${kotRetries === 1 ? '' : 's'} waiting to send` : `${count} order${count === 1 ? '' : 's'} waiting to sync`}</b><small>${detail || (reviews ? 'Discuss the live table order, then accept it as a new round or reject it.' : kotRetries ? 'The order is already saved. Send the KOT once the kitchen printer is available.' : navigator.onLine ? 'Ready to sync safely.' : 'Saved on this device until internet returns.')}</small></div>${navigator.onLine ? '<button type="button" data-sync-pending>Sync now</button>' : ''}</div><div class="pending-sync-list">${state.pending.map((entry, index) => pendingOrderCard(entry, index)).join('')}</div>`
+    ? `<div class="pending-sync-head"><span aria-hidden="true">${reviews ? '!' : kotRetries ? 'K' : '↻'}</span><div><b>${reviews ? `${reviews} order${reviews === 1 ? ' needs' : 's need'} table review` : kotRetries ? `${kotRetries} saved KOT${kotRetries === 1 ? '' : 's'} waiting to send` : `${count} order${count === 1 ? '' : 's'} waiting to sync`}</b><small>${detail || (reviews ? 'Discuss the live table order, then accept it as a new round or reject it.' : kotRetries ? 'The order is already saved. Send the KOT once the kitchen printer is available.' : navigator.onLine ? 'Ready to sync safely.' : 'Saved on this device until internet returns.')}</small></div>${navigator.onLine && syncable ? '<button type="button" data-sync-pending>Sync now</button>' : ''}</div><div class="pending-sync-list">${state.pending.map((entry, index) => pendingOrderCard(entry, index)).join('')}</div>`
     : detail
       ? `<span aria-hidden="true">!</span><div><b>Order sync needs attention</b><small>${esc(detail)}</small></div>`
       : '';
@@ -384,13 +414,44 @@ function renderPendingSync(message = '') {
 }
 function queuePending(payload) {
   state.pendingError = '';
-  state.pending.push({
-    id: `pending-${payload.clientRequestId}`,
-    kind: 'order',
-    payload,
-    queuedAt: Date.now(),
-    status: 'queued',
-  });
+  const index = state.pending.findIndex(
+    (entry) =>
+      entry.kind === 'order' && entry.payload?.clientRequestId === payload.clientRequestId
+  );
+  if (index < 0)
+    state.pending.push({
+      id: `pending-${payload.clientRequestId}`,
+      kind: 'order',
+      payload,
+      queuedAt: Date.now(),
+      status: 'queued',
+    });
+  savePending();
+  renderPendingSync();
+}
+function removePendingOrder(clientRequestId) {
+  if (!clientRequestId) return;
+  const next = state.pending.filter(
+    (entry) =>
+      entry.kind !== 'order' || entry.payload?.clientRequestId !== clientRequestId
+  );
+  if (next.length === state.pending.length) return;
+  state.pending = next;
+  savePending();
+  renderPendingSync();
+}
+function reviewPendingOrder(clientRequestId, conflict) {
+  const index = state.pending.findIndex(
+    (entry) =>
+      entry.kind === 'order' && entry.payload?.clientRequestId === clientRequestId
+  );
+  if (index < 0) return;
+  state.pending[index] = {
+    ...state.pending[index],
+    status: 'review',
+    conflict: conflict || null,
+    reviewedAt: Date.now(),
+  };
   savePending();
   renderPendingSync();
 }
@@ -533,6 +594,7 @@ async function postCaptainOrder(payload) {
     error.status = response.status;
     error.code = data.code || '';
     error.conflict = data.conflict || null;
+    error.transient = response.status === 408 || response.status === 429 || response.status >= 500;
     throw error;
   }
   if (payload.sendKot) {
@@ -755,6 +817,7 @@ async function loadKotProgress(orderId) {
 }
 function setScreen(screen) {
   state.screen = screen;
+  document.body.dataset.captainScreen = screen;
   ['tables', 'menu', 'review'].forEach((name) => ($(`#${name}-screen`).hidden = name !== screen));
   $('#basket-bar').hidden = screen === 'tables' || (!state.cart.length && !state.kotRetry);
   if (screen === 'menu') {
@@ -1896,6 +1959,8 @@ $('#place-order').addEventListener('click', async () => {
   const status = $('#order-status'),
     isTakeaway = state.table.mode === 'takeaway',
     complete = async (data, sendKot) => {
+      removePendingOrder(payload?.clientRequestId);
+      state.submittingRequestId = '';
       clearDraft();
       state.cart = [];
       state.table = null;
@@ -1917,6 +1982,7 @@ $('#place-order').addEventListener('click', async () => {
     },
     saveForSync = () => {
       queuePending(payload);
+      state.submittingRequestId = '';
       clearDraft();
       state.cart = [];
       state.table = null;
@@ -1955,6 +2021,9 @@ $('#place-order').addEventListener('click', async () => {
       specialRequest: $('#special-request').value.trim(),
       items: state.cart.map(({ key, ...item }) => item),
     };
+    state.submittingRequestId = payload.clientRequestId;
+    queuePending(payload);
+    clearDraft();
     if (!navigator.onLine) {
       saveForSync();
       return;
@@ -1964,15 +2033,40 @@ $('#place-order').addEventListener('click', async () => {
     await complete(data, sendKot);
   } catch (error) {
     if (error.savedOrder) {
+      removePendingOrder(payload?.clientRequestId);
+      state.submittingRequestId = '';
+      clearDraft();
+      state.cart = [];
+      $('#customer-name').value = '';
+      $('#customer-phone').value = '';
+      $('#special-request').value = '';
       state.kotRetry = { id: error.savedOrder.id, orderNumber: error.savedOrder.orderNumber };
       status.textContent = `Order #${error.savedOrder.orderNumber} is saved. Retry will send only its KOT.`;
       showCaptainToast(
         `Order #${error.savedOrder.orderNumber} was saved. Retry KOT to notify the kitchen.`,
         'error'
       );
+    } else if (payload && error.code === 'table_changed') {
+      reviewPendingOrder(payload.clientRequestId, error.conflict);
+      state.submittingRequestId = '';
+      clearDraft();
+      state.cart = [];
+      state.table = null;
+      $('#customer-name').value = '';
+      $('#customer-phone').value = '';
+      $('#special-request').value = '';
+      await load();
+      setScreen('tables');
+      state.pendingError =
+        'The table changed before this round could be saved. Review it once; it will not be submitted automatically.';
+      renderPendingSync();
+      showCaptainToast('Table changed. Review this round before adding it.', 'error');
     } else if (payload && error.transient) {
       saveForSync();
     } else {
+      removePendingOrder(payload?.clientRequestId);
+      state.submittingRequestId = '';
+      saveDraft();
       status.textContent = error.message || 'Unable to save the order.';
       showCaptainToast(error.message || 'Unable to save the order.', 'error');
     }
@@ -2068,6 +2162,7 @@ const draftContextKey = () =>
 const persistCaptainDraft = saveDraft,
   removeCaptainDraft = clearDraft;
 saveDraft = function () {
+  if (state.submittingRequestId) return;
   persistCaptainDraft();
   const key = draftContextKey(),
     fields = draftFields(),

@@ -5513,9 +5513,9 @@ Availability may vary. Please ask our team about today’s specials.</textarea>
             </section>
             <section class="trusted-contact-method">
               <h3>Import from Excel</h3>
-              <p><a href="/api/admin/trusted-contacts/template">Download the Excel template</a>, fill it in, then upload the completed <code>.xlsx</code> file.</p>
+              <p><a href="/api/admin/trusted-contacts/template">Download the Excel template</a>, fill it in, then upload the completed <code>.xlsx</code> file. Every valid row is checked; duplicate mobile numbers are skipped and existing contacts are never overwritten.</p>
               <input id="trusted-contact-file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
-              <button type="button" id="trusted-contact-upload-button" class="btn-save">Upload Excel file</button>
+              <button type="button" id="trusted-contact-upload-button" class="btn-save">Import all contacts</button>
             </section>
           </div>
           <div id="trusted-contact-status" class="growth-ai-status"></div>

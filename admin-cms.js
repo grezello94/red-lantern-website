@@ -2935,6 +2935,23 @@ function setupTrustedContacts() {
     status.textContent = message;
     status.style.color = error ? '#b91c1c' : '';
   };
+  const importResultMessage = (data, action = 'imported') => {
+    const added = Number(data.added || 0);
+    const duplicates = Number(data.duplicates || 0);
+    const invalid = Number(data.invalid || 0);
+    const messages = [
+      `${added.toLocaleString('en-IN')} new contact${added === 1 ? '' : 's'} ${action} and enabled for auto-accept.`,
+    ];
+    if (duplicates)
+      messages.push(
+        `${duplicates.toLocaleString('en-IN')} duplicate${duplicates === 1 ? ' was' : 's were'} skipped.`
+      );
+    if (invalid)
+      messages.push(
+        `${invalid.toLocaleString('en-IN')} invalid mobile number${invalid === 1 ? ' was' : 's were'} skipped.`
+      );
+    return messages.join(' ');
+  };
   const purchase = (contact) => {
     const items = Array.isArray(contact.last_items) ? contact.last_items : [];
     if (!items.length) return 'No previous purchase saved';
@@ -3025,9 +3042,7 @@ function setupTrustedContacts() {
       if (!response.ok) throw new Error(data.error || 'Unable to save contacts.');
       input.value = '';
       await load();
-      setStatus(
-        `${data.added} contact${data.added === 1 ? '' : 's'} saved and enabled for auto-accept.`
-      );
+      setStatus(importResultMessage(data, 'saved'));
     } catch (error) {
       setStatus(error.message || 'Unable to save contacts.', true);
     } finally {
@@ -3037,25 +3052,33 @@ function setupTrustedContacts() {
   upload.addEventListener('click', async () => {
     const selected = file.files?.[0];
     if (!selected) return setStatus('Choose the completed Excel template first.', true);
+    const defaultLabel = upload.textContent;
     try {
       upload.disabled = true;
+      upload.textContent = 'Importing contacts…';
+      setStatus('Reading the complete Excel file and checking duplicate mobile numbers…');
       const form = new FormData();
       form.append('contactsFile', selected);
       const response = await fetch('/api/admin/trusted-contacts/import', {
         method: 'POST',
         body: form,
       });
-      const data = await response.json();
+      const responseText = await response.text();
+      let data;
+      try {
+        data = JSON.parse(responseText);
+      } catch (_) {
+        data = { error: responseText || 'The server did not return a valid import result.' };
+      }
       if (!response.ok) throw new Error(data.error || 'Unable to import contacts.');
       file.value = '';
       await load();
-      setStatus(
-        `${data.added} contact${data.added === 1 ? '' : 's'} imported and enabled for auto-accept.`
-      );
+      setStatus(importResultMessage(data));
     } catch (error) {
       setStatus(error.message || 'Unable to import contacts.', true);
     } finally {
       upload.disabled = false;
+      upload.textContent = defaultLabel;
     }
   });
   list.addEventListener('click', async (event) => {

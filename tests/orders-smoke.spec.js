@@ -41,6 +41,28 @@ async function expectContained(page, selector) {
   expect(failures).toEqual([]);
 }
 
+async function expectWithinViewport(page, selector) {
+  const failures = await page.locator(selector).evaluateAll((nodes) =>
+    nodes
+      .filter((node) => {
+        const style = getComputedStyle(node);
+        const box = node.getBoundingClientRect();
+        return style.display !== 'none' && style.visibility !== 'hidden' && box.width && box.height;
+      })
+      .filter((node) => {
+        const box = node.getBoundingClientRect();
+        return box.left < -1 || box.right > window.innerWidth + 1;
+      })
+      .map((node) => ({
+        node: node.className || node.id || node.tagName,
+        left: node.getBoundingClientRect().left,
+        right: node.getBoundingClientRect().right,
+        viewport: window.innerWidth,
+      }))
+  );
+  expect(failures).toEqual([]);
+}
+
 async function mockCaptainApp(
   page,
   { orders = [], alerts = [], menuItems = [], onCounterOrder, onKot, onServed } = {}
@@ -623,6 +645,133 @@ test('Captain ordering enforces, prices and submits assigned add-ons', async ({ 
   });
 });
 
+test('Captain KOT failure retires the saved cart and retries only the KOT', async ({ page }) => {
+  let counterRequests = 0;
+  let kotRequests = 0;
+  await mockCaptainApp(page, {
+    menuItems: [
+      {
+        key: 'crispy',
+        name: 'Chicken Crispy',
+        category: 'NON - VEG STARTER',
+        menuType: 'food',
+        price: 220,
+      },
+    ],
+    onCounterOrder: () => {
+      counterRequests += 1;
+    },
+  });
+  await page.route('**/api/orders/captain-order-1/kots', async (route) => {
+    kotRequests += 1;
+    if (kotRequests === 1)
+      return route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'Kitchen printer temporarily unavailable.' }),
+      });
+    return route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({ kotNumber: 13, tickets: [] }),
+    });
+  });
+
+  await signInCaptain(page);
+  await page.locator('#table-board .table-tile').first().click();
+  await page.locator('#menu-list .menu-item').click();
+  await page.locator('#basket-bar').click();
+  await page.locator('#place-order').click();
+
+  await expect.poll(() => counterRequests).toBe(1);
+  await expect.poll(() => kotRequests).toBe(1);
+  await expect(page.locator('#place-order')).toHaveText(/Retry KOT/);
+  await expect(page.locator('#cart-list')).not.toContainText('Chicken Crispy');
+  const failedState = await page.evaluate(() => ({
+    draft: localStorage.getItem(
+      `red-lantern-captain-draft:${new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Kolkata',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(new Date())}:captain-1:DINING:1`
+    ),
+    pending: JSON.parse(localStorage.getItem('red-lantern-captain-pending:captain-1')),
+  }));
+  expect(failedState.draft).toBeNull();
+  expect(failedState.pending.entries).toHaveLength(1);
+  expect(failedState.pending.entries[0]).toMatchObject({
+    kind: 'kot-retry',
+    savedOrderId: 'captain-order-1',
+  });
+
+  await page.locator('#place-order').click();
+  await expect.poll(() => kotRequests).toBe(2);
+  expect(counterRequests).toBe(1);
+  await expect(page.locator('#tables-screen')).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(() => localStorage.getItem('red-lantern-captain-pending:captain-1'))
+    )
+    .toBeNull();
+});
+
+test('Captain network retry reuses one request ID after a refresh', async ({ page }) => {
+  const requestIds = [];
+  let counterRequests = 0;
+  await mockCaptainApp(page, {
+    menuItems: [
+      {
+        key: 'crispy',
+        name: 'Chicken Crispy',
+        category: 'NON - VEG STARTER',
+        menuType: 'food',
+        price: 220,
+      },
+    ],
+  });
+  await page.route('**/api/orders/counter', async (route) => {
+    counterRequests += 1;
+    requestIds.push(route.request().headers()['x-counter-order-id']);
+    if (counterRequests === 1)
+      return route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'Temporary database delay.' }),
+      });
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        id: 'captain-order-1',
+        status: 'accepted',
+        orderNumber: '01',
+        total: 220,
+        duplicate: true,
+      }),
+    });
+  });
+
+  await signInCaptain(page);
+  await page.locator('#table-board .table-tile').first().click();
+  await page.locator('#menu-list .menu-item').click();
+  await page.locator('#basket-bar').click();
+  await page.locator('#place-order').click();
+
+  await expect.poll(() => counterRequests).toBe(1);
+  await expect(page.locator('#captain-pending-sync')).toBeVisible();
+  await page.reload();
+
+  await expect.poll(() => counterRequests).toBe(2);
+  expect(requestIds[0]).toBeTruthy();
+  expect(requestIds[1]).toBe(requestIds[0]);
+  await expect
+    .poll(() =>
+      page.evaluate(() => localStorage.getItem('red-lantern-captain-pending:captain-1'))
+    )
+    .toBeNull();
+});
+
 test('Normal and Smart KDS display the saved add-on choices to the kitchen', async ({ page }) => {
   const modifiers = [
     {
@@ -806,6 +955,104 @@ test('captain table board and menu cards stay contained on desktop and phone wid
     await page.locator('[data-captain-back]').first().click();
     await expect(page.locator('#tables-screen')).toBeVisible();
   }
+});
+
+test('captain conflict, active bill and final order stay contained on a narrow phone', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 360, height: 780 });
+  await mockCaptainApp(page, {
+    orders: [
+      {
+        id: 'captain-table-order-mobile',
+        captain_id: 'captain-1',
+        mode: 'table',
+        table_area: 'DINING',
+        table_number: 1,
+        status: 'accepted',
+        daily_order_number: 1,
+        created_at: new Date().toISOString(),
+        items: [
+          { name: 'Squid Batter Fry with Sauce', portion: 'Regular', quantity: 1, price: 390 },
+          { name: 'Chicken Crispy with an intentionally long preparation note', portion: 'Regular', quantity: 3, price: 220, note: 'Half spicy and no sauce' },
+        ],
+        total: 1050,
+      },
+    ],
+    menuItems: [
+      {
+        key: 'mobile-dish',
+        name: 'Chicken Crispy with a long dish name',
+        category: 'NON - VEG STARTER',
+        menuType: 'food',
+        price: 220,
+      },
+    ],
+  });
+
+  await page.goto('/captain.html');
+  await page.evaluate(() => {
+    localStorage.setItem(
+      'red-lantern-captain-pending:captain-1',
+      JSON.stringify({
+        updatedAt: Date.now(),
+        entries: [
+          {
+            id: 'pending-mobile-conflict',
+            kind: 'order',
+            status: 'review',
+            queuedAt: Date.now(),
+            payload: {
+              clientRequestId: 'mobile-conflict',
+              tableArea: 'DINING',
+              tableNumber: 1,
+              items: [
+                {
+                  name: 'Chicken Crispy with a long dish name and kitchen instruction',
+                  quantity: 1,
+                },
+              ],
+            },
+            conflict: {
+              id: 'captain-table-order-mobile',
+              orderNumber: 1,
+              items: [{ name: 'Squid Batter Fry with Sauce', quantity: 1 }],
+            },
+          },
+        ],
+      })
+    );
+  });
+  await page.locator('[data-captain-id="captain-1"]').click();
+  await page.locator('#captain-pin').fill('1234');
+  await page.locator('#captain-pin-form').dispatchEvent('submit');
+
+  await expect(page.locator('#captain-pending-sync')).toBeVisible();
+  await expectNoPageOverflow(page);
+  await expectContained(page, '#captain-pending-sync');
+  await expectWithinViewport(page, '#captain-pending-sync, #captain-pending-sync *');
+
+  await page.locator('#table-board .table-tile').first().click();
+  await expect(page.locator('#menu-screen')).toBeVisible();
+  await page.locator('#active-bill-summary').click();
+  await expectNoPageOverflow(page);
+  await expectWithinViewport(page, '#active-bill-summary, #active-bill-summary *');
+
+  await page.locator('#menu-list .menu-item').click();
+  await page.locator('#basket-bar').click();
+  await expect(page.locator('#review-screen')).toBeVisible();
+  await page.evaluate(() => {
+    const toast = document.querySelector('#captain-toast');
+    toast.textContent =
+      'This table changed while the add-on was being sent. Refresh and review it safely.';
+    toast.className = 'captain-toast is-error';
+    toast.hidden = false;
+  });
+  await expectNoPageOverflow(page);
+  await expectWithinViewport(
+    page,
+    '#review-screen .cart-line, #review-screen .quantity, #review-screen .guest-details, #review-screen .send-kot, #place-order, #captain-toast'
+  );
 });
 
 test('captain can release a saved table KOT without adding another item', async ({ page }) => {
