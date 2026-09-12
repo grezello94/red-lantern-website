@@ -966,12 +966,12 @@ summary:focus-visible {
 
 /* Mobile reliability pass: keep dense ordering controls readable without horizontal overflow. */
 html {
-  overflow-x: hidden;
+  overflow-x: clip;
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
 }
 body {
-  overflow-x: hidden;
+  overflow-x: clip;
 }
 .captain-app,
 .captain-app .screen,
@@ -1335,6 +1335,7 @@ body {
   width: 100%;
   min-width: 0;
   max-width: 100%;
+  overflow-y: visible;
 }
 html {
   min-height: 100%;
