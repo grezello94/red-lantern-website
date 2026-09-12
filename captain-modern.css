@@ -1327,3 +1327,47 @@ body {
     gap: 3px;
   }
 }
+
+/* Mobile-browser reliability: iPhone Safari auto-zooms small form text, while
+   narrow iOS and Android viewports both need a shell that can shrink safely. */
+html,
+body {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+html {
+  min-height: 100%;
+  overscroll-behavior-x: none;
+}
+body {
+  min-height: 100dvh;
+  overscroll-behavior-x: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.captain-header,
+.captain-app,
+.captain-app .screen {
+  min-width: 0;
+  max-width: 100%;
+}
+@media (max-width: 620px) {
+  .captain-header {
+    padding-right: max(14px, env(safe-area-inset-right));
+    padding-left: max(14px, env(safe-area-inset-left));
+  }
+  .captain-app {
+    padding-right: max(14px, env(safe-area-inset-right));
+    padding-left: max(14px, env(safe-area-inset-left));
+  }
+  input,
+  select,
+  textarea {
+    min-width: 0;
+    max-width: 100%;
+    font-size: 16px !important;
+  }
+  .cart-course select {
+    font-size: 16px !important;
+  }
+}
