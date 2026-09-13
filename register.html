@@ -26,7 +26,7 @@
     <header class="register-topbar">
       <a class="brand" href="/orders" aria-label="Back to orders"><span>R</span><div><b>Red Lantern Register</b><small>Counter Fast-Checkout Dashboard</small></div></a>
       <div class="summary" aria-label="Register summary"><span>Tables: <b id="active-tables" class="amber">0 Active</b></span><span>Parcels: <b id="pending-parcels" class="sky">0 Pending</b></span></div>
-      <div class="live"><button type="button" id="print-summary" class="print-summary">Print summary</button><time id="clock"></time><span><i id="connection-dot"></i><b id="connection-label">Live</b></span></div>
+      <div class="live"><button type="button" id="print-summary" class="print-summary">Print summary</button><time id="clock"></time><span><i id="connection-dot"></i><b id="connection-label">Live</b></span><button type="button" id="staff-sign-out" class="staff-sign-out">Sign out</button></div>
     </header>
     <main class="register-grid">
       <section class="register-panel tables-panel"><header><h1><i></i>Dine-In Tables</h1><b id="table-badge">0 Active</b></header><div id="tables-list" class="register-list" aria-live="polite"></div></section>
@@ -36,6 +36,6 @@
     <dialog id="payment-modal" class="payment-modal"><button type="button" class="payment-close" aria-label="Close">×</button><p class="payment-eyebrow">Payment collection</p><h2 id="payment-title">Cash payment</h2><p id="payment-order"></p><div class="payment-due"><span>Bill total</span><b id="payment-due">₹0</b></div><label id="payment-received-label" for="payment-received">Cash received from customer</label><input id="payment-received" type="number" min="0" step="0.01" inputmode="decimal"><p id="payment-preview" aria-live="polite"></p><div class="payment-actions"><button type="button" class="payment-cancel">Cancel</button><button type="button" id="payment-confirm">Save payment</button></div></dialog>
     <template id="empty-template"><div class="empty-state">No active orders at the counter.</div></template>
     <script src="/addons-domain.js?v=1"></script>
-    <script src="/register.js?v=6"></script>
+    <script src="/register.js?v=7"></script>
   </body>
 </html>

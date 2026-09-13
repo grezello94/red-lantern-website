@@ -424,7 +424,7 @@ function isProtectedAdminPath(req) {
     req.path === '/api/admin/orders-errors' ||
     req.path === '/api/admin/qr-scans' ||
     req.path === '/api/admin/health' ||
-    req.path === '/api/admin/customer-insights' ||
+    req.path.startsWith('/api/admin/customer-insights') ||
     req.path.startsWith('/api/admin/smart-kds') ||
     req.path === '/api/admin/trusted-contacts' ||
     req.path.startsWith('/api/admin/trusted-contacts/') ||
@@ -533,7 +533,114 @@ function requireAdmin(req, res, next) {
   return res.status(401).send('Invalid username or password.');
 }
 
+const ordersSessionCookie = 'rl_orders_session';
+const ordersSessionTtlMs = 12 * 60 * 60 * 1000;
+const ordersLoginAttempts = new Map();
+const ordersLoginFailureLimit = 8;
+const ordersLoginWindowMs = 15 * 60 * 1000;
+
+function ordersCredentialFingerprint() {
+  return crypto
+    .createHash('sha256')
+    .update(`${process.env.ORDERS_USERNAME || ''}\0${process.env.ORDERS_PASSWORD || ''}`)
+    .digest('hex')
+    .slice(0, 24);
+}
+
+function ordersSessionSecret() {
+  return (
+    process.env.ORDERS_SESSION_SECRET ||
+    crypto
+      .createHash('sha256')
+      .update(`red-lantern-orders\0${process.env.ORDERS_PASSWORD || ''}`)
+      .digest('hex')
+  );
+}
+
+function cookieValue(req, name) {
+  const pair = String(req.headers.cookie || '')
+    .split(';')
+    .map((part) => part.trim())
+    .find((part) => part.startsWith(`${name}=`));
+  if (!pair) return '';
+  try {
+    return decodeURIComponent(pair.slice(name.length + 1));
+  } catch (_) {
+    return '';
+  }
+}
+
+function createOrdersSession() {
+  const payload = Buffer.from(
+    JSON.stringify({
+      version: 1,
+      scope: 'orders-console',
+      credential: ordersCredentialFingerprint(),
+      issuedAt: Date.now(),
+      expiresAt: Date.now() + ordersSessionTtlMs,
+    })
+  ).toString('base64url');
+  const signature = crypto
+    .createHmac('sha256', ordersSessionSecret())
+    .update(payload)
+    .digest('base64url');
+  return `${payload}.${signature}`;
+}
+
+function readOrdersSession(req) {
+  try {
+    const [payload, signature, extra] = cookieValue(req, ordersSessionCookie).split('.');
+    if (!payload || !signature || extra) return null;
+    const expected = crypto
+      .createHmac('sha256', ordersSessionSecret())
+      .update(payload)
+      .digest('base64url');
+    if (!secureCompare(signature, expected)) return null;
+    const session = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    if (
+      session.version !== 1 ||
+      session.scope !== 'orders-console' ||
+      session.credential !== ordersCredentialFingerprint() ||
+      !Number.isFinite(session.expiresAt) ||
+      session.expiresAt <= Date.now()
+    )
+      return null;
+    return session;
+  } catch (_) {
+    return null;
+  }
+}
+
+function ordersCookieOptions(req) {
+  return {
+    httpOnly: true,
+    secure: req.secure || req.get('x-forwarded-proto') === 'https',
+    sameSite: 'lax',
+    path: '/',
+  };
+}
+
+function safeOrdersDestination(value) {
+  try {
+    const target = new URL(String(value || '/register'), 'https://red-lantern.local');
+    const allowed = new Set(['/orders', '/orders.html', '/register', '/register.html', '/kds', '/kds.html', '/smart-kds', '/smart-kds.html', '/kitchen-display']);
+    return allowed.has(target.pathname) ? `${target.pathname}${target.search}${target.hash}` : '/register';
+  } catch (_) {
+    return '/register';
+  }
+}
+
+function currentOrdersLoginFailures(req) {
+  const key = adminAttemptKey(req);
+  const recent = (ordersLoginAttempts.get(key) || []).filter(
+    (time) => Date.now() - time < ordersLoginWindowMs
+  );
+  ordersLoginAttempts.set(key, recent);
+  return { key, recent };
+}
+
 async function requireOrdersConsole(req, res, next) {
+  if (req.path === '/api/orders/session') return next();
   const captainReadRoute =
     req.method === 'GET' &&
     [
@@ -576,6 +683,7 @@ async function requireOrdersConsole(req, res, next) {
     req.path === '/kitchen-display' ||
     req.path === '/orders.js' ||
     req.path === '/orders.css' ||
+    req.path.startsWith('/api/register') ||
     req.path.startsWith('/api/orders');
   if (!protectedPath) return next();
   const username = process.env.ORDERS_USERNAME;
@@ -584,17 +692,51 @@ async function requireOrdersConsole(req, res, next) {
     return res
       .status(503)
       .send('Orders console is not configured. Add ORDERS_USERNAME and ORDERS_PASSWORD.');
+  if (readOrdersSession(req)) return next();
   const [scheme, encoded] = String(req.headers.authorization || '').split(' ');
   const [providedUser, ...providedPassword] =
     scheme === 'Basic' && encoded ? Buffer.from(encoded, 'base64').toString('utf8').split(':') : [];
   if (
-    !secureCompare(providedUser || '', username) ||
-    !secureCompare(providedPassword.join(':'), password)
-  ) {
-    res.set('WWW-Authenticate', 'Basic realm="Red Lantern Orders", charset="UTF-8"');
-    return res.status(401).send('Authentication required.');
-  }
-  next();
+    req.path.startsWith('/api/') &&
+    secureCompare(providedUser || '', username) &&
+    secureCompare(providedPassword.join(':'), password)
+  )
+    return next();
+
+  if (scheme === 'Basic' && encoded)
+    logDiagnostic({
+      level: 'warning',
+      category: 'auth',
+      message: 'Failed Orders console login attempt.',
+      method: req.method,
+      path: req.path,
+      statusCode: 401,
+      ipHash: hashIp(req),
+      userAgent: req.headers['user-agent'] || '',
+      details: { username: providedUser ? 'provided' : 'missing' },
+    });
+  const destination = safeOrdersDestination(req.originalUrl);
+  const loginUrl = `/staff-login?next=${encodeURIComponent(destination)}`;
+  const isPage = [
+    '/orders',
+    '/orders.html',
+    '/register',
+    '/register.html',
+    '/kds',
+    '/kds.html',
+    '/smart-kds',
+    '/smart-kds.html',
+    '/kitchen-display',
+  ].includes(req.path);
+  if ((req.method === 'GET' || req.method === 'HEAD') && isPage)
+    return res.redirect(302, loginUrl);
+  if (req.path.startsWith('/api/'))
+    return res.status(401).json({
+      error: 'Staff sign-in is required.',
+      code: 'staff_auth_required',
+      loginUrl,
+    });
+  return res.status(401).send('Staff sign-in is required.');
 }
 
 function requestDiagnostics(req, res, next) {
@@ -687,6 +829,7 @@ const cleanPageRoutes = new Map([
   ['/blog', 'blog-post.html'],
   ['/orders', 'orders.html'],
   ['/register', 'register.html'],
+  ['/staff-login', 'staff-login.html'],
   ['/kds', 'kds.html'],
   ['/smart-kds', 'smart-kds.html'],
   ['/captain', 'captain.html'],
@@ -750,6 +893,57 @@ if (uploadsDir) {
 }
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 app.use(express.json({ limit: '1mb' }));
+
+app.post('/api/orders/session', (req, res) => {
+  const expectedUser = process.env.ORDERS_USERNAME;
+  const expectedPassword = process.env.ORDERS_PASSWORD;
+  if (!expectedUser || !expectedPassword)
+    return res.status(503).json({ error: 'Staff access is not configured.' });
+
+  const failures = currentOrdersLoginFailures(req);
+  if (failures.recent.length >= ordersLoginFailureLimit) {
+    const retryAfter = Math.max(
+      1,
+      Math.ceil((ordersLoginWindowMs - (Date.now() - failures.recent[0])) / 1000)
+    );
+    res.set('Retry-After', String(retryAfter));
+    return res.status(429).json({ error: 'Too many sign-in attempts. Please wait and try again.' });
+  }
+
+  const username = String(req.body?.username || '');
+  const password = String(req.body?.password || '');
+  if (!secureCompare(username, expectedUser) || !secureCompare(password, expectedPassword)) {
+    failures.recent.push(Date.now());
+    ordersLoginAttempts.set(failures.key, failures.recent);
+    logDiagnostic({
+      level: 'warning',
+      category: 'auth',
+      message: 'Failed staff sign-in attempt.',
+      method: req.method,
+      path: req.path,
+      statusCode: 401,
+      ipHash: hashIp(req),
+      userAgent: req.headers['user-agent'] || '',
+      details: { username: username ? 'provided' : 'missing' },
+    });
+    return res.status(401).json({ error: 'Incorrect username or password.' });
+  }
+
+  ordersLoginAttempts.delete(failures.key);
+  const next = safeOrdersDestination(req.body?.next);
+  res.cookie(ordersSessionCookie, createOrdersSession(), {
+    ...ordersCookieOptions(req),
+    maxAge: ordersSessionTtlMs,
+  });
+  res.set('Cache-Control', 'no-store');
+  return res.json({ ok: true, next });
+});
+
+app.delete('/api/orders/session', (req, res) => {
+  res.clearCookie(ordersSessionCookie, ordersCookieOptions(req));
+  res.set('Cache-Control', 'no-store');
+  res.json({ ok: true });
+});
 
 const collections = {
   home: 'home_content',
@@ -7204,6 +7398,87 @@ app.get('/api/admin/customer-insights', async (req, res) => {
   } catch (error) {
     console.error('Customer insights error:', error);
     res.status(500).json({ error: 'Unable to load customer insights.' });
+  }
+});
+
+app.get('/api/admin/customer-insights/daily-summary', async (req, res) => {
+  try {
+    await ensureDirectOrdersTable();
+    const day = String(req.query.date || '');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day))
+      return res.status(400).json({ error: 'Choose a valid order date before printing.' });
+
+    const rows =
+      await sql`SELECT daily_order_number,mode,fulfillment_type,table_area,table_number,customer_name,customer_phone,items,total,status,settlement_type,settlement_amount,payment_received,change_due,tip_amount,created_at,settled_at FROM direct_orders WHERE order_day=${day}::date ORDER BY created_at,daily_order_number`;
+    const reportable = rows.filter(
+      (order) => !['cancelled', 'rejected'].includes(String(order.status || '').toLowerCase())
+    );
+    const completed = rows.filter(
+      (order) => String(order.status || '').toLowerCase() === 'completed'
+    );
+    const itemCounts = new Map();
+    const statusCounts = {};
+    const channels = {
+      direct: { orders: 0, value: 0 },
+      card: { orders: 0, value: 0 },
+      table: { orders: 0, value: 0 },
+    };
+    rows.forEach((order) => {
+      const status = String(order.status || 'unknown').toLowerCase();
+      statusCounts[status] = (statusCounts[status] || 0) + 1;
+    });
+    reportable.forEach((order) => {
+      const channel = order.mode === 'table' ? 'table' : order.mode === 'card' ? 'card' : 'direct';
+      channels[channel].orders += 1;
+      channels[channel].value += Number(order.total || 0);
+      (Array.isArray(order.items) ? order.items : []).forEach((item) => {
+        const quantity = Math.max(0, Number(item.quantity || 0));
+        const label = `${String(item.name || 'Item')}${item.portion ? ` · ${String(item.portion)}` : ''}`;
+        itemCounts.set(label, (itemCounts.get(label) || 0) + quantity);
+      });
+    });
+    const orders = rows.map(({ items, ...order }) => ({
+      ...order,
+      item_quantity: (Array.isArray(items) ? items : []).reduce(
+        (sum, item) => sum + Math.max(0, Number(item.quantity || 0)),
+        0
+      ),
+    }));
+    const moneyTotal = (list, field) =>
+      list.reduce((sum, order) => sum + Number(order[field] || 0), 0);
+
+    res.set('Cache-Control', 'no-store');
+    res.json({
+      day,
+      orders,
+      items: [...itemCounts.entries()]
+        .map(([name, quantity]) => ({ name, quantity }))
+        .sort((a, b) => b.quantity - a.quantity || a.name.localeCompare(b.name)),
+      summary: {
+        totalOrders: rows.length,
+        reportableOrders: reportable.length,
+        completedOrders: completed.length,
+        itemQuantity: orders
+          .filter(
+            (order) =>
+              !['cancelled', 'rejected'].includes(String(order.status || '').toLowerCase())
+          )
+          .reduce((sum, order) => sum + Number(order.item_quantity || 0), 0),
+        orderValue: moneyTotal(reportable, 'total'),
+        completedValue: moneyTotal(completed, 'total'),
+        collected: completed.reduce(
+          (sum, order) =>
+            sum + Number(order.settlement_amount == null ? order.total : order.settlement_amount),
+          0
+        ),
+        tips: moneyTotal(completed, 'tip_amount'),
+        statusCounts,
+        channels,
+      },
+    });
+  } catch (error) {
+    console.error('Daily order summary error:', error);
+    res.status(500).json({ error: 'Unable to prepare the date-wise order summary.' });
   }
 });
 

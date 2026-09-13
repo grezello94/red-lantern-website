@@ -264,7 +264,7 @@
         position: relative;
       }
       .captain-pin-control input {
-        padding-right: 74px !important;
+        padding-right: 98px !important;
       }
       .captain-pin-toggle {
         position: absolute;
@@ -2675,6 +2675,13 @@
           600 13px Manrope,
           sans-serif;
       }
+      .insight-toolbar .form-group small {
+        display: block;
+        margin-top: 6px;
+        color: #8290a4;
+        font-size: 10px;
+        font-weight: 650;
+      }
       .insight-table-wrap {
         overflow: auto;
         border: 1px solid #e5eaf1;
@@ -3214,25 +3221,28 @@
         background: #14213d8a;
       }
       .customer-order-bill-dialog .bill-close {
-        position: absolute;
-        right: 16px;
-        top: 15px;
-        width: 34px;
+        position: static;
+        width: auto;
         height: 34px;
-        border: 0;
-        border-radius: 50%;
-        background: #f1f4f8;
-        color: #22324d;
-        font-size: 25px;
+        padding: 0 12px;
+        border: 1px solid rgba(255, 255, 255, 0.55);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.14);
+        color: #fff;
+        font: 800 11px Manrope, Arial, sans-serif;
         line-height: 1;
         cursor: pointer;
+      }
+      .customer-order-bill-dialog .bill-close:hover {
+        background: #fff;
+        color: #17355f;
       }
       .bill-heading {
         display: flex;
         align-items: start;
         justify-content: space-between;
         gap: 24px;
-        padding: 27px 60px 22px 26px;
+        padding: 22px 26px;
         background: linear-gradient(135deg, #132344, #27497d);
         color: #fff;
       }
@@ -3254,8 +3264,14 @@
         color: #dce7fa;
         font-size: 12px;
       }
-      .bill-heading > strong {
-        padding-top: 14px;
+      .bill-heading-actions {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 15px;
+        flex: 0 0 auto;
+      }
+      .bill-heading-actions > strong {
         font-size: 23px;
         white-space: nowrap;
       }
@@ -3380,7 +3396,8 @@
           grid-template-columns: 1fr;
         }
         .bill-heading {
-          padding: 23px 55px 19px 20px;
+          gap: 12px;
+          padding: 19px 20px;
         }
         .bill-heading h2 {
           font-size: 24px;
@@ -5438,6 +5455,9 @@ Availability may vary. Please ask our team about today’s specials.</textarea>
             <p>Review direct-order history, loyalty points, and customer balances in one place.</p>
           </div>
           <div class="header-actions">
+            <button type="button" id="print-daily-order-summary" class="btn-refresh">
+              Print date-wise summary
+            </button>
             <button type="button" id="print-register-summary" class="btn-refresh">
               Print payment summary
             </button>
@@ -5452,14 +5472,17 @@ Availability may vary. Please ask our team about today’s specials.</textarea>
         <div class="card insight-card">
           <div class="insight-toolbar">
             <label class="form-group"
-              ><span>Order date</span><input id="insight-date" type="date" /></label
+              ><span>Order date</span><input id="insight-date" type="date" /><small
+                >Choose a date before printing a date-wise report.</small
+              ></label
             ><label class="form-group"
               ><span>Find customer / mobile</span
               ><input
                 id="insight-search"
                 type="search"
                 placeholder="Name, number, or last 4 digits"
-            /></label>
+              /><small>Search filters the table only; printed totals include the full date.</small
+            ></label>
           </div>
           <div id="customer-insight-status" class="growth-ai-status"></div>
           <div class="insight-table-wrap">
@@ -6551,18 +6574,27 @@ Watch competitors ranking for Colva Beach, seafood, Goan food, Chinese food, fam
             badge.textContent = configured ? '● PIN configured' : '● PIN required';
             head.append(badge);
             input.placeholder = configured
-              ? 'PIN saved — enter only to change it'
+              ? '•••••• — PIN saved securely'
               : 'Set a 4–6 digit PIN';
             if (toggle) {
-              toggle.disabled = !input.value;
-              toggle.textContent = input.type === 'password' ? 'Show' : 'Hide';
+              const hasReplacement = !!input.value;
+              toggle.disabled = !configured && !hasReplacement;
+              toggle.textContent = hasReplacement
+                ? input.type === 'password'
+                  ? 'Show'
+                  : 'Hide'
+                : configured
+                  ? 'Change PIN'
+                  : 'Show';
               toggle.setAttribute(
                 'aria-label',
-                input.value
+                hasReplacement
                   ? input.type === 'password'
                     ? 'Show replacement PIN'
                     : 'Hide replacement PIN'
-                  : 'Enter a replacement PIN first'
+                  : configured
+                    ? 'Change saved PIN'
+                    : 'Enter a PIN first'
               );
             }
           });
@@ -6581,7 +6613,7 @@ Watch competitors ranking for Colva Beach, seafood, Goan food, Chinese food, fam
                 configured = !!captain.pinConfigured;
               const areas = captain.areas || [];
               const areaSummary = areas.length ? areas.join(' · ') : 'All dining areas';
-              return `<article class="captain-account-card" data-captain-card="${index}"><header class="captain-account-head"><div><b>${captainEsc(captain.name || `New Captain ${index + 1}`)}</b><small>${captainEsc(areaSummary)}</small></div><span class="${isActive ? '' : 'is-off'}">${isActive ? '● Active' : '● Disabled'}</span></header><div class="captain-account-body"><div class="form-grid"><div class="form-group"><label>Name</label><input type="text" data-captain-name="${index}" value="${captainEsc(captain.name || '')}" placeholder="Captain name" autocomplete="name"></div><div class="form-group"><label>Set PIN</label><div class="captain-pin-control"><input type="password" data-captain-pin="${index}" inputmode="numeric" maxlength="6" placeholder="${configured ? 'PIN saved — enter only to change it' : 'Set a 4–6 digit PIN'}" autocomplete="new-password"><button type="button" class="captain-pin-toggle" data-captain-pin-toggle="${index}" aria-label="Show PIN">Show</button></div><small class="captain-pin-help ${configured ? '' : 'is-missing'}">${configured ? '✓ PIN saved securely. Enter a new PIN only to replace it.' : 'A 4–6 digit PIN is required before this Captain can sign in.'}</small></div><div class="form-group"><label>Access</label><label><input data-captain-active="${index}" type="checkbox" ${isActive ? 'checked' : ''}> Captain can sign in</label></div></div><div class="form-group"><label>Assigned dining areas</label><p class="help-text">Leave every area unselected to allow this Captain everywhere.</p>${captainAreas.length ? `<div class="captain-area-options">${captainAreas.map((area) => `<label><input data-captain-area="${index}" value="${captainEsc(area)}" type="checkbox" ${areas.includes(area) ? 'checked' : ''}> ${captainEsc(area)}</label>`).join('')}</div>` : '<p class="help-text">Set up table areas first in Orders → Operations → Table allocation.</p>'}</div><button type="button" data-captain-remove="${index}" class="btn-delete">Remove Captain</button></div></article>`;
+              return `<article class="captain-account-card" data-captain-card="${index}"><header class="captain-account-head"><div><b>${captainEsc(captain.name || `New Captain ${index + 1}`)}</b><small>${captainEsc(areaSummary)}</small></div><span class="${isActive ? '' : 'is-off'}">${isActive ? '● Active' : '● Disabled'}</span></header><div class="captain-account-body"><div class="form-grid"><div class="form-group"><label>Name</label><input type="text" data-captain-name="${index}" value="${captainEsc(captain.name || '')}" placeholder="Captain name" autocomplete="name"></div><div class="form-group"><label>Set PIN</label><div class="captain-pin-control"><input type="password" data-captain-pin="${index}" inputmode="numeric" maxlength="6" placeholder="${configured ? '•••••• — PIN saved securely' : 'Set a 4–6 digit PIN'}" autocomplete="new-password"><button type="button" class="captain-pin-toggle" data-captain-pin-toggle="${index}" aria-label="${configured ? 'Change saved PIN' : 'Show PIN'}">${configured ? 'Change PIN' : 'Show'}</button></div><small class="captain-pin-help ${configured ? '' : 'is-missing'}">${configured ? '✓ PIN saved securely. For safety it cannot be revealed; you can replace it.' : 'A 4–6 digit PIN is required before this Captain can sign in.'}</small></div><div class="form-group"><label>Access</label><label><input data-captain-active="${index}" type="checkbox" ${isActive ? 'checked' : ''}> Captain can sign in</label></div></div><div class="form-group"><label>Assigned dining areas</label><p class="help-text">Leave every area unselected to allow this Captain everywhere.</p>${captainAreas.length ? `<div class="captain-area-options">${captainAreas.map((area) => `<label><input data-captain-area="${index}" value="${captainEsc(area)}" type="checkbox" ${areas.includes(area) ? 'checked' : ''}> ${captainEsc(area)}</label>`).join('')}</div>` : '<p class="help-text">Set up table areas first in Orders → Operations → Table allocation.</p>'}</div><button type="button" data-captain-remove="${index}" class="btn-delete">Remove Captain</button></div></article>`;
             })
             .join('') ||
           '<div class="captain-empty-state">No Captain accounts yet. Add a waiter, assign a PIN, then save the account.</div>';
@@ -6701,8 +6733,21 @@ Watch competitors ranking for Colva Beach, seafood, Goan food, Chinese food, fam
           const input = document.querySelector(
               `[data-captain-pin="${toggle.dataset.captainPinToggle}"]`
             ),
-            show = input?.type === 'password';
+            captain = captainAccounts[Number(toggle.dataset.captainPinToggle)];
           if (!input) return;
+          if (captain?.pinConfigured && !input.value) {
+            input.placeholder = 'Enter a new 4–6 digit PIN';
+            const help = input.closest('.form-group')?.querySelector('.captain-pin-help');
+            if (help)
+              help.textContent =
+                'Enter a replacement PIN, check it with Show if needed, then save the Captain settings.';
+            toggle.disabled = true;
+            toggle.textContent = 'Show';
+            toggle.setAttribute('aria-label', 'Enter a replacement PIN first');
+            input.focus();
+            return;
+          }
+          const show = input.type === 'password';
           input.type = show ? 'text' : 'password';
           toggle.textContent = show ? 'Hide' : 'Show';
           toggle.setAttribute('aria-label', show ? 'Hide PIN' : 'Show PIN');
@@ -6757,16 +6802,34 @@ Watch competitors ranking for Colva Beach, seafood, Goan food, Chinese food, fam
           .closest('.captain-pin-control')
           ?.querySelector('[data-captain-pin-toggle]');
         if (!toggle) return;
-        toggle.disabled = !input.value;
-        toggle.textContent = input.type === 'password' ? 'Show' : 'Hide';
+        const configured = !!captainAccounts[Number(input.dataset.captainPin)]?.pinConfigured,
+          hasReplacement = !!input.value;
+        toggle.disabled = !configured && !hasReplacement;
+        toggle.textContent = hasReplacement
+          ? input.type === 'password'
+            ? 'Show'
+            : 'Hide'
+          : configured
+            ? 'Change PIN'
+            : 'Show';
         toggle.setAttribute(
           'aria-label',
-          input.value
+          hasReplacement
             ? input.type === 'password'
               ? 'Show replacement PIN'
               : 'Hide replacement PIN'
-            : 'Enter a replacement PIN first'
+            : configured
+              ? 'Change saved PIN'
+              : 'Enter a PIN first'
         );
+        if (!hasReplacement && configured) {
+          input.type = 'password';
+          input.placeholder = '•••••• — PIN saved securely';
+          const help = input.closest('.form-group')?.querySelector('.captain-pin-help');
+          if (help)
+            help.textContent =
+              '✓ PIN saved securely. For safety it cannot be revealed; you can replace it.';
+        }
       });
       document.getElementById('captain-save')?.addEventListener('click', async () => {
         const saveButton = document.getElementById('captain-save');
@@ -7027,6 +7090,6 @@ Watch competitors ranking for Colva Beach, seafood, Goan food, Chinese food, fam
       }
     </script>
     <script src="/addons-domain.js?v=1" defer></script>
-    <script src="admin-cms.js?v=20260903-34" defer></script>
+    <script src="admin-cms.js?v=20260903-35" defer></script>
   </body>
 </html>

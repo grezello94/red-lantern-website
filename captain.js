@@ -4,6 +4,7 @@ const recentKey = 'red-lantern-captain-recent-items',
   loginSelectionKey = 'red-lantern-captain-login-selection',
   readyKey = 'red-lantern-captain-ready-seen';
 const Addons = window.RedLanternAddons;
+const OrderRequests = window.RedLanternOrderRequests;
 const $ = (selector) => document.querySelector(selector);
 const esc = (value) =>
   String(value ?? '').replace(
@@ -574,8 +575,10 @@ async function postCaptainKot(orderId) {
   clearQueuedKotRetry(orderId);
   return data;
 }
-async function postCaptainOrder(payload) {
-  const response = await fetchWithTimeout('/api/orders/counter', {
+async function postCaptainOrder(payload, options = {}) {
+  const { response, data } = await OrderRequests.json(
+    '/api/orders/counter',
+    {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -583,8 +586,13 @@ async function postCaptainOrder(payload) {
         ...captainHeaders(),
       },
       body: JSON.stringify(payload),
-    }),
-    data = await response.json().catch(() => ({}));
+    },
+    {
+      attempts: 3,
+      timeoutMs: 8000,
+      onRetry: options.onRetry,
+    }
+  );
   if (response.status === 401) {
     signOut('Your Captain session expired. Sign in again.');
     throw new Error('Captain sign-in has expired.');
@@ -1968,7 +1976,6 @@ $('#place-order').addEventListener('click', async () => {
       $('#customer-name').value = '';
       $('#customer-phone').value = '';
       $('#special-request').value = '';
-      await load();
       setScreen('tables');
       $('#captain-connection').textContent = sendKot
         ? `Order #${data.orderNumber} sent to the kitchen${data.kotNumber ? ` · KOT #${data.kotNumber}` : ''}.`
@@ -1979,6 +1986,9 @@ $('#place-order').addEventListener('click', async () => {
           : `Order #${data.orderNumber} saved without a KOT.`,
         'success'
       );
+      // The order and KOT are confirmed at this point. Refresh the board in the
+      // background so the waiter is never held on a completed submit screen.
+      void load();
     },
     saveForSync = () => {
       queuePending(payload);
@@ -2029,7 +2039,11 @@ $('#place-order').addEventListener('click', async () => {
       return;
     }
     status.textContent = sendKot ? 'Sending KOT to kitchen…' : 'Saving order without a KOT…';
-    const data = await postCaptainOrder(payload);
+    const data = await postCaptainOrder(payload, {
+      onRetry: ({ nextAttempt, attempts }) => {
+        status.textContent = `Connection delayed — confirming this same order safely (${nextAttempt}/${attempts})…`;
+      },
+    });
     await complete(data, sendKot);
   } catch (error) {
     if (error.savedOrder) {

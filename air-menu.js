@@ -1,5 +1,6 @@
 const params = new URLSearchParams(window.location.search);
 const Addons = window.RedLanternAddons;
+const OrderRequests = window.RedLanternOrderRequests;
 const fallbackUrl = 'https://www.redlanternrestaurant.in/menu';
 const expires = Number(params.get('expires'));
 const orderStorageKey = `red-lantern-order:${params.get('signature') || expires}`;
@@ -649,24 +650,36 @@ function setupOrderShortlist() {
       const loyaltyPointsToUse = Math.floor(Number(loyaltyInput?.value) || 0);
       directOrderRequestId ||= nextDirectOrderRequestId();
       sessionStorage.setItem(directOrderRequestKey, directOrderRequestId);
-      const response = await fetch('/api/direct-orders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Direct-Order-Id': directOrderRequestId },
-        body: JSON.stringify({
-          clientRequestId: directOrderRequestId,
-          mode: params.get('mode'),
-          expires,
-          signature: params.get('signature'),
-          customerPhone: phone,
-          customerName: document.getElementById('order-customer-name').value.trim(),
-          specialRequest: document.getElementById('order-special-request').value.trim(),
-          fulfillmentType: document.getElementById('order-fulfillment-type')?.value,
-          proximity: proximityProof,
-          loyaltyPoints: loyaltyPointsToUse,
-          items,
-        }),
-      });
-      const result = await response.json().catch(() => ({}));
+      const { response, data: result } = await OrderRequests.json(
+        '/api/direct-orders',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Direct-Order-Id': directOrderRequestId,
+          },
+          body: JSON.stringify({
+            clientRequestId: directOrderRequestId,
+            mode: params.get('mode'),
+            expires,
+            signature: params.get('signature'),
+            customerPhone: phone,
+            customerName: document.getElementById('order-customer-name').value.trim(),
+            specialRequest: document.getElementById('order-special-request').value.trim(),
+            fulfillmentType: document.getElementById('order-fulfillment-type')?.value,
+            proximity: proximityProof,
+            loyaltyPoints: loyaltyPointsToUse,
+            items,
+          }),
+        },
+        {
+          attempts: 3,
+          timeoutMs: 8000,
+          onRetry: ({ nextAttempt, attempts }) => {
+            status.textContent = `Connection delayed — confirming this same order safely (${nextAttempt}/${attempts})…`;
+          },
+        }
+      );
       if (!response.ok) {
         const error = new Error(result.error || 'Unable to place the order.');
         error.status = response.status;

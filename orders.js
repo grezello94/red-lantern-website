@@ -1,5 +1,6 @@
 const root = document.getElementById('orders');
 const Addons = window.RedLanternAddons;
+const OrderRequests = window.RedLanternOrderRequests;
 const defaultBillHeader =
   'Colva Goa\n9922853605 / 9049558369\n[Follow] Insta ID:\nred_lantern_restaurant';
 const defaultBillFooter =
@@ -305,6 +306,24 @@ async function saveToBridgeLedger(payload) {
   updateConnectivity();
   return body.action;
 }
+function startCounterLedgerSave(payload, source) {
+  return saveToBridgeLedger(payload)
+    .then(() => true)
+    .catch((error) => {
+      reportOrdersDiagnostic({
+        level: 'warning',
+        message: `Local ledger unavailable: ${error.message}`,
+        source,
+      });
+      return false;
+    });
+}
+async function markCounterLedgerSynced(ledgerPromise, clientRequestId) {
+  if (!(await ledgerPromise)) return;
+  await updateBridgeLedger(clientRequestId, 'synced');
+  bridgeLedgerPending = Math.max(0, bridgeLedgerPending - 1);
+  updateConnectivity();
+}
 async function saveBridgeAction(type, payload) {
   const id = offlineActionId(type);
   const response = await fetch(`${printBridgeOrigin}/v1/ledger/actions`, {
@@ -504,13 +523,19 @@ function updateConnectivity(message) {
         ? `${pending} order${pending === 1 ? '' : 's'} waiting to sync.`
         : '');
 }
-async function sendCounterOrder(payload) {
-  const response = await fetch('/api/orders/counter', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Counter-Order-Id': payload.clientRequestId },
-    body: JSON.stringify(payload),
-  });
-  const result = await response.json().catch(() => ({}));
+async function sendCounterOrder(payload, options = {}) {
+  const { response, data: result } = await OrderRequests.json(
+    '/api/orders/counter',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Counter-Order-Id': payload.clientRequestId,
+      },
+      body: JSON.stringify(payload),
+    },
+    { attempts: 3, timeoutMs: 8000, onRetry: options.onRetry }
+  );
   if (!response.ok) {
     const error = new Error(result.error || 'Unable to save the order.');
     error.status = response.status;
@@ -1733,7 +1758,7 @@ const toPushKey = (value) => {
   return Uint8Array.from(raw, (character) => character.charCodeAt(0));
 };
 
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('/orders-sw.js?v=24');
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/orders-sw.js?v=25');
 document.getElementById('enable-notifications')?.addEventListener('click', async () => {
   closeOpenPanels();
   const button = document.getElementById('enable-notifications');
@@ -4576,6 +4601,7 @@ async function submitDineInAction(action) {
     ? `${counterTable.area} · Table ${String(counterTable.number).padStart(2, '0')}`
     : 'Takeaway order';
   let savedInBridgeLedger = false;
+  let ledgerSavePromise = Promise.resolve(false);
   try {
     setCounterOrderStatus(
       action === 'hold'
@@ -4588,30 +4614,29 @@ async function submitDineInAction(action) {
       'sending'
     );
     if (['save', 'hold'].includes(action)) {
-      try {
-        await saveToBridgeLedger(payload);
-        savedInBridgeLedger = true;
-      } catch (ledgerError) {
-        reportOrdersDiagnostic({
-          level: 'warning',
-          message: `Local ledger unavailable: ${ledgerError.message}`,
-          source: isDineIn ? 'offline dine-in ledger' : 'offline takeaway ledger',
-        });
-      }
+      // Start the local durability write and cloud save together. A healthy
+      // online order must never wait for localhost printer/ledger discovery.
+      ledgerSavePromise = startCounterLedgerSave(
+        payload,
+        isDineIn ? 'offline dine-in ledger' : 'offline takeaway ledger'
+      );
     }
     if (!navigator.onLine) {
+      savedInBridgeLedger = await ledgerSavePromise;
       if (!['save', 'hold'].includes(action))
         throw new Error(
           'KOT and final bill printing need an online order confirmation. Save or hold the order first; it will sync safely when the connection returns.'
         );
       throw new TypeError('Offline');
     }
-    const result = await sendCounterOrder(payload);
-    if (savedInBridgeLedger) {
-      await updateBridgeLedger(payload.clientRequestId, 'synced');
-      bridgeLedgerPending = Math.max(0, bridgeLedgerPending - 1);
-      updateConnectivity();
-    }
+    const result = await sendCounterOrder(payload, {
+      onRetry: ({ nextAttempt, attempts }) =>
+        setCounterOrderStatus(
+          `Connection delayed — confirming the same order safely (${nextAttempt}/${attempts})…`,
+          'sending'
+        ),
+    });
+    void markCounterLedgerSynced(ledgerSavePromise, payload.clientRequestId).catch(() => {});
     if (action === 'kot-print') {
       const savedOrderLabel = isDineIn ? orderLabel : `Takeaway order #${result.orderNumber}`;
       counterBillSplit = null;
@@ -4679,6 +4704,7 @@ async function submitDineInAction(action) {
     await loadOrders();
     if (isDineIn) await showTableView();
   } catch (error) {
+    savedInBridgeLedger = savedInBridgeLedger || (await ledgerSavePromise);
     if (
       (!navigator.onLine || !error.status || error.status >= 500) &&
       ['save', 'hold'].includes(action)
@@ -4769,25 +4795,19 @@ document.getElementById('counter-place-order')?.addEventListener('click', async 
     ? `Saving ${orderLabel} order…`
     : 'Internet is unavailable — saving this order safely on this device…';
   let savedInBridgeLedger = false;
+  const ledgerSavePromise = startCounterLedgerSave(payload, 'offline order ledger');
   try {
     let result;
-    try {
-      await saveToBridgeLedger(payload);
-      savedInBridgeLedger = true;
-    } catch (ledgerError) {
-      reportOrdersDiagnostic({
-        level: 'warning',
-        message: `Local ledger unavailable: ${ledgerError.message}`,
-        source: 'offline order ledger',
-      });
+    if (!navigator.onLine) {
+      savedInBridgeLedger = await ledgerSavePromise;
+      throw new TypeError('Offline');
     }
-    if (!navigator.onLine) throw new TypeError('Offline');
-    result = await sendCounterOrder(payload);
-    if (savedInBridgeLedger) {
-      await updateBridgeLedger(payload.clientRequestId, 'synced');
-      bridgeLedgerPending = Math.max(0, bridgeLedgerPending - 1);
-      updateConnectivity();
-    }
+    result = await sendCounterOrder(payload, {
+      onRetry: ({ nextAttempt, attempts }) => {
+        status.textContent = `Connection delayed — confirming the same order safely (${nextAttempt}/${attempts})…`;
+      },
+    });
+    void markCounterLedgerSynced(ledgerSavePromise, payload.clientRequestId).catch(() => {});
     status.textContent = `${counterTable ? `${counterTable.area} Table ${String(counterTable.number).padStart(2, '0')}` : `Takeaway order #${result.orderNumber}`} accepted. Sending KOTs…`;
     counterCart = [];
     resetCounterRequestAttempt();
@@ -4812,6 +4832,7 @@ document.getElementById('counter-place-order')?.addEventListener('click', async 
     loadOrders();
     refreshCounterLiveStatus();
   } catch (error) {
+    savedInBridgeLedger = savedInBridgeLedger || (await ledgerSavePromise);
     if (!navigator.onLine || !error.status || error.status >= 500) {
       if (!savedInBridgeLedger) {
         const queued = queuedCounterOrders();

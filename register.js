@@ -65,6 +65,10 @@ async function load() {
   try {
     const response = await fetch('/api/orders', { cache: 'no-store' });
     const data = await response.json();
+    if (response.status === 401 && data.loginUrl) {
+      window.location.replace(data.loginUrl);
+      return;
+    }
     if (!response.ok) throw new Error(data.error);
     orders = Array.isArray(data) ? data : [];
     $('#connection-dot').style.background = '#10b981';
@@ -219,6 +223,10 @@ document.addEventListener('click', async (event) => {
     }
     if (target.id === 'payment-confirm') await savePayment();
     if (target.id === 'print-summary') await printSummary();
+    if (target.id === 'staff-sign-out') {
+      await fetch('/api/orders/session', { method: 'DELETE' });
+      window.location.replace('/staff-login?next=%2Fregister');
+    }
     if (target.closest('.payment-close,.payment-cancel'))
       document.getElementById('payment-modal').close();
   } catch (error) {

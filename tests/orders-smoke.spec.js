@@ -63,6 +63,24 @@ async function expectWithinViewport(page, selector) {
   expect(failures).toEqual([]);
 }
 
+async function expectIOSControlsDoNotAutoZoom(page, selector = 'input, select, textarea') {
+  const undersizedControls = await page.locator(selector).evaluateAll((controls) => {
+    if (window.innerWidth > 620) return [];
+    return controls
+      .filter((control) => {
+        const style = getComputedStyle(control);
+        const box = control.getBoundingClientRect();
+        return style.display !== 'none' && style.visibility !== 'hidden' && box.width && box.height;
+      })
+      .map((control) => ({
+        control: control.id || control.className || control.tagName,
+        fontSize: Number.parseFloat(getComputedStyle(control).fontSize),
+      }))
+      .filter(({ fontSize }) => fontSize < 16);
+  });
+  expect(undersizedControls).toEqual([]);
+}
+
 async function mockCaptainApp(
   page,
   { orders = [], alerts = [], menuItems = [], onCounterOrder, onKot, onServed } = {}
@@ -118,6 +136,7 @@ async function signInCaptain(page) {
   await page.goto('/captain.html');
   await page.locator('[data-captain-id="captain-1"]').click();
   await page.locator('#captain-pin').fill('1234');
+  await expectIOSControlsDoNotAutoZoom(page, '#captain-login input');
   await page.locator('#captain-pin-form').dispatchEvent('submit');
   await expect(page.locator('.captain-app')).toBeVisible();
 }
@@ -228,6 +247,39 @@ test('Send KOT clears the counter immediately while kitchen printing continues',
   await expect(page.locator('#counter-order-status')).toContainText('KOT sent');
 });
 
+test('online counter save does not wait for the local print ledger', async ({ page }) => {
+  let releaseLedger;
+  const ledgerBlocked = new Promise((resolve) => {
+    releaseLedger = resolve;
+  });
+  await page.unroute('http://127.0.0.1:9124/**');
+  await page.route('http://127.0.0.1:9124/**', async (route) => {
+    const pathname = new URL(route.request().url()).pathname;
+    if (pathname === '/v1/ledger/actions') await ledgerBlocked;
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      headers: { 'Access-Control-Allow-Origin': '*' },
+      body: JSON.stringify(
+        pathname === '/v1/ledger/actions'
+          ? { ok: true, action: { status: 'queued' } }
+          : pathname === '/health'
+            ? { ok: true, ledger: 'ready' }
+            : { ok: true, printers: [] }
+      ),
+    });
+  });
+  await mockCounterWorkspace(page);
+  await page.goto('/orders.html');
+  await addCounterTestItem(page);
+
+  await page.locator('#counter-place-order').click();
+  await expect(page.locator('#counter-total')).toHaveText('₹0');
+  await expect(page.locator('#counter-order-status')).toContainText('accepted');
+
+  releaseLedger();
+});
+
 test('required add-ons are selected, priced and sent with a counter order', async ({ page }) => {
   let submitted;
   await mockCounterWorkspace(page, {
@@ -279,7 +331,7 @@ test('required add-ons are selected, priced and sent with a counter order', asyn
 });
 
 test('QR ordering enforces, prices and submits assigned add-ons', async ({ page }) => {
-  let submitted;
+  const submissions = [];
   await page.route('**/api/**', async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -318,14 +370,22 @@ test('QR ordering enforces, prices and submits assigned add-ons', async ({ page 
         ],
       };
     } else if (url.pathname === '/api/direct-orders') {
-      submitted = request.postDataJSON();
-      status = 201;
-      body = {
-        id: 'qr-order-1',
-        orderNumber: '01',
-        autoAccepted: true,
-        trackingUrl: '/track-order?token=test',
-      };
+      submissions.push({
+        body: request.postDataJSON(),
+        requestId: request.headers()['x-direct-order-id'],
+      });
+      if (submissions.length === 1) {
+        status = 503;
+        body = { error: 'Temporary database delay.' };
+      } else {
+        status = 201;
+        body = {
+          id: 'qr-order-1',
+          orderNumber: '01',
+          autoAccepted: true,
+          trackingUrl: '/track-order?token=test',
+        };
+      }
     } else if (url.pathname === '/api/loyalty') body = { points: 0 };
     await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
   });
@@ -344,9 +404,11 @@ test('QR ordering enforces, prices and submits assigned add-ons', async ({ page 
   await page.locator('#order-customer-phone').fill('9876543210');
   await page.locator('#place-direct-order').click();
   await expect(page.locator('#order-confirmation')).toBeVisible();
-  await expect.poll(() => submitted).toBeTruthy();
+  await expect.poll(() => submissions.length).toBe(2);
 
-  expect(submitted.items[0]).toMatchObject({
+  expect(submissions[0].requestId).toBeTruthy();
+  expect(submissions[1].requestId).toBe(submissions[0].requestId);
+  expect(submissions[1].body.items[0]).toMatchObject({
     name: 'Test Soup',
     modifierTotal: 50,
     modifiers: [
@@ -420,7 +482,9 @@ test('live order history shows saved add-on snapshots and its fallback KOT print
   expect(fallbackKot).toContain('+ Cheese');
 });
 
-test('an interrupted Send KOT retry reuses the same idempotency key', async ({ page }) => {
+test('an interrupted Send KOT retries automatically with the same idempotency key', async ({
+  page,
+}) => {
   const requestIds = [];
   let attempt = 0;
   await mockCounterWorkspace(page, {
@@ -438,9 +502,7 @@ test('an interrupted Send KOT retry reuses the same idempotency key', async ({ p
   await addCounterTestItem(page);
 
   await page.locator('[data-dine-action="kot-print"]').click();
-  await expect(page.locator('#counter-order-status')).toContainText('connection was interrupted');
-  await expect(page.locator('#counter-total')).toHaveText('₹110');
-  await page.locator('[data-dine-action="kot-print"]').click();
+  await expect(page.locator('#counter-order-status')).toContainText('KOT sent');
   await expect(page.locator('#counter-total')).toHaveText('₹0');
 
   expect(requestIds).toHaveLength(2);
@@ -567,6 +629,7 @@ test('orders tables and live-order cards remain contained on desktop and phone w
   for (const viewport of [
     { width: 1280, height: 900 },
     { width: 360, height: 780 },
+    { width: 280, height: 720 },
   ]) {
     await page.setViewportSize(viewport);
     await page.goto('/orders.html');
@@ -583,14 +646,22 @@ test('orders tables and live-order cards remain contained on desktop and phone w
 });
 
 test('captain page loads with login screen', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 700 });
   await page.goto('/captain.html');
   await expect(page).toHaveTitle(/Captain/i);
   await expect(page.locator('#captain-login')).toBeVisible();
   await expect(page.locator('#captain-account-list')).toBeVisible();
+  await expect(page.locator('meta[name="viewport"]')).toHaveAttribute(
+    'content',
+    /maximum-scale=1,user-scalable=no/
+  );
+  await expectNoPageOverflow(page);
+  await expectWithinViewport(page, '#captain-login, #captain-login *');
 });
 
 test('Captain ordering enforces, prices and submits assigned add-ons', async ({ page }) => {
   let submitted;
+  await page.setViewportSize({ width: 390, height: 844 });
   await mockCaptainApp(page, {
     menuItems: [
       {
@@ -622,6 +693,9 @@ test('Captain ordering enforces, prices and submits assigned add-ons', async ({ 
   await expect(page.locator('#menu-screen')).toBeVisible();
   await page.locator('#menu-list .menu-item').click();
   await expect(page.locator('#choice-sheet')).toBeVisible();
+  await expectIOSControlsDoNotAutoZoom(page, '#choice-sheet input, #choice-sheet select');
+  await expectNoPageOverflow(page);
+  await expectWithinViewport(page, '#choice-sheet, #choice-sheet *');
   await expect(page.locator('#choice-add')).toBeDisabled();
   await page.locator('[data-captain-addon-group="extras"] input[value="cheese"]').check();
   await expect(page.locator('#choice-add')).toContainText('₹160');
@@ -733,7 +807,7 @@ test('Captain network retry reuses one request ID after a refresh', async ({ pag
   await page.route('**/api/orders/counter', async (route) => {
     counterRequests += 1;
     requestIds.push(route.request().headers()['x-counter-order-id']);
-    if (counterRequests === 1)
+    if (counterRequests <= 3)
       return route.fulfill({
         status: 503,
         contentType: 'application/json',
@@ -758,13 +832,13 @@ test('Captain network retry reuses one request ID after a refresh', async ({ pag
   await page.locator('#basket-bar').click();
   await page.locator('#place-order').click();
 
-  await expect.poll(() => counterRequests).toBe(1);
+  await expect.poll(() => counterRequests).toBe(3);
   await expect(page.locator('#captain-pending-sync')).toBeVisible();
   await page.reload();
 
-  await expect.poll(() => counterRequests).toBe(2);
+  await expect.poll(() => counterRequests).toBe(4);
   expect(requestIds[0]).toBeTruthy();
-  expect(requestIds[1]).toBe(requestIds[0]);
+  expect(new Set(requestIds)).toEqual(new Set([requestIds[0]]));
   await expect
     .poll(() =>
       page.evaluate(() => localStorage.getItem('red-lantern-captain-pending:captain-1'))
@@ -941,7 +1015,10 @@ test('captain table board and menu cards stay contained on desktop and phone wid
 
   for (const viewport of [
     { width: 1280, height: 900 },
+    { width: 768, height: 1024 },
+    { width: 390, height: 844 },
     { width: 360, height: 780 },
+    { width: 320, height: 700 },
   ]) {
     await page.setViewportSize(viewport);
     await expectNoPageOverflow(page);
@@ -1041,6 +1118,7 @@ test('captain conflict, active bill and final order stay contained on a narrow p
   await page.locator('#menu-list .menu-item').click();
   await page.locator('#basket-bar').click();
   await expect(page.locator('#review-screen')).toBeVisible();
+  await expectIOSControlsDoNotAutoZoom(page, '#review-screen input, #review-screen select, #review-screen textarea');
   await page.evaluate(() => {
     const toast = document.querySelector('#captain-toast');
     toast.textContent =

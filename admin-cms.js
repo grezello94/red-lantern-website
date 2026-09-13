@@ -2695,6 +2695,7 @@ function setupCustomerInsights() {
   const date = document.getElementById('insight-date');
   const search = document.getElementById('insight-search');
   const refresh = document.getElementById('refresh-customer-insights');
+  const printDailySummary = document.getElementById('print-daily-order-summary');
   const printSummary = document.getElementById('print-register-summary');
   const stats = document.getElementById('customer-insight-stats');
   const rows = document.getElementById('customer-insight-orders');
@@ -2757,7 +2758,7 @@ function setupCustomerInsights() {
       dialog.className = 'customer-order-bill-dialog';
       document.body.appendChild(dialog);
     }
-    dialog.innerHTML = `<button class="bill-close" aria-label="Close bill">×</button><div class="bill-heading"><div><span>Red Lantern Restaurant · staff view</span><h2>Order #${esc(orderNumber)}</h2><p>${esc(placed)} · ${esc(order.status)}</p></div><strong>${money(total)}</strong></div><div class="bill-customer"><div><span>Customer</span><b>${esc(order.customer_name || 'Guest')}</b></div><div><span>Mobile</span><b>${esc(order.customer_phone || '—')}</b></div><div><span>Wallet points</span><b>${Number(order.loyalty_points || 0)}</b></div></div>${order.special_request ? `<div class="bill-request"><b>Special request</b>${esc(order.special_request)}</div>` : ''}<div class="bill-items"><div class="bill-items-head"><span>Item</span><span>Qty</span><span>Price</span><span>Amount</span></div>${
+    dialog.innerHTML = `<div class="bill-heading"><div><span>Red Lantern Restaurant · staff view</span><h2>Order #${esc(orderNumber)}</h2><p>${esc(placed)} · ${esc(order.status)}</p></div><div class="bill-heading-actions"><button type="button" class="bill-close" aria-label="Close bill">Close ×</button><strong>${money(total)}</strong></div></div><div class="bill-customer"><div><span>Customer</span><b>${esc(order.customer_name || 'Guest')}</b></div><div><span>Mobile</span><b>${esc(order.customer_phone || '—')}</b></div><div><span>Wallet points</span><b>${Number(order.loyalty_points || 0)}</b></div></div>${order.special_request ? `<div class="bill-request"><b>Special request</b>${esc(order.special_request)}</div>` : ''}<div class="bill-items"><div class="bill-items-head"><span>Item</span><span>Qty</span><span>Price</span><span>Amount</span></div>${
       items
         .map((item) => {
           const qty = Number(item.quantity || 0);
@@ -2798,6 +2799,85 @@ function setupCustomerInsights() {
       `<!doctype html><title>Payment summary</title><style>body{font:12px Arial;padding:22px;color:#111}h1,p{margin:0 0 7px}table{width:100%;border-collapse:collapse;margin-top:18px}th,td{padding:8px;text-align:left;border-bottom:1px solid #ddd}th{font-size:10px;text-transform:uppercase;background:#f3f3f3}.right{text-align:right}.total{margin-top:18px;font-size:14px;font-weight:bold}</style><h1>Red Lantern Restaurant — Payment Summary</h1><p>Date: ${esc(data.day || date.value || '')}</p><table><thead><tr><th>Bill</th><th>Type</th><th>Table / Parcel</th><th>Customer</th><th>Payment</th><th class=right>Bill total</th><th class=right>Received</th><th class=right>Change</th><th class=right>Tip</th></tr></thead><tbody>${payments.map((order) => `<tr><td>#${esc(order.daily_order_number)}</td><td>${order.mode === 'table' ? 'Dine-in' : 'Parcel'}</td><td>${esc(order.mode === 'table' ? `Table ${String(order.table_number || '').padStart(2, '0')}` : order.customer_phone || 'Walk-in')}</td><td>${esc(order.customer_name || 'Walk-in customer')}</td><td>${esc(paymentName(order.settlement_type))}</td><td class=right>${money(order.total)}</td><td class=right>${money(order.payment_received ?? order.settlement_amount ?? order.total)}</td><td class=right>${money(order.change_due)}</td><td class=right>${money(order.tip_amount)}</td></tr>`).join('') || '<tr><td colspan=9>No completed payments for this date.</td></tr>'}</tbody></table><p class=total>Sales: ${money(sales)} &nbsp; | &nbsp; Tips: ${money(tips)}</p><script>onload=()=>print()<\/script>`
     );
     popup.document.close();
+  };
+  const printDateWiseSummary = async () => {
+    if (!date.value) {
+      date.focus();
+      throw new Error('Choose an order date before printing the date-wise summary.');
+    }
+    const popup = window.open('', 'red-lantern-daily-order-summary', 'popup=yes,width=1180,height=820');
+    if (!popup) throw new Error('Allow pop-ups to print the date-wise summary.');
+    popup.document.write(
+      '<!doctype html><title>Preparing date-wise summary…</title><p style="font:14px Arial;padding:24px">Preparing date-wise summary…</p>'
+    );
+    try {
+      const response = await fetch(
+        `/api/admin/customer-insights/daily-summary?date=${encodeURIComponent(date.value)}`,
+        { cache: 'no-store' }
+      );
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok)
+        throw new Error(data.error || 'Unable to prepare the date-wise order summary.');
+      const summary = data.summary || {};
+      const orders = Array.isArray(data.orders) ? data.orders : [];
+      const items = Array.isArray(data.items) ? data.items : [];
+      const channel = summary.channels || {};
+      const statusName = (value) =>
+        String(value || 'unknown')
+          .replace(/[_-]+/g, ' ')
+          .replace(/\b\w/g, (letter) => letter.toUpperCase());
+      const paymentName = (type) =>
+        ({ cash: 'Cash', upi: 'UPI / GPay', card: 'Card', other: 'Other', due: 'Due' })[type] ||
+        'Not recorded';
+      const dayLabel = new Date(`${data.day}T00:00:00`).toLocaleDateString('en-IN', {
+        dateStyle: 'full',
+      });
+      const generatedLabel = new Date().toLocaleString('en-IN', {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+        timeZone: 'Asia/Kolkata',
+      });
+      const statusRows = Object.entries(summary.statusCounts || {})
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([name, count]) => `<span>${esc(statusName(name))}: <b>${Number(count || 0)}</b></span>`)
+        .join('');
+      const orderRows = orders
+        .map((order) => {
+          const placed = new Date(order.created_at).toLocaleTimeString('en-IN', {
+            hour: '2-digit',
+            minute: '2-digit',
+            timeZone: 'Asia/Kolkata',
+          });
+          const location =
+            order.mode === 'table'
+              ? `${order.table_area || 'Table'} ${String(order.table_number || '').padStart(2, '0')}`
+              : order.mode === 'card'
+                ? 'Business Card QR'
+                : statusName(order.fulfillment_type || 'Takeaway');
+          const paid =
+            String(order.status).toLowerCase() === 'completed'
+              ? order.settlement_amount == null
+                ? order.total
+                : order.settlement_amount
+              : 0;
+          return `<tr><td>#${esc(String(order.daily_order_number || '—').padStart(2, '0'))}</td><td>${esc(placed)}</td><td>${esc(location)}</td><td>${esc(order.customer_name || 'Walk-in customer')}<small>${esc(order.customer_phone || '')}</small></td><td class="number">${Number(order.item_quantity || 0)}</td><td>${esc(statusName(order.status))}</td><td>${esc(paymentName(order.settlement_type))}</td><td class="number">${money(order.total)}</td><td class="number">${money(paid)}</td></tr>`;
+        })
+        .join('');
+      const itemRows = items
+        .map(
+          (item, index) =>
+            `<tr><td class="number">${index + 1}</td><td>${esc(item.name)}</td><td class="number"><b>${Number(item.quantity || 0)}</b></td></tr>`
+        )
+        .join('');
+      popup.document.open();
+      popup.document.write(`<!doctype html><html><head><title>Order summary · ${esc(data.day)}</title><style>
+        @page{size:A4 landscape;margin:10mm}*{box-sizing:border-box}body{font:11px Arial,sans-serif;margin:0;color:#17233a}header{display:flex;justify-content:space-between;gap:24px;border-bottom:3px solid #bf2530;padding-bottom:12px}h1{font-size:23px;margin:0 0 5px}h2{font-size:15px;margin:22px 0 7px}.muted,small{display:block;color:#68778e}.report-date{text-align:right;font-weight:700}.cards{display:grid;grid-template-columns:repeat(6,1fr);gap:7px;margin:14px 0}.card{border:1px solid #dce3ec;border-radius:7px;padding:9px}.card b{display:block;color:#b4232b;font-size:17px;margin-bottom:3px}.channels{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}.channel{background:#f5f7fa;border-radius:7px;padding:9px}.channel b{float:right}.statuses{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:10px;padding:8px;background:#fff8e8;border-radius:7px}table{width:100%;border-collapse:collapse}th,td{padding:6px 7px;text-align:left;vertical-align:top;border-bottom:1px solid #e2e7ee}th{background:#eef2f7;text-transform:uppercase;font-size:9px;letter-spacing:.04em}.number{text-align:right}.items{columns:2;column-gap:20px}.items table{break-inside:avoid}.footer{margin-top:16px;padding-top:8px;border-top:1px solid #dce3ec;color:#68778e}@media print{.no-print{display:none}}
+      </style></head><body><header><div><h1>Red Lantern Restaurant</h1><b>Date-wise Order Summary</b><span class="muted">Generated ${esc(generatedLabel)}</span></div><div class="report-date">${esc(dayLabel)}<span class="muted">All orders placed on this business date</span></div></header><section class="cards"><div class="card"><b>${Number(summary.totalOrders || 0)}</b>Total orders</div><div class="card"><b>${Number(summary.itemQuantity || 0)}</b>Items ordered</div><div class="card"><b>${money(summary.orderValue)}</b>Order value</div><div class="card"><b>${Number(summary.completedOrders || 0)}</b>Completed</div><div class="card"><b>${money(summary.collected)}</b>Collected</div><div class="card"><b>${money(summary.tips)}</b>Tips</div></section><section class="channels"><div class="channel">Direct / counter <b>${Number(channel.direct?.orders || 0)} · ${money(channel.direct?.value)}</b></div><div class="channel">Business Card QR <b>${Number(channel.card?.orders || 0)} · ${money(channel.card?.value)}</b></div><div class="channel">Table / dine-in <b>${Number(channel.table?.orders || 0)} · ${money(channel.table?.value)}</b></div></section><div class="statuses">${statusRows || '<span>No orders</span>'}</div><h2>Order details</h2><table><thead><tr><th>Order</th><th>Placed</th><th>Type / table</th><th>Customer</th><th class="number">Items</th><th>Status</th><th>Payment</th><th class="number">Value</th><th class="number">Collected</th></tr></thead><tbody>${orderRows || '<tr><td colspan="9">No orders were placed on this date.</td></tr>'}</tbody></table><h2>Dish quantity summary</h2><div class="items"><table><thead><tr><th class="number">#</th><th>Dish / portion</th><th class="number">Quantity</th></tr></thead><tbody>${itemRows || '<tr><td colspan="3">No saleable items for this date.</td></tr>'}</tbody></table></div><p class="footer">Cancelled and rejected orders appear in the detail table, but are excluded from order value, channel totals, and dish quantities.</p><script>onload=()=>print()<\/script></body></html>`);
+      popup.document.close();
+    } catch (error) {
+      popup.close();
+      throw error;
+    }
   };
   const load = async () => {
     try {
@@ -2877,6 +2957,17 @@ function setupCustomerInsights() {
     if (button) showBill(ordersById.get(button.dataset.insightOrder));
   });
   refresh?.addEventListener('click', load);
+  printDailySummary?.addEventListener('click', async () => {
+    printDailySummary.disabled = true;
+    try {
+      await printDateWiseSummary();
+    } catch (error) {
+      status.textContent = error.message || 'Unable to print the date-wise order summary.';
+      status.style.color = '#b91c1c';
+    } finally {
+      printDailySummary.disabled = false;
+    }
+  });
   printSummary?.addEventListener('click', async () => {
     printSummary.disabled = true;
     try {
