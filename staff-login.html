@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&amp;family=Playfair+Display:wght@700&amp;display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/staff-login.css?v=1">
+    <link rel="stylesheet" href="/staff-login.css?v=2">
   </head>
   <body>
     <main class="staff-login-shell">
@@ -17,17 +17,17 @@
           <img src="/images/red-lantern-logo-600.webp" alt="Red Lantern Restaurant">
           <div>
             <p class="brand-kicker">Red Lantern Restaurant</p>
-            <h1>Service starts with a secure sign-in.</h1>
-            <p>One staff account gives your authorised team access to Orders, Register and Kitchen displays.</p>
+            <h1 id="staff-login-brand-title">Service starts with a secure sign-in.</h1>
+            <p id="staff-login-brand-copy">One staff account gives your authorised team access to Orders, Register and Kitchen displays.</p>
           </div>
           <div class="brand-status"><i aria-hidden="true"></i> Protected staff workspace</div>
         </aside>
 
         <section class="staff-login-panel">
           <form id="staff-login-form" novalidate>
-            <p class="form-kicker">Staff access</p>
+            <p id="staff-login-kicker" class="form-kicker">Staff access</p>
             <h2 id="staff-login-title">Welcome back</h2>
-            <p class="form-intro">Enter the Orders console credentials to continue.</p>
+            <p id="staff-login-intro" class="form-intro">Enter your authorised credentials to continue.</p>
 
             <label for="staff-username">Username</label>
             <div class="field-control">
@@ -42,16 +42,23 @@
               <button type="button" id="toggle-staff-password" aria-label="Show password">Show</button>
             </div>
 
+            <label class="stay-logged-in" for="staff-stay-logged-in">
+              <input id="staff-stay-logged-in" type="checkbox">
+              <span aria-hidden="true"><i></i></span>
+              <b>Stay logged in</b>
+              <small>Keep this trusted device signed in for 30 days.</small>
+            </label>
+
             <p id="staff-login-error" class="login-error" role="alert" aria-live="polite" hidden></p>
             <button id="staff-login-submit" class="login-submit" type="submit">
               <span>Sign in securely</span><b aria-hidden="true">→</b>
             </button>
-            <p class="login-help">Credentials are checked securely and are never stored in this browser.</p>
+            <p id="staff-login-help" class="login-help">Leave “Stay logged in” unchecked on a shared device.</p>
           </form>
         </section>
       </section>
       <p class="staff-login-footer">Red Lantern internal system · Authorised staff only</p>
     </main>
-    <script src="/staff-login.js?v=1" defer></script>
+    <script src="/staff-login.js?v=2" defer></script>
   </body>
 </html>

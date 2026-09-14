@@ -415,10 +415,12 @@ function secureCompare(a = '', b = '') {
 }
 
 function isProtectedAdminPath(req) {
+  if (req.path === '/api/admin/session') return false;
   return (
     req.path === '/admin' ||
     req.path === '/admin.html' ||
     req.path === '/admin-cms.js' ||
+    req.path.startsWith('/api/admin/') ||
     req.path === '/api/admin/content' ||
     req.path === '/api/admin/logs' ||
     req.path === '/api/admin/orders-errors' ||
@@ -440,6 +442,9 @@ function isProtectedAdminPath(req) {
 const adminAttempts = new Map();
 const maxAdminFailures = 8;
 const adminLockMs = 15 * 60 * 1000;
+const adminSessionCookie = 'rl_admin_session';
+const defaultAuthSessionTtlMs = 12 * 60 * 60 * 1000;
+const rememberedAuthSessionTtlMs = 30 * 24 * 60 * 60 * 1000;
 
 function adminAttemptKey(req) {
   return req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
@@ -468,23 +473,89 @@ function clearAdminFailures(req) {
   adminAttempts.delete(adminAttemptKey(req));
 }
 
+function adminCredentialFingerprint() {
+  return crypto
+    .createHash('sha256')
+    .update(`${process.env.ADMIN_USERNAME || ''}\0${process.env.ADMIN_PASSWORD || ''}`)
+    .digest('hex')
+    .slice(0, 24);
+}
+
+function adminSessionSecret() {
+  return (
+    process.env.ADMIN_SESSION_SECRET ||
+    crypto
+      .createHash('sha256')
+      .update(`red-lantern-admin\0${process.env.ADMIN_PASSWORD || ''}`)
+      .digest('hex')
+  );
+}
+
+function createAdminSession(remembered = false) {
+  const payload = Buffer.from(
+    JSON.stringify({
+      version: 1,
+      scope: 'admin-console',
+      credential: adminCredentialFingerprint(),
+      issuedAt: Date.now(),
+      expiresAt:
+        Date.now() +
+        (remembered ? rememberedAuthSessionTtlMs : defaultAuthSessionTtlMs),
+    })
+  ).toString('base64url');
+  const signature = crypto
+    .createHmac('sha256', adminSessionSecret())
+    .update(payload)
+    .digest('base64url');
+  return `${payload}.${signature}`;
+}
+
+function readAdminSession(req) {
+  try {
+    const [payload, signature, extra] = cookieValue(req, adminSessionCookie).split('.');
+    if (!payload || !signature || extra) return null;
+    const expected = crypto
+      .createHmac('sha256', adminSessionSecret())
+      .update(payload)
+      .digest('base64url');
+    if (!secureCompare(signature, expected)) return null;
+    const session = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    if (
+      session.version !== 1 ||
+      session.scope !== 'admin-console' ||
+      session.credential !== adminCredentialFingerprint() ||
+      !Number.isFinite(session.expiresAt) ||
+      session.expiresAt <= Date.now()
+    )
+      return null;
+    return session;
+  } catch (_) {
+    return null;
+  }
+}
+
+function authCookieOptions(req) {
+  return {
+    httpOnly: true,
+    secure: req.secure || req.get('x-forwarded-proto') === 'https',
+    sameSite: 'lax',
+    path: '/',
+  };
+}
+
+function safeAdminDestination(value) {
+  try {
+    const target = new URL(String(value || '/admin'), 'https://red-lantern.local');
+    return ['/admin', '/admin.html'].includes(target.pathname)
+      ? `${target.pathname}${target.search}${target.hash}`
+      : '/admin';
+  } catch (_) {
+    return '/admin';
+  }
+}
+
 function requireAdmin(req, res, next) {
   if (!isProtectedAdminPath(req)) return next();
-
-  if (isAdminLocked(req)) {
-    logDiagnostic({
-      level: 'error',
-      category: 'auth',
-      message: 'Admin login temporarily locked after repeated failures.',
-      method: req.method,
-      path: req.path,
-      statusCode: 429,
-      ipHash: hashIp(req),
-      userAgent: req.headers['user-agent'] || '',
-      details: { failures: maxAdminFailures },
-    });
-    return res.status(429).send('Too many failed login attempts. Try again later.');
-  }
 
   const expectedUser = process.env.ADMIN_USERNAME;
   const expectedPass = process.env.ADMIN_PASSWORD;
@@ -503,38 +574,68 @@ function requireAdmin(req, res, next) {
     return res.status(503).send('Admin access is not configured.');
   }
 
-  const header = req.headers.authorization || '';
-  const [scheme, encoded] = header.split(' ');
-  if (scheme !== 'Basic' || !encoded) {
-    res.set('WWW-Authenticate', 'Basic realm="Red Lantern Admin", charset="UTF-8"');
-    return res.status(401).send('Authentication required.');
+  if (readAdminSession(req)) return next();
+
+  if (isAdminLocked(req)) {
+    logDiagnostic({
+      level: 'error',
+      category: 'auth',
+      message: 'Admin login temporarily locked after repeated failures.',
+      method: req.method,
+      path: req.path,
+      statusCode: 429,
+      ipHash: hashIp(req),
+      userAgent: req.headers['user-agent'] || '',
+      details: { failures: maxAdminFailures },
+    });
+    return res.status(429).send('Too many failed login attempts. Try again later.');
   }
 
-  const [username, ...passwordParts] = Buffer.from(encoded, 'base64').toString('utf8').split(':');
+  const header = req.headers.authorization || '';
+  const [scheme, encoded] = header.split(' ');
+  const [username, ...passwordParts] =
+    scheme === 'Basic' && encoded ? Buffer.from(encoded, 'base64').toString('utf8').split(':') : [];
   const password = passwordParts.join(':');
-  if (secureCompare(username, expectedUser) && secureCompare(password, expectedPass)) {
+  if (
+    req.path.startsWith('/api/') &&
+    secureCompare(username || '', expectedUser) &&
+    secureCompare(password, expectedPass)
+  ) {
     clearAdminFailures(req);
     return next();
   }
 
-  recordAdminFailure(req);
-  logDiagnostic({
-    level: 'warning',
-    category: 'auth',
-    message: 'Failed admin login attempt.',
-    method: req.method,
-    path: req.path,
-    statusCode: 401,
-    ipHash: hashIp(req),
-    userAgent: req.headers['user-agent'] || '',
-    details: { username: username ? 'provided' : 'missing' },
-  });
-  res.set('WWW-Authenticate', 'Basic realm="Red Lantern Admin", charset="UTF-8"');
-  return res.status(401).send('Invalid username or password.');
+  if (scheme === 'Basic' && encoded) {
+    recordAdminFailure(req);
+    logDiagnostic({
+      level: 'warning',
+      category: 'auth',
+      message: 'Failed admin login attempt.',
+      method: req.method,
+      path: req.path,
+      statusCode: 401,
+      ipHash: hashIp(req),
+      userAgent: req.headers['user-agent'] || '',
+      details: { username: username ? 'provided' : 'missing' },
+    });
+  }
+  const destination = safeAdminDestination(req.originalUrl);
+  const loginUrl = `/staff-login?scope=admin&next=${encodeURIComponent(destination)}`;
+  if (
+    (req.method === 'GET' || req.method === 'HEAD') &&
+    ['/admin', '/admin.html'].includes(req.path)
+  )
+    return res.redirect(302, loginUrl);
+  if (req.path.startsWith('/api/'))
+    return res.status(401).json({
+      error: 'Administrator sign-in is required.',
+      code: 'admin_auth_required',
+      loginUrl,
+    });
+  return res.status(401).send('Administrator sign-in is required.');
 }
 
 const ordersSessionCookie = 'rl_orders_session';
-const ordersSessionTtlMs = 12 * 60 * 60 * 1000;
 const ordersLoginAttempts = new Map();
 const ordersLoginFailureLimit = 8;
 const ordersLoginWindowMs = 15 * 60 * 1000;
@@ -570,14 +671,16 @@ function cookieValue(req, name) {
   }
 }
 
-function createOrdersSession() {
+function createOrdersSession(remembered = false) {
   const payload = Buffer.from(
     JSON.stringify({
       version: 1,
       scope: 'orders-console',
       credential: ordersCredentialFingerprint(),
       issuedAt: Date.now(),
-      expiresAt: Date.now() + ordersSessionTtlMs,
+      expiresAt:
+        Date.now() +
+        (remembered ? rememberedAuthSessionTtlMs : defaultAuthSessionTtlMs),
     })
   ).toString('base64url');
   const signature = crypto
@@ -609,15 +712,6 @@ function readOrdersSession(req) {
   } catch (_) {
     return null;
   }
-}
-
-function ordersCookieOptions(req) {
-  return {
-    httpOnly: true,
-    secure: req.secure || req.get('x-forwarded-proto') === 'https',
-    sameSite: 'lax',
-    path: '/',
-  };
 }
 
 function safeOrdersDestination(value) {
@@ -716,7 +810,7 @@ async function requireOrdersConsole(req, res, next) {
       details: { username: providedUser ? 'provided' : 'missing' },
     });
   const destination = safeOrdersDestination(req.originalUrl);
-  const loginUrl = `/staff-login?next=${encodeURIComponent(destination)}`;
+  const loginUrl = `/staff-login?scope=orders&next=${encodeURIComponent(destination)}`;
   const isPage = [
     '/orders',
     '/orders.html',
@@ -894,6 +988,49 @@ if (uploadsDir) {
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 app.use(express.json({ limit: '1mb' }));
 
+app.post('/api/admin/session', (req, res) => {
+  const expectedUser = process.env.ADMIN_USERNAME;
+  const expectedPassword = process.env.ADMIN_PASSWORD;
+  if (!expectedUser || !expectedPassword)
+    return res.status(503).json({ error: 'Administrator access is not configured.' });
+  if (isAdminLocked(req)) {
+    res.set('Retry-After', String(Math.ceil(adminLockMs / 1000)));
+    return res.status(429).json({ error: 'Too many sign-in attempts. Please wait and try again.' });
+  }
+
+  const username = String(req.body?.username || '');
+  const password = String(req.body?.password || '');
+  if (!secureCompare(username, expectedUser) || !secureCompare(password, expectedPassword)) {
+    recordAdminFailure(req);
+    logDiagnostic({
+      level: 'warning',
+      category: 'auth',
+      message: 'Failed administrator sign-in attempt.',
+      method: req.method,
+      path: req.path,
+      statusCode: 401,
+      ipHash: hashIp(req),
+      userAgent: req.headers['user-agent'] || '',
+      details: { username: username ? 'provided' : 'missing' },
+    });
+    return res.status(401).json({ error: 'Incorrect username or password.' });
+  }
+
+  clearAdminFailures(req);
+  const remembered = req.body?.remember === true;
+  const cookieOptions = authCookieOptions(req);
+  if (remembered) cookieOptions.maxAge = rememberedAuthSessionTtlMs;
+  res.cookie(adminSessionCookie, createAdminSession(remembered), cookieOptions);
+  res.set('Cache-Control', 'no-store');
+  return res.json({ ok: true, next: safeAdminDestination(req.body?.next) });
+});
+
+app.delete('/api/admin/session', (req, res) => {
+  res.clearCookie(adminSessionCookie, authCookieOptions(req));
+  res.set('Cache-Control', 'no-store');
+  res.json({ ok: true });
+});
+
 app.post('/api/orders/session', (req, res) => {
   const expectedUser = process.env.ORDERS_USERNAME;
   const expectedPassword = process.env.ORDERS_PASSWORD;
@@ -931,16 +1068,16 @@ app.post('/api/orders/session', (req, res) => {
 
   ordersLoginAttempts.delete(failures.key);
   const next = safeOrdersDestination(req.body?.next);
-  res.cookie(ordersSessionCookie, createOrdersSession(), {
-    ...ordersCookieOptions(req),
-    maxAge: ordersSessionTtlMs,
-  });
+  const remembered = req.body?.remember === true;
+  const cookieOptions = authCookieOptions(req);
+  if (remembered) cookieOptions.maxAge = rememberedAuthSessionTtlMs;
+  res.cookie(ordersSessionCookie, createOrdersSession(remembered), cookieOptions);
   res.set('Cache-Control', 'no-store');
   return res.json({ ok: true, next });
 });
 
 app.delete('/api/orders/session', (req, res) => {
-  res.clearCookie(ordersSessionCookie, ordersCookieOptions(req));
+  res.clearCookie(ordersSessionCookie, authCookieOptions(req));
   res.set('Cache-Control', 'no-store');
   res.json({ ok: true });
 });
@@ -8043,13 +8180,22 @@ const captainSessionSecret =
   process.env.CAPTAIN_SESSION_SECRET ||
   process.env.ADMIN_PASSWORD ||
   crypto.randomBytes(32).toString('hex');
-const captainSession = (captain) => {
+const captainCredentialFingerprint = (captain) =>
+  crypto
+    .createHash('sha256')
+    .update(String(captain?.pinHash || ''))
+    .digest('hex')
+    .slice(0, 24);
+const captainSession = (captain, remembered = false) => {
   const payload = Buffer.from(
     JSON.stringify({
       id: captain.id,
       name: captain.name,
       areas: captain.areas || [],
-      exp: Date.now() + 12 * 60 * 60 * 1000,
+      credential: captainCredentialFingerprint(captain),
+      exp:
+        Date.now() +
+        (remembered ? rememberedAuthSessionTtlMs : defaultAuthSessionTtlMs),
     })
   ).toString('base64url');
   return `${payload}.${crypto.createHmac('sha256', captainSessionSecret).update(payload).digest('base64url')}`;
@@ -8082,7 +8228,9 @@ const getActiveCaptainSession = async (token) => {
       captain = (config.captains || []).find(
         (entry) => entry.id === session.id && entry.active !== false && entry.pinHash
       );
-    return captain ? { ...session, name: captain.name, areas: captain.areas || [] } : null;
+    return captain && session.credential === captainCredentialFingerprint(captain)
+      ? { ...session, name: captain.name, areas: captain.areas || [] }
+      : null;
   } catch {
     return null;
   }
@@ -8146,10 +8294,12 @@ app.post('/api/captain/login', async (req, res) => {
       return res.status(401).json({ error: 'Incorrect PIN.' });
     }
     captainLoginFailures.delete(loginFailures.key);
+    const remembered = req.body?.remember === true;
     res.set('Cache-Control', 'no-store');
     res.json({
       captain: { id: captain.id, name: captain.name, areas: captain.areas || [], idleMinutes },
-      token: captainSession(captain),
+      token: captainSession(captain, remembered),
+      remembered,
     });
   } catch (error) {
     res.status(500).json({ error: 'Unable to sign in.' });

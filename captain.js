@@ -83,12 +83,17 @@ let lastActivityPersisted = 0;
 let captainToastTimer = null;
 function captainLastActivity() {
   try {
-    return Number(localStorage.getItem(activityKey) || sessionStorage.getItem(activityKey) || 0);
+    return Number(
+      (state.captain?.remembered ? localStorage.getItem(activityKey) : '') ||
+        sessionStorage.getItem(activityKey) ||
+        0
+    );
   } catch {
     return 0;
   }
 }
 function captainIdleExpired() {
+  if (state.captain?.remembered) return false;
   const lastActivity = captainLastActivity();
   return !lastActivity || Date.now() - lastActivity >= captainIdleMs();
 }
@@ -98,7 +103,8 @@ function persistCaptainActivity() {
   lastActivityPersisted = now;
   try {
     sessionStorage.setItem(activityKey, String(now));
-    localStorage.setItem(activityKey, String(now));
+    if (state.captain?.remembered) localStorage.setItem(activityKey, String(now));
+    else localStorage.removeItem(activityKey);
   } catch {}
 }
 function showCaptainToast(message, type = 'success') {
@@ -926,6 +932,7 @@ function setCaptainUI() {
   profile.hidden = !state.captain;
   toggle.hidden = !state.captain;
   app.hidden = !state.captain;
+  document.body.classList.toggle('is-captain-logged-out', !state.captain);
   if (state.captain) {
     profile.textContent = `● ${state.captain.name}`;
     profile.title = 'Tap to sign out';
@@ -940,6 +947,10 @@ function setCaptainUI() {
     $('#captain-account-list').hidden = false;
     $('#captain-selected-name').textContent = '';
     $('#captain-pin').value = '';
+    $('#captain-pin').type = 'password';
+    $('#captain-pin-toggle').textContent = 'Show';
+    $('#captain-pin-toggle').setAttribute('aria-label', 'Show PIN');
+    $('#captain-stay-logged-in').checked = false;
   }
 }
 function renderLogin() {
@@ -1502,6 +1513,7 @@ function resetCaptainIdleLock() {
   if (!state.captain) return;
   persistCaptainActivity();
   clearTimeout(captainIdleTimer);
+  if (state.captain.remembered) return;
   captainIdleTimer = setTimeout(() => {
     saveDraft();
     signOut('Session locked after inactivity. Sign in with your PIN to continue.');
@@ -1513,6 +1525,14 @@ $('#captain-account-list').addEventListener('click', (event) => {
   if (event.target.closest('[data-retry-captain-accounts]')) void loadAccounts();
 });
 $('#captain-change-account').addEventListener('click', () => showAccountChooser());
+$('#captain-pin-toggle').addEventListener('click', () => {
+  const pin = $('#captain-pin'),
+    showing = pin.type === 'password';
+  pin.type = showing ? 'text' : 'password';
+  $('#captain-pin-toggle').textContent = showing ? 'Hide' : 'Show';
+  $('#captain-pin-toggle').setAttribute('aria-label', showing ? 'Hide PIN' : 'Show PIN');
+  pin.focus();
+});
 $('#captain-pin-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   let account = state.loginAccount;
@@ -1542,16 +1562,18 @@ $('#captain-pin-form').addEventListener('submit', async (event) => {
   submit.disabled = true;
   status.textContent = 'Signing in…';
   try {
+    const remembered = $('#captain-stay-logged-in').checked;
     const response = await fetch('/api/captain/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: account.id, pin }),
+        body: JSON.stringify({ id: account.id, pin, remember: remembered }),
       }),
       data = await response.json();
     if (!response.ok) throw new Error(data.error || 'Unable to sign in.');
-    state.captain = { ...data.captain, token: data.token };
+    state.captain = { ...data.captain, token: data.token, remembered: data.remembered === true };
     sessionStorage.setItem(sessionKey, JSON.stringify(state.captain));
-    localStorage.setItem(sessionKey, JSON.stringify(state.captain));
+    if (state.captain.remembered) localStorage.setItem(sessionKey, JSON.stringify(state.captain));
+    else localStorage.removeItem(sessionKey);
     lastActivityPersisted = 0;
     persistCaptainActivity();
     if (navigator.storage?.persist) void navigator.storage.persist().catch(() => {});

@@ -1,3 +1,14 @@
+const authenticatedAdminFetch = window.fetch.bind(window);
+window.fetch = async (...args) => {
+  const response = await authenticatedAdminFetch(...args);
+  if (response.status === 401) {
+    const data = await response.clone().json().catch(() => ({}));
+    if (data.code === 'admin_auth_required' && data.loginUrl)
+      window.location.replace(data.loginUrl);
+  }
+  return response;
+};
+
 const setField = (name, value) => {
   const field = document.querySelector(`[name="${name}"]`);
   if (field && value !== undefined) field.value = value;
@@ -4450,9 +4461,14 @@ setupSmartKdsRecommendations();
 setupSmartKdsServiceRisk();
 setupSmartKdsMetrics();
 
-document.querySelectorAll('.logout-btn:not(#clear-logs)').forEach((button) => {
-  button.addEventListener('click', () => {
-    window.location.href = '/';
+document.querySelectorAll('.logout-btn:not([id])').forEach((button) => {
+  button.addEventListener('click', async () => {
+    button.disabled = true;
+    try {
+      await fetch('/api/admin/session', { method: 'DELETE' });
+    } finally {
+      window.location.replace('/staff-login?scope=admin&next=%2Fadmin');
+    }
   });
 });
 

@@ -123,59 +123,145 @@ body {
 }
 
 /* Login and operational notices */
+.is-captain-logged-out .captain-header { display: none; }
 .captain-login {
   display: grid;
-  min-height: calc(100vh - 76px);
-  place-items: center;
-  padding: 28px;
-  background: radial-gradient(circle at 50% -20%, #dcecff 0, #f6f7f9 42%);
+  min-height: 100vh;
+  min-height: 100dvh;
+  place-content: center;
+  padding: max(24px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
+  background:
+    radial-gradient(circle at 8% 12%, rgba(202, 45, 55, .12), transparent 27rem),
+    radial-gradient(circle at 92% 88%, rgba(28, 63, 111, .1), transparent 30rem),
+    #f7f5f3;
 }
-.captain-login-card {
-  width: min(560px, 100%);
-  padding: 34px;
-  border: 1px solid #e1e5eb;
-  border-radius: 24px;
-  background: #fff;
-  box-shadow: 0 20px 48px #24364d19;
-}
-.captain-login-card > img {
-  display: block;
-  width: 76px;
-  height: 76px;
-  margin: 0 auto 24px;
-  object-fit: contain;
-}
-.captain-login-card h1 {
-  margin: 10px 0;
-  color: #26344b;
-  font-size: 31px;
-  letter-spacing: -0.04em;
-}
-.captain-login-card > p {
-  color: #64758e;
-  line-height: 1.5;
-}
-.captain-login-card label {
+.captain-auth-card {
   display: grid;
-  gap: 7px;
-  margin-top: 20px;
-  color: #526783;
-  font-size: 12px;
-  font-weight: 900;
+  grid-template-columns: minmax(330px, .92fr) minmax(390px, 1.08fr);
+  width: min(940px, calc(100vw - 40px));
+  min-height: 570px;
+  overflow: hidden;
+  border: 1px solid rgba(74, 48, 45, .12);
+  border-radius: 28px;
+  background: #fff;
+  box-shadow: 0 32px 90px rgba(54, 34, 36, .18);
 }
-.captain-login-card input {
-  min-height: 56px;
-  padding: 12px 14px;
-  border: 1px solid #cfdbea;
+.captain-auth-brand {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 45px;
+  color: #fff;
+  background:
+    linear-gradient(145deg, rgba(56, 12, 18, .96), rgba(111, 25, 34, .96)),
+    url('/images/red-lantern-home-1400.webp') center / cover;
+}
+.captain-auth-brand > img {
+  width: 88px;
+  height: 88px;
+  padding: 7px;
+  border: 1px solid rgba(255, 255, 255, .28);
+  border-radius: 24px;
+  object-fit: contain;
+  background: rgba(255, 255, 255, .96);
+  box-shadow: 0 16px 35px rgba(21, 4, 7, .28);
+}
+.captain-auth-brand div > span {
+  display: block;
+  margin-bottom: 13px;
+  color: #f5b79f;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+}
+.captain-auth-brand h1 {
+  max-width: 370px;
+  margin: 0;
+  font: 700 clamp(32px, 3.3vw, 47px) / 1.08 Georgia, serif;
+  letter-spacing: -.035em;
+}
+.captain-auth-brand p {
+  max-width: 380px;
+  margin: 20px 0 0;
+  color: #ead8d7;
+  font-size: 14px;
+  line-height: 1.7;
+}
+.captain-auth-brand > small {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: #ead8d7;
+  font-size: 11px;
+  font-weight: 750;
+}
+.captain-auth-brand > small i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #6ee7b7;
+  box-shadow: 0 0 0 5px rgba(110, 231, 183, .13);
+}
+.captain-auth-panel {
+  display: grid;
+  place-items: center;
+  padding: 46px clamp(34px, 5vw, 68px);
+}
+.captain-auth-content { width: min(100%, 410px); }
+.captain-auth-content > .eyebrow { color: #bd2632; }
+.captain-auth-content > h1 {
+  margin: 12px 0 0;
+  color: #182238;
+  font-size: 32px;
+  letter-spacing: -.04em;
+}
+.captain-auth-content > p {
+  margin: 9px 0 0;
+  color: #738096;
+  font-size: 13px;
+  line-height: 1.55;
+}
+#captain-pin-form > label:not(.captain-stay-logged-in) {
+  display: block;
+  margin: 18px 0 8px;
+  color: #354258;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.captain-pin-control { position: relative; display: flex; align-items: center; }
+.captain-pin-control input {
+  width: 100%;
+  min-height: 54px;
+  padding: 0 76px 0 17px;
+  border: 1px solid #dce2ea;
   border-radius: 13px;
-  color: #253650;
-  font: 700 20px inherit;
+  outline: 0;
+  color: #172238;
+  background: #fbfcfd;
+  font: 800 18px inherit;
   letter-spacing: 0.22em;
+}
+.captain-pin-control input:focus { border-color: #c92a36; background: #fff; box-shadow: 0 0 0 4px rgba(201, 42, 54, .1); }
+#captain-pin-toggle {
+  position: absolute;
+  right: 8px;
+  min-height: 38px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 9px;
+  color: #a3222d;
+  background: #fff0f1;
+  font: 900 11px inherit;
 }
 .captain-account-list {
   display: grid;
   gap: 10px;
   margin-top: 24px;
+  max-height: 330px;
+  overflow: auto;
 }
 .captain-account {
   display: grid;
@@ -191,12 +277,16 @@ body {
 .captain-account b,
 .captain-account small {
   display: block;
+  grid-column: 1;
 }
+.captain-account b { grid-row: 1; }
 .captain-account small {
+  grid-row: 2;
   color: #718198;
   font-size: 11px;
 }
 .captain-account span {
+  grid-column: 2;
   grid-row: 1 / span 2;
   align-self: center;
   color: #287ceb;
@@ -205,10 +295,61 @@ body {
 }
 .captain-selected-name,
 .captain-login-status {
-  min-height: 20px;
+  min-height: 18px;
   color: #687b95;
   font-size: 12px;
   font-weight: 750;
+}
+.captain-selected-name { margin: 18px 0 0; color: #a3222d; }
+#captain-pin-form .send-button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 54px;
+  margin-top: 16px;
+  padding: 0 20px;
+  border-radius: 13px;
+  box-shadow: 0 13px 25px rgba(193, 34, 45, .25);
+}
+.captain-stay-logged-in {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: 1px 10px;
+  align-items: center;
+  margin: 18px 0 0;
+  color: #354258;
+  cursor: pointer;
+}
+.captain-stay-logged-in input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.captain-stay-logged-in > span {
+  display: grid;
+  grid-row: 1 / span 2;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border: 1px solid #ccd5e1;
+  border-radius: 7px;
+  background: #fff;
+}
+.captain-stay-logged-in > span i { width: 9px; height: 5px; border: solid #fff; border-width: 0 0 2px 2px; opacity: 0; transform: translateY(-1px) rotate(-45deg); }
+.captain-stay-logged-in input:checked + span { border-color: #c72633; background: #c72633; }
+.captain-stay-logged-in input:checked + span i { opacity: 1; }
+.captain-stay-logged-in input:focus-visible + span { box-shadow: 0 0 0 4px rgba(201, 42, 54, .12); }
+.captain-stay-logged-in b { font-size: 12px; }
+.captain-stay-logged-in small { grid-column: 2; color: #8b96a8; font-size: 10px; font-weight: 650; }
+.captain-shared-device { margin: 15px 8px 0 !important; color: #8b96a8 !important; font-size: 10px !important; text-align: center; }
+
+@media (max-width: 760px) {
+  .captain-login { padding: 14px; }
+  .captain-auth-card { grid-template-columns: 1fr; width: min(520px, calc(100vw - 28px)); min-height: 0; border-radius: 22px; }
+  .captain-auth-brand { min-height: 178px; padding: 24px; }
+  .captain-auth-brand > img { width: 62px; height: 62px; border-radius: 18px; }
+  .captain-auth-brand h1 { max-width: 315px; font-size: 27px; }
+  .captain-auth-brand p, .captain-auth-brand > small { display: none; }
+  .captain-auth-panel { padding: 30px 25px 34px; }
+  .captain-auth-content > h1 { font-size: 27px; }
+  .captain-account-list { max-height: 240px; }
 }
 .captain-ready-alerts,
 .captain-pending-sync {

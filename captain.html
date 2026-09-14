@@ -15,7 +15,7 @@
     <meta name="format-detection" content="telephone=no" />
     <title>Captain · Red Lantern</title>
     <link rel="stylesheet" href="/captain.css?v=2" />
-    <link rel="stylesheet" href="/captain-ux.css?v=52" />
+    <link rel="stylesheet" href="/captain-ux.css?v=53" />
     <link rel="stylesheet" href="/captain-modern.css?v=6" />
   </head>
   <body>
@@ -84,37 +84,56 @@
       </section>
     </aside>
     <section id="captain-login" class="captain-login" aria-labelledby="captain-login-title" aria-live="polite">
-      <div class="captain-login-card">
-        <img src="/images/red-lantern-logo-600.webp" alt="Red Lantern Restaurant" />
-        <span class="eyebrow">STAFF ACCESS</span>
-        <h1 id="captain-login-title">Who is taking this order?</h1>
-        <p>
-          Choose your name, then enter your personal PIN. Your table access and order trail are
-          recorded automatically.
-        </p>
-        <div id="captain-account-list" class="captain-account-list" aria-live="polite"></div>
-        <form id="captain-pin-form" hidden>
-          <button id="captain-change-account" class="back-button" type="button">
-            ← Change Captain
-          </button>
-          <p id="captain-selected-name" class="captain-selected-name"></p>
-          <label
-            >Personal PIN<input
-              id="captain-pin"
-              type="password"
-              inputmode="numeric"
-              autocomplete="current-password"
-              pattern="[0-9]*"
-              minlength="4"
-              maxlength="6"
-              required
-              placeholder="••••"
-          /></label>
-          <p id="captain-login-status" class="captain-login-status" aria-live="polite"></p>
-          <button id="captain-login-submit" class="send-button" type="submit">
-            Start taking orders
-          </button>
-        </form>
+      <div class="captain-auth-card">
+        <aside class="captain-auth-brand">
+          <img src="/images/red-lantern-logo-600.webp" alt="Red Lantern Restaurant" />
+          <div>
+            <span>Red Lantern Restaurant</span>
+            <h1>Confident service starts here.</h1>
+            <p>Securely access your assigned tables, live kitchen progress and order history.</p>
+          </div>
+          <small><i aria-hidden="true"></i> Protected Captain workspace</small>
+        </aside>
+        <div class="captain-auth-panel">
+          <div class="captain-auth-content">
+            <span class="eyebrow">CAPTAIN ACCESS</span>
+            <h1 id="captain-login-title">Who is taking this order?</h1>
+            <p>Choose your name, then enter your personal PIN.</p>
+            <div id="captain-account-list" class="captain-account-list" aria-live="polite"></div>
+            <form id="captain-pin-form" hidden>
+              <button id="captain-change-account" class="back-button" type="button">
+                ← Change Captain
+              </button>
+              <p id="captain-selected-name" class="captain-selected-name"></p>
+              <label for="captain-pin">Personal PIN</label>
+              <div class="captain-pin-control">
+                <input
+                  id="captain-pin"
+                  type="password"
+                  inputmode="numeric"
+                  autocomplete="current-password"
+                  pattern="[0-9]*"
+                  minlength="4"
+                  maxlength="6"
+                  required
+                  placeholder="••••"
+                />
+                <button id="captain-pin-toggle" type="button" aria-label="Show PIN">Show</button>
+              </div>
+              <label class="captain-stay-logged-in" for="captain-stay-logged-in">
+                <input id="captain-stay-logged-in" type="checkbox" />
+                <span aria-hidden="true"><i></i></span>
+                <b>Stay logged in</b>
+                <small>Keep this trusted device signed in for 30 days.</small>
+              </label>
+              <p id="captain-login-status" class="captain-login-status" aria-live="polite"></p>
+              <button id="captain-login-submit" class="send-button" type="submit">
+                Start taking orders <span aria-hidden="true">→</span>
+              </button>
+              <p class="captain-shared-device">Leave “Stay logged in” unchecked on a shared device.</p>
+            </form>
+          </div>
+        </div>
       </div>
     </section>
     <main class="captain-app" hidden>
@@ -405,7 +424,7 @@
     <script src="/client-config.js"></script>
     <script src="/addons-domain.js?v=1"></script>
     <script src="/order-request.js?v=1"></script>
-    <script src="/captain.js?v=59"></script>
+    <script src="/captain.js?v=60"></script>
     <script>
       if ('serviceWorker' in navigator) {
         let reloadedForCaptainWorker = false;
@@ -416,7 +435,7 @@
           }
         });
         navigator.serviceWorker
-          .register('/captain-sw.js?v=30')
+          .register('/captain-sw.js?v=31')
           .then((registration) => {
             registration.update().catch(() => {});
             if (registration.waiting) registration.waiting.postMessage({ type: 'SKIP_WAITING' });
