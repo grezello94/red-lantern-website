@@ -4,8 +4,8 @@
  * Run this on the restaurant computer that has the LAN/USB printers installed:
  *   npm run print-bridge
  *
- * The Orders console uses this local service only to discover printer names.
- * Printing is intentionally not exposed until the KOT dispatch workflow is enabled.
+ * It keeps a durable workstation identity, repairs the local Windows printing
+ * service, and accepts only print jobs assigned to this restaurant computer.
  */
 const http = require('http');
 const net = require('net');
@@ -20,7 +20,7 @@ const path = require('path');
 const { DatabaseSync } = require('node:sqlite');
 
 const PORT = Number(process.env.PRINT_BRIDGE_PORT || 9124);
-const BRIDGE_VERSION = '2026.09.03.1';
+const BRIDGE_VERSION = '2026.09.16.1';
 const PRINT_JOB_LEASE_MS = Math.max(
   30000,
   Number(process.env.PRINT_BRIDGE_JOB_LEASE_MS || 2 * 60 * 1000)
@@ -34,8 +34,15 @@ const storageDir =
 const configFile = path.join(storageDir, 'printer-config.json');
 const queueFile = path.join(storageDir, 'kot-queue.json');
 const ledgerFile = path.join(storageDir, 'orders-ledger.sqlite');
+const workstationFile = path.join(storageDir, 'workstation.json');
 let ledger = null;
 let shuttingDown = false;
+let workstationIdentityPromise = null;
+let windowsSpoolerCheckPromise = null;
+let windowsSpoolerCheck = {
+  checkedAt: 0,
+  result: { attempted: false, recovered: false },
+};
 
 function closeLedger() {
   try {
@@ -382,6 +389,55 @@ async function installedPrinters() {
   }
 }
 
+async function ensureWindowsSpoolerRunning({ force = false } = {}) {
+  if (process.platform !== 'win32') return { attempted: false, recovered: false };
+  const now = Date.now();
+  if (!force && now - windowsSpoolerCheck.checkedAt < 30000)
+    return { ...windowsSpoolerCheck.result, cached: true };
+  if (windowsSpoolerCheckPromise) return windowsSpoolerCheckPromise;
+  windowsSpoolerCheckPromise = (async () => {
+    let result;
+    try {
+      const output = await run(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-Command',
+          "$actions = @(); $service = Get-Service -Name Spooler -ErrorAction Stop; if ($service.Status -ne 'Running') { Start-Service -Name Spooler -ErrorAction Stop; $service.WaitForStatus('Running', [TimeSpan]::FromSeconds(5)); $actions += 'spooler' }; $paused = @(Get-Printer -ErrorAction SilentlyContinue | Where-Object { \"$($_.PrinterStatus)\" -match 'Paused|Stopped' }); foreach ($printer in $paused) { try { $escaped = $printer.Name.Replace(\"'\", \"''\"); $queue = Get-CimInstance -ClassName Win32_Printer -Filter \"Name='$escaped'\" -ErrorAction Stop; Invoke-CimMethod -InputObject $queue -MethodName Resume -ErrorAction Stop | Out-Null; $actions += 'queue' } catch {} }; if ($actions.Count) { $actions -join ',' } else { 'running' }",
+        ],
+        8000
+      );
+      const actions = output
+        .trim()
+        .toLowerCase()
+        .split(',')
+        .filter((action) => action === 'spooler' || action === 'queue');
+      result = {
+        attempted: true,
+        recovered: actions.length > 0,
+        recoveredSpooler: actions.includes('spooler'),
+        resumedQueues: actions.filter((action) => action === 'queue').length,
+        running: true,
+      };
+    } catch (error) {
+      // Printer discovery below remains authoritative. Older installations may
+      // still run the Bridge without an elevated token, so expose the recovery
+      // failure without preventing a healthy queue from being used.
+      result = {
+        attempted: true,
+        recovered: false,
+        running: false,
+        error: String(error.message || 'Windows could not start the Print Spooler.').slice(0, 300),
+      };
+    }
+    windowsSpoolerCheck = { checkedAt: Date.now(), result };
+    return result;
+  })().finally(() => {
+    windowsSpoolerCheckPromise = null;
+  });
+  return windowsSpoolerCheckPromise;
+}
+
 async function unavailablePrinterNames() {
   try {
     if (process.platform === 'win32') {
@@ -490,7 +546,56 @@ async function writeJson(file, value) {
   await fs.rename(temporary, file);
 }
 
+function workstationIdentity() {
+  if (workstationIdentityPromise) return workstationIdentityPromise;
+  workstationIdentityPromise = (async () => {
+    const saved = await readJson(workstationFile, null);
+    if (saved?.id) {
+      return {
+        id: String(saved.id).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80),
+        name: String(saved.name || os.hostname() || 'Restaurant computer').trim().slice(0, 120),
+        platform: process.platform,
+        createdAt: String(saved.createdAt || ''),
+      };
+    }
+    const identity = {
+      id: `ws_${crypto.randomUUID().replace(/-/g, '')}`,
+      name: String(os.hostname() || 'Restaurant computer').trim().slice(0, 120),
+      platform: process.platform,
+      createdAt: new Date().toISOString(),
+    };
+    await writeJson(workstationFile, identity);
+    return identity;
+  })().catch((error) => {
+    workstationIdentityPromise = null;
+    throw error;
+  });
+  return workstationIdentityPromise;
+}
+
+function printerMatchesWorkstation(printer, identity, installedNames) {
+  const assigned = String(printer?.workstationId || '').trim();
+  if (assigned) return assigned === identity.id;
+  // Existing installations did not have a workstation ID. Adopt a legacy
+  // queue only when the identically named OS printer exists on this computer.
+  return installedNames.has(String(printer?.deviceName || '').trim());
+}
+
+async function assertRequestedWorkstation(payload) {
+  const requested = String(payload?.workstationId || '').trim();
+  if (!requested) return;
+  const identity = await workstationIdentity();
+  if (requested !== identity.id) {
+    const error = new Error('This print job belongs to a different restaurant computer.');
+    error.code = 'WORKSTATION_MISMATCH';
+    throw error;
+  }
+}
+
 async function printText(printerName, text, settings = {}) {
+  // Repair the software printing path before accepting a new job. This is
+  // silent and cached, so normal one-click printing stays fast.
+  await ensureWindowsSpoolerRunning();
   const file = path.join(os.tmpdir(), `red-lantern-kot-${crypto.randomUUID()}.txt`);
   await fs.writeFile(file, text, 'utf8');
   try {
@@ -969,6 +1074,24 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && req.url === '/health') {
     try {
       localLedger().prepare('SELECT 1 AS ok').get();
+      const workstation = await workstationIdentity();
+      const automaticRecovery = await ensureWindowsSpoolerRunning();
+      return reply(
+        res,
+        200,
+        {
+          ok: true,
+          service: 'Red Lantern Print Bridge',
+          version: BRIDGE_VERSION,
+          platform: process.platform,
+          node: process.version,
+          ledger: 'ready',
+          workstation,
+          automaticRecovery,
+          ledgerSummary: ledgerSummary(),
+        },
+        origin
+      );
     } catch (error) {
       return reply(
         res,
@@ -982,24 +1105,12 @@ const server = http.createServer(async (req, res) => {
         origin
       );
     }
-    return reply(
-      res,
-      200,
-      {
-        ok: true,
-        service: 'Red Lantern Print Bridge',
-        version: BRIDGE_VERSION,
-        platform: process.platform,
-        node: process.version,
-        ledger: 'ready',
-        ledgerSummary: ledgerSummary(),
-      },
-      origin
-    );
   }
   if (req.method === 'GET' && req.url === '/v1/setup-status') {
     try {
       localLedger().prepare('SELECT 1 AS ok').get();
+      const automaticRecovery = await ensureWindowsSpoolerRunning();
+      const workstation = await workstationIdentity();
       const [printers, config, unavailableNames, networkEndpoints] = await Promise.all([
         installedPrinters(),
         readJson(configFile, { printers: [], routes: [] }),
@@ -1009,8 +1120,15 @@ const server = http.createServer(async (req, res) => {
       const savedPrinters = Array.isArray(config.printers) ? config.printers : [];
       const savedRoutes = Array.isArray(config.routes) ? config.routes : [];
       const installedNames = new Set(printers.map((printer) => String(printer.name).trim()));
-      const assignedPrinters = savedPrinters.filter((printer) =>
-        String(printer.deviceName || '').trim()
+      // A saved queue with no active Bill or KOT capability is not part of the
+      // restaurant's print path and must not make the entire workspace appear
+      // offline. This also prevents old, unassigned queues from surviving as a
+      // permanent false warning after a printer is replaced.
+      const assignedPrinters = savedPrinters.filter(
+        (printer) =>
+          String(printer.deviceName || '').trim() &&
+          printerMatchesWorkstation(printer, workstation, installedNames) &&
+          (printerSupports(printer, 'bill') || printerSupports(printer, 'kot'))
       );
       const configuredPrinters = assignedPrinters.filter((printer) =>
         installedNames.has(String(printer.deviceName || '').trim())
@@ -1022,30 +1140,40 @@ const server = http.createServer(async (req, res) => {
           name: String(printer.name || ''),
           deviceName: String(printer.deviceName || ''),
         }));
-      const unavailableConfiguredPrinters = configuredPrinters
-        .filter((printer) => unavailableNames.has(String(printer.deviceName || '').trim()))
-        .map((printer) => ({
-          id: String(printer.id || ''),
-          name: String(printer.name || ''),
-          deviceName: String(printer.deviceName || ''),
-        }));
       const networkChecks = await Promise.all(
         configuredPrinters.map(async (printer) => {
           const deviceName = String(printer.deviceName || '').trim();
           const endpoint = networkEndpoints.get(deviceName);
           if (!endpoint) return null;
-          return (await tcpEndpointReachable(endpoint.host, endpoint.port))
-            ? null
-            : {
-                id: String(printer.id || ''),
-                name: String(printer.name || ''),
-                deviceName,
-                host: endpoint.host,
-                port: endpoint.port,
-              };
+          return {
+            id: String(printer.id || ''),
+            name: String(printer.name || ''),
+            deviceName,
+            host: endpoint.host,
+            port: endpoint.port,
+            reachable: await tcpEndpointReachable(endpoint.host, endpoint.port),
+          };
         })
       );
-      const unreachableConfiguredPrinters = networkChecks.filter(Boolean);
+      const networkStatus = networkChecks.filter(Boolean);
+      const networkPrinterNames = new Set(networkStatus.map((printer) => printer.deviceName));
+      // Thermal-printer drivers frequently leave PrinterStatus=Offline even
+      // while their RAW TCP endpoint is accepting jobs. For LAN printers the
+      // live socket probe is the stronger signal; use the Windows flag only for
+      // local/USB queues where no network endpoint exists.
+      const unavailableConfiguredPrinters = configuredPrinters
+        .filter((printer) => {
+          const deviceName = String(printer.deviceName || '').trim();
+          return unavailableNames.has(deviceName) && !networkPrinterNames.has(deviceName);
+        })
+        .map((printer) => ({
+          id: String(printer.id || ''),
+          name: String(printer.name || ''),
+          deviceName: String(printer.deviceName || ''),
+        }));
+      const unreachableConfiguredPrinters = networkStatus
+        .filter((printer) => !printer.reachable)
+        .map(({ reachable, ...printer }) => printer);
       const configuredKotIds = new Set(
         configuredPrinters
           .filter((printer) => printerSupports(printer, 'kot'))
@@ -1069,8 +1197,11 @@ const server = http.createServer(async (req, res) => {
           version: BRIDGE_VERSION,
           node: process.version,
           ledger: 'ready',
+          automaticRecovery,
+          workstation,
           printerCount: printers.length,
           configuredPrinterCount: configuredPrinters.length,
+          configuredPrinterIds: configuredPrinters.map((printer) => String(printer.id || '')),
           configuredBillPrinterCount: configuredPrinters.filter((printer) =>
             printerSupports(printer, 'bill')
           ).length,
@@ -1128,7 +1259,12 @@ const server = http.createServer(async (req, res) => {
   }
   if (req.method === 'GET' && req.url === '/v1/printers') {
     try {
-      return reply(res, 200, { printers: await installedPrinters() }, origin);
+      return reply(
+        res,
+        200,
+        { printers: await installedPrinters(), workstation: await workstationIdentity() },
+        origin
+      );
     } catch (error) {
       return reply(
         res,
@@ -1158,8 +1294,14 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'PUT' && req.url === '/v1/config') {
     try {
       const config = (await readBody(req)).config || {};
+      const [identity, installed] = await Promise.all([
+        workstationIdentity(),
+        installedPrinters(),
+      ]);
+      const installedNames = new Set(installed.map((printer) => String(printer.name).trim()));
       const printers = (Array.isArray(config.printers) ? config.printers : [])
         .slice(0, 250)
+        .filter((printer) => printerMatchesWorkstation(printer, identity, installedNames))
         .map((printer) => {
           const capabilities = printerCapabilities(printer);
           return {
@@ -1171,6 +1313,8 @@ const server = http.createServer(async (req, res) => {
             type: capabilities[0] || (printer.type === 'bill' ? 'bill' : 'kot'),
             deviceId: String(printer.deviceId || '').slice(0, 160),
             deviceName: String(printer.deviceName || '').slice(0, 120),
+            workstationId: identity.id,
+            workstationName: identity.name,
           };
         })
         .filter((printer) => printer.id && printer.name);
@@ -1191,7 +1335,12 @@ const server = http.createServer(async (req, res) => {
             .slice(0, 40),
         }))
         .filter((route) => route.id && printerIds.has(route.printerId) && route.category);
-      const safeConfig = { printers, routes, savedAt: new Date().toISOString() };
+      const safeConfig = {
+        printers,
+        routes,
+        workstation: identity,
+        savedAt: new Date().toISOString(),
+      };
       await writeJson(configFile, safeConfig);
       return reply(res, 200, { ok: true, savedAt: safeConfig.savedAt }, origin);
     } catch (error) {
@@ -1296,6 +1445,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && req.url === '/v1/kot-queue') {
     try {
       const payload = await readBody(req);
+      await assertRequestedWorkstation(payload);
       const printerId = String(payload.printerId || '').slice(0, 60);
       const items = Array.isArray(payload.items) ? payload.items.slice(0, 100) : [];
       if (!printerId || !items.length)
@@ -1320,6 +1470,7 @@ const server = http.createServer(async (req, res) => {
     let printJobId = '';
     try {
       const payload = await readBody(req);
+      await assertRequestedWorkstation(payload);
       printJobId = String(payload.printJobId || '');
       const printerName = String(payload.printerName || '')
         .trim()
@@ -1366,6 +1517,7 @@ const server = http.createServer(async (req, res) => {
     let printJobId = '';
     try {
       const payload = await readBody(req);
+      await assertRequestedWorkstation(payload);
       printJobId = String(payload.printJobId || '');
       const printerName = String(payload.printerName || '')
         .trim()
@@ -1417,6 +1569,15 @@ if (require.main === module) {
   process.on('SIGTERM', () => shutdown(0));
   server.listen(PORT, '127.0.0.1', () => {
     console.log(`Red Lantern Print Bridge is running at http://127.0.0.1:${PORT}`);
+    // Keep Windows printing healthy without asking restaurant staff to open
+    // Services or restart the spooler. The cached probe prevents browser
+    // health checks from spawning extra PowerShell processes.
+    void ensureWindowsSpoolerRunning({ force: true });
+    const recoveryMonitor = setInterval(
+      () => void ensureWindowsSpoolerRunning({ force: true }),
+      60000
+    );
+    recoveryMonitor.unref();
   });
 }
 

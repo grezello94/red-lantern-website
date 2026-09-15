@@ -45,7 +45,7 @@ function displayOrder(order, kind) {
     ? `Paid via ${String(order.settlement_type).toUpperCase()}`
     : 'Settled';
   const tableIdentity = `<div class="table-identity"><div class="token"><span>Table</span><b>${escapeHtml(tableNumber)}</b></div>${captainLabel ? `<small class="captain-assignment">${escapeHtml(captainLabel)}</small>` : ''}</div>`;
-  return `<article class="order-strip ${table ? '' : 'parcel-strip'} ${settled ? 'settled' : ''} ${needsAcceptance ? 'needs-acceptance' : ''}">${table ? tableIdentity : `<div class="token">${escapeHtml(identifier)}</div>`}<div class="meta"><b>${escapeHtml(name)}${settled ? ` <small>• ${escapeHtml(paid)}</small>` : ''}</b><small>${needsAcceptance ? 'New order · waiting for acceptance' : settled ? 'Settled' : table ? 'Occupied' : 'Counter Pick'} • ${elapsed(order.created_at)}</small></div><div class="amount">${money(order.total)}</div><div class="actions">${needsAcceptance ? `<button class="accept-order" data-accept="${order.id}">✓ Accept</button>` : settled ? `<button class="clear" data-clear="${order.id}">✓ Ready to Clear</button><button class="icon" data-reprint="${order.id}" title="Reprint receipt">${icon('print')}</button>` : `<button data-view="${order.id}">${icon('view')}</button><button class="icon" data-reprint="${order.id}" title="Reprint existing bill">${icon('print')}</button><span class="pay-group"><button data-pay="cash" data-id="${order.id}">Cash</button><button data-pay="upi" data-id="${order.id}">UPI</button><button data-pay="zomato" data-id="${order.id}">Zomato</button></span>`}</div></article>`;
+  return `<article class="order-strip ${table ? '' : 'parcel-strip'} ${settled ? 'settled' : ''} ${needsAcceptance ? 'needs-acceptance' : ''}">${table ? tableIdentity : `<div class="token">${escapeHtml(identifier)}</div>`}<div class="meta"><b>${escapeHtml(name)}${settled ? ` <small>• ${escapeHtml(paid)}</small>` : ''}</b><small>${needsAcceptance ? 'New order · waiting for acceptance' : settled ? 'Settled' : table ? 'Occupied' : 'Counter Pick'} • ${elapsed(order.created_at)}</small></div><div class="amount">${money(order.total)}</div><div class="actions">${needsAcceptance ? `<button class="accept-order" data-accept="${order.id}">✓ Accept</button>` : settled ? `<button class="clear" data-clear="${order.id}">✓ Ready to Clear</button><button class="icon" data-reprint="${order.id}" title="Reprint receipt">${icon('print')}</button>` : `<button data-view="${order.id}">${icon('view')}</button><button class="icon" data-reprint="${order.id}" title="Reprint existing bill">${icon('print')}</button><span class="pay-group"><button data-pay="cash" data-id="${order.id}">Cash</button><button data-pay="upi" data-id="${order.id}">UPI</button><button data-pay="card" data-id="${order.id}">Card</button><button data-pay="zomato" data-id="${order.id}">Zomato</button><button data-pay="split" data-id="${order.id}">Split</button></span>`}</div></article>`;
 }
 function render() {
   const tables = orders.filter((o) => active(o) && o.mode === 'table'),
@@ -108,12 +108,104 @@ async function receipt(id, print = false) {
   $('#bill-modal').showModal();
 }
 let paymentOrder = null,
-  paymentType = '';
+  paymentType = '',
+  paymentSplit = false;
 function paymentName(type) {
-  return { cash: 'Cash', upi: 'UPI / GPay', card: 'Card', other: 'Other' }[type] || 'Not recorded';
+  return {
+    cash: 'Cash',
+    upi: 'UPI / GPay',
+    card: 'Card',
+    zomato: 'Zomato',
+    other: 'Other',
+    due: 'Due',
+    not_paid: 'Not paid',
+    part: 'Split payment',
+  }[type] || 'Not recorded';
+}
+const paidPaymentTypes = new Set(['cash', 'upi', 'card', 'zomato', 'other']);
+const paymentOptions = ['cash', 'upi', 'card', 'zomato', 'other', 'due'];
+function splitPaymentRows() {
+  return [...document.querySelectorAll('.payment-split-row')].map((row) => ({
+    row,
+    type: row.querySelector('.split-type').value,
+    amount: Number(row.querySelector('.split-applied').value || 0),
+    received: Number(row.querySelector('.split-received').value || 0),
+  }));
+}
+function syncSplitRow(row) {
+  const type = row.querySelector('.split-type').value,
+    applied = row.querySelector('.split-applied'),
+    received = row.querySelector('.split-received'),
+    unpaid = !paidPaymentTypes.has(type);
+  row.classList.toggle('is-due', unpaid);
+  received.disabled = unpaid;
+  if (unpaid) received.value = '0.00';
+  else if (!received.value || received.dataset.auto === 'true') received.value = applied.value;
+}
+function addSplitPayment(type = 'cash', amount = 0) {
+  const row = document.createElement('div');
+  row.className = 'payment-split-row';
+  row.innerHTML = `<label>Method<select class="split-type">${paymentOptions.map((option) => `<option value="${option}" ${option === type ? 'selected' : ''}>${escapeHtml(paymentName(option))}</option>`).join('')}</select></label><label>Applied<input class="split-applied" type="number" min="0" step="0.01" inputmode="decimal" value="${Number(amount || 0).toFixed(2)}"></label><label class="split-received-wrap">Received<input class="split-received" type="number" min="0" step="0.01" inputmode="decimal" value="${Number(amount || 0).toFixed(2)}" data-auto="true"></label><button type="button" class="split-remove" aria-label="Remove payment">×</button>`;
+  document.getElementById('payment-split-rows').append(row);
+  syncSplitRow(row);
+  updatePaymentPreview();
 }
 function updatePaymentPreview() {
   if (!paymentOrder) return;
+  if (paymentSplit) {
+    const total = Number(paymentOrder.total || 0),
+      rows = splitPaymentRows(),
+      allocated = rows.reduce((sum, row) => sum + (Number.isFinite(row.amount) ? row.amount : 0), 0),
+      collected = rows.reduce(
+        (sum, row) => sum + (paidPaymentTypes.has(row.type) && row.amount > 0 ? row.amount : 0),
+        0
+      ),
+      change = rows.reduce(
+        (sum, row) => sum + (row.type === 'cash' ? Math.max(0, row.received - row.amount) : 0),
+        0
+      ),
+      tip = rows.reduce(
+        (sum, row) => sum + (row.type === 'upi' ? Math.max(0, row.received - row.amount) : 0),
+        0
+      ),
+      invalidRow = rows.some(
+        (row) =>
+          !row.type ||
+          !Number.isFinite(row.amount) ||
+          row.amount <= 0 ||
+          (paidPaymentTypes.has(row.type) &&
+            (!Number.isFinite(row.received) || row.received < row.amount)) ||
+          (!['cash', 'upi'].includes(row.type) &&
+            paidPaymentTypes.has(row.type) &&
+            row.received > row.amount)
+      ),
+      difference = Math.round((total - allocated) * 100) / 100,
+      preview = document.getElementById('payment-preview'),
+      confirm = document.getElementById('payment-confirm');
+    document.getElementById('payment-allocated').textContent = money(allocated);
+    document.getElementById('payment-collected').textContent = money(collected);
+    document.getElementById('payment-outstanding').textContent = money(Math.max(0, total - collected));
+    confirm.disabled = invalidRow || rows.length === 0 || Math.abs(difference) > 0.009;
+    if (invalidRow) {
+      preview.textContent = 'Every method needs a valid amount. Received cannot be short.';
+      preview.dataset.state = 'due';
+    } else if (difference > 0.009) {
+      preview.textContent = `Still to allocate: ${money(difference)}`;
+      preview.dataset.state = 'due';
+    } else if (difference < -0.009) {
+      preview.textContent = `Allocation exceeds the bill by ${money(Math.abs(difference))}.`;
+      preview.dataset.state = 'due';
+    } else {
+      const notes = [
+        change ? `Return ${money(change)} cash change` : '',
+        tip ? `Record ${money(tip)} UPI tip` : '',
+        collected < total ? `${money(total - collected)} remains due` : '',
+      ].filter(Boolean);
+      preview.textContent = notes.join(' · ') || 'The full bill is allocated and ready to save.';
+      preview.dataset.state = tip ? 'tip' : change ? 'change' : 'exact';
+    }
+    return;
+  }
   const due = Number(paymentOrder.total || 0),
     received = Number(document.getElementById('payment-received').value || 0),
     preview = document.getElementById('payment-preview'),
@@ -127,15 +219,15 @@ function updatePaymentPreview() {
   const difference = received - due;
   confirm.disabled = false;
   if (paymentType === 'cash') {
-    preview.textContent = difference
-      ? `Return change: ${money(difference)}`
-      : 'Exact cash received.';
+    preview.textContent = difference ? `Return change: ${money(difference)}` : 'Exact cash received.';
     preview.dataset.state = difference ? 'change' : 'exact';
   } else if (paymentType === 'upi') {
-    preview.textContent = difference
-      ? `Tip to record: ${money(difference)}`
-      : 'Exact UPI payment received.';
+    preview.textContent = difference ? `Tip to record: ${money(difference)}` : 'Exact UPI payment received.';
     preview.dataset.state = difference ? 'tip' : 'exact';
+  } else if (difference) {
+    preview.textContent = `${paymentName(paymentType)} must match the exact bill amount.`;
+    preview.dataset.state = 'due';
+    confirm.disabled = true;
   } else {
     preview.textContent = 'Payment amount matches the bill.';
     preview.dataset.state = 'exact';
@@ -145,11 +237,16 @@ function openPayment(id, type) {
   const order = orders.find((o) => String(o.id) === String(id));
   if (!order) return;
   paymentOrder = order;
-  paymentType = type === 'zomato' ? 'other' : type;
-  document.getElementById('payment-title').textContent = `${paymentName(paymentType)} payment`;
+  paymentSplit = type === 'split';
+  paymentType = paymentSplit ? '' : type;
+  document.getElementById('payment-title').textContent = paymentSplit
+    ? 'Split payment'
+    : `${paymentName(paymentType)} payment`;
   document.getElementById('payment-order').textContent =
     `${order.mode === 'table' ? `Table ${String(order.table_number || '').padStart(2, '0')}` : 'Parcel'} · Bill #${String(order.daily_order_number || '').padStart(2, '0')}`;
   document.getElementById('payment-due').textContent = money(order.total);
+  document.getElementById('payment-single').hidden = paymentSplit;
+  document.getElementById('payment-split').hidden = !paymentSplit;
   document.getElementById('payment-received-label').textContent =
     paymentType === 'cash'
       ? 'Cash received from customer'
@@ -157,45 +254,95 @@ function openPayment(id, type) {
         ? 'UPI / GPay received'
         : 'Amount received';
   document.getElementById('payment-received').value = Number(order.total || 0).toFixed(2);
-  document.getElementById('payment-confirm').textContent =
-    `Save ${paymentName(paymentType)} payment`;
+  document.getElementById('payment-split-rows').replaceChildren();
+  if (paymentSplit) addSplitPayment('cash', Number(order.total || 0));
+  document.getElementById('payment-confirm').textContent = paymentSplit
+    ? 'Save split payment'
+    : `Save ${paymentName(paymentType)} payment`;
   updatePaymentPreview();
+  document.getElementById('payment-modal').classList.toggle('is-split', paymentSplit);
   document.getElementById('payment-modal').showModal();
-  document.getElementById('payment-received').focus();
-  document.getElementById('payment-received').select();
+  if (!paymentSplit) {
+    document.getElementById('payment-received').focus();
+    document.getElementById('payment-received').select();
+  }
 }
 async function savePayment() {
   if (!paymentOrder) return;
   const received = Number(document.getElementById('payment-received').value || 0),
-    response = await fetch(`/api/orders/${encodeURIComponent(paymentOrder.id)}/settle`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Settlement-Id': `register-${paymentOrder.id}-${Date.now()}`,
-      },
-      body: JSON.stringify({
-        paymentType,
-        amount: Number(paymentOrder.total || 0),
-        paymentReceived: received,
+    payments = paymentSplit
+      ? splitPaymentRows().map((row) => ({
+          paymentType: row.type,
+          amount: row.amount,
+          paymentReceived: paidPaymentTypes.has(row.type) ? row.received : 0,
+        }))
+      : null,
+    confirm = document.getElementById('payment-confirm');
+  confirm.disabled = true;
+  confirm.textContent = 'Saving securely…';
+  try {
+    const response = await fetch(`/api/orders/${encodeURIComponent(paymentOrder.id)}/settle`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Settlement-Id': `register-${paymentOrder.id}-${Date.now()}`,
+        },
+        body: JSON.stringify(
+          paymentSplit
+            ? { payments }
+            : {
+                paymentType,
+                amount: Number(paymentOrder.total || 0),
+                paymentReceived: received,
+              }
+        ),
       }),
-    }),
-    data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || 'Payment could not be saved.');
-  document.getElementById('payment-modal').close();
-  paymentOrder = null;
-  await load();
+      data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || 'Payment could not be saved.');
+    document.getElementById('payment-modal').close();
+    paymentOrder = null;
+    await load();
+  } finally {
+    confirm.disabled = false;
+    confirm.textContent = paymentSplit
+      ? 'Save split payment'
+      : `Save ${paymentName(paymentType)} payment`;
+  }
+}
+function legacyPayment(order) {
+  const unpaid = !order.settlement_type || ['due', 'not_paid'].includes(order.settlement_type);
+  return {
+    paymentType: order.settlement_type,
+    appliedAmount: Number(order.total || 0),
+    collectedAmount: unpaid ? 0 : Number(order.settlement_amount ?? order.total ?? 0),
+  };
 }
 async function printSummary() {
-  const response = await fetch('/api/register/summary', { cache: 'no-store' }),
+  const chosenDay = document.getElementById('summary-date').value,
+    response = await fetch(
+      `/api/register/summary${chosenDay ? `?date=${encodeURIComponent(chosenDay)}` : ''}`,
+      { cache: 'no-store' }
+    ),
     data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || 'Unable to prepare the register summary.');
   const rows = Array.isArray(data.orders) ? data.orders : [],
+    rowsWithPayments = rows.map((order) => {
+      const payments = Array.isArray(order.payments) && order.payments.length
+          ? order.payments
+          : [legacyPayment(order)],
+        orderCollected = payments.reduce(
+          (sum, payment) => sum + Number(payment.collectedAmount || 0),
+          0
+        );
+      return { order, payments, orderCollected };
+    }),
     sales = rows.reduce((sum, order) => sum + Number(order.total || 0), 0),
+    collected = rowsWithPayments.reduce((sum, row) => sum + row.orderCollected, 0),
     tips = rows.reduce((sum, order) => sum + Number(order.tip_amount || 0), 0),
-    popup = window.open('', 'red-lantern-register-summary', 'popup=yes,width=1000,height=720');
+    popup = window.open('', 'red-lantern-register-summary', 'popup=yes,width=1100,height=720');
   if (!popup) throw new Error('Allow pop-ups to print the register summary.');
   popup.document.write(
-    `<!doctype html><title>Register summary</title><style>body{font:12px Arial;padding:22px;color:#111}h1,p{margin:0 0 7px}table{width:100%;border-collapse:collapse;margin-top:18px}th,td{padding:8px;text-align:left;border-bottom:1px solid #ddd}th{font-size:10px;text-transform:uppercase;background:#f3f3f3}.right{text-align:right}.total{margin-top:18px;font-size:14px;font-weight:bold}</style><h1>Red Lantern Restaurant — Register Summary</h1><p>Date: ${escapeHtml(data.day || '')}</p><table><thead><tr><th>Bill</th><th>Type</th><th>Table / Parcel</th><th>Customer</th><th>Payment</th><th class=right>Bill total</th><th class=right>Received</th><th class=right>Change</th><th class=right>Tip</th></tr></thead><tbody>${rows.map((order) => `<tr><td>#${escapeHtml(order.daily_order_number)}</td><td>${order.mode === 'table' ? 'Dine-in' : 'Parcel'}</td><td>${escapeHtml(order.mode === 'table' ? `Table ${String(order.table_number || '').padStart(2, '0')}` : order.customer_phone || 'Walk-in')}</td><td>${escapeHtml(order.customer_name || 'Walk-in customer')}</td><td>${escapeHtml(paymentName(order.settlement_type))}</td><td class=right>${money(order.total)}</td><td class=right>${money(order.payment_received ?? order.settlement_amount ?? order.total)}</td><td class=right>${money(order.change_due)}</td><td class=right>${money(order.tip_amount)}</td></tr>`).join('') || '<tr><td colspan=9>No completed payments for this date.</td></tr>'}</tbody></table><p class=total>Sales: ${money(sales)} &nbsp; | &nbsp; Tips: ${money(tips)}</p><script>onload=()=>print()<\/script>`
+    `<!doctype html><title>Register summary</title><style>body{font:12px Arial;padding:22px;color:#111}h1,p{margin:0 0 7px}table{width:100%;border-collapse:collapse;margin-top:18px}th,td{padding:8px;text-align:left;border-bottom:1px solid #ddd}th{font-size:10px;text-transform:uppercase;background:#f3f3f3}.right{text-align:right}.total{margin-top:18px;font-size:14px;font-weight:bold}</style><h1>Red Lantern Restaurant — Register Summary</h1><p>Date: ${escapeHtml(data.day || '')}</p><table><thead><tr><th>Bill</th><th>Type</th><th>Table / Parcel</th><th>Customer</th><th>Payment allocation</th><th class=right>Bill total</th><th class=right>Collected</th><th class=right>Due</th><th class=right>Change</th><th class=right>Tip</th></tr></thead><tbody>${rowsWithPayments.map(({ order, payments, orderCollected }) => `<tr><td>#${escapeHtml(order.daily_order_number)}</td><td>${order.mode === 'table' ? 'Dine-in' : 'Parcel'}</td><td>${escapeHtml(order.mode === 'table' ? `Table ${String(order.table_number || '').padStart(2, '0')}` : order.customer_phone || 'Walk-in')}</td><td>${escapeHtml(order.customer_name || 'Walk-in customer')}</td><td>${escapeHtml(payments.map((payment) => `${paymentName(payment.paymentType)} ${money(payment.appliedAmount)}`).join(' + '))}</td><td class=right>${money(order.total)}</td><td class=right>${money(orderCollected)}</td><td class=right>${money(Math.max(0, Number(order.total || 0) - orderCollected))}</td><td class=right>${money(order.change_due)}</td><td class=right>${money(order.tip_amount)}</td></tr>`).join('') || '<tr><td colspan=10>No completed payments for this date.</td></tr>'}</tbody></table><p class=total>Sales: ${money(sales)} &nbsp; | &nbsp; Collected: ${money(collected)} &nbsp; | &nbsp; Outstanding: ${money(Math.max(0, sales - collected))} &nbsp; | &nbsp; Tips: ${money(tips)}</p><script>onload=()=>print()<\/script>`
   );
   popup.document.close();
 }
@@ -222,6 +369,31 @@ document.addEventListener('click', async (event) => {
       render();
     }
     if (target.id === 'payment-confirm') await savePayment();
+    if (target.id === 'payment-add-method') {
+      const rows = splitPaymentRows(),
+        total = Number(paymentOrder?.total || 0),
+        allocated = rows.reduce((sum, row) => sum + row.amount, 0),
+        remaining = Math.max(0, Math.round((total - allocated) * 100) / 100);
+      if (!remaining && rows.length === 1) {
+        const firstAmount = Math.floor((total * 100) / 2) / 100,
+          firstApplied = rows[0].row.querySelector('.split-applied'),
+          firstReceived = rows[0].row.querySelector('.split-received');
+        firstApplied.value = firstAmount.toFixed(2);
+        if (firstReceived.dataset.auto === 'true') firstReceived.value = firstApplied.value;
+        addSplitPayment('upi', total - firstAmount);
+      } else addSplitPayment('upi', remaining);
+    }
+    if (target.id === 'payment-add-due') {
+      const rows = splitPaymentRows(),
+        total = Number(paymentOrder?.total || 0),
+        allocated = rows.reduce((sum, row) => sum + row.amount, 0),
+        remaining = Math.max(0, Math.round((total - allocated) * 100) / 100);
+      if (remaining) addSplitPayment('due', remaining);
+    }
+    if (target.classList.contains('split-remove')) {
+      target.closest('.payment-split-row')?.remove();
+      updatePaymentPreview();
+    }
     if (target.id === 'print-summary') await printSummary();
     if (target.id === 'staff-sign-out') {
       await fetch('/api/orders/session', { method: 'DELETE' });
@@ -235,6 +407,28 @@ document.addEventListener('click', async (event) => {
 });
 $('.modal-close').addEventListener('click', () => $('#bill-modal').close());
 document.getElementById('payment-received').addEventListener('input', updatePaymentPreview);
+document.getElementById('payment-split-rows').addEventListener('input', (event) => {
+  const row = event.target.closest('.payment-split-row');
+  if (!row) return;
+  if (event.target.classList.contains('split-received')) event.target.dataset.auto = 'false';
+  if (event.target.classList.contains('split-applied')) {
+    const received = row.querySelector('.split-received');
+    if (received.dataset.auto === 'true' && !received.disabled) received.value = event.target.value;
+  }
+  updatePaymentPreview();
+});
+document.getElementById('payment-split-rows').addEventListener('change', (event) => {
+  const row = event.target.closest('.payment-split-row');
+  if (!row) return;
+  if (event.target.classList.contains('split-type')) syncSplitRow(row);
+  updatePaymentPreview();
+});
+document.getElementById('summary-date').value = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Kolkata',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+}).format(new Date());
 function tick() {
   $('#clock').textContent = new Intl.DateTimeFormat('en-IN', {
     timeZone: 'Asia/Kolkata',

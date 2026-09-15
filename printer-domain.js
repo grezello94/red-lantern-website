@@ -65,13 +65,23 @@
     return printer;
   }
 
-  function configuredPrintersFor(config, capability) {
+  function printerBelongsToWorkstation(printer, workstationId) {
+    const expected = String(workstationId || '').trim();
+    if (!expected) return true;
+    const assigned = String(printer?.workstationId || '').trim();
+    // Legacy printers remain usable during the one-time automatic migration.
+    return !assigned || assigned === expected;
+  }
+
+  function configuredPrintersFor(config, capability, workstationId = '') {
     return [
       ...new Map(
         (Array.isArray(config?.printers) ? config.printers : [])
           .filter(
             (printer) =>
-              printerSupports(printer, capability) && String(printer.deviceName || '').trim()
+              printerSupports(printer, capability) &&
+              String(printer.deviceName || '').trim() &&
+              printerBelongsToWorkstation(printer, workstationId)
           )
           .map((printer) => [String(printer.deviceName).trim(), printer])
       ).values(),
@@ -87,6 +97,7 @@
     capabilityLabel,
     configuredPrintersFor,
     printerFormat,
+    printerBelongsToWorkstation,
     printerCapabilities,
     printerSupports,
     setPrinterCapability,

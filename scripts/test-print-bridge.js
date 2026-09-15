@@ -77,8 +77,11 @@ async function main() {
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
     }
-    if (!health?.ok || health.ledger !== 'ready' || !health.version)
+    if (!health?.ok || health.ledger !== 'ready' || !health.version || !health.workstation?.id)
       throw new Error(`Bridge health check failed. ${output}`);
+    const printerDiscovery = await request(port, '/v1/printers');
+    if (printerDiscovery.workstation?.id !== health.workstation.id)
+      throw new Error('Bridge workstation identity was not stable across endpoints.');
     const queued = await request(port, '/v1/ledger/actions', {
       method: 'POST',
       body: {
@@ -126,9 +129,25 @@ async function main() {
       setup.recentPrintFailures[0]?.status !== 'uncertain' ||
       typeof setup.ledgerSummary?.printJobs?.unresolvedIssues !== 'number' ||
       typeof setup.unavailableConfiguredPrinterCount !== 'number' ||
-      typeof setup.unreachableConfiguredPrinterCount !== 'number'
+      typeof setup.unreachableConfiguredPrinterCount !== 'number' ||
+      setup.workstation?.id !== health.workstation.id
     )
       throw new Error('Bridge setup status did not expose the durable ledger state.');
+    let rejectedWrongWorkstation = false;
+    try {
+      await request(port, '/v1/kot-queue', {
+        method: 'POST',
+        body: {
+          workstationId: 'ws_another_computer',
+          printerId: 'kitchen',
+          items: [{ name: 'Must not print here', quantity: 1 }],
+        },
+      });
+    } catch (error) {
+      rejectedWrongWorkstation = /different restaurant computer/i.test(error.message);
+    }
+    if (!rejectedWrongWorkstation)
+      throw new Error('Bridge accepted a print job assigned to another workstation.');
     console.log('Print Bridge smoke test passed.');
   } finally {
     if (child.exitCode === null) {

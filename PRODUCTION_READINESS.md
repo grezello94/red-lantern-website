@@ -126,6 +126,15 @@ the evidence field. Remove or clearly label test orders afterward.
 
 ### Payments and printing
 
+Automated on 15 September 2026: Register single and split settlement now writes
+each Cash, UPI/GPay, Card, Zomato, Other or Due allocation to the database
+payment ledger. The backend validates every allocation against the saved bill
+total, treats cash overpayment as change, treats UPI overpayment as a tip, and
+uses an idempotency key so a repeated click cannot create a second settlement.
+The Dashboard and the Admin/Register date-wise print summaries read actual
+collected, outstanding, change and tip values from that ledger. Parked/held
+orders remain open and do not become sales or collections until completed.
+
 - [ ] Cash settlement records tendered cash, bill amount and change correctly.
   Tester/date/device: ____________________ Evidence: ____________________
 - [ ] UPI settlement records the received amount and any extra amount according

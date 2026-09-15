@@ -8,7 +8,7 @@
       href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/admin-analytics.css?v=2" />
+    <link rel="stylesheet" href="/admin-analytics.css?v=4" />
     <style>
       * {
         box-sizing: border-box;
@@ -5481,6 +5481,7 @@ Availability may vary. Please ask our team about today’s specials.</textarea>
           <div class="analytics-period-summary">
             <strong id="analytics-range-label">Today</strong>
             <span id="analytics-generated">Preparing dashboard…</span>
+            <span id="analytics-sync-state" class="analytics-sync-state is-connecting" role="status" aria-live="polite"><i></i>Connecting live sync…</span>
           </div>
         </section>
 
@@ -5527,11 +5528,13 @@ Availability may vary. Please ask our team about today’s specials.</textarea>
         <section class="analytics-grid analytics-detail-grid">
           <article class="analytics-panel">
             <div class="analytics-panel-heading"><div><span>Kitchen audit</span><h2>KOT exceptions</h2></div><b id="analytics-kot-exception-count" class="analytics-count">0</b></div>
-            <div class="analytics-table-wrap"><table class="analytics-table"><thead><tr><th>Event</th><th>KOT / order</th><th>Table</th><th>When</th></tr></thead><tbody id="analytics-kot-exceptions"></tbody></table></div>
+            <p class="analytics-table-hint" aria-hidden="true">Swipe sideways to see every column.</p>
+            <div class="analytics-table-wrap" tabindex="0" aria-label="KOT exceptions table, horizontally scrollable"><table class="analytics-table"><thead><tr><th>Event</th><th>KOT / order</th><th>Table</th><th>When</th></tr></thead><tbody id="analytics-kot-exceptions"></tbody></table></div>
           </article>
           <article class="analytics-panel">
             <div class="analytics-panel-heading"><div><span>Billing audit</span><h2>Bill exceptions</h2></div><b id="analytics-bill-exception-count" class="analytics-count">0</b></div>
-            <div class="analytics-table-wrap"><table class="analytics-table"><thead><tr><th>Event</th><th>Bill / order</th><th>Value</th><th>When</th></tr></thead><tbody id="analytics-bill-exceptions"></tbody></table></div>
+            <p class="analytics-table-hint" aria-hidden="true">Swipe sideways to see every column.</p>
+            <div class="analytics-table-wrap" tabindex="0" aria-label="Bill exceptions table, horizontally scrollable"><table class="analytics-table"><thead><tr><th>Event</th><th>Bill / order</th><th>Value</th><th>When</th></tr></thead><tbody id="analytics-bill-exceptions"></tbody></table></div>
           </article>
         </section>
 
@@ -5542,7 +5545,8 @@ Availability may vary. Please ask our team about today’s specials.</textarea>
           </article>
           <article class="analytics-panel">
             <div class="analytics-panel-heading"><div><span>Order ledger</span><h2>Recent orders in this period</h2></div></div>
-            <div class="analytics-table-wrap"><table class="analytics-table"><thead><tr><th>Order</th><th>Type</th><th>Status</th><th>Value</th><th>Placed</th></tr></thead><tbody id="analytics-recent-orders"></tbody></table></div>
+            <p class="analytics-table-hint" aria-hidden="true">Swipe sideways to see every column.</p>
+            <div class="analytics-table-wrap" tabindex="0" aria-label="Recent orders table, horizontally scrollable"><table class="analytics-table"><thead><tr><th>Order</th><th>Type</th><th>Status</th><th>Value / payment</th><th>Placed</th></tr></thead><tbody id="analytics-recent-orders"></tbody></table></div>
           </article>
         </section>
 
@@ -7195,7 +7199,7 @@ Watch competitors ranking for Colva Beach, seafood, Goan food, Chinese food, fam
       }
     </script>
     <script src="/addons-domain.js?v=1" defer></script>
-    <script src="/admin-analytics.js?v=2" defer></script>
-    <script src="admin-cms.js?v=20260914-36" defer></script>
+    <script src="/admin-analytics.js?v=5" defer></script>
+    <script src="admin-cms.js?v=20260915-37" defer></script>
   </body>
 </html>

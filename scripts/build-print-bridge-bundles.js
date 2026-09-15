@@ -23,8 +23,10 @@ const readme = `Red Lantern Print Bridge
 2. Double-click START-SETUP.cmd on Windows or open START-SETUP.command on macOS.
 3. Return to Orders > Operations > Print & offline setup and choose Check again.
 
-The Bridge stays local to this computer and stores its offline SQLite ledger in
-your user profile. Do not expose port 9124 to the public internet.
+The Bridge stays local to this computer, pairs its printer queues to this
+workstation automatically, repairs the Windows printing service silently, and
+stores its offline SQLite ledger in your user profile. Do not expose port 9124
+to the public internet.
 `;
 
 function createStagedBundle(platform) {

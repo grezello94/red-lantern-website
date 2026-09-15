@@ -54,6 +54,8 @@ async function mockAdmin(page, { onRequest, content = sampleContent() } = {}) {
         },
         summary: {
           net_sales: 12500,
+          collected: 11750,
+          outstanding: 750,
           completed_bills: 24,
           average_bill: 521,
           total_orders: 28,
@@ -69,8 +71,9 @@ async function mockAdmin(page, { onRequest, content = sampleContent() } = {}) {
           { channel: 'takeaway', bills: 9, sales: 4500 },
         ],
         payments: [
-          { payment_type: 'upi', bills: 16, amount: 8500 },
-          { payment_type: 'cash', bills: 8, amount: 4000 },
+          { payment_type: 'upi', bills: 16, amount: 8000, outstanding: 0, tips: 180 },
+          { payment_type: 'cash', bills: 8, amount: 3750, outstanding: 0, change: 250 },
+          { payment_type: 'due', bills: 1, amount: 0, outstanding: 750 },
         ],
         trend: [
           { day: '2026-09-13', bills: 11, sales: 5000 },
@@ -86,6 +89,8 @@ async function mockAdmin(page, { onRequest, content = sampleContent() } = {}) {
             table_number: 3,
             total: 920,
             status: 'completed',
+            settlement_type: 'part',
+            payment_methods: ['cash', 'upi'],
             created_at: '2026-09-14T11:00:00.000Z',
           },
         ],
@@ -126,6 +131,8 @@ async function mockAdmin(page, { onRequest, content = sampleContent() } = {}) {
         },
         definitions: {
           sales: 'Completed bills only.',
+          collections: 'Money actually collected.',
+          outstanding: 'Unpaid completed bill balances.',
           cancelledKot: 'Stored KOT rounds attached to a cancelled order.',
           modifiedKot: 'Items changed after the first KOT.',
           shiftedKot: 'Table moved after the first KOT.',
@@ -180,6 +187,7 @@ test('sales dashboard presents operational controls and fits a phone', async ({ 
   await expect(page.locator('#analytics-bill-stats')).toContainText('Modified after print');
   await expect(page.locator('#analytics-kot-exceptions')).toContainText('shifted');
   await expect(page.locator('#analytics-bill-exceptions')).toContainText('Guest changed plan');
+  await expect(page.locator('#analytics-recent-orders')).toContainText('Cash + UPI / GPay');
   await expectNoPageOverflow(page);
 
   await page.locator('[data-analytics-preset="custom"]').click();
@@ -192,15 +200,49 @@ test('sales dashboard presents operational controls and fits a phone', async ({ 
 });
 
 test('dedicated dashboard presents the same analytics at /dashboard', async ({ page }) => {
+  let analyticsLoads = 0;
   await page.setViewportSize({ width: 390, height: 844 });
-  await mockAdmin(page);
+  await mockAdmin(page, {
+    onRequest: (_request, url) => {
+      if (url.pathname === '/api/admin/analytics') analyticsLoads += 1;
+    },
+  });
   await page.goto('/dashboard.html');
 
   await expect(page).toHaveTitle(/Sales Dashboard/);
   await expect(page.locator('#analytics-kpis')).toContainText('₹12,500');
   await expect(page.locator('#analytics-kot-stats')).toContainText('Cancelled');
   await expect(page.locator('#dashboard-logout')).toBeVisible();
+  await expect(page.locator('#analytics-sync-state')).toBeVisible();
   await expectNoPageOverflow(page);
+
+  const initialLoads = analyticsLoads;
+  await page.evaluate(() => window.dispatchEvent(new Event('online')));
+  await expect.poll(() => analyticsLoads).toBeGreaterThan(initialLoads);
+
+  for (const viewport of [
+    { width: 320, height: 568 },
+    { width: 360, height: 800 },
+    { width: 768, height: 1024 },
+    { width: 1280, height: 800 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await expectNoPageOverflow(page);
+  }
+
+  await page.setViewportSize({ width: 320, height: 568 });
+  await expect(page.locator('.analytics-kpis')).toHaveCSS('grid-template-columns', /\d+px/);
+  expect(
+    await page.locator('.analytics-kpis').evaluate((element) =>
+      getComputedStyle(element).gridTemplateColumns.trim().split(/\s+/).length,
+    ),
+  ).toBe(1);
+  await expect(page.locator('.analytics-table-hint').first()).toBeVisible();
+  const mobileTable = await page.locator('.analytics-table-wrap').first().evaluate((element) => ({
+    clientWidth: element.clientWidth,
+    scrollWidth: element.scrollWidth,
+  }));
+  expect(mobileTable.scrollWidth).toBeGreaterThan(mobileTable.clientWidth);
 });
 
 test('admin restores a trusted-contact deep link after refresh and fits a phone', async ({

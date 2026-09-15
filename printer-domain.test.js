@@ -2,6 +2,7 @@ const {
   configuredPrintersFor,
   printerFormat,
   printerCapabilities,
+  printerBelongsToWorkstation,
   printerSupports,
   setPrinterCapability,
   setPrinterFormat,
@@ -43,6 +44,22 @@ describe('printer capability domain', () => {
     const printers = configuredPrintersFor(config, 'bill');
     expect(printers.map((printer) => printer.deviceName)).toEqual(['Queue A', 'Queue B']);
     expect(printers.map((printer) => printer.paperWidth)).toEqual([58, 58]);
+  });
+
+  test('workstation pairing keeps another computer from using a local queue', () => {
+    const config = {
+      printers: [
+        { id: 'a', capabilities: ['bill'], deviceName: 'POS', workstationId: 'counter-a' },
+        { id: 'b', capabilities: ['bill'], deviceName: 'POS', workstationId: 'counter-b' },
+        { id: 'legacy', capabilities: ['bill'], deviceName: 'Legacy' },
+      ],
+    };
+    expect(printerBelongsToWorkstation(config.printers[0], 'counter-a')).toBe(true);
+    expect(printerBelongsToWorkstation(config.printers[1], 'counter-a')).toBe(false);
+    expect(configuredPrintersFor(config, 'bill', 'counter-a').map((item) => item.id)).toEqual([
+      'a',
+      'legacy',
+    ]);
   });
 
   test('Bill and KOT formats remain independent on a dual-purpose queue', () => {

@@ -30,6 +30,7 @@ const { buildKitchenMetrics } = require('./smart-kds-metrics');
 const { printerCapabilities, printerSupports } = require('./printer-domain');
 const Addons = require('./addons-domain');
 const Analytics = require('./analytics-domain');
+const Payments = require('./payments-domain');
 const { schemaProbe } = require('./database-readiness');
 const TrustedContacts = require('./trusted-contacts-domain');
 
@@ -1111,6 +1112,7 @@ const labels = {
 let publicContentCache = null;
 let contentRevisionsTableReady = null;
 let directOrdersTableReady = null;
+let orderPaymentsTableReady = null;
 let kotsTableReady = null;
 let loyaltyTableReady = null;
 let trustedContactsTableReady = null;
@@ -2500,6 +2502,45 @@ async function ensureDirectOrdersTable() {
       await sql`CREATE INDEX IF NOT EXISTS captain_order_requests_created_index ON captain_order_requests (created_at DESC)`;
     })();
   return directOrdersTableReady;
+}
+async function ensureOrderPaymentsTable() {
+  if (!sql) throw new Error('Orders database is not configured.');
+  if (!orderPaymentsTableReady)
+    orderPaymentsTableReady = (async () => {
+      if (
+        await schemaProbe(
+          () => sql`
+            SELECT payment_id,order_id,settlement_request_id,payment_index,payment_type,
+              applied_amount,received_amount,collected_amount,change_amount,tip_amount,created_at
+            FROM order_payments LIMIT 0
+          `
+        )
+      )
+        return;
+      await sql`CREATE TABLE IF NOT EXISTS order_payments (
+        payment_id BIGSERIAL PRIMARY KEY,
+        order_id TEXT NOT NULL,
+        settlement_request_id TEXT,
+        payment_index INTEGER NOT NULL,
+        payment_type TEXT NOT NULL,
+        applied_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+        received_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+        collected_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+        change_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+        tip_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+      await sql`ALTER TABLE order_payments ADD COLUMN IF NOT EXISTS settlement_request_id TEXT`;
+      await sql`ALTER TABLE order_payments ADD COLUMN IF NOT EXISTS payment_index INTEGER NOT NULL DEFAULT 0`;
+      await sql`ALTER TABLE order_payments ADD COLUMN IF NOT EXISTS received_amount NUMERIC(12,2) NOT NULL DEFAULT 0`;
+      await sql`ALTER TABLE order_payments ADD COLUMN IF NOT EXISTS collected_amount NUMERIC(12,2) NOT NULL DEFAULT 0`;
+      await sql`ALTER TABLE order_payments ADD COLUMN IF NOT EXISTS change_amount NUMERIC(12,2) NOT NULL DEFAULT 0`;
+      await sql`ALTER TABLE order_payments ADD COLUMN IF NOT EXISTS tip_amount NUMERIC(12,2) NOT NULL DEFAULT 0`;
+      await sql`CREATE UNIQUE INDEX IF NOT EXISTS order_payments_order_index_unique ON order_payments (order_id,payment_index)`;
+      await sql`CREATE INDEX IF NOT EXISTS order_payments_created_index ON order_payments (created_at DESC)`;
+      await sql`CREATE INDEX IF NOT EXISTS order_payments_type_created_index ON order_payments (payment_type,created_at DESC)`;
+    })();
+  return orderPaymentsTableReady;
 }
 async function ensureKotsTable() {
   if (!sql) throw new Error('Orders database is not configured.');
@@ -5903,19 +5944,12 @@ app.post('/api/orders/:id/bill-printed', async (req, res) => {
 
 app.post('/api/orders/:id/settle', async (req, res) => {
   try {
-    await ensureDirectOrdersTable();
+    await Promise.all([ensureDirectOrdersTable(), ensureOrderPaymentsTable()]);
     await ensureLoyaltyTable();
-    const paymentType = ['cash', 'upi', 'card', 'due', 'other', 'not_paid', 'part'].includes(
-      String(req.body?.paymentType || '')
-    )
-      ? String(req.body.paymentType)
-      : '';
-    const requestedAmount = Math.max(0, Number(req.body?.amount) || 0);
-    const suppliedReceived = Number(req.body?.paymentReceived);
     const requestId = String(req.get('X-Settlement-Id') || req.body?.requestId || '')
       .trim()
       .slice(0, 100);
-    if (!paymentType) return res.status(400).json({ error: 'Choose a payment type.' });
+    const settlementId = requestId || `server-${crypto.randomUUID()}`;
     if (requestId) {
       const existing =
         await sql`SELECT id FROM direct_orders WHERE id=${req.params.id} AND settlement_request_id=${requestId} LIMIT 1`;
@@ -5926,21 +5960,34 @@ app.post('/api/orders/:id/settle', async (req, res) => {
     if (!orderRows.length)
       return res.status(409).json({ error: 'This order is not waiting for payment.' });
     const total = Math.max(0, Number(orderRows[0].total) || 0);
-    const paymentReceived = Number.isFinite(suppliedReceived)
-      ? Math.max(0, suppliedReceived)
-      : requestedAmount || total;
-    if (['cash', 'upi', 'card', 'other'].includes(paymentType) && paymentReceived < total)
-      return res
-        .status(400)
-        .json({ error: 'Payment received cannot be less than the order total.' });
-    const changeDue = paymentType === 'cash' ? Math.max(0, paymentReceived - total) : 0;
-    const tipAmount = paymentType === 'upi' ? Math.max(0, paymentReceived - total) : 0;
-    const [rows] = await sql.transaction((tx) => [
-      tx`UPDATE direct_orders SET status='completed',settled_at=NOW(),settlement_type=${paymentType},settlement_amount=${total},payment_received=${paymentReceived},change_due=${changeDue},tip_amount=${tipAmount},settlement_request_id=${requestId || null},updated_at=NOW() WHERE id=${req.params.id} AND status IN ('accepted','preparing','ready') RETURNING customer_phone,customer_name,loyalty_points_earned`,
-      tx`WITH awarded AS (UPDATE direct_orders SET loyalty_awarded_at=NOW() WHERE id=${req.params.id} AND status='completed' AND loyalty_awarded_at IS NULL RETURNING customer_phone,loyalty_points_earned) INSERT INTO loyalty_accounts (customer_phone,points,total_earned) SELECT customer_phone,loyalty_points_earned,loyalty_points_earned FROM awarded ON CONFLICT (customer_phone) DO UPDATE SET points=loyalty_accounts.points+EXCLUDED.points,total_earned=loyalty_accounts.total_earned+EXCLUDED.total_earned,updated_at=NOW()`,
+    let plan;
+    try {
+      plan = Payments.normalizePaymentPlan({ ...req.body, total });
+    } catch (error) {
+      return res.status(400).json({ error: error.message });
+    }
+    const transactionResults = await sql.transaction((tx) => [
+      tx`UPDATE direct_orders SET status='completed',settled_at=NOW(),settlement_type=${plan.settlementType},settlement_amount=${plan.collectedTotal},payment_received=${plan.receivedTotal},change_due=${plan.changeDue},tip_amount=${plan.tipAmount},settlement_request_id=${settlementId},updated_at=NOW() WHERE id=${req.params.id} AND status IN ('accepted','preparing','ready') RETURNING customer_phone,customer_name,loyalty_points_earned`,
+      ...plan.entries.map(
+        (entry, index) =>
+          tx`INSERT INTO order_payments (order_id,settlement_request_id,payment_index,payment_type,applied_amount,received_amount,collected_amount,change_amount,tip_amount)
+            SELECT ${req.params.id},${settlementId},${index},${entry.paymentType},${entry.appliedAmount},${entry.receivedAmount},${entry.collectedAmount},${entry.changeAmount},${entry.tipAmount}
+            WHERE EXISTS (SELECT 1 FROM direct_orders WHERE id=${req.params.id} AND settlement_request_id=${settlementId})
+            ON CONFLICT (order_id,payment_index) DO NOTHING`
+      ),
+      ...(plan.outstanding === 0
+        ? [
+            tx`WITH awarded AS (UPDATE direct_orders SET loyalty_awarded_at=NOW() WHERE id=${req.params.id} AND status='completed' AND loyalty_awarded_at IS NULL RETURNING customer_phone,loyalty_points_earned) INSERT INTO loyalty_accounts (customer_phone,points,total_earned) SELECT customer_phone,loyalty_points_earned,loyalty_points_earned FROM awarded ON CONFLICT (customer_phone) DO UPDATE SET points=loyalty_accounts.points+EXCLUDED.points,total_earned=loyalty_accounts.total_earned+EXCLUDED.total_earned,updated_at=NOW()`,
+          ]
+        : []),
     ]);
-    if (!rows.length)
+    const rows = transactionResults[0];
+    if (!rows.length) {
+      const duplicate =
+        await sql`SELECT id FROM direct_orders WHERE id=${req.params.id} AND settlement_request_id=${settlementId} LIMIT 1`;
+      if (duplicate.length) return res.json({ ok: true, duplicate: true });
       return res.status(409).json({ error: 'This table is not waiting for settlement.' });
+    }
     await ensureTrustedContactsTable();
     await sql`INSERT INTO trusted_contacts (customer_phone,customer_name) VALUES (${rows[0].customer_phone},${String(
       rows[0].customer_name || ''
@@ -5951,14 +5998,17 @@ app.post('/api/orders/:id/settle', async (req, res) => {
         80
       )}) ON CONFLICT (customer_phone) DO UPDATE SET customer_name=CASE WHEN trusted_contacts.customer_name='' AND EXCLUDED.customer_name<>'' THEN EXCLUDED.customer_name ELSE trusted_contacts.customer_name END, updated_at=NOW()`;
     await recordOrderEvent(req.params.id, 'settled', {
-      paymentType,
+      paymentType: plan.settlementType,
+      paymentTypes: plan.entries.map((entry) => entry.paymentType),
       amount: total,
-      paymentReceived,
-      changeDue,
-      tipAmount,
-      requestId,
+      collected: plan.collectedTotal,
+      outstanding: plan.outstanding,
+      paymentReceived: plan.receivedTotal,
+      changeDue: plan.changeDue,
+      tipAmount: plan.tipAmount,
+      requestId: settlementId,
     });
-    res.json({ ok: true, total, paymentReceived, changeDue, tipAmount });
+    res.json({ ok: true, total, ...plan });
   } catch (error) {
     res.status(500).json({ error: 'Unable to save this payment.' });
   }
@@ -5966,12 +6016,14 @@ app.post('/api/orders/:id/settle', async (req, res) => {
 
 app.get('/api/register/summary', async (req, res) => {
   try {
-    await ensureDirectOrdersTable();
+    await Promise.all([ensureDirectOrdersTable(), ensureOrderPaymentsTable()]);
     const day = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.date || ''))
       ? String(req.query.date)
       : kolkataOrderDay();
     const orders =
-      await sql`SELECT daily_order_number,mode,table_area,table_number,customer_name,customer_phone,total,settlement_type,settlement_amount,payment_received,change_due,tip_amount,settled_at,created_at FROM direct_orders WHERE order_day=${day}::date AND status='completed' ORDER BY COALESCE(settled_at,created_at),daily_order_number`;
+      await sql`SELECT o.daily_order_number,o.mode,o.table_area,o.table_number,o.customer_name,o.customer_phone,o.total,o.settlement_type,o.settlement_amount,o.payment_received,o.change_due,o.tip_amount,o.settled_at,o.created_at,
+        COALESCE((SELECT jsonb_agg(jsonb_build_object('paymentType',p.payment_type,'appliedAmount',p.applied_amount,'receivedAmount',p.received_amount,'collectedAmount',p.collected_amount,'changeAmount',p.change_amount,'tipAmount',p.tip_amount) ORDER BY p.payment_index) FROM order_payments p WHERE p.order_id=o.id),'[]'::jsonb) AS payments
+        FROM direct_orders o WHERE o.order_day=${day}::date AND o.status='completed' ORDER BY COALESCE(o.settled_at,o.created_at),o.daily_order_number`;
     res.set('Cache-Control', 'no-store');
     res.json({ day, orders });
   } catch (error) {
@@ -6177,6 +6229,8 @@ app.post('/api/orders/:id/kots', async (req, res) => {
             printerId: printer.id,
             printerName: printer.deviceName,
             printerLabel: printer.name,
+            workstationId: String(printer.workstationId || ''),
+            workstationName: String(printer.workstationName || ''),
             items: [],
           });
         groups.get(printer.id).items.push(item);
@@ -6775,6 +6829,12 @@ app.put('/api/orders/operations', async (req, res) => {
           deviceName: String(printer.deviceName || '')
             .trim()
             .slice(0, 120),
+          workstationId: String(printer.workstationId || '')
+            .replace(/[^a-zA-Z0-9_-]/g, '')
+            .slice(0, 80),
+          workstationName: String(printer.workstationName || '')
+            .trim()
+            .slice(0, 120),
           ...sanitizePrinterFormat(printer),
           formats: {
             bill: sanitizePrinterFormat({ ...printer, ...(formats.bill || {}) }),
@@ -6788,12 +6848,15 @@ app.put('/api/orders/operations', async (req, res) => {
         .status(400)
         .json({ error: 'Each configured printer must have a unique saved ID.' });
     const configuredDeviceIds = printers
-      .map((printer) => printer.deviceId || printer.deviceName)
+      .map((printer) => {
+        const device = printer.deviceId || printer.deviceName;
+        return device ? `${printer.workstationId || 'legacy'}::${device}` : '';
+      })
       .filter(Boolean);
     if (new Set(configuredDeviceIds).size !== configuredDeviceIds.length)
       return res
         .status(400)
-        .json({ error: 'Each operating-system printer queue can be configured only once.' });
+        .json({ error: 'Each operating-system printer queue can be configured only once per computer.' });
     const kotPrinterIds = new Set(
       printers.filter((printer) => printerSupports(printer, 'kot')).map((printer) => printer.id)
     );
@@ -7544,13 +7607,15 @@ app.get('/api/admin/customer-insights', async (req, res) => {
 
 app.get('/api/admin/customer-insights/daily-summary', async (req, res) => {
   try {
-    await ensureDirectOrdersTable();
+    await Promise.all([ensureDirectOrdersTable(), ensureOrderPaymentsTable()]);
     const day = String(req.query.date || '');
     if (!/^\d{4}-\d{2}-\d{2}$/.test(day))
       return res.status(400).json({ error: 'Choose a valid order date before printing.' });
 
     const rows =
-      await sql`SELECT daily_order_number,mode,fulfillment_type,table_area,table_number,customer_name,customer_phone,items,total,status,settlement_type,settlement_amount,payment_received,change_due,tip_amount,created_at,settled_at FROM direct_orders WHERE order_day=${day}::date ORDER BY created_at,daily_order_number`;
+      await sql`SELECT o.daily_order_number,o.mode,o.fulfillment_type,o.table_area,o.table_number,o.customer_name,o.customer_phone,o.items,o.total,o.status,o.settlement_type,o.settlement_amount,o.payment_received,o.change_due,o.tip_amount,o.created_at,o.settled_at,
+        COALESCE((SELECT jsonb_agg(jsonb_build_object('paymentType',p.payment_type,'appliedAmount',p.applied_amount,'receivedAmount',p.received_amount,'collectedAmount',p.collected_amount,'changeAmount',p.change_amount,'tipAmount',p.tip_amount) ORDER BY p.payment_index) FROM order_payments p WHERE p.order_id=o.id),'[]'::jsonb) AS payments
+        FROM direct_orders o WHERE o.order_day=${day}::date ORDER BY o.created_at,o.daily_order_number`;
     const reportable = rows.filter(
       (order) => !['cancelled', 'rejected'].includes(String(order.status || '').toLowerCase())
     );
@@ -7578,8 +7643,19 @@ app.get('/api/admin/customer-insights/daily-summary', async (req, res) => {
         itemCounts.set(label, (itemCounts.get(label) || 0) + quantity);
       });
     });
+    const collectedFor = (order) => {
+      if (Array.isArray(order.payments) && order.payments.length)
+        return order.payments.reduce(
+          (sum, payment) => sum + Number(payment.collectedAmount || 0),
+          0
+        );
+      if (!order.settlement_type || ['due', 'not_paid'].includes(order.settlement_type)) return 0;
+      return Math.min(Number(order.total || 0), Number(order.settlement_amount ?? order.total ?? 0));
+    };
     const orders = rows.map(({ items, ...order }) => ({
       ...order,
+      collected_amount:
+        String(order.status || '').toLowerCase() === 'completed' ? collectedFor(order) : 0,
       item_quantity: (Array.isArray(items) ? items : []).reduce(
         (sum, item) => sum + Math.max(0, Number(item.quantity || 0)),
         0
@@ -7607,9 +7683,9 @@ app.get('/api/admin/customer-insights/daily-summary', async (req, res) => {
           .reduce((sum, order) => sum + Number(order.item_quantity || 0), 0),
         orderValue: moneyTotal(reportable, 'total'),
         completedValue: moneyTotal(completed, 'total'),
-        collected: completed.reduce(
-          (sum, order) =>
-            sum + Number(order.settlement_amount == null ? order.total : order.settlement_amount),
+        collected: completed.reduce((sum, order) => sum + collectedFor(order), 0),
+        outstanding: completed.reduce(
+          (sum, order) => sum + Math.max(0, Number(order.total || 0) - collectedFor(order)),
           0
         ),
         tips: moneyTotal(completed, 'tip_amount'),
@@ -7623,6 +7699,66 @@ app.get('/api/admin/customer-insights/daily-summary', async (req, res) => {
   }
 });
 
+app.get('/api/admin/analytics/updates', async (req, res) => {
+  try {
+    await ensureSmartKdsTables();
+    const rawCursor = String(req.query?.after || '');
+    const hasCursor = /^\d+$/.test(rawCursor);
+    const after = hasCursor ? Math.max(0, Math.min(Number(rawCursor), Number.MAX_SAFE_INTEGER)) : 0;
+    if (!hasCursor) {
+      const latest =
+        await sql`SELECT event_id FROM kitchen_realtime_events ORDER BY event_id DESC LIMIT 1`;
+      res.set('Cache-Control', 'private, no-store');
+      return res.json({ cursor: Number(latest[0]?.event_id || 0), events: [] });
+    }
+    const events =
+      await sql`SELECT event_id,event_type,created_at FROM kitchen_realtime_events WHERE event_id>${after} ORDER BY event_id ASC LIMIT 100`;
+    const cursor = events.length ? Number(events[events.length - 1].event_id) : after;
+    res.set('Cache-Control', 'private, no-store');
+    res.json({
+      cursor,
+      events: events.map((event) => ({
+        id: Number(event.event_id),
+        type: event.event_type,
+        at: event.created_at,
+      })),
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Unable to check live dashboard updates.' });
+  }
+});
+
+app.get('/api/admin/analytics/stream', async (req, res) => {
+  try {
+    await ensureSmartKdsTables();
+    res.status(200);
+    res.set({
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'private, no-cache, no-transform',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    res.flushHeaders?.();
+    res.write(`event: connected\ndata: ${JSON.stringify({ at: new Date().toISOString() })}\n\n`);
+    smartKdsStreamClients.add(res);
+    const heartbeat = setInterval(() => {
+      try {
+        res.write(': keepalive\n\n');
+      } catch (_) {
+        clearInterval(heartbeat);
+        smartKdsStreamClients.delete(res);
+      }
+    }, 25000);
+    req.on('close', () => {
+      clearInterval(heartbeat);
+      smartKdsStreamClients.delete(res);
+    });
+  } catch (error) {
+    if (!res.headersSent) res.status(500).json({ error: 'Unable to open live dashboard updates.' });
+    else res.end();
+  }
+});
+
 app.get('/api/admin/analytics', async (req, res) => {
   let range;
   try {
@@ -7631,7 +7767,12 @@ app.get('/api/admin/analytics', async (req, res) => {
     return res.status(400).json({ error: error.message });
   }
   try {
-    await Promise.all([ensureDirectOrdersTable(), ensureKotsTable(), ensureOrderEventsTable()]);
+    await Promise.all([
+      ensureDirectOrdersTable(),
+      ensureOrderPaymentsTable(),
+      ensureKotsTable(),
+      ensureOrderEventsTable(),
+    ]);
     const start = range.startUtc;
     const end = range.endUtc;
     const previousStart = range.previous.startUtc;
@@ -7640,12 +7781,17 @@ app.get('/api/admin/analytics', async (req, res) => {
 
     const [overviewRows, recentOrders, kotRows, billRows] = await Promise.all([
       sql`
-        WITH windowed AS (
+        WITH payment_totals AS (
+          SELECT order_id,
+            COALESCE(SUM(collected_amount),0)::numeric AS collected,
+            COALESCE(SUM(applied_amount-collected_amount),0)::numeric AS outstanding
+          FROM order_payments GROUP BY order_id
+        ), windowed AS (
           SELECT 'current'::text AS period,o.* FROM direct_orders o WHERE o.created_at>=${start} AND o.created_at<${end}
           UNION ALL
           SELECT 'previous'::text AS period,o.* FROM direct_orders o WHERE o.created_at>=${previousStart} AND o.created_at<${previousEnd}
         ), summaries AS (
-          SELECT period,
+          SELECT w.period,
             COUNT(*)::integer AS total_orders,
             COUNT(*) FILTER (WHERE status='completed')::integer AS completed_bills,
             COUNT(*) FILTER (WHERE status IN ('new','saved','held','accepted','preparing','ready'))::integer AS live_orders,
@@ -7653,10 +7799,16 @@ app.get('/api/admin/analytics', async (req, res) => {
             COUNT(*) FILTER (WHERE status='rejected')::integer AS rejected_orders,
             COALESCE(SUM(total) FILTER (WHERE status NOT IN ('cancelled','rejected')),0)::numeric AS order_value,
             COALESCE(SUM(total) FILTER (WHERE status='completed'),0)::numeric AS net_sales,
-            COALESCE(SUM(COALESCE(settlement_amount,total)) FILTER (WHERE status='completed'),0)::numeric AS collected,
+            COALESCE(SUM(CASE WHEN status='completed' THEN COALESCE(pt.collected,
+              CASE WHEN COALESCE(settlement_type,'') IN ('','due','not_paid') THEN 0
+                   ELSE LEAST(total,COALESCE(settlement_amount,total)) END) ELSE 0 END),0)::numeric AS collected,
+            COALESCE(SUM(CASE WHEN status='completed' THEN COALESCE(pt.outstanding,
+              CASE WHEN COALESCE(settlement_type,'') IN ('','due','not_paid') THEN total
+                   WHEN settlement_type='part' THEN GREATEST(0,total-COALESCE(settlement_amount,0))
+                   ELSE 0 END) ELSE 0 END),0)::numeric AS outstanding,
             COALESCE(SUM(tip_amount) FILTER (WHERE status='completed'),0)::numeric AS tips,
             COALESCE(AVG(total) FILTER (WHERE status='completed'),0)::numeric AS average_bill
-          FROM windowed GROUP BY period
+          FROM windowed w LEFT JOIN payment_totals pt ON pt.order_id=w.id GROUP BY w.period
         ), current_orders AS (
           SELECT * FROM direct_orders WHERE created_at>=${start} AND created_at<${end}
         ), channels AS (
@@ -7664,11 +7816,26 @@ app.get('/api/admin/analytics', async (req, res) => {
             COUNT(*) FILTER (WHERE status='completed')::integer AS bills,
             COALESCE(SUM(total) FILTER (WHERE status='completed'),0)::numeric AS sales
           FROM current_orders GROUP BY 1
+        ), ledger_payments AS (
+          SELECT p.order_id,p.payment_type,p.applied_amount,p.collected_amount,p.change_amount,p.tip_amount
+          FROM order_payments p JOIN current_orders o ON o.id=p.order_id WHERE o.status='completed'
+        ), legacy_payments AS (
+          SELECT o.id AS order_id,COALESCE(NULLIF(o.settlement_type,''),'not_recorded') AS payment_type,
+            o.total AS applied_amount,
+            CASE WHEN COALESCE(o.settlement_type,'') IN ('','due','not_paid') THEN 0
+                 ELSE LEAST(o.total,COALESCE(o.settlement_amount,o.total)) END AS collected_amount,
+            COALESCE(o.change_due,0) AS change_amount,COALESCE(o.tip_amount,0) AS tip_amount
+          FROM current_orders o WHERE o.status='completed'
+            AND NOT EXISTS (SELECT 1 FROM order_payments p WHERE p.order_id=o.id)
+        ), all_payments AS (
+          SELECT * FROM ledger_payments UNION ALL SELECT * FROM legacy_payments
         ), payments AS (
-          SELECT COALESCE(NULLIF(settlement_type,''),'not_recorded') AS payment_type,
-            COUNT(*)::integer AS bills,
-            COALESCE(SUM(COALESCE(settlement_amount,total)),0)::numeric AS amount
-          FROM current_orders WHERE status='completed' GROUP BY 1
+          SELECT payment_type,COUNT(DISTINCT order_id)::integer AS bills,
+            COALESCE(SUM(collected_amount),0)::numeric AS amount,
+            COALESCE(SUM(applied_amount-collected_amount),0)::numeric AS outstanding,
+            COALESCE(SUM(change_amount),0)::numeric AS change,
+            COALESCE(SUM(tip_amount),0)::numeric AS tips
+          FROM all_payments GROUP BY payment_type
         ), trend AS (
           SELECT CASE WHEN ${monthlyTrend} THEN date_trunc('month',created_at AT TIME ZONE 'Asia/Kolkata')::date ELSE order_day END AS day,
             COUNT(*) FILTER (WHERE status='completed')::integer AS bills,
@@ -7697,10 +7864,11 @@ app.get('/api/admin/analytics', async (req, res) => {
           COALESCE((SELECT jsonb_agg(to_jsonb(i) ORDER BY i.quantity DESC,i.sales DESC) FROM top_items i),'[]'::jsonb) AS top_items
       `,
       sql`
-        SELECT id,daily_order_number,bill_year,bill_number,mode,fulfillment_type,table_area,table_number,
-          customer_name,total,status,settlement_type,created_at,settled_at
-        FROM direct_orders WHERE created_at>=${start} AND created_at<${end}
-        ORDER BY created_at DESC LIMIT 80
+        SELECT o.id,o.daily_order_number,o.bill_year,o.bill_number,o.mode,o.fulfillment_type,o.table_area,o.table_number,
+          o.customer_name,o.total,o.status,o.settlement_type,o.created_at,o.settled_at,
+          COALESCE((SELECT jsonb_agg(p.payment_type ORDER BY p.payment_index) FROM order_payments p WHERE p.order_id=o.id),'[]'::jsonb) AS payment_methods
+        FROM direct_orders o WHERE o.created_at>=${start} AND o.created_at<${end}
+        ORDER BY o.created_at DESC LIMIT 80
       `,
       sql`
         WITH kot_totals AS (
@@ -7770,6 +7938,7 @@ app.get('/api/admin/analytics', async (req, res) => {
       order_value: 0,
       net_sales: 0,
       collected: 0,
+      outstanding: 0,
       tips: 0,
       average_bill: 0,
     };
@@ -7796,6 +7965,8 @@ app.get('/api/admin/analytics', async (req, res) => {
       bills: billRows[0] || { summary: {}, exceptions: [] },
       definitions: {
         sales: 'Completed bills only. Cancelled, rejected and unpaid live orders are excluded.',
+        collections: 'Money actually collected, excluding cash change and amounts left due.',
+        outstanding: 'The unpaid portion of completed bills recorded as Due or part payment.',
         cancelledKot: 'Stored KOT rounds attached to an order cancelled during the selected period.',
         modifiedKot: 'An item update or Captain add-on round made after the first KOT existed.',
         shiftedKot: 'A table move recorded after the order already had a KOT.',
@@ -8975,6 +9146,7 @@ app.get('/api/admin/health', async (req, res) => {
       const latencyMs = Date.now() - startedAt;
       await Promise.all([
         ensureDirectOrdersTable(),
+        ensureOrderPaymentsTable(),
         ensureKotsTable(),
         ensureOperationsConfigTable(),
         ensureMenuAvailabilityTable(),
@@ -8983,6 +9155,7 @@ app.get('/api/admin/health', async (req, res) => {
       ]);
       const [
         orders,
+        payments,
         kots,
         printers,
         availability,
@@ -8992,6 +9165,7 @@ app.get('/api/admin/health', async (req, res) => {
         databaseSize,
       ] = await Promise.all([
         sql`SELECT COUNT(*)::int AS count FROM direct_orders`,
+        sql`SELECT COUNT(*)::int AS count FROM order_payments`,
         sql`SELECT COUNT(*)::int AS count FROM order_kots`,
         sql`SELECT COUNT(*)::int AS count FROM order_operations_config`,
         sql`SELECT COUNT(*)::int AS count FROM menu_availability WHERE unavailable_until > NOW()`,
@@ -9009,6 +9183,7 @@ app.get('/api/admin/health', async (req, res) => {
         latestOrderAt: latestOrder[0]?.created_at || null,
         counts: {
           orders: Number(orders[0]?.count || 0),
+          payments: Number(payments[0]?.count || 0),
           kots: Number(kots[0]?.count || 0),
           printerConfigs: Number(printers[0]?.count || 0),
           unavailableItems: Number(availability[0]?.count || 0),

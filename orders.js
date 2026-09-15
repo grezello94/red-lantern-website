@@ -38,6 +38,7 @@ const {
   configuredPrintersFor,
   printerFormat,
   printerCapabilities,
+  printerBelongsToWorkstation,
   printerSupports,
   setPrinterCapability,
   setPrinterFormat,
@@ -193,6 +194,8 @@ let installedSystemPrinters = [];
 let printBridgeState = 'checking';
 let printBridgeConfigState = 'not-synced';
 let printBridgeSetupStatus = null;
+let printBridgeWorkstation = null;
+let workstationPairingInFlight = false;
 let assignmentPrinterId = '';
 let assignmentMode = '';
 let counterMenu = [];
@@ -214,6 +217,26 @@ const printBridgeOrigin =
     window.RED_LANTERN_CONFIG &&
     window.RED_LANTERN_CONFIG.printBridgeOrigin) ||
   'http://127.0.0.1:9124';
+
+function rememberPrintBridgeWorkstation(payload) {
+  const workstation = payload?.workstation;
+  if (!workstation?.id) return printBridgeWorkstation;
+  printBridgeWorkstation = {
+    id: String(workstation.id),
+    name: String(workstation.name || 'Restaurant computer'),
+    platform: String(workstation.platform || ''),
+  };
+  return printBridgeWorkstation;
+}
+function localWorkstationId() {
+  return String(printBridgeWorkstation?.id || '');
+}
+function ticketsForThisWorkstation(tickets) {
+  const workstationId = localWorkstationId();
+  return (Array.isArray(tickets) ? tickets : []).filter(
+    (ticket) => !workstationId || !ticket.workstationId || ticket.workstationId === workstationId
+  );
+}
 
 // Bridge support for extracted browser bridge
 const bridgeSupport =
@@ -1554,7 +1577,7 @@ moveTableDialog.addEventListener('click', async (event) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ tableArea, tableNumber: Number(tableNumber) }),
     });
-    const data = await response.json().catch(() => ({}));
+    let data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || 'Unable to move the table.');
     moveTableDialog.close();
     await showTableView();
@@ -1617,6 +1640,7 @@ tableViewReferenceStyles.textContent = `
    occupied table metadata competes for the same horizontal row and escapes the card. */
 .table-tile,.table-tile-wrap .table-tile{box-sizing:border-box;min-width:0;flex-direction:column;align-items:stretch;justify-content:flex-start;overflow:hidden}.table-tile:focus-visible{outline:3px solid #2563eb;outline-offset:2px}.table-tile-top{min-width:0;align-items:flex-start}.table-tile-top>div{min-width:0}.table-tile-top em{max-width:82px;overflow:hidden;line-height:1.15;text-align:center;text-overflow:ellipsis}.table-tile-info{box-sizing:border-box;align-self:stretch;min-width:0;margin-top:auto;padding:14px 0 0}.table-tile-info small,.table-tile-info strong{max-width:100%}.table-tile-info strong{max-width:calc(100% - 80px);margin-top:10px;line-height:1.1}.table-tile.is-blank,.table-tile.is-paid{align-items:center;justify-content:center}.table-tile.is-blank .table-tile-top{width:auto}.table-tile.is-blank>small{margin:7px 0 0}.table-tile-actions{z-index:1;right:12px;bottom:12px;gap:6px}.table-tile-action{width:34px;height:34px;border-radius:9px}
 @media(max-width:780px){#table-view-panel{margin:14px 16px 0;padding:18px}.table-view-head{align-items:start}.table-view-head h2{font-size:23px}.table-floor-toolbar{align-items:stretch;flex-direction:column}.table-search{min-width:0}.table-view-legend{justify-content:flex-start}.table-move-toggle{margin-right:0}.table-grid{grid-template-columns:repeat(auto-fill,minmax(142px,1fr));gap:10px}.table-tile,.table-tile-wrap,.table-tile-wrap .table-tile{min-height:142px}.table-area-head h3:after{width:45px}.table-tile-top b{font-size:27px}}
+@media(max-width:420px){#table-view-panel{margin-inline:12px;padding:16px}.table-view-head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px}.table-view-head h2{font-size:21px}.table-view-head-note{min-width:70px;padding:8px}.table-view-head-note b{font-size:18px}.table-view-head-note span{font-size:8px}.table-area-head h3{overflow-wrap:anywhere}}
 `;
 document.head.appendChild(tableViewReferenceStyles);
 const settleTableStyles = document.createElement('style');
@@ -1663,7 +1687,7 @@ counterWorkspaceStyles.textContent = `
 document.head.appendChild(counterWorkspaceStyles);
 const counterWorkspacePolishStyles = document.createElement('style');
 counterWorkspacePolishStyles.textContent = `
-.counter-menu-items{grid-template-columns:repeat(auto-fill,minmax(215px,1fr));grid-auto-rows:154px}.counter-menu-item{display:flex;height:154px;flex-direction:column;padding:15px}.counter-menu-item b{display:-webkit-box;overflow:hidden;margin:7px 32px 0 0;line-height:1.3;-webkit-line-clamp:2;-webkit-box-orient:vertical}.counter-menu-item small{position:static;display:block;margin-top:auto;padding-right:38px;overflow:hidden;font-size:16px;line-height:1.15;text-overflow:ellipsis;white-space:nowrap}.counter-menu-item i{right:14px;bottom:14px}.counter-cart-items .counter-empty{display:grid;min-height:142px;margin:6px 0;place-items:center;padding:18px;border:1px dashed #d5dfeb;border-radius:11px;color:#788aa2;background:#fafcff;font-size:11px;font-weight:750;line-height:1.45;text-align:center}.counter-cart-items .counter-empty:before{display:block;width:32px;height:32px;margin:0 auto 7px;place-content:center;border-radius:50%;color:#b3c0d0;background:#edf2f7;content:'+';font-size:21px;font-weight:500}@media(min-width:1750px){.counter-menu-items{grid-template-columns:repeat(auto-fill,minmax(230px,1fr))}}@media(max-width:760px){.counter-menu-items{grid-template-columns:repeat(2,minmax(0,1fr));grid-auto-rows:136px}.counter-menu-item{height:136px}.counter-menu-item small{font-size:14px}.counter-cart-items .counter-empty{min-height:110px}}
+.counter-menu-items{grid-template-columns:repeat(auto-fill,minmax(172px,1fr));grid-auto-rows:118px;gap:10px}.counter-menu-item{display:flex;height:118px;flex-direction:column;padding:12px}.counter-menu-item b{display:-webkit-box;overflow:hidden;margin:5px 30px 0 0;font-size:12px;line-height:1.25;-webkit-line-clamp:2;-webkit-box-orient:vertical}.counter-menu-item small{position:static;display:block;margin-top:auto;padding-right:34px;overflow:hidden;font-size:14px;line-height:1.15;text-overflow:ellipsis;white-space:nowrap}.counter-menu-item i{right:10px;bottom:10px;width:28px;height:28px;font-size:22px}.counter-cart-items .counter-empty{display:grid;min-height:142px;margin:6px 0;place-items:center;padding:18px;border:1px dashed #d5dfeb;border-radius:11px;color:#788aa2;background:#fafcff;font-size:11px;font-weight:750;line-height:1.45;text-align:center}.counter-cart-items .counter-empty:before{display:block;width:32px;height:32px;margin:0 auto 7px;place-content:center;border-radius:50%;color:#b3c0d0;background:#edf2f7;content:'+';font-size:21px;font-weight:500}@media(min-width:1750px){.counter-menu-items{grid-template-columns:repeat(auto-fill,minmax(182px,1fr))}}@media(max-width:760px){.counter-menu-items{grid-template-columns:repeat(2,minmax(0,1fr));grid-auto-rows:122px}.counter-menu-item{height:122px;padding:11px}.counter-menu-item b{font-size:12px}.counter-menu-item small{font-size:14px}.counter-menu-item i{right:9px;bottom:9px;width:28px;height:28px}.counter-cart-items .counter-empty{min-height:110px}}
 `;
 document.head.appendChild(counterWorkspacePolishStyles);
 const counterWorkspaceScrollStyles = document.createElement('style');
@@ -2256,6 +2280,7 @@ async function printBillOnConfiguredPrinters(printers, order, printJobPrefix) {
         body: JSON.stringify({
           printJobId: `${printJobPrefix}:${printerKey}`,
           printerName: printer.deviceName,
+          workstationId: printer.workstationId || localWorkstationId(),
           order,
           // Layout is always taken from the printer receiving this copy. No
           // bill queue inherits another printer's paper or typography settings.
@@ -2301,7 +2326,8 @@ async function printOrder(id, split = null) {
       fetch(`/api/orders/${encodeURIComponent(id)}/print`, { cache: 'no-store' }),
     ]);
     if (!bridgeResponse.ok) throw new Error('Print Bridge is not available on this computer.');
-    const billPrinters = configuredPrintersFor(printConfig, 'bill');
+    rememberPrintBridgeWorkstation(await bridgeResponse.clone().json().catch(() => ({})));
+    const billPrinters = configuredPrintersFor(printConfig, 'bill', localWorkstationId());
     if (!billPrinters.length) throw new Error('No Bill printer is configured.');
     const receipt = await receiptResponse.json();
     if (!receiptResponse.ok) throw new Error(receipt.error || 'Unable to prepare the receipt.');
@@ -2411,7 +2437,8 @@ const operationItemOptions = (item) => {
 const routePrinters = (item) => {
   const printers = new Map(operationsConfig.printers.map((printer) => [printer.id, printer]));
   const routes = operationsConfig.routes.filter((route) =>
-    printerSupports(printers.get(route.printerId), 'kot')
+    printerSupports(printers.get(route.printerId), 'kot') &&
+    printerBelongsToWorkstation(printers.get(route.printerId), localWorkstationId())
   );
   return [
     ...new Map(
@@ -3212,6 +3239,22 @@ function renderPrintBridgeSetup() {
           `${job.kind.toUpperCase()} · ${job.printerName}${job.status === 'uncertain' ? ' · output uncertain' : ''}`
       )
       .join(' · ');
+  const unavailablePrinterNames = (
+      Array.isArray(status?.unavailableConfiguredPrinters)
+        ? status.unavailableConfiguredPrinters
+        : []
+    )
+      .map((printer) => printer.name || printer.deviceName)
+      .filter(Boolean)
+      .join(', '),
+    unreachablePrinterNames = (
+      Array.isArray(status?.unreachableConfiguredPrinters)
+        ? status.unreachableConfiguredPrinters
+        : []
+    )
+      .map((printer) => printer.name || printer.deviceName)
+      .filter(Boolean)
+      .join(', ');
   const card = status?.checking
     ? `<span class="printing-status-icon is-checking" aria-hidden="true">…</span><div><h3>Preparing printing…</h3><p>This takes a moment.</p></div>`
     : status?.ok && failedJobs
@@ -3219,9 +3262,9 @@ function renderPrintBridgeSetup() {
       : status?.ok && missingPrinters
         ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Assigned printer is missing</h3><p>${missingPrinters} saved printer ${missingPrinters === 1 ? 'queue is' : 'queues are'} no longer installed in Windows/macOS. Reassign the device before service.</p><button type="button" class="quiet-button" data-operations-tab="printers">Manage printers</button><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
         : status?.ok && unavailablePrinters
-          ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Printer queue is offline</h3><p>${unavailablePrinters} configured printer ${unavailablePrinters === 1 ? 'queue is' : 'queues are'} reporting Offline or Error in the operating system. Check power, cable/Wi-Fi, and the saved printer port before service.</p><button type="button" class="quiet-button" data-operations-tab="printers">Manage printers</button><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
+          ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Printer needs a physical check</h3><p>The Bridge already checked Windows automatically. ${esc(unavailablePrinterNames || `${unavailablePrinters} configured printer queue${unavailablePrinters === 1 ? '' : 's'}`)} still reports Offline or Error. Staff only need to check that the printer has power, paper and a connected cable.</p><button type="button" class="quiet-button" data-operations-tab="printers">Manage printers</button><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
           : status?.ok && unreachablePrinters
-            ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Network printer is unreachable</h3><p>${unreachablePrinters} configured LAN printer ${unreachablePrinters === 1 ? 'endpoint is' : 'endpoints are'} not accepting connections. Check printer power, Ethernet/Wi-Fi, unique IP/MAC settings, and RAW port 9100.</p><button type="button" class="quiet-button" data-operations-tab="printers">Manage printers</button><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
+            ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Printer needs a physical check</h3><p>The Bridge tested ${esc(unreachablePrinterNames || `${unreachablePrinters} configured LAN printer${unreachablePrinters === 1 ? '' : 's'}`)} automatically, but could not reach it. Staff only need to check printer power and its Ethernet/Wi-Fi connection.</p><button type="button" class="quiet-button" data-operations-tab="printers">Manage printers</button><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
             : status?.ok && unroutedItems
               ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Menu routing is incomplete</h3><p>${unroutedItems} menu item${unroutedItems === 1 ? '' : 's'} ${unroutedItems === 1 ? 'has' : 'have'} no live KOT printer route${status.unroutedItems?.length ? `: ${esc(status.unroutedItems.slice(0, 5).join(', '))}${unroutedItems > 5 ? '…' : ''}` : ''}.</p><button type="button" class="quiet-button" data-operations-tab="printers">Manage printers</button></div>`
               : status?.ok && !status.cloud
@@ -3290,14 +3333,8 @@ async function checkPrintBridgeSetup() {
     const data = await response.json().catch(() => ({}));
     if (!response.ok || !data.ok)
       throw new Error(data.detail || data.error || 'The local service did not complete its check.');
-    const cloudData = await cloudCheck,
-      unrouted = cloudData ? unroutedOperationItems(cloudData.menu, cloudData.config) : [];
-    printBridgeSetupStatus = {
-      ...data,
-      cloud: !!cloudData,
-      unroutedItemCount: unrouted.length,
-      unroutedItems: unrouted,
-    };
+    rememberPrintBridgeWorkstation(data);
+    const cloudData = await cloudCheck;
     installedSystemPrinters = Array.from(
       { length: Number(data.printerCount) || 0 },
       (_, index) => installedSystemPrinters[index]
@@ -3316,8 +3353,34 @@ async function checkPrintBridgeSetup() {
       };
       printOperationsLoadedAt = Date.now();
       cacheOperationsConfig(operationsConfig);
-      void syncOperationsToPrintBridge(operationsConfig);
+      await syncOperationsToPrintBridge(operationsConfig);
+      await pairLegacyPrintersToThisWorkstation();
+      // Re-read readiness after automatic sync/pairing so an already working
+      // computer never shows a stale "Finish printer setup" warning.
+      try {
+        const refreshController = new AbortController();
+        const refreshTimeout = setTimeout(() => refreshController.abort(), 1800);
+        const refreshedResponse = await fetch(`${printBridgeOrigin}/v1/setup-status`, {
+          cache: 'no-store',
+          signal: refreshController.signal,
+        });
+        clearTimeout(refreshTimeout);
+        const refreshed = await refreshedResponse.json().catch(() => ({}));
+        if (refreshedResponse.ok && refreshed.ok) {
+          rememberPrintBridgeWorkstation(refreshed);
+          data = refreshed;
+        }
+      } catch (_) {}
     }
+    const unrouted = cloudData
+      ? unroutedOperationItems(cloudData.menu, operationsConfig)
+      : [];
+    printBridgeSetupStatus = {
+      ...data,
+      cloud: !!cloudData,
+      unroutedItemCount: unrouted.length,
+      unroutedItems: unrouted,
+    };
   } catch (error) {
     printBridgeSetupStatus = {
       ok: false,
@@ -3333,6 +3396,7 @@ async function loadOperations() {
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || 'Unable to load Operations.');
   operationsConfig = data.config || { printers: [], routes: [] };
+  printOperationsLoadedAt = Date.now();
   if (!Array.isArray(operationsConfig.tableAreas) || !operationsConfig.tableAreas.length)
     operationsConfig.tableAreas = readCachedTableAreas();
   else cacheTableAreas(operationsConfig.tableAreas);
@@ -3391,6 +3455,7 @@ async function discoverSystemPrinters() {
     const body = await response.json();
     if (!response.ok || !Array.isArray(body.printers))
       throw new Error('Print Bridge did not return installed printers.');
+    rememberPrintBridgeWorkstation(body);
     installedSystemPrinters = body.printers
       .map((printer) => ({
         id: String(printer.id || printer.name || ''),
@@ -3398,9 +3463,66 @@ async function discoverSystemPrinters() {
       }))
       .filter((printer) => printer.id && printer.name);
     printBridgeState = 'available';
+    void pairLegacyPrintersToThisWorkstation();
   } catch (_) {
     installedSystemPrinters = [];
     printBridgeState = 'offline';
+  }
+}
+async function pairLegacyPrintersToThisWorkstation() {
+  const workstationId = localWorkstationId();
+  if (
+    workstationPairingInFlight ||
+    !workstationId ||
+    !navigator.onLine ||
+    !printOperationsLoadedAt ||
+    !installedSystemPrinters.length ||
+    !Array.isArray(operationsConfig.printers)
+  )
+    return false;
+  const installedIds = new Set(installedSystemPrinters.map((printer) => String(printer.id)));
+  const installedNames = new Set(installedSystemPrinters.map((printer) => String(printer.name)));
+  let changed = false;
+  const printers = operationsConfig.printers.map((printer) => {
+    if (printer.workstationId) return printer;
+    const isInstalledHere =
+      installedIds.has(String(printer.deviceId || '')) ||
+      installedNames.has(String(printer.deviceName || ''));
+    if (!isInstalledHere) return printer;
+    changed = true;
+    return {
+      ...printer,
+      workstationId,
+      workstationName: printBridgeWorkstation.name,
+    };
+  });
+  if (!changed) return false;
+  workstationPairingInFlight = true;
+  try {
+    const response = await fetch('/api/orders/operations', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ config: { ...operationsConfig, printers } }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.config)
+      throw new Error(data.error || 'Automatic printer pairing could not be saved.');
+    operationsConfig = data.config;
+    printOperationsLoadedAt = Date.now();
+    cacheOperationsConfig(operationsConfig);
+    await syncOperationsToPrintBridge(operationsConfig);
+    const operationsPanelElement = document.getElementById('operations-panel');
+    if (operationsPanelElement && !operationsPanelElement.hidden) renderOperations();
+    return true;
+  } catch (error) {
+    reportOrdersDiagnostic({
+      level: 'warning',
+      message: `Automatic workstation pairing will retry: ${error.message}`,
+      source: 'print workstation pairing',
+    });
+    return false;
+  } finally {
+    workstationPairingInFlight = false;
   }
 }
 async function syncOperationsToPrintBridge(config) {
@@ -3625,7 +3747,7 @@ async function dispatchKot(orderId, printerId) {
       `KOT #${data.kotNumber} was already sent. Use Reprint if another copy is needed.`
     );
   await Promise.all(
-    data.tickets.map(async (ticket) => {
+    ticketsForThisWorkstation(data.tickets).map(async (ticket) => {
       const response = await fetch(`${printBridgeOrigin}/v1/print-kot`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -3633,8 +3755,14 @@ async function dispatchKot(orderId, printerId) {
           printJobId: `manual-kot:${orderId}:${data.kotNumber}:${ticket.printerName}:${Date.now()}`,
           printerName: ticket.printerName,
           printerLabel: ticket.printerLabel,
+          workstationId: ticket.workstationId || localWorkstationId(),
           settings: printerFormat(
-            operationsConfig.printers.find((printer) => printer.deviceName === ticket.printerName),
+            operationsConfig.printers.find(
+              (printer) =>
+                printer.id === ticket.printerId ||
+                (printer.deviceName === ticket.printerName &&
+                  printerBelongsToWorkstation(printer, localWorkstationId()))
+            ),
             'kot'
           ),
           items: ticket.items,
@@ -3678,7 +3806,8 @@ async function autoPrintRequestedTableBill(order) {
       getPrintOperationsConfig(),
     ]);
     if (!bridge?.ok) return;
-    const billPrinters = configuredPrintersFor(printConfig, 'bill');
+    rememberPrintBridgeWorkstation(await bridge.clone().json().catch(() => ({})));
+    const billPrinters = configuredPrintersFor(printConfig, 'bill', localWorkstationId());
     if (!billPrinters.length) throw new Error('No Bill printer is assigned in Operations.');
     const claimResponse = await fetch(
       `/api/orders/${encodeURIComponent(order.id)}/bill-print/claim`,
@@ -3805,6 +3934,7 @@ async function autoPrintOrder(order, { deferred = false, kotOnly = false } = {})
       });
       return { ok: false, reason };
     }
+    rememberPrintBridgeWorkstation(await bridge.clone().json().catch(() => ({})));
     const kotPromise = (async () => {
       try {
         const createdResult = await createdPromise;
@@ -3826,9 +3956,14 @@ async function autoPrintOrder(order, { deferred = false, kotOnly = false } = {})
             ? operationsResult.config.printers
             : [];
           await Promise.all(
-            (savedKot.tickets || []).map(async (ticket) => {
+            ticketsForThisWorkstation(savedKot.tickets).map(async (ticket) => {
               const settings = printerFormat(
-                printers.find((printer) => printer.deviceName === ticket.printerName),
+                printers.find(
+                  (printer) =>
+                    printer.id === ticket.printerId ||
+                    (printer.deviceName === ticket.printerName &&
+                      printerBelongsToWorkstation(printer, localWorkstationId()))
+                ),
                 'kot'
               );
               const response = await fetch(`${printBridgeOrigin}/v1/print-kot`, {
@@ -3838,6 +3973,7 @@ async function autoPrintOrder(order, { deferred = false, kotOnly = false } = {})
                   printJobId: `auto-kot:${order.id}:${savedKot.kotNumber}:${ticket.printerName}`,
                   printerName: ticket.printerName,
                   printerLabel: ticket.printerLabel,
+                  workstationId: ticket.workstationId || localWorkstationId(),
                   settings,
                   items: ticket.items,
                   order: {
@@ -3880,7 +4016,11 @@ async function autoPrintOrder(order, { deferred = false, kotOnly = false } = {})
     // The bill starts at the same time as the KOT. Neither printer can delay the other.
     const billPromise = operationsPromise.then(async (operationsResult) => {
       if (operationsResult.error) throw operationsResult.error;
-      const billPrinters = configuredPrintersFor(operationsResult.config, 'bill');
+      const billPrinters = configuredPrintersFor(
+        operationsResult.config,
+        'bill',
+        localWorkstationId()
+      );
       if (!billPrinters.length) {
         const reason = 'No Bill printer is assigned in Operations.';
         reportOrdersDiagnostic({
@@ -5237,7 +5377,13 @@ document.getElementById('operations-content')?.addEventListener('click', async (
       alert('Choose an installed system printer first.');
       return;
     }
-    if (operationsConfig.printers.some((printer) => printer.deviceId === deviceId)) {
+    if (
+      operationsConfig.printers.some(
+        (printer) =>
+          printer.deviceId === deviceId &&
+          printerBelongsToWorkstation(printer, localWorkstationId())
+      )
+    ) {
       alert('This system printer has already been added.');
       return;
     }
@@ -5249,6 +5395,8 @@ document.getElementById('operations-content')?.addEventListener('click', async (
       connection: 'system',
       deviceId,
       deviceName,
+      workstationId: localWorkstationId(),
+      workstationName: printBridgeWorkstation?.name || '',
     });
     renderOperations();
     return;
@@ -5287,6 +5435,8 @@ document.getElementById('operations-content')?.addEventListener('click', async (
     printer.deviceName = String(
       device?.selectedOptions?.[0]?.textContent || printer.deviceName || ''
     ).trim();
+    printer.workstationId = localWorkstationId();
+    printer.workstationName = printBridgeWorkstation?.name || '';
     format.paperWidth =
       Number(document.getElementById('printer-edit-paper')?.value) == 58 ? 58 : 80;
     format.receiptHeader = String(document.getElementById('printer-edit-header')?.value || '')
@@ -5551,6 +5701,8 @@ document.getElementById('operations-content')?.addEventListener('click', async (
       connection: 'system',
       deviceId,
       deviceName,
+      workstationId: localWorkstationId(),
+      workstationName: printBridgeWorkstation?.name || '',
     });
     renderOperations();
     return;

@@ -39,6 +39,26 @@
     String(value || '')
       .replace(/_/g, ' ')
       .replace(/\b\w/g, (letter) => letter.toUpperCase());
+  const paymentNames = {
+    cash: 'Cash',
+    upi: 'UPI / GPay',
+    card: 'Card',
+    zomato: 'Zomato',
+    due: 'Due',
+    part: 'Part payment',
+    other: 'Other',
+    not_paid: 'Not paid',
+    not_recorded: 'Not recorded',
+  };
+  const paymentName = (value) => paymentNames[value] || title(value || 'Not recorded');
+  const orderPaymentName = (order) => {
+    const methods = Array.isArray(order.payment_methods)
+      ? [...new Set(order.payment_methods.filter(Boolean))]
+      : [];
+    return methods.length
+      ? methods.map(paymentName).join(' + ')
+      : paymentName(order.settlement_type || 'not_recorded');
+  };
   const today = () => {
     const parts = new Intl.DateTimeFormat('en-CA', {
       timeZone: 'Asia/Kolkata',
@@ -59,6 +79,7 @@
     custom: $('#analytics-custom-range'),
     range: $('#analytics-range-label'),
     generated: $('#analytics-generated'),
+    syncState: $('#analytics-sync-state'),
     error: $('#analytics-error'),
     kpis: $('#analytics-kpis'),
     trend: $('#analytics-trend'),
@@ -78,6 +99,11 @@
   let preset = 'today';
   let loading = false;
   let loadedAt = 0;
+  let reloadQueued = false;
+  let queuedLoadTimer = null;
+  let updatePollInFlight = false;
+  let updateCursor = null;
+  let liveStream = null;
 
   elements.from.value = today();
   elements.to.value = today();
@@ -109,9 +135,23 @@
       [
         'Completed bills',
         whole(summary.completed_bills),
-        'Paid and completed orders',
+        'Closed bills, including any recorded due',
         'green',
         changeMarkup(comparison.bills, 'vs previous period'),
+      ],
+      [
+        'Money collected',
+        money(summary.collected),
+        'Cashless and cash applied to bills',
+        'green',
+        '',
+      ],
+      [
+        'Outstanding due',
+        money(summary.outstanding),
+        'Unpaid balance on closed bills',
+        'amber',
+        '',
       ],
       [
         'Average bill',
@@ -187,21 +227,19 @@
       : '<div class="analytics-empty">No completed channel sales.</div>';
 
     const payments = Array.isArray(data.payments) ? data.payments : [];
-    const paymentNames = {
-      cash: 'Cash',
-      upi: 'UPI / GPay',
-      card: 'Card',
-      due: 'Due',
-      part: 'Part payment',
-      other: 'Other',
-      not_recorded: 'Not recorded',
-    };
     elements.payments.innerHTML = payments.length
       ? payments
-          .map(
-            (row) =>
-              `<div class="analytics-payment-row"><span>${escapeHtml(paymentNames[row.payment_type] || title(row.payment_type))} · ${whole(row.bills)}</span><b>${escapeHtml(money(row.amount))}</b></div>`
-          )
+          .map((row) => {
+            const outstanding = number(row.outstanding),
+              secondary = [
+                outstanding ? `${money(outstanding)} due` : '',
+                number(row.change) ? `${money(row.change)} change` : '',
+                number(row.tips) ? `${money(row.tips)} tips` : '',
+              ]
+                .filter(Boolean)
+                .join(' · ');
+            return `<div class="analytics-payment-row"><span>${escapeHtml(paymentName(row.payment_type))} · ${whole(row.bills)}${secondary ? `<small>${escapeHtml(secondary)}</small>` : ''}</span><b>${escapeHtml(money(row.amount))}<small>collected</small></b></div>`;
+          })
           .join('')
       : '<div class="analytics-empty">No payments recorded.</div>';
   }
@@ -300,7 +338,7 @@
       ? orders
           .map(
             (order) =>
-              `<tr><td><strong>#${escapeHtml(String(order.daily_order_number || '—').padStart(2, '0'))}</strong><small>Bill #${escapeHtml(order.bill_number || '—')}</small></td><td>${escapeHtml(tableLocation(order))}</td><td><span class="analytics-event ${['cancelled', 'rejected'].includes(order.status) ? 'cancelled' : ''}">${escapeHtml(title(order.status))}</span></td><td><strong>${escapeHtml(money(order.total))}</strong></td><td>${escapeHtml(dateTime(order.created_at))}</td></tr>`
+              `<tr><td><strong>#${escapeHtml(String(order.daily_order_number || '—').padStart(2, '0'))}</strong><small>Bill #${escapeHtml(order.bill_number || '—')}</small></td><td>${escapeHtml(tableLocation(order))}</td><td><span class="analytics-event ${['cancelled', 'rejected'].includes(order.status) ? 'cancelled' : ''}">${escapeHtml(title(order.status))}</span></td><td><strong>${escapeHtml(money(order.total))}</strong>${order.status === 'completed' ? `<small>${escapeHtml(orderPaymentName(order))}</small>` : ''}</td><td>${escapeHtml(dateTime(order.created_at))}</td></tr>`
           )
           .join('')
       : emptyRow(5, 'No orders were placed in this period.');
@@ -309,6 +347,8 @@
   function renderDefinitions(definitions = {}) {
     const names = {
       sales: 'Sales',
+      collections: 'Collections',
+      outstanding: 'Outstanding due',
       cancelledKot: 'Cancelled KOT',
       modifiedKot: 'Modified KOT',
       shiftedKot: 'Shifted KOT',
@@ -323,12 +363,43 @@
       .join('');
   }
 
-  async function load() {
-    if (loading) return;
+  function dashboardIsActive() {
+    return (
+      document.visibilityState === 'visible' &&
+      (document.body.classList.contains('dashboard-page') || root.classList.contains('active'))
+    );
+  }
+
+  function setSyncState(state, message) {
+    if (!elements.syncState) return;
+    elements.syncState.classList.toggle('is-connecting', state === 'connecting');
+    elements.syncState.classList.toggle('is-offline', state === 'offline');
+    elements.syncState.innerHTML = `<i></i>${escapeHtml(message)}`;
+  }
+
+  function queueLoad(delay = 100) {
+    if (!dashboardIsActive()) return;
+    reloadQueued = true;
+    if (loading || queuedLoadTimer) return;
+    queuedLoadTimer = window.setTimeout(() => {
+      queuedLoadTimer = null;
+      reloadQueued = false;
+      void load({ background: true });
+    }, delay);
+  }
+
+  async function load({ background = false } = {}) {
+    if (loading) {
+      reloadQueued = true;
+      return;
+    }
     loading = true;
+    reloadQueued = false;
     elements.error.textContent = '';
-    elements.refresh.disabled = true;
-    elements.refresh.textContent = 'Refreshing…';
+    if (!background) {
+      elements.refresh.disabled = true;
+      elements.refresh.textContent = 'Refreshing…';
+    }
     root.setAttribute('aria-busy', 'true');
     try {
       const params = new URLSearchParams({ preset });
@@ -357,10 +428,69 @@
       elements.error.textContent = error.message || 'Unable to load the sales dashboard.';
     } finally {
       loading = false;
-      elements.refresh.disabled = false;
-      elements.refresh.textContent = 'Refresh data';
+      if (!background) {
+        elements.refresh.disabled = false;
+        elements.refresh.textContent = 'Refresh data';
+      }
       root.removeAttribute('aria-busy');
+      if (reloadQueued) queueLoad(75);
     }
+  }
+
+  async function pollLiveUpdates() {
+    if (!dashboardIsActive() || updatePollInFlight) return;
+    if (!navigator.onLine) {
+      setSyncState('offline', 'Offline · will sync when connected');
+      return;
+    }
+    updatePollInFlight = true;
+    try {
+      const suffix = Number.isInteger(updateCursor) ? `?after=${updateCursor}` : '';
+      const response = await fetch(`/api/admin/analytics/updates${suffix}`, { cache: 'no-store' });
+      const payload = await response.json().catch(() => ({}));
+      if (response.status === 401 && payload.loginUrl) {
+        window.location.replace(payload.loginUrl);
+        return;
+      }
+      if (!response.ok) throw new Error('Unable to check live dashboard updates.');
+      const cursor = Number(payload.cursor);
+      if (Number.isInteger(cursor) && cursor >= 0) updateCursor = cursor;
+      if (!liveStream || liveStream.readyState !== 1) setSyncState('live', 'Auto-sync on');
+      if (Array.isArray(payload.events) && payload.events.length) queueLoad(40);
+    } catch (_) {
+      setSyncState('connecting', 'Live sync reconnecting…');
+    } finally {
+      updatePollInFlight = false;
+    }
+  }
+
+  function connectLiveUpdates() {
+    if (!dashboardIsActive() || liveStream || !window.EventSource) return;
+    setSyncState('connecting', 'Connecting live sync…');
+    liveStream = new EventSource('/api/admin/analytics/stream');
+    liveStream.addEventListener('connected', () => {
+      setSyncState('live', 'Live sync on');
+      void pollLiveUpdates();
+      queueLoad(40);
+    });
+    liveStream.addEventListener('smart-kds-update', () => queueLoad(40));
+    liveStream.onerror = () => {
+      setSyncState(
+        navigator.onLine ? 'connecting' : 'offline',
+        navigator.onLine ? 'Live sync reconnecting…' : 'Offline · will sync when connected'
+      );
+    };
+  }
+
+  function closeLiveUpdates() {
+    liveStream?.close();
+    liveStream = null;
+  }
+
+  function startLiveSync() {
+    if (!dashboardIsActive()) return;
+    connectLiveUpdates();
+    void pollLiveUpdates();
   }
 
   $$('.analytics-periods button').forEach((button) => {
@@ -393,7 +523,35 @@
     }
   });
   document.addEventListener('admin-tab-change', (event) => {
-    if (event.detail?.targetId === 'tab-sales-dashboard' && Date.now() - loadedAt > 60000) load();
+    if (event.detail?.targetId === 'tab-sales-dashboard') {
+      startLiveSync();
+      if (Date.now() - loadedAt > 10000) queueLoad(0);
+    } else {
+      closeLiveUpdates();
+    }
   });
-  if (root.classList.contains('active')) load();
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+      closeLiveUpdates();
+      return;
+    }
+    startLiveSync();
+    if (Date.now() - loadedAt > 10000) queueLoad(0);
+  });
+  window.addEventListener('online', () => {
+    startLiveSync();
+    queueLoad(0);
+  });
+  window.addEventListener('offline', () =>
+    setSyncState('offline', 'Offline · will sync when connected')
+  );
+  window.addEventListener('pagehide', closeLiveUpdates);
+  window.setInterval(pollLiveUpdates, 5000);
+  window.setInterval(() => {
+    if (Date.now() - loadedAt >= 30000) queueLoad(0);
+  }, 5000);
+  if (root.classList.contains('active')) {
+    load();
+    startLiveSync();
+  }
 })();
