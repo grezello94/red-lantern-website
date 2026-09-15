@@ -42,6 +42,97 @@ async function mockAdmin(page, { onRequest, content = sampleContent() } = {}) {
     let body = {};
     let contentType = 'application/json';
     if (url.pathname === '/api/admin/content') body = content;
+    else if (url.pathname === '/api/admin/analytics')
+      body = {
+        generatedAt: '2026-09-14T12:00:00.000Z',
+        range: {
+          preset: url.searchParams.get('preset') || 'today',
+          label: url.searchParams.get('preset') === 'custom' ? '1 Sept – 14 Sept 2026' : 'Today',
+          from: url.searchParams.get('from') || '2026-09-14',
+          to: url.searchParams.get('to') || '2026-09-14',
+          days: url.searchParams.get('preset') === 'custom' ? 14 : 1,
+        },
+        summary: {
+          net_sales: 12500,
+          completed_bills: 24,
+          average_bill: 521,
+          total_orders: 28,
+          order_value: 13200,
+          live_orders: 2,
+          cancelled_orders: 1,
+          rejected_orders: 1,
+          tips: 180,
+        },
+        comparison: { sales: 12.5, bills: 9.1, averageBill: 3.2 },
+        channels: [
+          { channel: 'dine_in', bills: 15, sales: 8000 },
+          { channel: 'takeaway', bills: 9, sales: 4500 },
+        ],
+        payments: [
+          { payment_type: 'upi', bills: 16, amount: 8500 },
+          { payment_type: 'cash', bills: 8, amount: 4000 },
+        ],
+        trend: [
+          { day: '2026-09-13', bills: 11, sales: 5000 },
+          { day: '2026-09-14', bills: 13, sales: 7500 },
+        ],
+        topItems: [{ name: 'Chicken Crispy', portion: 'Regular', quantity: 18, sales: 3960 }],
+        recentOrders: [
+          {
+            daily_order_number: 28,
+            bill_number: 1028,
+            mode: 'table',
+            table_area: 'NON AC',
+            table_number: 3,
+            total: 920,
+            status: 'completed',
+            created_at: '2026-09-14T11:00:00.000Z',
+          },
+        ],
+        kots: {
+          summary: { total_kots: 30, cancelled_kots: 2, modified_kots: 3, shifted_kots: 1 },
+          exceptions: [
+            {
+              kind: 'shifted',
+              event_at: '2026-09-14T11:10:00.000Z',
+              daily_order_number: 28,
+              kot_number: 30,
+              table_area: 'NON AC',
+              table_number: 3,
+              affected_kots: 1,
+              details: { fromArea: 'AC', fromNumber: 2, toArea: 'NON AC', toNumber: 3 },
+            },
+          ],
+        },
+        bills: {
+          summary: {
+            issued_bills: 28,
+            completed_bills: 24,
+            cancelled_bills: 1,
+            modified_bills: 1,
+            printed_bills: 24,
+          },
+          exceptions: [
+            {
+              kind: 'cancelled',
+              event_at: '2026-09-14T10:00:00.000Z',
+              daily_order_number: 20,
+              bill_number: 1020,
+              mode: 'counter',
+              total: 450,
+              details: { reason: 'Guest changed plan' },
+            },
+          ],
+        },
+        definitions: {
+          sales: 'Completed bills only.',
+          cancelledKot: 'Stored KOT rounds attached to a cancelled order.',
+          modifiedKot: 'Items changed after the first KOT.',
+          shiftedKot: 'Table moved after the first KOT.',
+          cancelledBill: 'A numbered cancelled bill.',
+          modifiedBill: 'Items changed after printing.',
+        },
+      };
     else if (url.pathname === '/api/admin/trusted-contacts')
       body = {
         contacts: [
@@ -77,6 +168,40 @@ async function mockAdmin(page, { onRequest, content = sampleContent() } = {}) {
     });
   });
 }
+
+test('sales dashboard presents operational controls and fits a phone', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockAdmin(page);
+  await page.goto('/admin.html#tab-sales-dashboard');
+
+  await expect(page.locator('#tab-sales-dashboard')).toHaveClass(/active/);
+  await expect(page.locator('#analytics-kpis')).toContainText('₹12,500');
+  await expect(page.locator('#analytics-kot-stats')).toContainText('Cancelled');
+  await expect(page.locator('#analytics-bill-stats')).toContainText('Modified after print');
+  await expect(page.locator('#analytics-kot-exceptions')).toContainText('shifted');
+  await expect(page.locator('#analytics-bill-exceptions')).toContainText('Guest changed plan');
+  await expectNoPageOverflow(page);
+
+  await page.locator('[data-analytics-preset="custom"]').click();
+  await expect(page.locator('#analytics-custom-range')).toBeVisible();
+  await page.locator('#analytics-from').fill('2026-09-01');
+  await page.locator('#analytics-to').fill('2026-09-14');
+  await page.locator('#analytics-apply-range').click();
+  await expect(page.locator('#analytics-range-label')).toContainText('1 Sept');
+  await expectNoPageOverflow(page);
+});
+
+test('dedicated dashboard presents the same analytics at /dashboard', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockAdmin(page);
+  await page.goto('/dashboard.html');
+
+  await expect(page).toHaveTitle(/Sales Dashboard/);
+  await expect(page.locator('#analytics-kpis')).toContainText('₹12,500');
+  await expect(page.locator('#analytics-kot-stats')).toContainText('Cancelled');
+  await expect(page.locator('#dashboard-logout')).toBeVisible();
+  await expectNoPageOverflow(page);
+});
 
 test('admin restores a trusted-contact deep link after refresh and fits a phone', async ({
   page,

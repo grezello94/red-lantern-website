@@ -29,6 +29,7 @@ const { reasonCodesForRecommendation } = require('./smart-kds-reasons');
 const { buildKitchenMetrics } = require('./smart-kds-metrics');
 const { printerCapabilities, printerSupports } = require('./printer-domain');
 const Addons = require('./addons-domain');
+const Analytics = require('./analytics-domain');
 const { schemaProbe } = require('./database-readiness');
 const TrustedContacts = require('./trusted-contacts-domain');
 
@@ -419,6 +420,8 @@ function isProtectedAdminPath(req) {
   return (
     req.path === '/admin' ||
     req.path === '/admin.html' ||
+    req.path === '/dashboard' ||
+    req.path === '/dashboard.html' ||
     req.path === '/admin-cms.js' ||
     req.path.startsWith('/api/admin/') ||
     req.path === '/api/admin/content' ||
@@ -546,7 +549,7 @@ function authCookieOptions(req) {
 function safeAdminDestination(value) {
   try {
     const target = new URL(String(value || '/admin'), 'https://red-lantern.local');
-    return ['/admin', '/admin.html'].includes(target.pathname)
+    return ['/admin', '/admin.html', '/dashboard', '/dashboard.html'].includes(target.pathname)
       ? `${target.pathname}${target.search}${target.hash}`
       : '/admin';
   } catch (_) {
@@ -623,7 +626,7 @@ function requireAdmin(req, res, next) {
   const loginUrl = `/staff-login?scope=admin&next=${encodeURIComponent(destination)}`;
   if (
     (req.method === 'GET' || req.method === 'HEAD') &&
-    ['/admin', '/admin.html'].includes(req.path)
+    ['/admin', '/admin.html', '/dashboard', '/dashboard.html'].includes(req.path)
   )
     return res.redirect(302, loginUrl);
   if (req.path.startsWith('/api/'))
@@ -922,6 +925,7 @@ const cleanPageRoutes = new Map([
   ['/contact', 'contact.html'],
   ['/blog', 'blog-post.html'],
   ['/orders', 'orders.html'],
+  ['/dashboard', 'dashboard.html'],
   ['/register', 'register.html'],
   ['/staff-login', 'staff-login.html'],
   ['/kds', 'kds.html'],
@@ -7616,6 +7620,192 @@ app.get('/api/admin/customer-insights/daily-summary', async (req, res) => {
   } catch (error) {
     console.error('Daily order summary error:', error);
     res.status(500).json({ error: 'Unable to prepare the date-wise order summary.' });
+  }
+});
+
+app.get('/api/admin/analytics', async (req, res) => {
+  let range;
+  try {
+    range = Analytics.resolveAnalyticsRange(req.query);
+  } catch (error) {
+    return res.status(400).json({ error: error.message });
+  }
+  try {
+    await Promise.all([ensureDirectOrdersTable(), ensureKotsTable(), ensureOrderEventsTable()]);
+    const start = range.startUtc;
+    const end = range.endUtc;
+    const previousStart = range.previous.startUtc;
+    const previousEnd = range.previous.endUtc;
+    const monthlyTrend = range.days > 62;
+
+    const [overviewRows, recentOrders, kotRows, billRows] = await Promise.all([
+      sql`
+        WITH windowed AS (
+          SELECT 'current'::text AS period,o.* FROM direct_orders o WHERE o.created_at>=${start} AND o.created_at<${end}
+          UNION ALL
+          SELECT 'previous'::text AS period,o.* FROM direct_orders o WHERE o.created_at>=${previousStart} AND o.created_at<${previousEnd}
+        ), summaries AS (
+          SELECT period,
+            COUNT(*)::integer AS total_orders,
+            COUNT(*) FILTER (WHERE status='completed')::integer AS completed_bills,
+            COUNT(*) FILTER (WHERE status IN ('new','saved','held','accepted','preparing','ready'))::integer AS live_orders,
+            COUNT(*) FILTER (WHERE status='cancelled')::integer AS cancelled_orders,
+            COUNT(*) FILTER (WHERE status='rejected')::integer AS rejected_orders,
+            COALESCE(SUM(total) FILTER (WHERE status NOT IN ('cancelled','rejected')),0)::numeric AS order_value,
+            COALESCE(SUM(total) FILTER (WHERE status='completed'),0)::numeric AS net_sales,
+            COALESCE(SUM(COALESCE(settlement_amount,total)) FILTER (WHERE status='completed'),0)::numeric AS collected,
+            COALESCE(SUM(tip_amount) FILTER (WHERE status='completed'),0)::numeric AS tips,
+            COALESCE(AVG(total) FILTER (WHERE status='completed'),0)::numeric AS average_bill
+          FROM windowed GROUP BY period
+        ), current_orders AS (
+          SELECT * FROM direct_orders WHERE created_at>=${start} AND created_at<${end}
+        ), channels AS (
+          SELECT CASE WHEN mode='table' THEN 'dine_in' WHEN mode='card' THEN 'business_qr' WHEN fulfillment_type='delivery' THEN 'delivery' ELSE 'takeaway' END AS channel,
+            COUNT(*) FILTER (WHERE status='completed')::integer AS bills,
+            COALESCE(SUM(total) FILTER (WHERE status='completed'),0)::numeric AS sales
+          FROM current_orders GROUP BY 1
+        ), payments AS (
+          SELECT COALESCE(NULLIF(settlement_type,''),'not_recorded') AS payment_type,
+            COUNT(*)::integer AS bills,
+            COALESCE(SUM(COALESCE(settlement_amount,total)),0)::numeric AS amount
+          FROM current_orders WHERE status='completed' GROUP BY 1
+        ), trend AS (
+          SELECT CASE WHEN ${monthlyTrend} THEN date_trunc('month',created_at AT TIME ZONE 'Asia/Kolkata')::date ELSE order_day END AS day,
+            COUNT(*) FILTER (WHERE status='completed')::integer AS bills,
+            COALESCE(SUM(total) FILTER (WHERE status='completed'),0)::numeric AS sales
+          FROM current_orders GROUP BY 1 ORDER BY 1
+        ), top_items AS (
+          SELECT COALESCE(NULLIF(item->>'name',''),'Item') AS name,
+            COALESCE(NULLIF(item->>'portion',''),'Regular') AS portion,
+            SUM(GREATEST(0,COALESCE((item->>'quantity')::numeric,0)))::integer AS quantity,
+            COALESCE(SUM(
+              GREATEST(0,COALESCE((item->>'quantity')::numeric,0)) *
+              (COALESCE(NULLIF(regexp_replace(COALESCE(item->>'price',''),'[^0-9.]','','g'),'')::numeric,0)
+               + COALESCE(NULLIF(item->>'modifierTotal','')::numeric,0)
+               + CASE WHEN COALESCE(item->>'style','')<>'' THEN 10 ELSE 0 END)
+            ),0)::numeric AS sales
+          FROM current_orders o CROSS JOIN LATERAL jsonb_array_elements(COALESCE(o.items,'[]'::jsonb)) item
+          WHERE o.status='completed'
+          GROUP BY 1,2 ORDER BY quantity DESC,sales DESC,name LIMIT 10
+        )
+        SELECT
+          COALESCE((SELECT to_jsonb(s) FROM summaries s WHERE period='current'),'{}'::jsonb) AS current,
+          COALESCE((SELECT to_jsonb(s) FROM summaries s WHERE period='previous'),'{}'::jsonb) AS previous,
+          COALESCE((SELECT jsonb_agg(to_jsonb(c) ORDER BY c.sales DESC) FROM channels c),'[]'::jsonb) AS channels,
+          COALESCE((SELECT jsonb_agg(to_jsonb(p) ORDER BY p.amount DESC) FROM payments p),'[]'::jsonb) AS payments,
+          COALESCE((SELECT jsonb_agg(to_jsonb(t) ORDER BY t.day) FROM trend t),'[]'::jsonb) AS trend,
+          COALESCE((SELECT jsonb_agg(to_jsonb(i) ORDER BY i.quantity DESC,i.sales DESC) FROM top_items i),'[]'::jsonb) AS top_items
+      `,
+      sql`
+        SELECT id,daily_order_number,bill_year,bill_number,mode,fulfillment_type,table_area,table_number,
+          customer_name,total,status,settlement_type,created_at,settled_at
+        FROM direct_orders WHERE created_at>=${start} AND created_at<${end}
+        ORDER BY created_at DESC LIMIT 80
+      `,
+      sql`
+        WITH kot_totals AS (
+          SELECT
+            (SELECT COUNT(*)::integer FROM order_kots WHERE created_at>=${start} AND created_at<${end}) AS total_kots,
+            (SELECT COUNT(*)::integer FROM order_kots k JOIN direct_orders o ON o.id=k.order_id WHERE o.cancelled_at>=${start} AND o.cancelled_at<${end}) AS cancelled_kots,
+            (SELECT COUNT(*)::integer FROM order_events e WHERE e.created_at>=${start} AND e.created_at<${end} AND e.event_type IN ('items-updated','captain-items-added') AND EXISTS (SELECT 1 FROM order_kots k WHERE k.order_id=e.order_id AND k.created_at<=e.created_at)) AS modified_kots,
+            (SELECT COUNT(*)::integer FROM order_events e WHERE e.created_at>=${start} AND e.created_at<${end} AND e.event_type='table-moved' AND EXISTS (SELECT 1 FROM order_kots k WHERE k.order_id=e.order_id AND k.created_at<=e.created_at)) AS shifted_kots
+        ), exceptions AS (
+          SELECT 'cancelled'::text AS kind,o.cancelled_at AS event_at,o.id AS order_id,o.daily_order_number,o.bill_number,
+            o.table_area,o.table_number,o.customer_name,COUNT(k.kot_number)::integer AS affected_kots,
+            MAX(COALESCE(k.daily_kot_number,k.kot_number))::bigint AS kot_number,
+            jsonb_build_object('reason',COALESCE(o.cancellation_reason,'')) AS details
+          FROM direct_orders o JOIN order_kots k ON k.order_id=o.id
+          WHERE o.cancelled_at>=${start} AND o.cancelled_at<${end}
+          GROUP BY o.id,o.cancelled_at,o.daily_order_number,o.bill_number,o.table_area,o.table_number,o.customer_name,o.cancellation_reason
+          UNION ALL
+          SELECT CASE WHEN e.event_type='table-moved' THEN 'shifted' ELSE 'modified' END,e.created_at,o.id,o.daily_order_number,o.bill_number,
+            o.table_area,o.table_number,o.customer_name,1,
+            (SELECT MAX(COALESCE(k.daily_kot_number,k.kot_number)) FROM order_kots k WHERE k.order_id=e.order_id AND k.created_at<=e.created_at),e.details
+          FROM order_events e JOIN direct_orders o ON o.id=e.order_id
+          WHERE e.created_at>=${start} AND e.created_at<${end}
+            AND e.event_type IN ('items-updated','captain-items-added','table-moved')
+            AND EXISTS (SELECT 1 FROM order_kots k WHERE k.order_id=e.order_id AND k.created_at<=e.created_at)
+        ), recent AS (
+          SELECT * FROM exceptions ORDER BY event_at DESC LIMIT 120
+        )
+        SELECT to_jsonb(kot_totals.*) AS summary,
+          COALESCE((SELECT jsonb_agg(to_jsonb(recent) ORDER BY event_at DESC) FROM recent),'[]'::jsonb) AS exceptions
+        FROM kot_totals
+      `,
+      sql`
+        WITH bill_totals AS (
+          SELECT
+            (SELECT COUNT(*)::integer FROM direct_orders WHERE created_at>=${start} AND created_at<${end} AND bill_number IS NOT NULL) AS issued_bills,
+            (SELECT COUNT(*)::integer FROM direct_orders WHERE created_at>=${start} AND created_at<${end} AND status='completed') AS completed_bills,
+            (SELECT COUNT(*)::integer FROM direct_orders WHERE cancelled_at>=${start} AND cancelled_at<${end} AND bill_number IS NOT NULL) AS cancelled_bills,
+            (SELECT COUNT(DISTINCT e.order_id)::integer FROM order_events e WHERE e.created_at>=${start} AND e.created_at<${end} AND e.event_type IN ('items-updated','captain-items-added') AND EXISTS (SELECT 1 FROM order_events printed WHERE printed.order_id=e.order_id AND printed.event_type='bill-printed' AND printed.created_at<e.created_at)) AS modified_bills,
+            (SELECT COUNT(DISTINCT e.order_id)::integer FROM order_events e WHERE e.created_at>=${start} AND e.created_at<${end} AND e.event_type='bill-printed') AS printed_bills
+        ), exceptions AS (
+          SELECT 'cancelled'::text AS kind,o.cancelled_at AS event_at,o.id AS order_id,o.daily_order_number,o.bill_year,o.bill_number,
+            o.mode,o.table_area,o.table_number,o.customer_name,o.total,jsonb_build_object('reason',COALESCE(o.cancellation_reason,'')) AS details
+          FROM direct_orders o WHERE o.cancelled_at>=${start} AND o.cancelled_at<${end} AND o.bill_number IS NOT NULL
+          UNION ALL
+          SELECT 'modified'::text,e.created_at,o.id,o.daily_order_number,o.bill_year,o.bill_number,
+            o.mode,o.table_area,o.table_number,o.customer_name,o.total,e.details
+          FROM order_events e JOIN direct_orders o ON o.id=e.order_id
+          WHERE e.created_at>=${start} AND e.created_at<${end}
+            AND e.event_type IN ('items-updated','captain-items-added')
+            AND EXISTS (SELECT 1 FROM order_events printed WHERE printed.order_id=e.order_id AND printed.event_type='bill-printed' AND printed.created_at<e.created_at)
+        ), recent AS (
+          SELECT * FROM exceptions ORDER BY event_at DESC LIMIT 120
+        )
+        SELECT to_jsonb(bill_totals.*) AS summary,
+          COALESCE((SELECT jsonb_agg(to_jsonb(recent) ORDER BY event_at DESC) FROM recent),'[]'::jsonb) AS exceptions
+        FROM bill_totals
+      `,
+    ]);
+
+    const overview = overviewRows[0] || {};
+    const emptySummary = {
+      total_orders: 0,
+      completed_bills: 0,
+      live_orders: 0,
+      cancelled_orders: 0,
+      rejected_orders: 0,
+      order_value: 0,
+      net_sales: 0,
+      collected: 0,
+      tips: 0,
+      average_bill: 0,
+    };
+    const current = { ...emptySummary, ...(overview.current || {}) };
+    const previous = { ...emptySummary, ...(overview.previous || {}) };
+    res.set('Cache-Control', 'private, no-store');
+    res.json({
+      generatedAt: new Date().toISOString(),
+      range,
+      summary: current,
+      comparison: {
+        sales: Analytics.percentChange(current.net_sales, previous.net_sales),
+        bills: Analytics.percentChange(current.completed_bills, previous.completed_bills),
+        averageBill: Analytics.percentChange(current.average_bill, previous.average_bill),
+        previousSales: Number(previous.net_sales || 0),
+        previousBills: Number(previous.completed_bills || 0),
+      },
+      channels: overview.channels || [],
+      payments: overview.payments || [],
+      trend: overview.trend || [],
+      topItems: overview.top_items || [],
+      recentOrders,
+      kots: kotRows[0] || { summary: {}, exceptions: [] },
+      bills: billRows[0] || { summary: {}, exceptions: [] },
+      definitions: {
+        sales: 'Completed bills only. Cancelled, rejected and unpaid live orders are excluded.',
+        cancelledKot: 'Stored KOT rounds attached to an order cancelled during the selected period.',
+        modifiedKot: 'An item update or Captain add-on round made after the first KOT existed.',
+        shiftedKot: 'A table move recorded after the order already had a KOT.',
+        cancelledBill: 'A numbered bill whose order was cancelled during the selected period.',
+        modifiedBill: 'A numbered bill with an item change after its first bill print.',
+      },
+    });
+  } catch (error) {
+    console.error('Admin analytics error:', error);
+    res.status(500).json({ error: 'Unable to load the sales dashboard.' });
   }
 });
 

@@ -8,6 +8,7 @@
       href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700&display=swap"
       rel="stylesheet"
     />
+    <link rel="stylesheet" href="/admin-analytics.css?v=2" />
     <style>
       * {
         box-sizing: border-box;
@@ -4492,6 +4493,7 @@
         <div class="nav-item" data-target="tab-footer">Footer & Settings</div>
 
         <div class="nav-category pos">Restaurant POS</div>
+        <a class="nav-item" data-target="tab-sales-dashboard" href="/dashboard">Sales Dashboard</a>
         <div class="nav-item" data-target="tab-customer-insights">Customer &amp; Orders</div>
         <div class="nav-item" data-target="tab-captain-app">Captain App</div>
         <div class="nav-item" data-target="tab-smart-kds">Smart KDS</div>
@@ -5447,7 +5449,110 @@ Availability may vary. Please ask our team about today’s specials.</textarea>
         </form>
       </div>
 
-      <!-- ABOUT PAGE TAB -->
+      <div id="tab-sales-dashboard" class="tab-content">
+        <header class="header analytics-page-header">
+          <div>
+            <span class="analytics-eyebrow">Business intelligence</span>
+            <h1>Sales &amp; Operations Dashboard</h1>
+            <p>One trusted view of sales, bills, KOT activity, cancellations and changes.</p>
+          </div>
+          <div class="analytics-header-actions">
+            <button type="button" id="analytics-print" class="analytics-button secondary">Print dashboard</button>
+            <button type="button" id="analytics-refresh" class="analytics-button primary">Refresh data</button>
+          </div>
+        </header>
+
+        <section class="analytics-period-card" aria-label="Dashboard period">
+          <div>
+            <span class="analytics-control-label">Reporting period</span>
+            <div class="analytics-periods" role="group" aria-label="Choose reporting period">
+              <button type="button" data-analytics-preset="today" class="is-active">Today</button>
+              <button type="button" data-analytics-preset="yesterday">Yesterday</button>
+              <button type="button" data-analytics-preset="month">This month</button>
+              <button type="button" data-analytics-preset="year">This year</button>
+              <button type="button" data-analytics-preset="custom">Custom</button>
+            </div>
+          </div>
+          <div id="analytics-custom-range" class="analytics-custom-range" hidden>
+            <label><span>From</span><input type="date" id="analytics-from" /></label>
+            <label><span>To</span><input type="date" id="analytics-to" /></label>
+            <button type="button" id="analytics-apply-range" class="analytics-button primary">Apply dates</button>
+          </div>
+          <div class="analytics-period-summary">
+            <strong id="analytics-range-label">Today</strong>
+            <span id="analytics-generated">Preparing dashboard…</span>
+          </div>
+        </section>
+
+        <div id="analytics-error" class="analytics-message" role="status" aria-live="polite"></div>
+
+        <section class="analytics-kpis" id="analytics-kpis" aria-label="Sales summary">
+          <article class="analytics-kpi is-loading"><span>Loading sales…</span></article>
+        </section>
+
+        <section class="analytics-grid analytics-sales-grid">
+          <article class="analytics-panel analytics-trend-panel">
+            <div class="analytics-panel-heading">
+              <div><span>Sales movement</span><h2>Completed sales by day</h2></div>
+              <strong id="analytics-trend-total">₹0</strong>
+            </div>
+            <div class="analytics-chart-scroll"><div id="analytics-trend" class="analytics-trend"></div></div>
+          </article>
+          <article class="analytics-panel">
+            <div class="analytics-panel-heading"><div><span>Sales mix</span><h2>Where revenue came from</h2></div></div>
+            <div id="analytics-channels" class="analytics-breakdown"></div>
+            <div class="analytics-divider"></div>
+            <div class="analytics-panel-heading compact"><div><span>Collections</span><h2>Payment methods</h2></div></div>
+            <div id="analytics-payments" class="analytics-payment-list"></div>
+          </article>
+        </section>
+
+        <section class="analytics-operation-grid">
+          <article class="analytics-panel analytics-operation-panel kot">
+            <div class="analytics-panel-heading">
+              <div><span>Kitchen control</span><h2>KOT activity</h2><p>Printed rounds and operational exceptions.</p></div>
+              <div class="analytics-panel-icon">KOT</div>
+            </div>
+            <div id="analytics-kot-stats" class="analytics-mini-stats"></div>
+          </article>
+          <article class="analytics-panel analytics-operation-panel bill">
+            <div class="analytics-panel-heading">
+              <div><span>Billing control</span><h2>Bill activity</h2><p>Issued, completed, cancelled and post-print changes.</p></div>
+              <div class="analytics-panel-icon">₹</div>
+            </div>
+            <div id="analytics-bill-stats" class="analytics-mini-stats"></div>
+          </article>
+        </section>
+
+        <section class="analytics-grid analytics-detail-grid">
+          <article class="analytics-panel">
+            <div class="analytics-panel-heading"><div><span>Kitchen audit</span><h2>KOT exceptions</h2></div><b id="analytics-kot-exception-count" class="analytics-count">0</b></div>
+            <div class="analytics-table-wrap"><table class="analytics-table"><thead><tr><th>Event</th><th>KOT / order</th><th>Table</th><th>When</th></tr></thead><tbody id="analytics-kot-exceptions"></tbody></table></div>
+          </article>
+          <article class="analytics-panel">
+            <div class="analytics-panel-heading"><div><span>Billing audit</span><h2>Bill exceptions</h2></div><b id="analytics-bill-exception-count" class="analytics-count">0</b></div>
+            <div class="analytics-table-wrap"><table class="analytics-table"><thead><tr><th>Event</th><th>Bill / order</th><th>Value</th><th>When</th></tr></thead><tbody id="analytics-bill-exceptions"></tbody></table></div>
+          </article>
+        </section>
+
+        <section class="analytics-grid analytics-bottom-grid">
+          <article class="analytics-panel">
+            <div class="analytics-panel-heading"><div><span>Menu performance</span><h2>Top-selling dishes</h2></div></div>
+            <div id="analytics-top-items" class="analytics-top-items"></div>
+          </article>
+          <article class="analytics-panel">
+            <div class="analytics-panel-heading"><div><span>Order ledger</span><h2>Recent orders in this period</h2></div></div>
+            <div class="analytics-table-wrap"><table class="analytics-table"><thead><tr><th>Order</th><th>Type</th><th>Status</th><th>Value</th><th>Placed</th></tr></thead><tbody id="analytics-recent-orders"></tbody></table></div>
+          </article>
+        </section>
+
+        <details class="analytics-definitions">
+          <summary>How dashboard figures are calculated</summary>
+          <div id="analytics-definitions"></div>
+        </details>
+      </div>
+
+      <!-- CUSTOMER & ORDER INSIGHTS TAB -->
       <div id="tab-customer-insights" class="tab-content">
         <div class="header">
           <div>
@@ -7090,6 +7195,7 @@ Watch competitors ranking for Colva Beach, seafood, Goan food, Chinese food, fam
       }
     </script>
     <script src="/addons-domain.js?v=1" defer></script>
+    <script src="/admin-analytics.js?v=2" defer></script>
     <script src="admin-cms.js?v=20260914-36" defer></script>
   </body>
 </html>
