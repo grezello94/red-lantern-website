@@ -253,9 +253,9 @@
 }
 #availability {
   margin: 22px 28px 0;
-  padding: 24px;
+  padding: 22px;
   border: 1px solid #e8e1da;
-  border-radius: 18px;
+  border-radius: 20px;
   background: #fff;
   box-shadow: 0 14px 34px rgba(24, 39, 70, 0.09);
 }
@@ -264,7 +264,7 @@
 }
 .availability-heading {
   display: flex;
-  align-items: start;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
 }
@@ -276,12 +276,15 @@
   text-transform: uppercase;
 }
 .availability-heading h2 {
-  margin: 4px 0;
-  font-size: 21px;
+  margin: 4px 0 5px;
+  color: #172b4d;
+  font-size: clamp(22px, 2vw, 28px);
+  letter-spacing: -0.04em;
 }
 .availability-heading p {
   margin: 0;
   color: #68778e;
+  font-size: 13px;
 }
 .quiet-button {
   display: inline-flex;
@@ -371,20 +374,33 @@
     flex: 1;
   }
 }
+.availability-control-surface {
+  margin-top: 20px;
+  padding: 12px;
+  border: 1px solid #e1e8f1;
+  border-radius: 15px;
+  background: linear-gradient(135deg, #f8fbff, #f3f7fc);
+}
+.availability-control-topline,
+.availability-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
 .menu-type-tabs {
   display: inline-flex;
-  gap: 4px;
-  margin-top: 20px;
+  gap: 3px;
   padding: 4px;
-  border: 1px solid #dde5ef;
-  border-radius: 11px;
-  background: #f4f7fb;
+  border: 1px solid #dce5f0;
+  border-radius: 10px;
+  background: #fff;
 }
 .menu-type-tab {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 9px 13px;
+  padding: 8px 12px;
   border: 0;
   border-radius: 8px;
   color: #5e6d84;
@@ -411,16 +427,12 @@
   background: #fff;
 }
 .availability-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  margin: 20px 0 12px;
+  margin-top: 12px;
 }
 .search-field {
   display: flex;
   align-items: center;
-  width: min(100%, 540px);
+  width: min(100%, 460px);
   padding: 0 13px;
   border: 1px solid #ced8e5;
   border-radius: 10px;
@@ -440,7 +452,7 @@
 }
 #menu-search {
   width: 100%;
-  padding: 12px 10px;
+  padding: 10px 9px;
   border: 0;
   outline: 0;
   color: #1f2b41;
@@ -454,7 +466,7 @@
   gap: 7px;
 }
 .stock-count {
-  padding: 6px 9px;
+  padding: 7px 10px;
   border-radius: 999px;
   font-size: 11px;
   font-weight: 800;
@@ -470,9 +482,8 @@
 }
 .availability-filters {
   display: flex;
+  flex-wrap: wrap;
   gap: 7px;
-  padding-bottom: 13px;
-  border-bottom: 1px solid #e9edf2;
 }
 .filter-button {
   padding: 7px 11px;
@@ -487,23 +498,47 @@
   background: #263d68;
   color: #fff;
 }
+.availability-results-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 20px;
+}
+.availability-results-heading h3 {
+  margin: 0;
+  color: #1d3355;
+  font-size: 16px;
+}
+.availability-results-heading p {
+  margin: 4px 0 0;
+  color: #72819a;
+  font-size: 12px;
+}
+.availability-results-hint {
+  color: #5e718b;
+  font-size: 11px;
+  font-weight: 800;
+  text-align: right;
+}
 #menu-results {
   display: grid;
-  max-height: 560px;
-  grid-template-columns: repeat(auto-fill, minmax(395px, 1fr));
+  max-height: min(64vh, 700px);
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: 10px;
   margin-top: 14px;
   overflow: auto;
-  padding: 2px 4px 4px 2px;
+  padding: 2px 5px 5px 2px;
 }
 .menu-item {
-  display: grid;
-  grid-template-columns: minmax(145px, 1fr) auto;
-  gap: 10px 14px;
-  align-items: center;
-  padding: 15px;
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px;
   border: 1px solid #e3e8ef;
-  border-radius: 12px;
+  border-radius: 13px;
   background: #fff;
   box-shadow: 0 3px 10px rgba(31, 52, 88, 0.035);
   transition:
@@ -520,6 +555,13 @@
   border-color: #f0c7c6;
   background: linear-gradient(120deg, #fffafa, #fff);
 }
+.menu-item-topline {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+}
 .menu-item-name b,
 .menu-item-name span {
   display: block;
@@ -527,9 +569,10 @@
 .menu-item-name b {
   color: #1f2b41;
   font-size: 14px;
+  line-height: 1.3;
 }
 .menu-item-name span {
-  margin-top: 4px;
+  margin-bottom: 4px;
   color: #738197;
   font-size: 11px;
   font-weight: 700;
@@ -541,7 +584,10 @@
   align-items: center;
   justify-content: flex-end;
   gap: 5px;
+  padding: 5px 7px;
+  border-radius: 999px;
   color: #087348;
+  background: #ebf9f0;
   font-size: 11px;
   font-weight: 800;
   text-align: right;
@@ -555,40 +601,72 @@
 }
 .is-out .availability-state {
   color: #bb2d2b;
+  background: #fff0ef;
 }
 .availability-controls {
-  grid-column: 1 / -1;
   display: flex;
-  flex-wrap: wrap;
-  align-items: end;
-  gap: 7px;
-  padding-top: 10px;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 8px;
+  width: 100%;
+  padding-top: 11px;
   border-top: 1px solid #edf0f4;
 }
 .availability-controls button {
-  padding: 8px 10px;
+  min-height: 34px;
+  padding: 7px 9px;
+  border-radius: 8px;
   font-size: 11px;
 }
+.availability-actions {
+  display: flex;
+  gap: 6px;
+  width: 100%;
+}
+.availability-actions button {
+  flex: 1;
+  white-space: nowrap;
+}
 .stock-tomorrow {
-  background: #dc3430;
+  color: #9e2827;
+  background: #fff0ef;
+  border: 1px solid #f4c8c6;
 }
 .stock-date {
   background: #c88218;
 }
 .stock-in {
+  width: 100%;
   background: #168451;
 }
-.availability-controls label {
+.availability-date,
+.availability-return {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
   gap: 3px;
+  min-width: 0;
   color: #5f6c80;
   font-size: 10px;
   font-weight: 800;
   letter-spacing: 0.03em;
   text-transform: uppercase;
 }
+.availability-return strong {
+  overflow: hidden;
+  max-width: 72%;
+  color: #8d2b2b;
+  font-size: 11px;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  text-transform: none;
+  white-space: nowrap;
+}
 .availability-controls input {
+  width: 162px;
+  min-height: 34px;
   padding: 6px 7px;
   border: 1px solid #ccd5e1;
   border-radius: 6px;
@@ -688,6 +766,18 @@
     align-items: stretch;
     flex-direction: column;
   }
+  .availability-control-topline {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .availability-results-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .availability-results-hint {
+    text-align: left;
+  }
   .availability-counts {
     justify-content: flex-start;
   }
@@ -697,6 +787,9 @@
   .availability-state {
     justify-content: flex-start;
     text-align: left;
+  }
+  .availability-controls input {
+    width: min(168px, 58vw);
   }
 }
 

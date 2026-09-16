@@ -8,6 +8,7 @@ const root = path.resolve(__dirname, '..');
 const outputDir = path.join(root, 'downloads');
 const stageDir = path.join(outputDir, '.bridge-stage');
 const bundleName = 'Red-Lantern-Print-Bridge';
+const releaseManifestPath = path.join(outputDir, 'print-bridge-release.json');
 const bridgeFiles = [
   'addons-domain.js',
   'printer-domain.js',
@@ -17,6 +18,15 @@ const bridgeFiles = [
   'install-print-bridge-windows.ps1',
   'install-print-bridge-macos.sh',
 ];
+const bridgeVersionMatch = fs
+  .readFileSync(path.join(root, 'print-bridge.js'), 'utf8')
+  .match(/const BRIDGE_VERSION = '([^']+)'/);
+const releaseManifest = JSON.parse(fs.readFileSync(releaseManifestPath, 'utf8'));
+if (!bridgeVersionMatch || releaseManifest.version !== bridgeVersionMatch[1]) {
+  throw new Error(
+    `Print Bridge version mismatch: print-bridge.js is ${bridgeVersionMatch?.[1] || 'unknown'}, but downloads/print-bridge-release.json is ${releaseManifest.version || 'unknown'}.`
+  );
+}
 const readme = `Red Lantern Print Bridge
 
 1. Install Node.js 22 or newer from https://nodejs.org if it is not already installed.

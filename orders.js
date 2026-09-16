@@ -194,6 +194,7 @@ let installedSystemPrinters = [];
 let printBridgeState = 'checking';
 let printBridgeConfigState = 'not-synced';
 let printBridgeSetupStatus = null;
+let printBridgeRelease = null;
 let printBridgeWorkstation = null;
 let workstationPairingInFlight = false;
 let assignmentPrinterId = '';
@@ -1677,7 +1678,7 @@ const counterWorkspaceStyles = document.createElement('style');
 counterWorkspaceStyles.textContent = `
 #counter-order-panel{max-width:none;margin:14px 12px 0;padding:0;overflow:hidden;border:1px solid #dfe6ef;border-radius:16px;background:#f7f9fc;box-shadow:0 12px 28px rgba(30,48,77,.08)}
 .counter-order-head{align-items:center;min-height:76px;padding:14px 20px;border-bottom:1px solid #e4eaf1;background:#fff}.counter-order-head .eyebrow{margin:0;color:#bc263d;font-size:10px}.counter-order-head h2{margin:3px 0 0;color:#172840;font-size:23px;letter-spacing:-.04em}.counter-order-head p{margin-top:3px;color:#728199;font-size:11px;font-weight:700}.counter-back{min-height:36px;padding:8px 11px;border:1px solid #dce4ee;border-radius:8px;color:#3e5778;background:#fff;font-size:11px;box-shadow:none}.counter-back:hover{border-color:#b7c7d9;color:#bd263d;background:#fff5f6;filter:none;transform:none}
-.counter-order-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(350px,410px);gap:0;min-height:calc(100dvh - 190px);margin:0}.counter-menu{display:grid;grid-template-columns:210px minmax(0,1fr);grid-template-rows:76px minmax(0,1fr);gap:0;padding:0;border:0;border-radius:0;background:#f7f9fc}.counter-search{grid-column:2;grid-row:1;align-self:center;margin:0 20px;padding:0 14px;border-color:#e1e7ef;border-radius:10px;background:#fff}.counter-search:focus-within{border-color:#d33a4b;box-shadow:0 0 0 3px rgba(211,58,75,.1)}.counter-search input{height:44px;color:#243752;font-size:13px}.counter-search input::placeholder{color:#95a2b4}
+.counter-order-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(390px,470px);gap:0;min-height:calc(100dvh - 190px);margin:0}.counter-menu{display:grid;grid-template-columns:210px minmax(0,1fr);grid-template-rows:76px minmax(0,1fr);gap:0;padding:0;border:0;border-radius:0;background:#f7f9fc}.counter-search{grid-column:2;grid-row:1;align-self:center;margin:0 20px;padding:0 14px;border-color:#e1e7ef;border-radius:10px;background:#fff}.counter-search:focus-within{border-color:#d33a4b;box-shadow:0 0 0 3px rgba(211,58,75,.1)}.counter-search input{height:44px;color:#243752;font-size:13px}.counter-search input::placeholder{color:#95a2b4}
 .counter-categories{grid-column:1;grid-row:1 / 3;max-height:none;padding:12px 0;border:0;border-right:1px solid #e2e8f0;border-radius:0;background:#fff}.counter-category-group{padding:16px 18px 7px;color:#9a2638;background:#fff;font-size:9px}.counter-category{min-height:43px;padding:9px 18px;border:0;border-right:3px solid transparent;color:#596a81;background:#fff;font-size:12px}.counter-category:first-child{margin-bottom:4px;color:#b8253a;background:#fff5f6}.counter-category:hover{color:#bd263d;background:#fff7f8}.counter-category.is-active{color:#c3263c;border-right-color:#cf293f;background:#fff1f3;box-shadow:none}.counter-category-group~.counter-category{min-height:42px}
 .counter-menu-items{grid-column:2;grid-row:2;align-content:start;grid-template-columns:repeat(auto-fill,minmax(174px,1fr));grid-auto-rows:142px;gap:14px;max-height:none;padding:4px 20px 22px;overflow:auto}.counter-menu-item{height:142px;padding:14px;border:1px solid #e1e7ef;border-left:3px solid #d63146;border-radius:12px;background:#fff;box-shadow:0 3px 9px rgba(34,53,83,.045)}.counter-menu-item:hover{border-color:#c9d4e1;border-left-color:#c52a40;background:#fff;box-shadow:0 8px 16px rgba(34,53,83,.09);transform:translateY(-1px)}.counter-menu-item span{color:#8391a5;font-size:9px}.counter-menu-item b{margin:7px 26px 7px 0;color:#243651;font-size:13px}.counter-menu-item small{position:absolute;bottom:14px;left:14px;color:#172940;font-size:18px}.counter-menu-item i{right:13px;bottom:13px;width:30px;height:30px;border-radius:8px;color:#6d819d;background:#f1f5f9;font-size:25px;font-weight:500}.counter-menu-item:hover i{color:#fff;background:#ca2c42}
 .counter-cart{position:relative;min-height:0;max-height:calc(100dvh - 190px);padding:19px 20px;border:0;border-left:1px solid #e2e8f0;border-radius:0;background:#fff;box-shadow:none}.counter-cart-head{align-items:center;padding-bottom:14px;border-bottom:1px solid #e8edf3}.counter-cart-head h3{color:#172840;font-size:18px;letter-spacing:-.025em}.counter-clear{padding:7px 0;color:#c82b3f;background:transparent;font-size:10px}.counter-clear:hover{background:transparent;filter:none;transform:none;text-decoration:underline}.counter-cart-items{height:clamp(175px,31vh,300px);margin:12px 0;overflow-y:auto}.counter-cart-line{grid-template-columns:minmax(0,1fr) auto;gap:10px;min-height:0!important;height:auto!important;padding:12px 0}.counter-cart-line>strong{display:none}.counter-cart-line b{color:#263751;font-size:12px}.counter-cart-line small{font-size:10px}.counter-quantity{grid-column:2;grid-row:1;gap:0;border:1px solid #e0e7ef;border-radius:8px;overflow:hidden}.counter-quantity button{width:29px;height:29px;border-radius:0;color:#536b88;background:#fff;font-size:16px}.counter-quantity b{display:grid;min-width:28px;height:29px;place-items:center;border-inline:1px solid #e0e7ef;font-size:12px}.counter-line-course{grid-column:1 / -1;margin:2px 0 0}.counter-line-course select{min-height:26px;font-size:10px}
@@ -1720,7 +1721,7 @@ const bridgeReadinessStyles = document.createElement('style');
 bridgeReadinessStyles.textContent = `.operations-setup-card{border-color:#bcd7ca;background:linear-gradient(135deg,#fbfffc,#f1fbf5)}.operations-setup-card .operations-home-icon{color:#087348;background:#e3f7eb}.bridge-readiness{padding:24px;border:1px solid #d9e8df;border-radius:16px;background:linear-gradient(145deg,#fff,#f8fcf9)}.bridge-check-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin:22px 0}.bridge-check{display:flex;gap:9px;align-items:flex-start;padding:13px;border:1px solid #e0e8ec;border-radius:11px;background:#fff}.bridge-check>span{display:grid;width:23px;height:23px;place-items:center;flex:0 0 23px;border-radius:50%;color:#596b82;background:#edf2f7;font-weight:900}.bridge-check.is-ok>span{color:#087348;background:#e4f8ec}.bridge-check.is-warn>span{color:#a85c14;background:#fff1dc}.bridge-check b,.bridge-check small{display:block}.bridge-check b{color:#283b56;font-size:12px}.bridge-check small{margin-top:3px;color:#728198;font-size:10px;line-height:1.35}.bridge-install-box{padding:17px;border:1px solid #ecd8b5;border-radius:13px;background:#fffaf0}.bridge-install-box>b{color:#574225;font-size:14px}.bridge-install-box p{margin:6px 0 10px;color:#6f604a;font-size:12px;line-height:1.45}.bridge-install-box code{display:block;padding:11px 12px;border-radius:9px;color:#263b59;background:#f0f4f8;font:800 12px ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-word}.bridge-install-box>div,.bridge-ready-actions{display:flex;gap:9px;align-items:center;margin-top:12px}.bridge-ready-actions{justify-content:flex-end}.bridge-ready-actions .quiet-button,.bridge-install-box .quiet-button{padding:10px 13px;border:1px solid #cdd9e6;border-radius:8px;color:#375170;background:#fff;font-size:12px;font-weight:800}@media(max-width:1000px){.bridge-check-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}@media(max-width:620px){.bridge-readiness{padding:17px}.bridge-check-grid{grid-template-columns:1fr}.bridge-install-box>div,.bridge-ready-actions{align-items:stretch;flex-direction:column}.bridge-ready-actions{justify-content:stretch}.bridge-ready-actions button,.bridge-install-box button{width:100%}}`;
 document.head.appendChild(bridgeReadinessStyles);
 const bridgeDownloadStyles = document.createElement('style');
-bridgeDownloadStyles.textContent = `.bridge-download{display:inline-flex;align-items:center;justify-content:center;padding:10px 13px;border:1px solid #168451;border-radius:8px;color:#fff!important;background:#168451!important;font-size:12px;font-weight:800;text-decoration:none}.bridge-download:hover{color:#fff;filter:brightness(.95)}.bridge-node-note{display:block;margin-top:10px;color:#78694f!important;font-size:11px!important}@media(max-width:620px){.bridge-install-box>div{align-items:stretch;flex-direction:column}.bridge-download{width:100%;text-align:center}}`;
+bridgeDownloadStyles.textContent = `.bridge-download{display:inline-flex;align-items:center;justify-content:center;padding:10px 13px;border:1px solid #168451;border-radius:8px;color:#fff!important;background:#168451!important;font-size:12px;font-weight:800;text-decoration:none}.bridge-download:hover{color:#fff;filter:brightness(.95)}.bridge-version-info{display:flex;flex-wrap:wrap;gap:7px 16px;align-items:center;margin:12px 0 2px;padding:9px 11px;border:1px solid #dfe8f2;border-radius:9px;color:#65778f;background:#f7faff;font-size:11px}.bridge-version-info span{display:inline-flex;gap:4px}.bridge-version-info b{color:#263c5b}.bridge-version-info em{padding:3px 7px;border-radius:999px;color:#a55618;background:#fff0db;font-style:normal;font-weight:900}.bridge-version-info em.is-current{color:#087348;background:#e5f8ec}.bridge-node-note{display:block;margin-top:10px;color:#78694f!important;font-size:11px!important}@media(max-width:620px){.bridge-install-box>div{align-items:stretch;flex-direction:column}.bridge-download{width:100%;text-align:center}.bridge-version-info{align-items:flex-start;flex-direction:column;gap:5px}}`;
 document.head.appendChild(bridgeDownloadStyles);
 const managePrintersStyles = document.createElement('style');
 managePrintersStyles.textContent = `.manage-printers,.printer-assignment{padding:24px;border:1px solid #dfe7f1;border-radius:16px;background:#fff}.manage-printers-head{display:flex;justify-content:space-between;gap:18px;align-items:start}.manage-printers h3,.printer-assignment h3{margin:4px 0;color:#1e3150;font-size:23px}.manage-printers p,.printer-assignment p{margin:0;color:#687a91}.bridge-status{max-width:370px;padding:9px 12px;border-radius:9px;color:#8a5b13;background:#fff5dc;font-size:12px;font-weight:700}.bridge-status.online{color:#087348;background:#e8f7ef}.add-system-printer{display:flex;gap:10px;margin:22px 0}.add-system-printer select{flex:1;min-height:44px;padding:10px;border:1px solid #cfdceb;border-radius:9px}.add-system-printer button,.printer-table-row button{padding:10px 14px;background:#246ce0;color:#fff}.printer-table{border:1px solid #dfe6ee;border-radius:12px;overflow:hidden}.printer-table-head,.printer-table-row{display:grid;grid-template-columns:1.5fr .8fr 1fr auto;gap:16px;align-items:center;padding:16px 18px}.printer-table-head{color:#526680;background:#eef2f6;font-size:11px;font-weight:900;text-transform:uppercase}.printer-table-row+.printer-table-row{border-top:1px solid #e1e7ee}.printer-table-row b,.printer-table-row small{display:block}.printer-table-row b{color:#1d2f4a}.printer-table-row small{margin-top:4px;color:#76869a;font-size:11px}.assignment-tag{display:inline-block;margin:2px;padding:5px 9px;border-radius:999px;color:#087348;background:#e8f7ef;font-size:11px;font-style:normal;font-weight:800}.printer-table-row .remove-printer{margin-left:6px;color:#a52a39;background:#fff0f0}.assignment-back{display:inline-flex!important;align-items:center;min-height:38px;margin-bottom:17px;padding:8px 12px!important;border:1px solid #9bb7d9!important;border-radius:8px!important;color:#123a70!important;background:#dcecff!important;box-shadow:0 1px 2px rgba(18,58,112,.12);font-size:13px!important;font-weight:900!important}.assignment-back:hover,.assignment-back:focus-visible{border-color:#246ce0!important;color:#fff!important;background:#246ce0!important;outline:0;box-shadow:0 0 0 3px rgba(36,108,224,.2)}.assignment-choices{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;max-width:720px;margin-top:24px}.assignment-choices button{display:grid;gap:6px;padding:22px;text-align:left;color:#1e3150;background:#fff;border:1px solid #d6e0ea}.assignment-choices button:hover{border-color:#246ce0;background:#f4f8ff}.assignment-choices b{font-size:16px}.assignment-choices span{color:#718198}.assignment-category-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:22px}.assignment-category-grid label{display:flex;align-items:center;gap:9px;padding:12px;border:1px solid #dce5ee;border-radius:9px;color:#263b59;font-size:12px;font-weight:700}.assignment-category-grid input{width:17px;height:17px;accent-color:#168451}.assignment-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:22px}.assignment-actions button{padding:11px 15px;background:#eef3f8;color:#304562}.assignment-actions .operations-save{color:#fff;background:#168451}@media(max-width:760px){.manage-printers-head{display:grid}.printer-table-head{display:none}.printer-table-row{grid-template-columns:1fr;gap:8px}.add-system-printer{display:grid}.assignment-choices,.assignment-category-grid{grid-template-columns:1fr}}`;
@@ -3204,15 +3205,56 @@ function printBridgeSetupCommand(platform = detectedDesktopPlatform()) {
     ? 'bash ./install-print-bridge-macos.sh'
     : 'powershell -ExecutionPolicy Bypass -File .\\install-print-bridge-windows.ps1';
 }
+function compareBridgeVersions(first, second) {
+  const firstParts = String(first || '')
+      .split(/[^0-9]+/)
+      .filter(Boolean)
+      .map(Number),
+    secondParts = String(second || '')
+      .split(/[^0-9]+/)
+      .filter(Boolean)
+      .map(Number),
+    partCount = Math.max(firstParts.length, secondParts.length);
+  for (let index = 0; index < partCount; index += 1) {
+    const difference = (firstParts[index] || 0) - (secondParts[index] || 0);
+    if (difference) return difference > 0 ? 1 : -1;
+  }
+  return 0;
+}
+async function fetchPrintBridgeRelease() {
+  const controller = new AbortController(),
+    timeout = setTimeout(() => controller.abort(), 1800);
+  try {
+    const response = await fetch('/downloads/print-bridge-release.json', {
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !/^\d+(?:\.\d+)+$/.test(String(data.version || ''))) return null;
+    return data;
+  } catch (_) {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 function renderPrintBridgeSetup() {
   const content = document.getElementById('operations-content');
   if (!content) return;
   const status = printBridgeSetupStatus;
   const platform = status?.platformLabel || detectedDesktopPlatform();
+  const latestBridgeVersion = String(printBridgeRelease?.version || '');
+  const installedBridgeVersion = String(status?.version || '');
+  const updateAvailable =
+    !!installedBridgeVersion &&
+    !!latestBridgeVersion &&
+    compareBridgeVersions(installedBridgeVersion, latestBridgeVersion) < 0;
   const download =
     platform === 'macOS'
-      ? 'https://github.com/grezello94/red-lantern-website/releases/latest/download/Red-Lantern-Print-Bridge-macOS.pkg'
-      : 'https://github.com/grezello94/red-lantern-website/releases/latest/download/Red-Lantern-Print-Bridge-Windows-Setup.exe';
+      ? printBridgeRelease?.downloads?.macOS || '/downloads/Red-Lantern-Print-Bridge-macOS.zip'
+      : printBridgeRelease?.downloads?.windows || '/downloads/Red-Lantern-Print-Bridge-Windows.zip';
+  const bridgeVersionInfo = `<div class="bridge-version-info"><span>Installed: <b>${installedBridgeVersion ? `v${esc(installedBridgeVersion)}` : 'Not installed'}</b></span><span>Latest approved: <b>${latestBridgeVersion ? `v${esc(latestBridgeVersion)}` : 'Checking…'}</b></span>${updateAvailable ? '<em>Update available</em>' : installedBridgeVersion && latestBridgeVersion ? '<em class="is-current">Up to date</em>' : ''}</div>`;
+  const bridgeUpdateAction = `${bridgeVersionInfo}<a class="quiet-button bridge-download" href="${esc(download)}" download title="Download the current Print Bridge setup for this computer">${updateAvailable ? `Update to v${esc(latestBridgeVersion)}` : 'Install / update Bridge'}</a>`;
   const missingPrinters = Number(status?.missingConfiguredPrinterCount || 0),
     unavailablePrinters = Number(status?.unavailableConfiguredPrinterCount || 0),
     unreachablePrinters = Number(status?.unreachableConfiguredPrinterCount || 0),
@@ -3258,22 +3300,22 @@ function renderPrintBridgeSetup() {
   const card = status?.checking
     ? `<span class="printing-status-icon is-checking" aria-hidden="true">…</span><div><h3>Preparing printing…</h3><p>This takes a moment.</p></div>`
     : status?.ok && failedJobs
-      ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Printing needs review</h3><p>${failedJobs} local print job${failedJobs === 1 ? '' : 's'} failed or ended with uncertain output${failureDetail ? ` (${esc(failureDetail)})` : ''}. Check for a physical slip and inspect the Windows printer queue before deliberately reprinting.</p><button type="button" class="quiet-button" data-acknowledge-print-failures="${esc(JSON.stringify(failedIds))}">Mark reviewed</button><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
+      ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Printing needs review</h3><p>${failedJobs} local print job${failedJobs === 1 ? '' : 's'} failed or ended with uncertain output${failureDetail ? ` (${esc(failureDetail)})` : ''}. Check for a physical slip and inspect the Windows printer queue before deliberately reprinting.</p><button type="button" class="quiet-button" data-acknowledge-print-failures="${esc(JSON.stringify(failedIds))}">Mark reviewed</button>${bridgeUpdateAction}<button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
       : status?.ok && missingPrinters
-        ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Assigned printer is missing</h3><p>${missingPrinters} saved printer ${missingPrinters === 1 ? 'queue is' : 'queues are'} no longer installed in Windows/macOS. Reassign the device before service.</p><button type="button" class="quiet-button" data-operations-tab="printers">Manage printers</button><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
+        ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Assigned printer is missing</h3><p>${missingPrinters} saved printer ${missingPrinters === 1 ? 'queue is' : 'queues are'} no longer installed in Windows/macOS. Reassign the device before service.</p><button type="button" class="quiet-button" data-operations-tab="printers">Manage printers</button>${bridgeUpdateAction}<button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
         : status?.ok && unavailablePrinters
-          ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Printer needs a physical check</h3><p>The Bridge already checked Windows automatically. ${esc(unavailablePrinterNames || `${unavailablePrinters} configured printer queue${unavailablePrinters === 1 ? '' : 's'}`)} still reports Offline or Error. Staff only need to check that the printer has power, paper and a connected cable.</p><button type="button" class="quiet-button" data-operations-tab="printers">Manage printers</button><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
+          ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Printer needs a physical check</h3><p>The Bridge already checked Windows automatically. ${esc(unavailablePrinterNames || `${unavailablePrinters} configured printer queue${unavailablePrinters === 1 ? '' : 's'}`)} still reports Offline or Error. Staff only need to check that the printer has power, paper and a connected cable.</p><button type="button" class="quiet-button" data-operations-tab="printers">Manage printers</button>${bridgeUpdateAction}<button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
           : status?.ok && unreachablePrinters
-            ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Printer needs a physical check</h3><p>The Bridge tested ${esc(unreachablePrinterNames || `${unreachablePrinters} configured LAN printer${unreachablePrinters === 1 ? '' : 's'}`)} automatically, but could not reach it. Staff only need to check printer power and its Ethernet/Wi-Fi connection.</p><button type="button" class="quiet-button" data-operations-tab="printers">Manage printers</button><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
+            ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Printer needs a physical check</h3><p>The Bridge tested ${esc(unreachablePrinterNames || `${unreachablePrinters} configured LAN printer${unreachablePrinters === 1 ? '' : 's'}`)} automatically, but could not reach it. Staff only need to check printer power and its Ethernet/Wi-Fi connection.</p><button type="button" class="quiet-button" data-operations-tab="printers">Manage printers</button>${bridgeUpdateAction}<button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
             : status?.ok && unroutedItems
-              ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Menu routing is incomplete</h3><p>${unroutedItems} menu item${unroutedItems === 1 ? '' : 's'} ${unroutedItems === 1 ? 'has' : 'have'} no live KOT printer route${status.unroutedItems?.length ? `: ${esc(status.unroutedItems.slice(0, 5).join(', '))}${unroutedItems > 5 ? '…' : ''}` : ''}.</p><button type="button" class="quiet-button" data-operations-tab="printers">Manage printers</button></div>`
+              ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Menu routing is incomplete</h3><p>${unroutedItems} menu item${unroutedItems === 1 ? '' : 's'} ${unroutedItems === 1 ? 'has' : 'have'} no live KOT printer route${status.unroutedItems?.length ? `: ${esc(status.unroutedItems.slice(0, 5).join(', '))}${unroutedItems > 5 ? '…' : ''}` : ''}.</p><button type="button" class="quiet-button" data-operations-tab="printers">Manage printers</button>${bridgeUpdateAction}</div>`
               : status?.ok && !status.cloud
-                ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Cloud configuration is unavailable</h3><p>The local Bridge is running, but printer routes could not be checked against the live menu. Restore internet or sign in again, then check printing.</p><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
+                ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Cloud configuration is unavailable</h3><p>The local Bridge is running, but printer routes could not be checked against the live menu. Restore internet or sign in again, then check printing.</p>${bridgeUpdateAction}<button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
                 : status?.ok && configured
-                  ? `<span class="printing-status-icon" aria-hidden="true">✓</span><div><h3>Printing is ready</h3><p>This computer is ready to print bills and kitchen orders${status.version ? ` · Bridge ${esc(status.version)}` : ''}.</p><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
+                  ? `<span class="printing-status-icon" aria-hidden="true">✓</span><div><h3>Printing is ready</h3><p>This computer is ready to print bills and kitchen orders.</p>${bridgeUpdateAction}<button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
                   : status?.ok
-                    ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Finish printer setup</h3><p>Print Bridge is running, but this computer needs an assigned Bill printer and a KOT route attached to a real system printer before service.</p><button type="button" class="quiet-button" data-operations-tab="printers">Manage printers</button><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
-                    : `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Set up printing</h3><p>${esc(status?.detail || `Install printing once on this ${platform} computer.`)}</p><a class="operations-save bridge-download" href="${download}">Set up printing</a><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`;
+                    ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Finish printer setup</h3><p>Print Bridge is running, but this computer needs an assigned Bill printer and a KOT route attached to a real system printer before service.</p><button type="button" class="quiet-button" data-operations-tab="printers">Manage printers</button>${bridgeUpdateAction}<button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
+                    : `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Set up printing</h3><p>${esc(status?.detail || `Install printing once on this ${platform} computer.`)}</p>${bridgeVersionInfo}<a class="operations-save bridge-download" href="${esc(download)}" download>Download latest Bridge</a><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`;
   content.innerHTML = `<section class="simple-printing-setup"><button type="button" class="assignment-back" data-operations-tab="home">‹ Back</button><span class="eyebrow">Printing</span><div class="simple-printing-card">${card}</div></section>`;
 }
 
@@ -3306,6 +3348,7 @@ function unroutedOperationItems(menu, config) {
 async function checkPrintBridgeSetup() {
   printBridgeSetupStatus = { checking: true };
   renderPrintBridgeSetup();
+  const releaseCheck = fetchPrintBridgeRelease();
   const cloudCheck = (async () => {
     const controller = new AbortController(),
       timeout = setTimeout(() => controller.abort(), 4000);
@@ -3334,7 +3377,8 @@ async function checkPrintBridgeSetup() {
     if (!response.ok || !data.ok)
       throw new Error(data.detail || data.error || 'The local service did not complete its check.');
     rememberPrintBridgeWorkstation(data);
-    const cloudData = await cloudCheck;
+    const [cloudData, release] = await Promise.all([cloudCheck, releaseCheck]);
+    printBridgeRelease = release;
     installedSystemPrinters = Array.from(
       { length: Number(data.printerCount) || 0 },
       (_, index) => installedSystemPrinters[index]
@@ -3382,6 +3426,7 @@ async function checkPrintBridgeSetup() {
       unroutedItems: unrouted,
     };
   } catch (error) {
+    printBridgeRelease = await releaseCheck;
     printBridgeSetupStatus = {
       ok: false,
       cloud: !!(await cloudCheck),
@@ -4151,14 +4196,31 @@ function renderAvailability() {
       );
     })
     .sort((a, b) => `${a.category} ${a.name}`.localeCompare(`${b.category} ${b.name}`));
+  const resultsMeta = document.getElementById('availability-results-meta');
+  if (resultsMeta) {
+    const matchingUnavailable = visible.filter((item) => activeUnavailable.has(item.key)).length;
+    resultsMeta.textContent = visible.length
+      ? `${visible.length} ${visible.length === 1 ? 'item' : 'items'} shown · ${visible.length - matchingUnavailable} available now`
+      : 'No items match these filters.';
+  }
   menuResults.innerHTML = visible.length
     ? visible
         .map((item) => {
           const until = activeUnavailable.has(item.key) ? unavailable.get(item.key) : null;
-          const status = until
-            ? `Out until ${new Date(until).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}`
-            : 'In stock';
-          return `<article class="menu-item ${until ? 'is-out' : ''}" data-key="${esc(item.key)}"><div class="menu-item-name"><b>${esc(item.name)}</b><span>${esc(item.category || 'Menu')}</span></div><div class="availability-state"><i aria-hidden="true"></i>${status}</div><div class="availability-controls">${until ? `<button class="stock-in" data-stock-action="restore">Mark in stock</button>` : `<button class="stock-tomorrow" data-stock-action="tomorrow">Out until tomorrow</button><label><span>Custom restock</span><input type="datetime-local" value="${tomorrowLocal()}" data-stock-until></label><button class="stock-date" data-stock-action="date">Mark unavailable</button>`}</div></article>`;
+          const restockAt = until
+            ? new Date(until).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
+            : '';
+          return `<article class="menu-item ${until ? 'is-out' : ''}" data-key="${esc(item.key)}">
+            <div class="menu-item-topline">
+              <div class="menu-item-name"><span>${esc(item.category || 'Menu')}</span><b>${esc(item.name)}</b></div>
+              <div class="availability-state"><i aria-hidden="true"></i>${until ? 'Unavailable' : 'Available'}</div>
+            </div>
+            <div class="availability-controls ${until ? 'is-restocking' : ''}">
+              ${until
+                ? `<div class="availability-return"><span>Scheduled to return</span><strong>${esc(restockAt)}</strong></div><button class="stock-in" data-stock-action="restore">Make available</button>`
+                : `<label class="availability-date"><span>Return to stock</span><input type="datetime-local" value="${tomorrowLocal()}" data-stock-until></label><div class="availability-actions"><button class="stock-tomorrow" data-stock-action="tomorrow">Until tomorrow</button><button class="stock-date" data-stock-action="date">Mark unavailable</button></div>`}
+            </div>
+          </article>`;
         })
         .join('')
     : '<div class="empty-state">No menu items match that search.</div>';

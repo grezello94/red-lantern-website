@@ -11,7 +11,7 @@
     <link rel="manifest" href="/orders.webmanifest?v=7" />
     <link rel="stylesheet" href="orders.css?v=7" />
     <link rel="stylesheet" href="orders-logo.css?v=7" />
-    <link rel="stylesheet" href="orders-fixes.css?v=17" />
+    <link rel="stylesheet" href="orders-fixes.css?v=18" />
   </head>
   <body>
     <nav class="orders-rail" aria-label="Orders workspace">
@@ -89,26 +89,37 @@
           <span class="eyebrow">Staff controls</span>
           <h2>Menu availability</h2>
           <p>
-            Update item availability for QR ordering. Menu pricing can only be changed in Admin.
+            Control what guests can order right now. Prices remain managed in Admin.
           </p>
         </div>
         <button id="availability-close" class="quiet-button" aria-label="Close menu availability">
           Close
         </button>
       </div>
-      <div id="menu-type-tabs" class="menu-type-tabs" aria-label="Select menu"></div>
-      <div class="availability-toolbar">
-        <label class="search-field"
-          ><span aria-hidden="true">⌕</span
-          ><input id="menu-search" type="search" autocomplete="off" placeholder="Search food menu"
-        /></label>
-        <div id="availability-counts" class="availability-counts" aria-live="polite"></div>
+      <div class="availability-control-surface">
+        <div class="availability-control-topline">
+          <div id="menu-type-tabs" class="menu-type-tabs" aria-label="Select menu"></div>
+          <div id="availability-counts" class="availability-counts" aria-live="polite"></div>
+        </div>
+        <div class="availability-toolbar">
+          <label class="search-field"
+            ><span aria-hidden="true">⌕</span
+            ><input id="menu-search" type="search" autocomplete="off" placeholder="Search food menu"
+          /></label>
+          <div
+            id="availability-filters"
+            class="availability-filters"
+            aria-label="Filter menu items"
+          ></div>
+        </div>
       </div>
-      <div
-        id="availability-filters"
-        class="availability-filters"
-        aria-label="Filter menu items"
-      ></div>
+      <div class="availability-results-heading">
+        <div>
+          <h3>Item availability</h3>
+          <p id="availability-results-meta" aria-live="polite">Choose an item to update its availability.</p>
+        </div>
+        <span class="availability-results-hint">Changes apply to QR ordering immediately</span>
+      </div>
       <div id="menu-results"></div>
     </section>
     <main id="orders" aria-live="polite" aria-busy="true" aria-label="Orders list">Loading orders…</main>
@@ -128,6 +139,6 @@
     <script src="/printer-domain.js?v=1"></script>
     <script src="/addons-domain.js?v=1"></script>
     <script src="/order-request.js?v=1"></script>
-    <script src="orders.js?v=45"></script>
+    <script src="orders.js?v=49"></script>
   </body>
 </html>
