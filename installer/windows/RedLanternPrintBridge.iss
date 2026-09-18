@@ -1,5 +1,5 @@
 #define AppName "Red Lantern Print Bridge"
-#define AppVersion "2026.09.18.4"
+#define AppVersion "2026.09.18.5"
 #ifndef NodeRuntime
   #error NodeRuntime must point to a Node.js 22 node.exe file
 #endif

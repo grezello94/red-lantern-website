@@ -22,7 +22,7 @@ const { DatabaseSync } = require('node:sqlite');
 const PORT = Number(process.env.PRINT_BRIDGE_PORT || 9124);
 // Keep this in sync with downloads/print-bridge-release.json. Operations uses
 // that signed-off release record to tell staff whether this computer is current.
-const BRIDGE_VERSION = '2026.09.18.4';
+const BRIDGE_VERSION = '2026.09.18.5';
 const PRINT_JOB_LEASE_MS = Math.max(
   30000,
   Number(process.env.PRINT_BRIDGE_JOB_LEASE_MS || 2 * 60 * 1000)
@@ -45,6 +45,7 @@ let windowsSpoolerCheck = {
   checkedAt: 0,
   result: { attempted: false, recovered: false },
 };
+const networkReachability = new Map();
 
 function closeLedger() {
   try {
@@ -526,19 +527,30 @@ async function tcpEndpointReachable(host, port, timeout = 900) {
   // stack directly so the first probe does not interfere with the printer's
   // limited connection queue.
   if (process.platform === 'win32') {
-    try {
-      const safeHost = String(host).replace(/'/g, "''");
-      const safePort = Number(port) || 9100;
-      const safeTimeout = Math.max(timeout, 5000);
-      const output = await run('powershell.exe', [
-        '-NoProfile',
-        '-Command',
-        `$hostName='${safeHost}'; $port=${safePort}; $timeout=${safeTimeout}; $client=[System.Net.Sockets.TcpClient]::new(); try { $task=$client.ConnectAsync($hostName,$port); if($task.Wait($timeout) -and $client.Connected){"reachable"}else{"unreachable"} } catch { "unreachable" } finally { $client.Dispose() }`,
-      ]);
-      return output.trim() === 'reachable';
-    } catch (_) {
-      return false;
+    const safePort = Number(port) || 9100;
+    const cacheKey = `${String(host).toLowerCase()}:${safePort}`;
+    const cached = networkReachability.get(cacheKey);
+    if (cached?.reachable && Date.now() - cached.checkedAt < 120000) return true;
+    const safeHost = String(host).replace(/'/g, "''");
+    const safeTimeout = Math.max(timeout, 5000);
+    let reachable = false;
+    for (let attempt = 0; attempt < 2 && !reachable; attempt += 1) {
+      try {
+        const output = await run('powershell.exe', [
+          '-NoProfile',
+          '-Command',
+          `$hostName='${safeHost}'; $port=${safePort}; $timeout=${safeTimeout}; $client=[System.Net.Sockets.TcpClient]::new(); try { $task=$client.ConnectAsync($hostName,$port); if($task.Wait($timeout) -and $client.Connected){"reachable"}else{"unreachable"} } catch { "unreachable" } finally { $client.Dispose() }`,
+        ]);
+        reachable = output.trim() === 'reachable';
+      } catch (_) {}
+      if (!reachable && attempt === 0)
+        await new Promise((resolve) => setTimeout(resolve, 350));
     }
+    networkReachability.set(cacheKey, { reachable, checkedAt: Date.now() });
+    // RAW printer ports can briefly refuse a health connection after a job or
+    // another probe. A recent successful connection remains authoritative.
+    if (!reachable && cached?.reachable && Date.now() - cached.checkedAt < 300000) return true;
+    return reachable;
   }
 
   return new Promise((resolve) => {
