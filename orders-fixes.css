@@ -1610,6 +1610,35 @@ main {
   border-radius: 8px;
   font-size: 11px;
 }
+.orders-rail .live-orders-toggle,
+.orders-rail .operations-toggle,
+.orders-rail .availability-toggle {
+  color: #617189 !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+.orders-rail .live-orders-toggle:hover,
+.orders-rail .live-orders-toggle.is-open,
+.orders-rail .operations-toggle:hover,
+.orders-rail .operations-toggle.is-open,
+.orders-rail .availability-toggle:hover,
+.orders-rail .availability-toggle.is-open,
+.orders-rail .orders-rail-button.is-active {
+  color: #c91f3c !important;
+  background: #fff0f2 !important;
+}
+.orders-rail .availability-toggle span,
+.orders-rail .operations-toggle span {
+  margin: 0;
+  font-size: inherit;
+  line-height: inherit;
+}
+.orders-rail .orders-rail-count,
+.orders-rail .live-orders-toggle.is-open .orders-rail-count {
+  color: #fff !important;
+  background: #d22342 !important;
+}
 @media print {
   .orders-rail {
     display: none !important;
