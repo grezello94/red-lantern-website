@@ -22,7 +22,7 @@ const { DatabaseSync } = require('node:sqlite');
 const PORT = Number(process.env.PRINT_BRIDGE_PORT || 9124);
 // Keep this in sync with downloads/print-bridge-release.json. Operations uses
 // that signed-off release record to tell staff whether this computer is current.
-const BRIDGE_VERSION = '2026.09.18.1';
+const BRIDGE_VERSION = '2026.09.18.2';
 const PRINT_JOB_LEASE_MS = Math.max(
   30000,
   Number(process.env.PRINT_BRIDGE_JOB_LEASE_MS || 2 * 60 * 1000)

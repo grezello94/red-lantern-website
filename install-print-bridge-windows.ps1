@@ -3,6 +3,17 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+# Updating the recovery task requires elevation. Relaunch setup once with an
+# administrator token so an existing installation can actually be replaced.
+$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$windowsPrincipal = New-Object Security.Principal.WindowsPrincipal($identity)
+if (!$windowsPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+  $arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -ProjectPath `"$ProjectPath`""
+  $elevated = Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList $arguments -Wait -PassThru
+  exit $elevated.ExitCode
+}
+
 $project = (Resolve-Path -LiteralPath $ProjectPath).Path
 $bridge = Join-Path $project 'print-bridge.js'
 $supervisor = Join-Path $project 'print-bridge-supervisor.js'
