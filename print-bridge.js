@@ -22,7 +22,7 @@ const { DatabaseSync } = require('node:sqlite');
 const PORT = Number(process.env.PRINT_BRIDGE_PORT || 9124);
 // Keep this in sync with downloads/print-bridge-release.json. Operations uses
 // that signed-off release record to tell staff whether this computer is current.
-const BRIDGE_VERSION = '2026.09.18.2';
+const BRIDGE_VERSION = '2026.09.18.3';
 const PRINT_JOB_LEASE_MS = Math.max(
   30000,
   Number(process.env.PRINT_BRIDGE_JOB_LEASE_MS || 2 * 60 * 1000)
@@ -541,13 +541,13 @@ async function tcpEndpointReachable(host, port, timeout = 900) {
   // through the Windows networking stack before warning staff that the physical
   // printer is unreachable.
   try {
+    const safeHost = String(host).replace(/'/g, "''");
+    const safePort = Number(port) || 9100;
+    const safeTimeout = Math.max(timeout, 1500);
     const output = await run('powershell.exe', [
       '-NoProfile',
       '-Command',
-      '$client=[System.Net.Sockets.TcpClient]::new(); try { $task=$client.ConnectAsync([string]$args[0],[int]$args[1]); if($task.Wait([int]$args[2]) -and $client.Connected){"reachable"}else{"unreachable"} } catch { "unreachable" } finally { $client.Dispose() }',
-      String(host),
-      String(Number(port) || 9100),
-      String(Math.max(timeout, 1500)),
+      `$hostName='${safeHost}'; $port=${safePort}; $timeout=${safeTimeout}; $client=[System.Net.Sockets.TcpClient]::new(); try { $task=$client.ConnectAsync($hostName,$port); if($task.Wait($timeout) -and $client.Connected){"reachable"}else{"unreachable"} } catch { "unreachable" } finally { $client.Dispose() }`,
     ]);
     return output.trim() === 'reachable';
   } catch (_) {

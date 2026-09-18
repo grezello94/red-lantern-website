@@ -248,7 +248,7 @@ ______________________________________________________________________________
 
 ## Silent printer-process follow-up — 18 September 2026
 
-Print Bridge 2026.09.18.2 explicitly runs printer PowerShell commands hidden and
+Print Bridge 2026.09.18.3 explicitly runs printer PowerShell commands hidden and
 non-interactively, without a command shell. Windows upgrades retire the legacy
 Bridge scheduled task and CMD Startup launcher. WScript startup uses batch mode
 and returns failures as exit codes instead of displaying script-error dialogs.
