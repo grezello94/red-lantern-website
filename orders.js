@@ -2136,6 +2136,22 @@ function connectFastPrintUpdates() {
   });
 }
 
+function formatOrderAge(createdAt) {
+  const timestamp = new Date(createdAt).getTime();
+  if (!Number.isFinite(timestamp)) return 'Time unavailable';
+  const elapsedMinutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60000));
+  if (elapsedMinutes < 1) return 'Just now';
+  if (elapsedMinutes < 60) return `${elapsedMinutes} min ago`;
+  const elapsedHours = Math.floor(elapsedMinutes / 60);
+  if (elapsedHours < 24) return `${elapsedHours} hr${elapsedHours === 1 ? '' : 's'} ago`;
+  const elapsedDays = Math.floor(elapsedHours / 24);
+  if (elapsedDays < 30) return `${elapsedDays} day${elapsedDays === 1 ? '' : 's'} ago`;
+  const elapsedMonths = Math.floor(elapsedDays / 30);
+  if (elapsedMonths < 12) return `${elapsedMonths} month${elapsedMonths === 1 ? '' : 's'} ago`;
+  const elapsedYears = Math.floor(elapsedDays / 365);
+  return `${elapsedYears} year${elapsedYears === 1 ? '' : 's'} ago`;
+}
+
 function renderOrder(order) {
   const items = Array.isArray(order.items) ? order.items : [];
   const itemCount = items.reduce((count, item) => count + Number(item.quantity || 0), 0);
@@ -2150,7 +2166,8 @@ function renderOrder(order) {
   );
   const storedTotal = Number(order.total);
   const total = storedTotal > 0 ? storedTotal : fallbackTotal;
-  const age = Math.max(0, Math.floor((Date.now() - new Date(order.created_at)) / 60000));
+  const ageMinutes = Math.max(0, Math.floor((Date.now() - new Date(order.created_at)) / 60000));
+  const ageLabel = formatOrderAge(order.created_at);
   const placedAt = new Intl.DateTimeFormat('en-IN', {
     timeZone: 'Asia/Kolkata',
     day: '2-digit',
@@ -2175,25 +2192,40 @@ function renderOrder(order) {
     preparing: ['ready', 'completed', 'rejected'],
     ready: ['completed', 'rejected'],
   };
-  const controls = (nextStatuses[order.status] || [])
+  const isHistoryView = orderView === 'history';
+  const controls = (isHistoryView ? [] : nextStatuses[order.status] || [])
     .map(
-      (status) => `<button onclick="setStatus('${esc(order.id)}','${status}')">${status}</button>`
+      (status) =>
+        `<button class="order-action order-action-${status}" onclick="setStatus('${esc(order.id)}','${status}')">${status}</button>`
     )
     .join('');
-  const canCancel = ['new', 'accepted', 'preparing', 'ready'].includes(order.status);
-  const canModify = age < 10 && ['new', 'accepted', 'preparing'].includes(order.status);
+  const canCancel =
+    !isHistoryView && ['new', 'accepted', 'preparing', 'ready'].includes(order.status);
+  const canModify =
+    !isHistoryView && ageMinutes < 10 && ['new', 'accepted', 'preparing'].includes(order.status);
+  const statusClass = [
+    'new',
+    'accepted',
+    'preparing',
+    'ready',
+    'completed',
+    'rejected',
+    'cancelled',
+  ].includes(String(order.status || '').toLowerCase())
+    ? String(order.status).toLowerCase()
+    : 'unknown';
   const service =
     order.mode === 'table' && order.service_state && order.service_state !== 'active'
       ? `<div class="request">Table service: <b>${esc(String(order.service_state).replace('_', ' '))}</b> <button data-clear-service="${esc(order.id)}">Handled</button></div>`
       : '';
-  return `<article class="order" data-order-id="${esc(order.id)}"><div class="order-heading"><span class="daily-order-number">Order #${orderNumber}</span><span class="order-status">${esc(order.status)}</span></div><div class="order-reference">Ref ${esc(order.id)}</div><div class="order-time">${age} min ago</div><div class="placed-at"><span>Placed</span>${esc(placedAt)} <small>Goa time</small></div><div class="meta">${esc(order.customer_name || 'Walk-in customer')}${hasGuestContact ? ` · <b class="phone">${esc(order.customer_phone)}</b>` : ''}</div>${service}${hasGuestContact ? `<div class="customer-trust"><b>${orderCount === 1 ? 'New customer' : `${orderCount} orders from this number`}</b><span>${history}</span></div>` : ''}${order.special_request ? `<div class="request">Special request: ${esc(order.special_request)}</div>` : ''}${order.cancellation_reason ? `<div class="request">Cancelled: ${esc(order.cancellation_reason)}</div>` : ''}<div class="items">${items
+  return `<article class="order${isHistoryView ? ' is-history-order' : ''}" data-order-id="${esc(order.id)}"><div class="order-heading"><span class="daily-order-number">Order #${orderNumber}</span><span class="order-status status-${statusClass}">${esc(order.status)}</span></div><div class="order-reference">Ref ${esc(order.id)}</div><div class="order-time">${ageLabel}</div><div class="placed-at"><span>Placed</span>${esc(placedAt)} <small>Goa time</small></div><div class="meta">${esc(order.customer_name || 'Walk-in customer')}${hasGuestContact ? ` · <b class="phone">${esc(order.customer_phone)}</b>` : ''}</div>${service}${hasGuestContact ? `<div class="customer-trust"><b>${orderCount === 1 ? 'New customer' : `${orderCount} orders from this number`}</b><span>${history}</span></div>` : ''}${order.special_request ? `<div class="request">Special request: ${esc(order.special_request)}</div>` : ''}${order.cancellation_reason ? `<div class="request">Cancelled: ${esc(order.cancellation_reason)}</div>` : ''}<div class="items">${items
     .map((item) => {
       const modifiers = Addons.modifierText(item.modifiers);
       return `<div><b>${Number(item.quantity || 0)}×</b> ${esc(item.name)} ${item.portion ? `(${esc(item.portion)})` : ''}${item.style ? ` — ${esc(item.style)} (+₹10)` : ''}${modifiers ? `<small class="order-item-addons">+ ${esc(modifiers)}</small>` : ''}</div>`;
     })
     .join(
       ''
-    )}</div><div class="totals"><b>${itemCount} item${itemCount === 1 ? '' : 's'}</b><strong>Total ${money(total)}</strong></div><div class="actions">${controls}${canCancel ? `<button class="cancel-order" onclick="cancelOrder('${esc(order.id)}')">Cancel order</button>` : ''}${canModify ? `<button class="modify-order" data-modify-order="${esc(order.id)}">Modify order</button>` : ''}<button class="print" onclick="printOrder('${esc(order.id)}')">Print</button></div></article>`;
+    )}</div><div class="totals"><b>${itemCount} item${itemCount === 1 ? '' : 's'}</b><strong>Total ${money(total)}</strong></div><div class="actions">${controls}${canCancel ? `<button class="cancel-order" onclick="cancelOrder('${esc(order.id)}')">Cancel order</button>` : ''}${canModify ? `<button class="modify-order" data-modify-order="${esc(order.id)}">Modify order</button>` : ''}<button class="print" onclick="printOrder('${esc(order.id)}')">${isHistoryView ? 'Reprint' : 'Print'}</button></div></article>`;
 }
 
 function renderOrders(rows) {
@@ -6008,11 +6040,15 @@ document.getElementById('clear-order-search')?.addEventListener('click', () => {
 });
 historyDate?.addEventListener('change', () => {
   historyAll = false;
+  document.getElementById('all-history')?.classList.remove('is-active');
+  document.getElementById('all-history')?.setAttribute('aria-pressed', 'false');
   loadOrders();
 });
 document.getElementById('all-history')?.addEventListener('click', () => {
   historyAll = true;
   if (historyDate) historyDate.value = '';
+  document.getElementById('all-history')?.classList.add('is-active');
+  document.getElementById('all-history')?.setAttribute('aria-pressed', 'true');
   loadOrders();
 });
 document.getElementById('order-view-tabs')?.addEventListener('click', (event) => {

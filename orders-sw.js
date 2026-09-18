@@ -1,13 +1,13 @@
-const CACHE = 'red-lantern-orders-v31';
+const CACHE = 'red-lantern-orders-v32';
 const ORDER_SHELL = [
   '/orders',
   '/printer-domain.js?v=1',
   '/addons-domain.js?v=1',
   '/order-request.js?v=1',
-  '/orders.js?v=54',
+  '/orders.js?v=55',
   '/orders.css?v=7',
   '/orders-logo.css?v=7',
-  '/orders-fixes.css?v=22',
+  '/orders-fixes.css?v=23',
   '/orders.webmanifest?v=7',
   '/images/red-lantern-logo-600.webp',
 ];
@@ -65,7 +65,9 @@ self.addEventListener('fetch', (event) => {
   const isOrdersShell =
     url.pathname === '/orders' ||
     url.pathname === '/orders.html' ||
-    /\/orders(?:-fixes|-logo)?\.css$|\/orders\.js$|\/orders\.webmanifest$|\/addons-domain\.js$/.test(url.pathname);
+    /\/orders(?:-fixes|-logo)?\.css$|\/orders\.js$|\/orders\.webmanifest$|\/addons-domain\.js$/.test(
+      url.pathname
+    );
   if (!isOrdersData && !isOrdersShell) return;
   event.respondWith(
     (async () => {
@@ -117,9 +119,11 @@ self.addEventListener('push', (event) => {
         renotify: true,
         data: { url: data.url || '/orders' },
       }),
-      clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windows) =>
-        windows.forEach((client) => client.postMessage({ type: 'order-update' }))
-      ),
+      clients
+        .matchAll({ type: 'window', includeUncontrolled: true })
+        .then((windows) =>
+          windows.forEach((client) => client.postMessage({ type: 'order-update' }))
+        ),
     ])
   );
 });

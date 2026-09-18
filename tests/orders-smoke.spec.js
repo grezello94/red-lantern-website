@@ -453,7 +453,7 @@ test('live order history shows saved add-on snapshots and its fallback KOT print
     table_number: 1,
     daily_order_number: 4,
     status: 'accepted',
-    created_at: new Date().toISOString(),
+    created_at: new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString(),
     customer_name: 'Test guest',
     total: 160,
     items: [
@@ -503,6 +503,12 @@ test('live order history shows saved add-on snapshots and its fallback KOT print
   const fallbackKot = await page.evaluate(() => window.__fallbackKotHtml);
   expect(fallbackKot).toContain('Test Soup');
   expect(fallbackKot).toContain('+ Cheese');
+
+  await page.locator('[data-order-view="history"]').click();
+  const historyOrder = page.locator('.order[data-order-id="addon-history-order"]');
+  await expect(historyOrder.locator('.order-time')).toHaveText('1 month ago');
+  await expect(historyOrder.locator('.order-action, .cancel-order, .modify-order')).toHaveCount(0);
+  await expect(historyOrder.locator('.print')).toHaveText('Reprint');
 });
 
 test('an interrupted Send KOT retries automatically with the same idempotency key', async ({
