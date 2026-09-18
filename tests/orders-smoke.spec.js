@@ -195,6 +195,29 @@ async function addCounterTestItem(page) {
   await expect(page.locator('#counter-total')).toHaveText('₹110');
 }
 
+test('phone ordering shows added dishes in a reachable order drawer', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockCounterWorkspace(page);
+  await page.goto('/orders.html');
+  await page.locator('[data-orders-rail="counter"]').click();
+
+  const orderBar = page.locator('#mobile-cart-toggle');
+  await expect(orderBar).toBeVisible();
+  await expect(orderBar).toContainText('0');
+  await page.locator('.counter-menu-item').first().click();
+
+  await expect(page.locator('#mobile-add-status')).toContainText('Test Soup added to order');
+  await expect(orderBar).toContainText('1');
+  await expect(orderBar).toContainText('₹110');
+  await orderBar.click();
+  await expect(orderBar).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.locator('.counter-cart-line')).toContainText('Test Soup');
+  await expect(page.locator('#counter-place-order')).toBeEnabled();
+  await page.locator('#mobile-cart-close').click();
+  await expect(orderBar).toHaveAttribute('aria-expanded', 'false');
+  await expectNoPageOverflow(page);
+});
+
 test.beforeEach(async ({ page }) => {
   await page.route('http://127.0.0.1:9124/**', async (route) => {
     const request = route.request();

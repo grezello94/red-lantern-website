@@ -743,7 +743,7 @@ const counterPanel = document.createElement('section');
 counterPanel.id = 'counter-order-panel';
 counterPanel.hidden = true;
 counterPanel.innerHTML =
-  '<div class="counter-order-head"><div><span class="eyebrow">Counter order</span><h2>Takeaway</h2><p>Build a walk-in or phone order, then send it directly to the kitchen.</p></div><button type="button" id="counter-order-close" class="new-order-button">New Order</button></div><div class="counter-order-layout"><div class="counter-menu"><label class="counter-search"><span aria-hidden="true">⌕</span><input id="counter-menu-search" type="search" placeholder="Search menu items"></label><div id="counter-categories" class="counter-categories"></div><div id="counter-menu-items" class="counter-menu-items"></div></div><aside class="counter-cart"><div class="counter-cart-head"><h3>Current order</h3><div><button type="button" id="view-table-kot" hidden>View KOT</button><button type="button" id="counter-clear" class="counter-clear">Clear</button></div></div><div id="counter-cart-items" class="counter-cart-items"></div><div class="counter-customer"><label>Customer name <input id="counter-customer-name" maxlength="80" placeholder="Walk-in customer"></label><label>Mobile number <input id="counter-customer-phone" inputmode="tel" maxlength="16" placeholder="Optional for walk-ins"></label><label>Serving preference <select id="counter-course-mode"><option value="normal_coursing">Serve course by course</option><option value="serve_together">Serve everything together</option><option value="as_ready">Serve items as ready</option><option value="manual_fire">Manual fire</option></select></label><label>Kitchen note <textarea id="counter-special-request" maxlength="240" placeholder="e.g. less spicy"></textarea></label></div><div class="counter-total"><span>Total</span><b id="counter-total">₹0</b></div><button type="button" id="counter-place-order" class="counter-place-order">Place takeaway order</button><p id="counter-order-status" class="counter-order-status" aria-live="polite"></p></aside></div><dialog id="counter-choice-dialog" class="counter-choice-dialog"><button type="button" class="dialog-close" data-counter-choice-close aria-label="Close">×</button><div id="counter-choice-content"></div></dialog>';
+  '<div class="counter-order-head"><div><span class="eyebrow">Counter order</span><h2>Takeaway</h2><p>Build a walk-in or phone order, then send it directly to the kitchen.</p></div><button type="button" id="counter-order-close" class="new-order-button">New Order</button></div><div class="counter-order-layout"><div class="counter-menu"><label class="counter-search"><span aria-hidden="true">⌕</span><input id="counter-menu-search" type="search" placeholder="Search menu items"></label><div id="counter-categories" class="counter-categories"></div><div id="counter-menu-items" class="counter-menu-items"></div></div><aside class="counter-cart" aria-label="Current order"><div class="counter-cart-head"><h3>Current order</h3><div><button type="button" id="mobile-cart-close" aria-label="Close current order">×</button><button type="button" id="view-table-kot" hidden>View KOT</button><button type="button" id="counter-clear" class="counter-clear">Clear</button></div></div><div id="counter-cart-items" class="counter-cart-items"></div><div class="counter-customer"><label>Customer name <input id="counter-customer-name" maxlength="80" placeholder="Walk-in customer"></label><label>Mobile number <input id="counter-customer-phone" inputmode="tel" maxlength="16" placeholder="Optional for walk-ins"></label><label>Serving preference <select id="counter-course-mode"><option value="normal_coursing">Serve course by course</option><option value="serve_together">Serve everything together</option><option value="as_ready">Serve items as ready</option><option value="manual_fire">Manual fire</option></select></label><label>Kitchen note <textarea id="counter-special-request" maxlength="240" placeholder="e.g. less spicy"></textarea></label></div><div class="counter-total"><span>Total</span><b id="counter-total">₹0</b></div><button type="button" id="counter-place-order" class="counter-place-order">Place takeaway order</button><p id="counter-order-status" class="counter-order-status" aria-live="polite"></p></aside></div><button type="button" id="mobile-cart-toggle" aria-expanded="false"><span><b id="mobile-cart-count">0</b> View order</span><strong id="mobile-cart-total">₹0</strong></button><p id="mobile-add-status" role="status" aria-live="polite"></p><dialog id="counter-choice-dialog" class="counter-choice-dialog"><button type="button" class="dialog-close" data-counter-choice-close aria-label="Close">×</button><div id="counter-choice-content"></div></dialog>';
 availability.before(counterPanel);
 const counterPanelCloseButton = document.getElementById('counter-order-close');
 if (counterPanelCloseButton) {
@@ -835,6 +835,9 @@ const closeOpenPanels = (except = null) => {
   if (except !== 'counter') {
     counterPanel.hidden = true;
     document.body.classList.remove('is-counter-workspace');
+    counterPanel.classList.remove('mobile-cart-open');
+    document.body.classList.remove('mobile-order-cart-open');
+    document.getElementById('mobile-cart-toggle')?.setAttribute('aria-expanded', 'false');
   }
   if (except !== 'tables') tableViewPanel.hidden = true;
   const shortcutDialog = document.getElementById('shortcut-dialog');
@@ -951,6 +954,20 @@ function openCounterChoice(item) {
   if (typeof dialog.showModal === 'function') dialog.showModal();
 }
 const counterMoney = (value) => `₹${Math.round(Number(value) || 0)}`;
+let mobileAddStatusTimer;
+function showMobileAdded(itemName) {
+  const status = document.getElementById('mobile-add-status');
+  if (!status) return;
+  status.textContent = `${itemName} added to order`;
+  status.classList.add('is-visible');
+  clearTimeout(mobileAddStatusTimer);
+  mobileAddStatusTimer = setTimeout(() => status.classList.remove('is-visible'), 1400);
+}
+function setMobileCartOpen(open) {
+  counterPanel.classList.toggle('mobile-cart-open', open);
+  document.getElementById('mobile-cart-toggle')?.setAttribute('aria-expanded', String(open));
+  document.body.classList.toggle('mobile-order-cart-open', open);
+}
 function renderCounterOrder() {
   const search = String(document.getElementById('counter-menu-search')?.value || '')
     .trim()
@@ -1038,6 +1055,14 @@ function renderCounterOrder() {
       ? Math.min(counterLoyaltyPoints, subtotal, Math.max(0, requestedPoints))
       : 0;
   document.getElementById('counter-total').textContent = counterMoney(subtotal - usablePoints);
+  const mobileItemCount = counterCart.reduce(
+    (count, line) => count + Number(line.quantity || 0),
+    0
+  );
+  const mobileCount = document.getElementById('mobile-cart-count');
+  const mobileTotal = document.getElementById('mobile-cart-total');
+  if (mobileCount) mobileCount.textContent = String(mobileItemCount);
+  if (mobileTotal) mobileTotal.textContent = counterMoney(subtotal - usablePoints);
   const placeOrderButton = document.getElementById('counter-place-order');
   if (placeOrderButton) {
     const hasItems = counterCart.length > 0;
@@ -1130,6 +1155,7 @@ async function openCounterOrder(table = null) {
   if (!opening) {
     counterPanel.hidden = true;
     document.body.classList.remove('is-counter-workspace');
+    setMobileCartOpen(false);
     return;
   }
   closeOpenPanels('counter');
@@ -4734,6 +4760,7 @@ document.getElementById('counter-menu-items')?.addEventListener('click', (event)
     });
   counterBillSplit = null;
   renderCounterOrder();
+  showMobileAdded(item.name);
 });
 document.getElementById('counter-choice-dialog')?.addEventListener('change', (event) => {
   if (
@@ -4793,6 +4820,13 @@ document.getElementById('counter-choice-dialog')?.addEventListener('click', (eve
   counterBillSplit = null;
   document.getElementById('counter-choice-dialog').close();
   renderCounterOrder();
+  showMobileAdded(counterChoiceItem.name);
+});
+document.getElementById('mobile-cart-toggle')?.addEventListener('click', () => {
+  setMobileCartOpen(!counterPanel.classList.contains('mobile-cart-open'));
+});
+document.getElementById('mobile-cart-close')?.addEventListener('click', () => {
+  setMobileCartOpen(false);
 });
 document.getElementById('counter-cart-items')?.addEventListener('click', (event) => {
   const button = event.target.closest('[data-counter-qty]');
