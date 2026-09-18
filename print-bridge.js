@@ -22,7 +22,7 @@ const { DatabaseSync } = require('node:sqlite');
 const PORT = Number(process.env.PRINT_BRIDGE_PORT || 9124);
 // Keep this in sync with downloads/print-bridge-release.json. Operations uses
 // that signed-off release record to tell staff whether this computer is current.
-const BRIDGE_VERSION = '2026.09.18.3';
+const BRIDGE_VERSION = '2026.09.18.4';
 const PRINT_JOB_LEASE_MS = Math.max(
   30000,
   Number(process.env.PRINT_BRIDGE_JOB_LEASE_MS || 2 * 60 * 1000)
@@ -521,7 +521,27 @@ async function networkPrinterEndpoints() {
 }
 
 async function tcpEndpointReachable(host, port, timeout = 900) {
-  const reachable = await new Promise((resolve) => {
+  // Some Windows printer drivers expose a working Standard TCP/IP port while
+  // Node's socket probe is blocked or times out. Use the Windows networking
+  // stack directly so the first probe does not interfere with the printer's
+  // limited connection queue.
+  if (process.platform === 'win32') {
+    try {
+      const safeHost = String(host).replace(/'/g, "''");
+      const safePort = Number(port) || 9100;
+      const safeTimeout = Math.max(timeout, 5000);
+      const output = await run('powershell.exe', [
+        '-NoProfile',
+        '-Command',
+        `$hostName='${safeHost}'; $port=${safePort}; $timeout=${safeTimeout}; $client=[System.Net.Sockets.TcpClient]::new(); try { $task=$client.ConnectAsync($hostName,$port); if($task.Wait($timeout) -and $client.Connected){"reachable"}else{"unreachable"} } catch { "unreachable" } finally { $client.Dispose() }`,
+      ]);
+      return output.trim() === 'reachable';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  return new Promise((resolve) => {
     const socket = net.createConnection({ host, port: Number(port) || 9100 });
     let completed = false;
     const finish = (reachable) => {
@@ -534,25 +554,6 @@ async function tcpEndpointReachable(host, port, timeout = 900) {
     socket.once('connect', () => finish(true));
     socket.once('error', () => finish(false));
   });
-  if (reachable || process.platform !== 'win32') return reachable;
-
-  // Some Windows printer drivers expose a working Standard TCP/IP port while
-  // Node's socket probe is blocked or times out. Confirm a failed Node probe
-  // through the Windows networking stack before warning staff that the physical
-  // printer is unreachable.
-  try {
-    const safeHost = String(host).replace(/'/g, "''");
-    const safePort = Number(port) || 9100;
-    const safeTimeout = Math.max(timeout, 1500);
-    const output = await run('powershell.exe', [
-      '-NoProfile',
-      '-Command',
-      `$hostName='${safeHost}'; $port=${safePort}; $timeout=${safeTimeout}; $client=[System.Net.Sockets.TcpClient]::new(); try { $task=$client.ConnectAsync($hostName,$port); if($task.Wait($timeout) -and $client.Connected){"reachable"}else{"unreachable"} } catch { "unreachable" } finally { $client.Dispose() }`,
-    ]);
-    return output.trim() === 'reachable';
-  } catch (_) {
-    return false;
-  }
 }
 
 function formatPrinters(names) {
