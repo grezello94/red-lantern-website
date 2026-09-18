@@ -1967,13 +1967,13 @@ main {
   cursor: pointer;
 }
 
-/* Phone ordering keeps the basket reachable while staff browse a long menu. */
+/* Phone and compact tablet ordering keeps the basket reachable while staff browse a long menu. */
 #mobile-cart-toggle,
 #mobile-cart-close,
 #mobile-add-status {
   display: none;
 }
-@media (max-width: 760px) {
+@media (max-width: 900px) {
   body.is-counter-workspace {
     padding-bottom: 86px;
   }

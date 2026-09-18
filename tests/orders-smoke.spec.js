@@ -195,8 +195,8 @@ async function addCounterTestItem(page) {
   await expect(page.locator('#counter-total')).toHaveText('₹110');
 }
 
-test('phone ordering shows added dishes in a reachable order drawer', async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
+test('compact ordering shows added dishes in a reachable order drawer', async ({ page }) => {
+  await page.setViewportSize({ width: 828, height: 1436 });
   await mockCounterWorkspace(page);
   await page.goto('/orders.html');
   await page.locator('[data-orders-rail="counter"]').click();
