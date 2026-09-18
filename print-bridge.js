@@ -22,7 +22,7 @@ const { DatabaseSync } = require('node:sqlite');
 const PORT = Number(process.env.PRINT_BRIDGE_PORT || 9124);
 // Keep this in sync with downloads/print-bridge-release.json. Operations uses
 // that signed-off release record to tell staff whether this computer is current.
-const BRIDGE_VERSION = '1.0.15';
+const BRIDGE_VERSION = '2026.09.18.1';
 const PRINT_JOB_LEASE_MS = Math.max(
   30000,
   Number(process.env.PRINT_BRIDGE_JOB_LEASE_MS || 2 * 60 * 1000)
@@ -520,8 +520,8 @@ async function networkPrinterEndpoints() {
   }
 }
 
-function tcpEndpointReachable(host, port, timeout = 900) {
-  return new Promise((resolve) => {
+async function tcpEndpointReachable(host, port, timeout = 900) {
+  const reachable = await new Promise((resolve) => {
     const socket = net.createConnection({ host, port: Number(port) || 9100 });
     let completed = false;
     const finish = (reachable) => {
@@ -534,6 +534,25 @@ function tcpEndpointReachable(host, port, timeout = 900) {
     socket.once('connect', () => finish(true));
     socket.once('error', () => finish(false));
   });
+  if (reachable || process.platform !== 'win32') return reachable;
+
+  // Some Windows printer drivers expose a working Standard TCP/IP port while
+  // Node's socket probe is blocked or times out. Confirm a failed Node probe
+  // through the Windows networking stack before warning staff that the physical
+  // printer is unreachable.
+  try {
+    const output = await run('powershell.exe', [
+      '-NoProfile',
+      '-Command',
+      '$client=[System.Net.Sockets.TcpClient]::new(); try { $task=$client.ConnectAsync([string]$args[0],[int]$args[1]); if($task.Wait([int]$args[2]) -and $client.Connected){"reachable"}else{"unreachable"} } catch { "unreachable" } finally { $client.Dispose() }',
+      String(host),
+      String(Number(port) || 9100),
+      String(Math.max(timeout, 1500)),
+    ]);
+    return output.trim() === 'reachable';
+  } catch (_) {
+    return false;
+  }
 }
 
 function formatPrinters(names) {
