@@ -784,9 +784,7 @@ test('Captain KOT failure retires the saved cart and retries only the KOT', asyn
   expect(counterRequests).toBe(1);
   await expect(page.locator('#tables-screen')).toBeVisible();
   await expect
-    .poll(() =>
-      page.evaluate(() => localStorage.getItem('red-lantern-captain-pending:captain-1'))
-    )
+    .poll(() => page.evaluate(() => localStorage.getItem('red-lantern-captain-pending:captain-1')))
     .toBeNull();
 });
 
@@ -840,9 +838,7 @@ test('Captain network retry reuses one request ID after a refresh', async ({ pag
   expect(requestIds[0]).toBeTruthy();
   expect(new Set(requestIds)).toEqual(new Set([requestIds[0]]));
   await expect
-    .poll(() =>
-      page.evaluate(() => localStorage.getItem('red-lantern-captain-pending:captain-1'))
-    )
+    .poll(() => page.evaluate(() => localStorage.getItem('red-lantern-captain-pending:captain-1')))
     .toBeNull();
 });
 
@@ -1051,7 +1047,13 @@ test('captain conflict, active bill and final order stay contained on a narrow p
         created_at: new Date().toISOString(),
         items: [
           { name: 'Squid Batter Fry with Sauce', portion: 'Regular', quantity: 1, price: 390 },
-          { name: 'Chicken Crispy with an intentionally long preparation note', portion: 'Regular', quantity: 3, price: 220, note: 'Half spicy and no sauce' },
+          {
+            name: 'Chicken Crispy with an intentionally long preparation note',
+            portion: 'Regular',
+            quantity: 3,
+            price: 220,
+            note: 'Half spicy and no sauce',
+          },
         ],
         total: 1050,
       },
@@ -1118,7 +1120,10 @@ test('captain conflict, active bill and final order stay contained on a narrow p
   await page.locator('#menu-list .menu-item').click();
   await page.locator('#basket-bar').click();
   await expect(page.locator('#review-screen')).toBeVisible();
-  await expectIOSControlsDoNotAutoZoom(page, '#review-screen input, #review-screen select, #review-screen textarea');
+  await expectIOSControlsDoNotAutoZoom(
+    page,
+    '#review-screen input, #review-screen select, #review-screen textarea'
+  );
   await page.evaluate(() => {
     const toast = document.querySelector('#captain-toast');
     toast.textContent =
@@ -1562,4 +1567,175 @@ test('takeaway menu renders from its saved snapshot while live refresh is pendin
   await page.locator('[data-orders-rail="counter"]').click();
   await expect(page.locator('.counter-menu-item')).toContainText('Cached Soup', { timeout: 500 });
   menuRelease();
+});
+
+test('unavailable Bridge shows an inline notice without opening a print dialog', async ({
+  page,
+}) => {
+  const dialogs = [];
+  const popups = [];
+  page.on('dialog', async (dialog) => {
+    dialogs.push(dialog.message());
+    await dialog.dismiss();
+  });
+  page.on('popup', (popup) => popups.push(popup));
+  await page.goto('/orders.html');
+  await page.unroute('http://127.0.0.1:9124/**');
+  await page.route('http://127.0.0.1:9124/**', (route) => route.abort());
+  const printed = await page.evaluate(() => window.printOrder('order-1'));
+  expect(printed).toBe(false);
+  await expect(page.locator('#staff-service-notice')).toBeVisible();
+  await expect(page.locator('#staff-service-notice')).toContainText('Print Bridge');
+  expect(dialogs).toEqual([]);
+  expect(popups).toEqual([]);
+  await page.locator('#staff-service-notice button').click();
+  await expect(page.locator('#staff-service-notice')).toBeHidden();
+});
+
+test('recovery preserves another order queued during a pending print', async ({ page }) => {
+  await page.goto('/orders.html');
+  const queued = await page.evaluate(async () => {
+    window.saveDeferredPrints([{ id: 'first', mode: 'table', kotOnly: true }]);
+    window.bridgeHealth = async () => ({ ok: true });
+    window.autoPrintOrder = async () => {
+      window.deferAutomaticPrint({ id: 'second', mode: 'table' }, { kotOnly: true });
+      return { ok: true };
+    };
+    await window.flushDeferredAutomaticPrints();
+    return window.deferredPrints();
+  });
+  expect(queued.map((entry) => entry.id)).toEqual(['second']);
+});
+
+test('Captain live event dispatches KOT while history is open and list refresh is blocked', async ({
+  page,
+}) => {
+  const jobs = [];
+  const order = { id: 'instant-captain', mode: 'table', status: 'accepted', daily_order_number: 8 };
+  await page.route(/\/api\/orders\/operations(?:\?.*)?$/, (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        config: { printers: [{ id: 'kitchen', type: 'kot', deviceName: 'Kitchen' }], routes: [] },
+      }),
+    })
+  );
+  await page.route('**/api/orders/instant-captain/print', (route) =>
+    route.fulfill({ contentType: 'application/json', body: JSON.stringify(order) })
+  );
+  await page.route('**/api/orders/instant-captain/kots', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        kotNumber: 12,
+        order,
+        tickets: [
+          { printerId: 'kitchen', printerName: 'Kitchen', items: [{ name: 'Soup', quantity: 1 }] },
+        ],
+      }),
+    })
+  );
+  await page.goto('/orders.html');
+  await page.unroute('http://127.0.0.1:9124/**');
+  await page.route('http://127.0.0.1:9124/**', async (route) => {
+    if (route.request().url().endsWith('/v1/print-kot')) jobs.push(route.request().postDataJSON());
+    await route.fulfill({
+      contentType: 'application/json',
+      headers: { 'Access-Control-Allow-Origin': '*' },
+      body: '{"ok":true}',
+    });
+  });
+  await page.evaluate(async () => {
+    // Simulate a list request that cannot complete and a screen that excludes live orders.
+    window.eval("orderView = 'history'; ordersRefreshInFlight = true;");
+    await window.dispatchLivePrintUpdate({ type: 'kot-created', orderId: 'instant-captain' });
+  });
+  expect(jobs).toHaveLength(1);
+  expect(jobs[0].order.kotNumber).toBe(12);
+});
+
+test('live events never release saved or held counter orders to the kitchen', async ({ page }) => {
+  await page.goto('/orders.html');
+  let kotRequests = 0;
+  await page.route('**/api/orders/not-released/kots', (route) => {
+    kotRequests += 1;
+    return route.abort();
+  });
+  for (const status of ['saved', 'held', 'new', 'cancelled']) {
+    await page.route('**/api/orders/not-released/print', (route) =>
+      route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ id: 'not-released', mode: 'counter', status }),
+      })
+    );
+    await page.evaluate(() =>
+      window.dispatchLivePrintUpdate({ type: 'created', orderId: 'not-released' })
+    );
+  }
+  expect(kotRequests).toBe(0);
+});
+
+test('Captain bill request prints directly with one receipt read and no KOT dispatch', async ({
+  page,
+}) => {
+  let receiptReads = 0;
+  let kotRequests = 0;
+  const jobs = [];
+  const dialogs = [];
+  const order = {
+    id: 'captain-bill-fast',
+    mode: 'table',
+    status: 'accepted',
+    service_state: 'bill_requested',
+    daily_order_number: 15,
+    total: 180,
+    items: [{ name: 'Soup', quantity: 1, price: 180 }],
+  };
+  page.on('dialog', async (dialog) => {
+    dialogs.push(dialog.message());
+    await dialog.dismiss();
+  });
+  await page.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    let body = {};
+    if (path === '/api/orders') body = [];
+    if (path === '/api/orders/operations')
+      body = {
+        config: {
+          printers: [{ id: 'bill', type: 'bill', deviceName: 'Front Bill' }],
+          routes: [],
+          tableAreas: [],
+        },
+      };
+    if (path === '/api/orders/captain-bill-fast/print') {
+      receiptReads += 1;
+      body = order;
+    }
+    if (path === '/api/orders/captain-bill-fast/kots') kotRequests += 1;
+    if (path.endsWith('/bill-print/claim')) body = { claimed: true };
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) });
+  });
+  await page.goto('/orders.html');
+  await page.unroute('http://127.0.0.1:9124/**');
+  await page.route('http://127.0.0.1:9124/**', async (route) => {
+    if (route.request().url().endsWith('/v1/print-bill')) jobs.push(route.request().postDataJSON());
+    await route.fulfill({
+      contentType: 'application/json',
+      headers: { 'Access-Control-Allow-Origin': '*' },
+      body: '{"ok":true}',
+    });
+  });
+  await page.evaluate(async () => {
+    window.eval("orderView = 'history'; ordersRefreshInFlight = true;");
+    await window.dispatchLivePrintUpdate({
+      type: 'table-service-request',
+      orderId: 'captain-bill-fast',
+    });
+  });
+  expect(jobs).toHaveLength(1);
+  expect(jobs[0].printerName).toBe('Front Bill');
+  expect(jobs[0].order.id).toBe('captain-bill-fast');
+  expect(receiptReads).toBe(1);
+  expect(kotRequests).toBe(0);
+  expect(dialogs).toEqual([]);
 });

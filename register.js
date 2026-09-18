@@ -88,19 +88,74 @@ const savedItemLabel = (item) => {
   const extras = window.RedLanternAddons?.modifierText(item.modifiers) || '';
   return `${item.quantity}× ${item.name}${item.portion ? ` · ${item.portion}` : ''}${extras ? ` + ${extras}` : ''}`;
 };
+const receiptPrintsInFlight = new Set();
 async function receipt(id, print = false) {
+  if (print && receiptPrintsInFlight.has(id)) return;
+  if (print) receiptPrintsInFlight.add(id);
+  try {
+    return await prepareReceipt(id, print);
+  } finally {
+    if (print) receiptPrintsInFlight.delete(id);
+  }
+}
+async function prepareReceipt(id, print = false) {
   const response = await fetch(`/api/orders/${encodeURIComponent(id)}/print`, {
     cache: 'no-store',
   });
   const order = await response.json();
   if (!response.ok) throw new Error(order.error || 'Unable to load bill.');
   if (print) {
-    const popup = window.open('', 'red-lantern-receipt', 'popup=yes,width=420,height=720');
-    if (!popup) throw new Error('Allow pop-ups to reprint the receipt.');
-    popup.document.write(
-      `<!doctype html><title>Receipt</title><style>body{font:13px Arial;padding:18px;color:#111}h2{margin:0}.row{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px dashed #aaa}</style><h2>Red Lantern Restaurant</h2><p>Order #${escapeHtml(order.daily_order_number)}</p>${(order.items || []).map((i) => `<div class=row><span>${escapeHtml(savedItemLabel(i))}</span><b>${money(savedItemTotal(i))}</b></div>`).join('')}<h3>Total: ${money(order.total)}</h3><script>onload=()=>print()<\/script>`
+    const origin = window.RED_LANTERN_CONFIG?.printBridgeOrigin || 'http://127.0.0.1:9124';
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 2500);
+    let health;
+    let configResponse;
+    try {
+      [health, configResponse] = await Promise.all([
+        fetch(`${origin}/health`, { signal: controller.signal, cache: 'no-store' }),
+        fetch('/api/orders/operations?configOnly=1', {
+          signal: controller.signal,
+          cache: 'no-store',
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+    if (!health.ok || !configResponse.ok)
+      throw new Error('Printing is unavailable. Check Print Bridge in Orders → Operations.');
+    const bridge = await health.json();
+    const configuration = await configResponse.json();
+    const domain = window.RedLanternPrinterDomain;
+    const printers = domain.configuredPrintersFor(
+      configuration.config,
+      'bill',
+      bridge.workstation?.id
     );
-    popup.document.close();
+    if (!printers.length)
+      throw new Error('No Bill printer is assigned to this computer. Check Orders → Operations.');
+    const batch = crypto.randomUUID();
+    const results = await Promise.allSettled(
+      printers.map(async (printer) => {
+        const result = await fetch(`${origin}/v1/print-bill`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            printJobId: `register-bill:${batch}:${printer.id}`,
+            printerName: printer.deviceName,
+            workstationId: printer.workstationId || bridge.workstation?.id,
+            order,
+            settings: domain.printerFormat(printer, 'bill'),
+          }),
+        });
+        const body = await result.json().catch(() => ({}));
+        if (!result.ok || result.status === 202 || body.pending)
+          throw new Error(body.error || 'Printing is pending or unavailable.');
+      })
+    );
+    if (results.some((result) => result.status === 'rejected'))
+      throw new Error(
+        'Receipt printing needs attention. Check assigned Bill printers before reprinting; a copy may already exist.'
+      );
     return;
   }
   $('#bill-content').innerHTML =
@@ -111,16 +166,18 @@ let paymentOrder = null,
   paymentType = '',
   paymentSplit = false;
 function paymentName(type) {
-  return {
-    cash: 'Cash',
-    upi: 'UPI / GPay',
-    card: 'Card',
-    zomato: 'Zomato',
-    other: 'Other',
-    due: 'Due',
-    not_paid: 'Not paid',
-    part: 'Split payment',
-  }[type] || 'Not recorded';
+  return (
+    {
+      cash: 'Cash',
+      upi: 'UPI / GPay',
+      card: 'Card',
+      zomato: 'Zomato',
+      other: 'Other',
+      due: 'Due',
+      not_paid: 'Not paid',
+      part: 'Split payment',
+    }[type] || 'Not recorded'
+  );
 }
 const paidPaymentTypes = new Set(['cash', 'upi', 'card', 'zomato', 'other']);
 const paymentOptions = ['cash', 'upi', 'card', 'zomato', 'other', 'due'];
@@ -155,7 +212,10 @@ function updatePaymentPreview() {
   if (paymentSplit) {
     const total = Number(paymentOrder.total || 0),
       rows = splitPaymentRows(),
-      allocated = rows.reduce((sum, row) => sum + (Number.isFinite(row.amount) ? row.amount : 0), 0),
+      allocated = rows.reduce(
+        (sum, row) => sum + (Number.isFinite(row.amount) ? row.amount : 0),
+        0
+      ),
       collected = rows.reduce(
         (sum, row) => sum + (paidPaymentTypes.has(row.type) && row.amount > 0 ? row.amount : 0),
         0
@@ -184,7 +244,9 @@ function updatePaymentPreview() {
       confirm = document.getElementById('payment-confirm');
     document.getElementById('payment-allocated').textContent = money(allocated);
     document.getElementById('payment-collected').textContent = money(collected);
-    document.getElementById('payment-outstanding').textContent = money(Math.max(0, total - collected));
+    document.getElementById('payment-outstanding').textContent = money(
+      Math.max(0, total - collected)
+    );
     confirm.disabled = invalidRow || rows.length === 0 || Math.abs(difference) > 0.009;
     if (invalidRow) {
       preview.textContent = 'Every method needs a valid amount. Received cannot be short.';
@@ -219,10 +281,14 @@ function updatePaymentPreview() {
   const difference = received - due;
   confirm.disabled = false;
   if (paymentType === 'cash') {
-    preview.textContent = difference ? `Return change: ${money(difference)}` : 'Exact cash received.';
+    preview.textContent = difference
+      ? `Return change: ${money(difference)}`
+      : 'Exact cash received.';
     preview.dataset.state = difference ? 'change' : 'exact';
   } else if (paymentType === 'upi') {
-    preview.textContent = difference ? `Tip to record: ${money(difference)}` : 'Exact UPI payment received.';
+    preview.textContent = difference
+      ? `Tip to record: ${money(difference)}`
+      : 'Exact UPI payment received.';
     preview.dataset.state = difference ? 'tip' : 'exact';
   } else if (difference) {
     preview.textContent = `${paymentName(paymentType)} must match the exact bill amount.`;
@@ -327,9 +393,10 @@ async function printSummary() {
   if (!response.ok) throw new Error(data.error || 'Unable to prepare the register summary.');
   const rows = Array.isArray(data.orders) ? data.orders : [],
     rowsWithPayments = rows.map((order) => {
-      const payments = Array.isArray(order.payments) && order.payments.length
-          ? order.payments
-          : [legacyPayment(order)],
+      const payments =
+          Array.isArray(order.payments) && order.payments.length
+            ? order.payments
+            : [legacyPayment(order)],
         orderCollected = payments.reduce(
           (sum, payment) => sum + Number(payment.collectedAmount || 0),
           0
@@ -402,7 +469,14 @@ document.addEventListener('click', async (event) => {
     if (target.closest('.payment-close,.payment-cancel'))
       document.getElementById('payment-modal').close();
   } catch (error) {
-    alert(error.message);
+    let notice = document.getElementById('register-service-notice');
+    if (!notice) {
+      notice = document.createElement('p');
+      notice.id = 'register-service-notice';
+      notice.setAttribute('role', 'status');
+      (document.querySelector("dialog[open]") || document.body).prepend(notice);
+    }
+    notice.textContent = error.message;
   }
 });
 $('.modal-close').addEventListener('click', () => $('#bill-modal').close());

@@ -33,14 +33,25 @@ $legacyLauncher = Join-Path $startup 'Red Lantern Print Bridge.cmd'
 # WScript waits for the supervisor and keeps the task attached, while using
 # window style 0 so counter staff never see a Node/terminal window.
 @(
+  'On Error Resume Next',
   'Set shell = CreateObject("WScript.Shell")',
-  ('shell.Run Chr(34) & "{0}" & Chr(34) & " " & Chr(34) & "{1}" & Chr(34), 0, True' -f $vbsNode, $vbsBridge)
+  ('result = shell.Run(Chr(34) & "{0}" & Chr(34) & " " & Chr(34) & "{1}" & Chr(34), 0, True)' -f $vbsNode, $vbsBridge),
+  'If Err.Number <> 0 Then WScript.Quit 1',
+  'WScript.Quit result'
 ) | Set-Content -LiteralPath $hiddenLauncher -Encoding Ascii
 try {
   # The task runs in the signed-in counter user's session. This is important:
   # Windows printers are user-scoped on many POS systems, so a task registered
   # under an elevated installer account can appear healthy but have no printers.
   $currentUser = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+  # Retire the original console-based task before stopping its processes.
+  # Otherwise the old task can relaunch a visible Node/CMD window at sign-in.
+  $legacyTask = Get-ScheduledTask -TaskName 'Red Lantern Print Bridge' -ErrorAction SilentlyContinue
+  if ($legacyTask) {
+    Stop-ScheduledTask -TaskName 'Red Lantern Print Bridge' -ErrorAction SilentlyContinue
+    Unregister-ScheduledTask -TaskName 'Red Lantern Print Bridge' -Confirm:$false -ErrorAction Stop
+  }
+  Remove-Item -LiteralPath $legacyLauncher -Force -ErrorAction SilentlyContinue
   # Stop the Bridge and its watchdog being upgraded. Leaving the old supervisor
   # alive lets it immediately recreate the old child and compete with the new
   # scheduled-task supervisor for port 9124.
@@ -68,7 +79,7 @@ try {
   Copy-Item -LiteralPath $domain -Destination $installedDomain -Force
   Copy-Item -LiteralPath $addonsDomain -Destination $installedAddonsDomain -Force
   # WScript waits for the supervisor but has no visible console window.
-  $action = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\wscript.exe" -Argument ('"{0}"' -f $hiddenLauncher) -WorkingDirectory $launcherDir
+  $action = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\wscript.exe" -Argument ('//B //Nologo "{0}"' -f $hiddenLauncher) -WorkingDirectory $launcherDir
   $trigger = New-ScheduledTaskTrigger -AtLogOn -User $currentUser
   # Keep the Bridge alive, with no visible terminal. It starts at every sign-in
   # and Task Scheduler restarts it after an unexpected exit.
@@ -98,13 +109,16 @@ try {
   # A .vbs launcher keeps the bridge completely out of the staff workflow:
   # no Command Prompt window appears at sign-in or when the fallback starts.
   @(
+    'On Error Resume Next',
     'Set shell = CreateObject("WScript.Shell")',
-    ('shell.Run Chr(34) & "{0}" & Chr(34) & " " & Chr(34) & "{1}" & Chr(34), 0, False' -f $vbsNode, $vbsBridge)
+    ('result = shell.Run(Chr(34) & "{0}" & Chr(34) & " " & Chr(34) & "{1}" & Chr(34), 0, False)' -f $vbsNode, $vbsBridge),
+    'If Err.Number <> 0 Then WScript.Quit 1',
+    'WScript.Quit result'
   ) | Set-Content -LiteralPath $launcher -Encoding Ascii
   Remove-Item -LiteralPath $legacyLauncher -Force -ErrorAction SilentlyContinue
   # Start through the hidden launcher immediately too; users never need to run
   # a command or manage a terminal window.
-  Start-Process -FilePath "$env:SystemRoot\System32\wscript.exe" -ArgumentList ('"{0}"' -f $launcher) -WindowStyle Hidden
+  Start-Process -FilePath "$env:SystemRoot\System32\wscript.exe" -ArgumentList ('//B //Nologo "{0}"' -f $launcher) -WindowStyle Hidden
   Write-Host "Print Bridge installed silently in this user's Startup folder and started. Scheduled-task setup will be retried at the next installer update."
   Write-Warning "Scheduled-task setup fallback reason: $failure"
 }

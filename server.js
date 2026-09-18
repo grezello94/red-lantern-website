@@ -1137,8 +1137,8 @@ function clearSmartKdsReadCaches({ foundation = true, profiles = true } = {}) {
 // Smart KDS screens receive same-instance updates through SSE. A persisted
 // event cursor below covers serverless instance changes and reconnects.
 const smartKdsStreamClients = new Set();
-function publishSmartKdsUpdate(reason = 'updated') {
-  const payload = `event: smart-kds-update\ndata: ${JSON.stringify({ reason, at: new Date().toISOString() })}\n\n`;
+function publishSmartKdsUpdate(reason = 'updated', details = {}) {
+  const payload = `event: smart-kds-update\ndata: ${JSON.stringify({ reason, orderId: details.orderId || null, at: new Date().toISOString() })}\n\n`;
   for (const client of smartKdsStreamClients) {
     try {
       client.write(payload);
@@ -1359,12 +1359,12 @@ async function recordSmartKdsRealtimeEvent(eventType, details = {}) {
     await ensureSmartKdsTables();
     const rows =
       await sql`INSERT INTO kitchen_realtime_events (event_type,details) VALUES (${reason},${JSON.stringify(details || {})}) RETURNING event_id,created_at`;
-    publishSmartKdsUpdate(reason);
+    publishSmartKdsUpdate(reason, details);
     return rows[0] || null;
   } catch (error) {
     // Local SSE remains useful if the event-audit insert has a temporary issue.
     console.error(`Smart KDS realtime event failed (${reason}):`, error.message);
-    publishSmartKdsUpdate(reason);
+    publishSmartKdsUpdate(reason, details);
     return null;
   }
 }
@@ -6195,7 +6195,9 @@ app.post('/api/orders/:id/kots', async (req, res) => {
         await sql`SELECT COALESCE(daily_kot_number, kot_number) AS kot_number, tickets FROM order_kots WHERE order_id=${orderRows[0].id} ORDER BY created_at DESC, kot_number DESC LIMIT 1`;
       if (req.captain && latest.length && ['saved', 'held'].includes(orderRows[0].status)) {
         await sql`UPDATE direct_orders SET status='accepted',updated_at=NOW() WHERE id=${orderRows[0].id} AND status IN ('saved','held')`;
-        await materializeSmartKdsOrderTiming(orderRows[0].id).catch((error) =>
+        orderRows[0].status = 'accepted';
+        await recordOrderEvent(orderRows[0].id, 'accepted');
+        void materializeSmartKdsOrderTiming(orderRows[0].id).catch((error) =>
           console.warn('Smart KDS timing materialisation failed:', error.message)
         );
       }
@@ -6253,7 +6255,9 @@ app.post('/api/orders/:id/kots', async (req, res) => {
       await ensureKotTicketStatuses(orderRows[0].id, existing[0].kot_number, existing[0].tickets);
       if (req.captain && ['saved', 'held'].includes(orderRows[0].status)) {
         await sql`UPDATE direct_orders SET status='accepted',updated_at=NOW() WHERE id=${orderRows[0].id} AND status IN ('saved','held')`;
-        await materializeSmartKdsOrderTiming(orderRows[0].id).catch((error) =>
+        orderRows[0].status = 'accepted';
+        await recordOrderEvent(orderRows[0].id, 'accepted');
+        void materializeSmartKdsOrderTiming(orderRows[0].id).catch((error) =>
           console.warn('Smart KDS timing materialisation failed:', error.message)
         );
       }
@@ -6267,17 +6271,18 @@ app.post('/api/orders/:id/kots', async (req, res) => {
     await ensureKotTicketStatuses(orderRows[0].id, created[0].kot_number, tickets, {
       newRound: true,
     });
+    if (req.captain && ['saved', 'held'].includes(orderRows[0].status)) {
+      await sql`UPDATE direct_orders SET status='accepted',updated_at=NOW() WHERE id=${orderRows[0].id} AND status IN ('saved','held')`;
+      orderRows[0].status = 'accepted';
+      void materializeSmartKdsOrderTiming(orderRows[0].id).catch((error) =>
+        console.warn('Smart KDS timing materialisation failed:', error.message)
+      );
+    }
     await recordOrderEvent(orderRows[0].id, 'kot-created', {
       kotNumber: created[0].kot_number,
       printerCount: tickets.length,
       itemCount: pending.reduce((count, item) => count + Number(item.quantity || 0), 0),
     });
-    if (req.captain && ['saved', 'held'].includes(orderRows[0].status)) {
-      await sql`UPDATE direct_orders SET status='accepted',updated_at=NOW() WHERE id=${orderRows[0].id} AND status IN ('saved','held')`;
-      await materializeSmartKdsOrderTiming(orderRows[0].id).catch((error) =>
-        console.warn('Smart KDS timing materialisation failed:', error.message)
-      );
-    }
     res.status(201).json({ kotNumber: created[0].kot_number, order: orderRows[0], tickets });
   } catch (error) {
     res.status(500).json({ error: error.message || 'Unable to create KOT.' });
@@ -8363,7 +8368,7 @@ app.get('/api/orders/smart-kds/updates', async (req, res) => {
       return res.json({ cursor: Number(latest[0]?.event_id || 0), events: [] });
     }
     const events =
-      await sql`SELECT event_id,event_type,created_at FROM kitchen_realtime_events WHERE event_id>${after} ORDER BY event_id ASC LIMIT 100`;
+      await sql`SELECT event_id,event_type,details,created_at FROM kitchen_realtime_events WHERE event_id>${after} ORDER BY event_id ASC LIMIT 100`;
     const cursor = events.length ? Number(events[events.length - 1].event_id) : after;
     res.set('Cache-Control', 'no-store');
     res.json({
@@ -8371,6 +8376,7 @@ app.get('/api/orders/smart-kds/updates', async (req, res) => {
       events: events.map((event) => ({
         id: Number(event.event_id),
         type: event.event_type,
+        orderId: event.details?.orderId || null,
         at: event.created_at,
       })),
     });

@@ -1937,3 +1937,32 @@ main {
     display: none;
   }
 }
+
+/* Nonblocking service feedback stays visible until staff dismiss it. */
+#staff-service-notice {
+  position: fixed;
+  bottom: 16px;
+  left: 16px;
+  right: 16px;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 18px;
+  border: 1px solid #b7791f;
+  border-radius: 12px;
+  background: #fff8e6;
+  color: #512c09;
+  box-shadow: 0 4px 20px #0002;
+}
+#staff-service-notice[hidden] {
+  display: none;
+}
+#staff-service-notice span {
+  flex: 1;
+  white-space: pre-line;
+}
+#staff-service-notice button {
+  padding: 10px;
+  cursor: pointer;
+}

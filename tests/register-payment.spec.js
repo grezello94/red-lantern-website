@@ -65,3 +65,48 @@ test('Register records a split payment and remains usable on a phone', async ({ 
   expect(overflow.body).toBeLessThanOrEqual(overflow.viewport);
   expect(overflow.document).toBeLessThanOrEqual(overflow.viewport);
 });
+
+test('Register reprints through Bridge without a browser popup', async ({ page }) => {
+  const jobs = [];
+  const popups = [];
+  page.on('popup', (popup) => popups.push(popup));
+  await page.route('**/api/orders**', async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    let data = [];
+    if (path.endsWith('/print'))
+      data = { ...registerOrder(), items: [{ name: 'Rice', quantity: 1, price: 800 }] };
+    else if (path.endsWith('/operations'))
+      data = {
+        config: {
+          printers: [
+            {
+              id: 'bill',
+              enabled: true,
+              type: 'bill',
+              deviceName: 'Counter',
+              workstationId: 'counter-1',
+            },
+          ],
+        },
+      };
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify(data) });
+  });
+  await page.route('http://127.0.0.1:9124/**', async (route) => {
+    if (route.request().url().endsWith('/v1/print-bill')) jobs.push(route.request().postDataJSON());
+    await route.fulfill({
+      contentType: 'application/json',
+      headers: { 'Access-Control-Allow-Origin': '*' },
+      body: JSON.stringify({ ok: true, workstation: { id: 'counter-1' } }),
+    });
+  });
+  await page.goto('/register.html');
+  await page.evaluate(() =>
+    Promise.all([
+      window.receipt('order-payment-test', true),
+      window.receipt('order-payment-test', true),
+    ])
+  );
+  expect(jobs).toHaveLength(1);
+  expect(jobs[0].printerName).toBe('Counter');
+  expect(popups).toEqual([]);
+});

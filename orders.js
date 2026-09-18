@@ -1,3 +1,37 @@
+// Service notices never steal focus or block the next order.
+function showStaffNotice(message) {
+  let notice = document.getElementById('staff-service-notice');
+  if (!notice) {
+    notice = document.createElement('aside');
+    notice.id = 'staff-service-notice';
+    notice.setAttribute('role', 'status');
+    const text = document.createElement('span');
+    const dismiss = document.createElement('button');
+    dismiss.type = 'button';
+    dismiss.textContent = 'Dismiss';
+    dismiss.addEventListener('click', () => {
+      notice.hidden = true;
+    });
+    notice.append(text, dismiss);
+    document.body.append(notice);
+  }
+  notice.firstElementChild.textContent = String(message);
+  notice.hidden = false;
+}
+
+async function bridgeHealth() {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 2500);
+  try {
+    return await fetch(`${printBridgeOrigin}/health`, {
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 const root = document.getElementById('orders');
 const Addons = window.RedLanternAddons;
 const OrderRequests = window.RedLanternOrderRequests;
@@ -1222,7 +1256,7 @@ function saveSplitBill() {
   if (splitMode === 'equal') {
     const percentageTotal = splitPercentages.reduce((sum, value) => sum + Number(value || 0), 0);
     if (Math.abs(percentageTotal - 100) > 0.01) {
-      alert(`Percentages must total 100% (currently ${percentageTotal.toFixed(2)}%).`);
+      showStaffNotice(`Percentages must total 100% (currently ${percentageTotal.toFixed(2)}%).`);
       return;
     }
     parts = splitParts(splitPartCount).map((part, index) => ({
@@ -1246,7 +1280,7 @@ function saveSplitBill() {
       })
     );
     if (parts.some((part) => !part.items.length)) {
-      alert('Assign at least one item to every bill, or reduce the number of bills.');
+      showStaffNotice('Assign at least one item to every bill, or reduce the number of bills.');
       return;
     }
   }
@@ -1469,7 +1503,7 @@ function openMoveTable(orderId) {
         !(table.area === order.table_area && table.number === Number(order.table_number))
     );
   if (!targets.length) {
-    alert('No available tables are configured.');
+    showStaffNotice('No available tables are configured.');
     return;
   }
   moveTableDialog.dataset.orderId = orderId;
@@ -1825,7 +1859,7 @@ document.getElementById('enable-notifications')?.addEventListener('click', async
     document.getElementById('shortcut-steps').innerHTML =
       '<li>Install the RL Orders shortcut on this device.</li><li>Open it once and tap Enable alerts.</li><li>Allow notifications when your device asks.</li>';
     if (typeof dialog?.showModal === 'function') dialog.showModal();
-    else alert(error.message);
+    else showStaffNotice(error.message);
   } finally {
     button.disabled = false;
   }
@@ -1976,6 +2010,56 @@ function printRelevantUpdate(type) {
   );
 }
 
+const livePrintDispatches = new Map();
+async function dispatchLivePrintUpdate(update) {
+  if (!printRelevantUpdate(update?.type || update?.reason)) return;
+  const id = String(update.orderId || '');
+  if (!id) {
+    requestFastOrdersRefresh();
+    return;
+  }
+  const active = livePrintDispatches.get(id);
+  if (active) {
+    active.queued = true;
+    return;
+  }
+  const state = { queued: false };
+  livePrintDispatches.set(id, state);
+  try {
+    do {
+      state.queued = false;
+      // Read only the affected order. Printing must not depend on the current
+      // screen, search filter, or an unrelated full-list request finishing.
+      const response = await fetch(`/api/orders/${encodeURIComponent(id)}/print`, {
+        cache: 'no-store',
+      });
+      if (!response.ok) throw new Error('Unable to load the order for printing.');
+      const order = await response.json();
+      if (order.id !== id) throw new Error('Unexpected print order response.');
+      const billRequest =
+        order.service_state === 'bill_requested' &&
+        /service-request|bill-request/.test(String(update.type || update.reason || ''));
+      if (billRequest) {
+        await autoPrintRequestedTableBill(order, { receipt: order });
+      } else {
+        await Promise.all([
+          autoPrintOrder(order),
+          autoPrintRequestedTableBill(order, { receipt: order }),
+        ]);
+      }
+    } while (state.queued);
+  } catch (error) {
+    reportOrdersDiagnostic({
+      level: 'warning',
+      message: error.message,
+      source: 'live print dispatch',
+    });
+    requestFastOrdersRefresh();
+  } finally {
+    livePrintDispatches.delete(id);
+  }
+}
+
 async function pollPrintUpdates() {
   if (printUpdatePollInFlight || !navigator.onLine) return;
   printUpdatePollInFlight = true;
@@ -1988,10 +2072,11 @@ async function pollPrintUpdates() {
     if (!response.ok) throw new Error(payload.error || 'Unable to check printer updates.');
     const cursor = Number(payload.cursor);
     if (Number.isInteger(cursor) && cursor >= 0) printUpdateCursor = cursor;
-    if ((payload.events || []).some((event) => printRelevantUpdate(event.type)))
-      requestFastOrdersRefresh();
+    const updates = (payload.events || []).filter((event) => printRelevantUpdate(event.type));
+    updates.forEach((event) => void dispatchLivePrintUpdate(event));
+    if (updates.length) requestFastOrdersRefresh();
   } catch (_) {
-    // The normal three-second refresh remains the final fallback.
+    // The periodic full-list refresh remains the final recovery fallback.
   } finally {
     printUpdatePollInFlight = false;
   }
@@ -2005,7 +2090,9 @@ function connectFastPrintUpdates() {
   });
   stream.addEventListener('smart-kds-update', (event) => {
     try {
-      if (!printRelevantUpdate(JSON.parse(event.data || '{}').reason)) return;
+      const update = JSON.parse(event.data || '{}');
+      if (!printRelevantUpdate(update.reason)) return;
+      void dispatchLivePrintUpdate(update);
     } catch (_) {}
     requestFastOrdersRefresh();
   });
@@ -2122,7 +2209,7 @@ async function setStatus(id, status, reason = '') {
     if (!operationsPanel?.hidden && ['kots', 'kitchen-display'].includes(operationsTab))
       await loadOperations();
   } catch (error) {
-    alert(error.message || 'Unable to update the order status.');
+    showStaffNotice(error.message || 'Unable to update the order status.');
   }
 }
 document.addEventListener('click', async (event) => {
@@ -2143,7 +2230,7 @@ document.addEventListener('click', async (event) => {
     await loadOrders();
   } catch (error) {
     button.disabled = false;
-    alert(error.message);
+    showStaffNotice(error.message);
   }
 });
 
@@ -2153,7 +2240,7 @@ async function cancelOrder(id) {
   );
   if (reason === null) return;
   if (reason.trim().length < 3) {
-    alert('Please enter a brief cancellation reason.');
+    showStaffNotice('Please enter a brief cancellation reason.');
     return;
   }
   await setStatus(id, 'cancelled', reason.trim());
@@ -2209,7 +2296,7 @@ function openModifyOrder(id) {
       loadOrders();
     } catch (error) {
       button.disabled = false;
-      window.alert(error.message);
+      showStaffNotice(error.message);
     }
   });
 }
@@ -2315,24 +2402,30 @@ async function printBillOnConfiguredPrinters(printers, order, printJobPrefix) {
   return results.length;
 }
 
+const manualBillsInFlight = new Set();
 async function printOrder(id, split = null) {
+  if (manualBillsInFlight.has(id)) return false;
+  manualBillsInFlight.add(id);
   let physicalPrintAttempted = false;
-  let preparedReceipt = null;
   try {
     // Health, printer configuration, and receipt preparation are independent.
     // Start all three on the click instead of discovering OS printers first.
     const [bridgeResponse, printConfig, receiptResponse] = await Promise.all([
-      fetch(`${printBridgeOrigin}/health`, { cache: 'no-store' }),
+      bridgeHealth(),
       getPrintOperationsConfig(),
       fetch(`/api/orders/${encodeURIComponent(id)}/print`, { cache: 'no-store' }),
     ]);
     if (!bridgeResponse.ok) throw new Error('Print Bridge is not available on this computer.');
-    rememberPrintBridgeWorkstation(await bridgeResponse.clone().json().catch(() => ({})));
+    rememberPrintBridgeWorkstation(
+      await bridgeResponse
+        .clone()
+        .json()
+        .catch(() => ({}))
+    );
     const billPrinters = configuredPrintersFor(printConfig, 'bill', localWorkstationId());
     if (!billPrinters.length) throw new Error('No Bill printer is configured.');
     const receipt = await receiptResponse.json();
     if (!receiptResponse.ok) throw new Error(receipt.error || 'Unable to prepare the receipt.');
-    preparedReceipt = receipt;
     const receipts = splitReceiptParts(receipt, split);
     if (!receipts.length) throw new Error('Assign at least one item to every split bill.');
     const printBatchId = Date.now();
@@ -2344,85 +2437,21 @@ async function printOrder(id, split = null) {
         `manual-bill:${id}:${printBatchId}:${index + 1}`
       );
     }
-    return;
+    return true;
   } catch (error) {
     reportOrdersDiagnostic({
       level: 'warning',
       message: `Direct bill reprint failed: ${error.message}`,
       source: 'manual bill printing',
     });
-    if (physicalPrintAttempted || error.physicalPrintAttempted) {
-      alert(
-        `${error.message}\n\nCheck every assigned Bill printer before reprinting; one or more copies may already exist.`
-      );
-      if (split) throw error;
-      return;
-    }
-    if (split) throw error;
-  }
-  const popup = window.open('', 'red-lantern-receipt', 'popup=yes,width=420,height=720');
-  if (!popup) {
-    alert('Please allow pop-ups to print the receipt.');
-    return;
-  }
-  try {
-    popup.document.write('<!doctype html><title>Preparing receipt…</title>');
-    let order = preparedReceipt;
-    if (!order) {
-      const response = await fetch(`/api/orders/${encodeURIComponent(id)}/print`, {
-        cache: 'no-store',
-      });
-      order = await response.json();
-      if (!response.ok) throw new Error(order.error || 'Unable to prepare this receipt.');
-    }
-    const items = Array.isArray(order.items) ? order.items : [];
-    const itemPrice = (item) =>
-      Number(String(item.price || '').replace(/[^0-9.]/g, '')) +
-      (item.style ? 10 : 0) +
-      Addons.lineModifierTotal(item);
-    const quantity = items.reduce((total, item) => total + Number(item.quantity || 0), 0);
-    const calculatedTotal = items.reduce(
-      (total, item) => total + Number(item.quantity || 0) * itemPrice(item),
-      0
-    );
-    const grandTotal = Number(order.total) > 0 ? Number(order.total) : calculatedTotal;
-    const walletDiscount = Math.max(0, Math.floor(Number(order.loyalty_points_redeemed || 0)));
-    const dailyNumber = Number(order.daily_order_number);
-    const token =
-      Number.isFinite(dailyNumber) && dailyNumber > 0 ? String(dailyNumber).padStart(2, '0') : '—';
-    const placedAt = new Intl.DateTimeFormat('en-IN', {
-      timeZone: 'Asia/Kolkata',
-      day: '2-digit',
-      month: 'short',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: true,
-    }).format(new Date(order.created_at));
-    const orderType =
-      order.mode === 'counter' || order.fulfillment_type === 'takeaway'
-        ? 'TAKEAWAY ORDER'
-        : order.fulfillment_type === 'delivery'
-          ? 'DELIVERY ORDER'
-          : order.mode === 'table'
-            ? 'DINE IN ORDER'
-            : 'QR ORDER';
-    const itemRows = items
-      .map((item) => {
-        const modifierText = Addons.modifierText(item.modifiers);
-        const label = `${item.name || 'Item'}${item.portion ? ` (${item.portion})` : ''}${item.style ? ` — ${item.style}` : ''}${modifierText ? ` + ${modifierText}` : ''}`;
-        const qty = Number(item.quantity || 0);
-        return `<tr><td class="item-name">${esc(label)}</td><td>${qty}</td><td>${money(itemPrice(item))}</td><td>${money(qty * itemPrice(item))}</td></tr>`;
-      })
-      .join('');
-    popup.document.open();
-    popup.document.write(
-      `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Red Lantern · Token ${esc(token)}</title><style>@page{size:80mm auto;margin:4mm}*{box-sizing:border-box}body{width:72mm;margin:0;color:#111;font:12px Arial,sans-serif}.center{text-align:center}.restaurant{font-size:18px;font-weight:800;letter-spacing:.2px}.sub{margin:3px 0;color:#333}.rule{border:0;border-top:1px dashed #222;margin:10px 0}.wallet{padding:7px 0;font-weight:700}.details{line-height:1.55}.details b{display:inline-block;min-width:68px}table{width:100%;border-collapse:collapse;margin-top:8px;font-size:11px}th{padding:5px 0;border-bottom:1px solid #222;text-align:right;font-size:10px}th:first-child{text-align:left}td{padding:5px 0;vertical-align:top;text-align:right;border-bottom:1px dotted #bbb}.item-name{text-align:left;padding-right:5px}.totals{display:flex;justify-content:space-between;font-size:13px;font-weight:700}.grand{display:flex;justify-content:space-between;margin-top:6px;font-size:16px;font-weight:800}.note{margin-top:8px;font-size:10px;line-height:1.4}.footer{margin-top:14px;font-size:10px;text-align:center;color:#333}@media print{body{width:72mm}}</style></head><body><div class="center"><div class="restaurant">RED LANTERN RESTAURANT</div><div class="sub">Restaurant Mobile Number: 9922853605</div><div class="sub">Direct Order Receipt</div></div><hr class="rule"><div class="wallet">Wallet Points: ${Number(order.loyalty_points || 0)}</div><div class="details"><div><b>Name:</b> ${esc(order.customer_name || 'Not provided')}</div><div><b>Mobile:</b> ${esc(order.customer_phone || '—')}</div><div><b>Type:</b> ${esc(orderType)}</div><div><b>Token No:</b> ${esc(token)}</div><div><b>Placed:</b> ${esc(placedAt)}</div></div>${order.special_request ? `<div class="note"><b>Special request:</b> ${esc(order.special_request)}</div>` : ''}<hr class="rule"><table><thead><tr><th>Item</th><th>Qty</th><th>Price</th><th>Amount</th></tr></thead><tbody>${itemRows}</tbody></table><hr class="rule"><div class="totals"><span>Total Qty: ${quantity}</span><span>Items: ${items.length}</span></div><div class="totals"><span>Subtotal</span><span>${money(calculatedTotal)}</span></div>${walletDiscount ? `<div class="totals"><span>Wallet points discount</span><span>−${money(walletDiscount)}</span></div>` : ''}<div class="grand"><span>GRAND TOTAL</span><span>${money(grandTotal)}</span></div><hr class="rule"><div class="footer">Thank you for ordering with us!<br>Red Lantern Restaurant</div><script>window.onload=()=>setTimeout(()=>window.print(),150);window.onafterprint=()=>window.close();<\/script></body></html>`
-    );
-    popup.document.close();
-  } catch (error) {
-    popup.close();
-    alert(error.message || 'Unable to prepare this receipt.');
+    const message =
+      physicalPrintAttempted || error.physicalPrintAttempted
+        ? `${error.message} Check assigned Bill printers before reprinting; a copy may already exist.`
+        : `${error.message} Check Print Bridge and the assigned Bill printer in Operations.`;
+    showStaffNotice(message);
+    return false;
+  } finally {
+    manualBillsInFlight.delete(id);
   }
 }
 
@@ -2437,9 +2466,10 @@ const operationItemOptions = (item) => {
 };
 const routePrinters = (item) => {
   const printers = new Map(operationsConfig.printers.map((printer) => [printer.id, printer]));
-  const routes = operationsConfig.routes.filter((route) =>
-    printerSupports(printers.get(route.printerId), 'kot') &&
-    printerBelongsToWorkstation(printers.get(route.printerId), localWorkstationId())
+  const routes = operationsConfig.routes.filter(
+    (route) =>
+      printerSupports(printers.get(route.printerId), 'kot') &&
+      printerBelongsToWorkstation(printers.get(route.printerId), localWorkstationId())
   );
   return [
     ...new Map(
@@ -3373,7 +3403,7 @@ async function checkPrintBridgeSetup() {
       signal: controller.signal,
     });
     clearTimeout(timeout);
-    const data = await response.json().catch(() => ({}));
+    let data = await response.json().catch(() => ({}));
     if (!response.ok || !data.ok)
       throw new Error(data.detail || data.error || 'The local service did not complete its check.');
     rememberPrintBridgeWorkstation(data);
@@ -3416,9 +3446,7 @@ async function checkPrintBridgeSetup() {
         }
       } catch (_) {}
     }
-    const unrouted = cloudData
-      ? unroutedOperationItems(cloudData.menu, operationsConfig)
-      : [];
+    const unrouted = cloudData ? unroutedOperationItems(cloudData.menu, operationsConfig) : [];
     printBridgeSetupStatus = {
       ...data,
       cloud: !!cloudData,
@@ -3750,7 +3778,7 @@ function printKot(orderId, printerId) {
   if (!items.length) return;
   const popup = window.open('', 'red-lantern-kot', 'popup=yes,width=390,height=600');
   if (!popup) {
-    alert('Please allow pop-ups to print this KOT.');
+    showStaffNotice('Please allow pop-ups to print this KOT.');
     return;
   }
   const number = String(order.daily_order_number || '—').padStart(2, '0');
@@ -3834,8 +3862,9 @@ async function dispatchKot(orderId, printerId) {
 }
 
 const autoPrintInFlight = new Set();
+const autoPrintFollowups = new Map();
 const requestedTableBillInFlight = new Set();
-async function autoPrintRequestedTableBill(order) {
+async function autoPrintRequestedTableBill(order, { receipt: preparedReceipt = null } = {}) {
   if (
     !order?.id ||
     order.mode !== 'table' ||
@@ -3846,12 +3875,28 @@ async function autoPrintRequestedTableBill(order) {
     return;
   requestedTableBillInFlight.add(order.id);
   try {
+    // Prepare the receipt alongside local readiness instead of adding another
+    // cloud round trip after the print claim. Live dispatch already has it.
+    const receiptPromise = preparedReceipt
+      ? Promise.resolve({ receipt: preparedReceipt })
+      : fetch(`/api/orders/${encodeURIComponent(order.id)}/print`, { cache: 'no-store' })
+          .then(async (response) => {
+            const receipt = await response.json();
+            if (!response.ok) throw new Error(receipt.error || 'Unable to prepare the receipt.');
+            return { receipt };
+          })
+          .catch((error) => ({ error }));
     const [bridge, printConfig] = await Promise.all([
-      fetch(`${printBridgeOrigin}/health`, { cache: 'no-store' }).catch(() => null),
+      bridgeHealth().catch(() => null),
       getPrintOperationsConfig(),
     ]);
     if (!bridge?.ok) return;
-    rememberPrintBridgeWorkstation(await bridge.clone().json().catch(() => ({})));
+    rememberPrintBridgeWorkstation(
+      await bridge
+        .clone()
+        .json()
+        .catch(() => ({}))
+    );
     const billPrinters = configuredPrintersFor(printConfig, 'bill', localWorkstationId());
     if (!billPrinters.length) throw new Error('No Bill printer is assigned in Operations.');
     const claimResponse = await fetch(
@@ -3865,11 +3910,9 @@ async function autoPrintRequestedTableBill(order) {
       throw new Error(claim.error || 'Unable to reserve this bill for printing.');
     if (!claim.claimed) return;
     try {
-      const receiptResponse = await fetch(`/api/orders/${encodeURIComponent(order.id)}/print`, {
-        cache: 'no-store',
-      });
-      const receipt = await receiptResponse.json().catch(() => ({}));
-      if (!receiptResponse.ok) throw new Error(receipt.error || 'Unable to prepare the receipt.');
+      const prepared = await receiptPromise;
+      if (prepared.error) throw prepared.error;
+      const receipt = prepared.receipt;
       await printBillOnConfiguredPrinters(billPrinters, receipt, `captain-bill:${order.id}`);
       await fetch(`/api/orders/${encodeURIComponent(order.id)}/bill-print/complete`, {
         method: 'POST',
@@ -3907,9 +3950,7 @@ async function flushDeferredAutomaticPrints() {
   if (!entries.length) return;
   deferredPrintSyncInProgress = true;
   try {
-    const health = await fetch(`${printBridgeOrigin}/health`, { cache: 'no-store' }).catch(
-      () => null
-    );
+    const health = await bridgeHealth().catch(() => null);
     if (!health?.ok) return;
     const remaining = [];
     for (const entry of entries) {
@@ -3921,24 +3962,34 @@ async function flushDeferredAutomaticPrints() {
         // Keep retrying only if the Bridge disappeared again. A reachable
         // Bridge that reports a printer/driver failure records that job for
         // staff review; repeatedly sending it could create duplicate slips.
-        const bridgeStillOffline = !(
-          await fetch(`${printBridgeOrigin}/health`, {
-            cache: 'no-store',
-          }).catch(() => null)
-        )?.ok;
+        const bridgeStillOffline = !(await bridgeHealth().catch(() => null))?.ok;
         if (bridgeStillOffline) remaining.push(entry);
       }
     }
-    saveDeferredPrints(remaining);
+    // Do not overwrite orders queued while this recovery pass was awaiting I/O.
+    const processed = new Set(entries.map((entry) => entry.id));
+    saveDeferredPrints([
+      ...remaining,
+      ...deferredPrints().filter((entry) => !processed.has(entry.id)),
+    ]);
   } finally {
     deferredPrintSyncInProgress = false;
   }
 }
 async function autoPrintOrder(order, { deferred = false, kotOnly = false } = {}) {
+  if (order?.id && autoPrintInFlight.has(order.id)) {
+    const previous = autoPrintFollowups.get(order.id);
+    autoPrintFollowups.set(order.id, {
+      order,
+      deferred,
+      kotOnly: previous ? previous.kotOnly && kotOnly : kotOnly,
+    });
+    return { ok: false, reason: 'KOT dispatch is already in progress.' };
+  }
   const canReleaseToKitchen =
     deferred ||
-    order?.mode === 'counter' ||
-    (order?.mode === 'table' && ['accepted', 'preparing', 'ready'].includes(order?.status));
+    (['counter', 'table'].includes(order?.mode) &&
+      ['accepted', 'preparing', 'ready'].includes(order?.status));
   if (
     !order?.id ||
     !canReleaseToKitchen ||
@@ -3952,9 +4003,7 @@ async function autoPrintOrder(order, { deferred = false, kotOnly = false } = {})
     // Start cloud KOT creation and config loading immediately. The Bridge
     // health result still gates physical output, but no longer delays the
     // durable KOT request.
-    const bridgePromise = fetch(`${printBridgeOrigin}/health`, { cache: 'no-store' }).catch(
-      () => null
-    );
+    const bridgePromise = bridgeHealth().catch(() => null);
     const operationsPromise = getPrintOperationsConfig().then(
       (config) => ({ config }),
       (error) => ({ error })
@@ -3979,7 +4028,12 @@ async function autoPrintOrder(order, { deferred = false, kotOnly = false } = {})
       });
       return { ok: false, reason };
     }
-    rememberPrintBridgeWorkstation(await bridge.clone().json().catch(() => ({})));
+    rememberPrintBridgeWorkstation(
+      await bridge
+        .clone()
+        .json()
+        .catch(() => ({}))
+    );
     const kotPromise = (async () => {
       try {
         const createdResult = await createdPromise;
@@ -4080,7 +4134,9 @@ async function autoPrintOrder(order, { deferred = false, kotOnly = false } = {})
         { method: 'POST' }
       );
       const claim = await claimResponse.json().catch(() => ({}));
-      if (!claimResponse.ok || !claim.claimed) return { ok: true };
+      if (!claimResponse.ok)
+        throw new Error(claim.error || 'Unable to reserve this bill for printing.');
+      if (!claim.claimed) return { ok: true };
       try {
         const receiptResponse = await fetch(`/api/orders/${encodeURIComponent(order.id)}/print`, {
           cache: 'no-store',
@@ -4099,8 +4155,8 @@ async function autoPrintOrder(order, { deferred = false, kotOnly = false } = {})
         throw error;
       }
     });
-    const [, billResult] = await Promise.all([kotPromise, billPromise]);
-    return billResult;
+    const [kotResult, billResult] = await Promise.all([kotPromise, billPromise]);
+    return kotResult.ok ? billResult : kotResult;
   } catch (error) {
     const reason = error.message || 'Automatic printing failed.';
     reportOrdersDiagnostic({
@@ -4110,6 +4166,11 @@ async function autoPrintOrder(order, { deferred = false, kotOnly = false } = {})
     return { ok: false, reason };
   } finally {
     autoPrintInFlight.delete(order.id);
+    const followup = autoPrintFollowups.get(order.id);
+    if (followup) {
+      autoPrintFollowups.delete(order.id);
+      void autoPrintOrder(followup.order, followup);
+    }
   }
 }
 const offlineMenuSnapshotKey = 'red-lantern-counter-menu-snapshot';
@@ -4216,9 +4277,11 @@ function renderAvailability() {
               <div class="availability-state"><i aria-hidden="true"></i>${until ? 'Unavailable' : 'Available'}</div>
             </div>
             <div class="availability-controls ${until ? 'is-restocking' : ''}">
-              ${until
-                ? `<div class="availability-return"><span>Scheduled to return</span><strong>${esc(restockAt)}</strong></div><button class="stock-in" data-stock-action="restore">Make available</button>`
-                : `<label class="availability-date"><span>Return to stock</span><input type="datetime-local" value="${tomorrowLocal()}" data-stock-until></label><div class="availability-actions"><button class="stock-tomorrow" data-stock-action="tomorrow">Until tomorrow</button><button class="stock-date" data-stock-action="date">Mark unavailable</button></div>`}
+              ${
+                until
+                  ? `<div class="availability-return"><span>Scheduled to return</span><strong>${esc(restockAt)}</strong></div><button class="stock-in" data-stock-action="restore">Make available</button>`
+                  : `<label class="availability-date"><span>Return to stock</span><input type="datetime-local" value="${tomorrowLocal()}" data-stock-until></label><div class="availability-actions"><button class="stock-tomorrow" data-stock-action="tomorrow">Until tomorrow</button><button class="stock-date" data-stock-action="date">Mark unavailable</button></div>`
+              }
             </div>
           </article>`;
         })
@@ -4362,7 +4425,7 @@ viewKotDialog.addEventListener('click', async (event) => {
     if (entered === null) return;
     quantity = Number(entered);
     if (!Number.isInteger(quantity) || quantity < 1 || quantity > 20) {
-      alert('Enter a whole quantity from 1 to 20.');
+      showStaffNotice('Enter a whole quantity from 1 to 20.');
       return;
     }
   } else if (!confirm('Delete this item from the active table bill?')) return;
@@ -4394,7 +4457,7 @@ viewKotDialog.addEventListener('click', async (event) => {
     await loadOrders();
     viewKotDialog.close();
   } catch (error) {
-    alert(error.message || `Unable to ${edit ? 'modify' : 'delete'} this item.`);
+    showStaffNotice(error.message || `Unable to ${edit ? 'modify' : 'delete'} this item.`);
     button.disabled = false;
   }
 });
@@ -4441,7 +4504,10 @@ document.getElementById('table-view-content')?.addEventListener('click', async (
     printBill.disabled = true;
     printBill.textContent = '…';
     try {
-      await printOrder(order.id);
+      if (!(await printOrder(order.id))) {
+        renderTableView();
+        return;
+      }
       const marked = await fetch(`/api/orders/${encodeURIComponent(order.id)}/bill-printed`, {
         method: 'POST',
       });
@@ -4453,7 +4519,7 @@ document.getElementById('table-view-content')?.addEventListener('click', async (
       await loadOrders();
       renderTableView();
     } catch (error) {
-      alert(error.message || 'Unable to print this table bill.');
+      showStaffNotice(error.message || 'Unable to print this table bill.');
       printBill.disabled = false;
       renderTableView();
     }
@@ -4516,7 +4582,7 @@ document.getElementById('table-view-content')?.addEventListener('click', async (
       !['completed', 'rejected', 'cancelled'].includes(order.status)
   );
   if (String(existing?.id || '').startsWith('offline:')) {
-    alert(
+    showStaffNotice(
       'This table order is safely stored on this device and waiting to sync. Reconnect to continue editing it.'
     );
     return;
@@ -4879,7 +4945,10 @@ async function submitDineInAction(action) {
       if (isDineIn) void showTableView();
       return;
     } else if (action === 'print') {
-      await printOrder(result.id, counterBillSplit);
+      if (!(await printOrder(result.id, counterBillSplit)))
+        throw new Error(
+          'Order saved. Bill printing needs attention; check Operations before retrying.'
+        );
       const marked = await fetch(`/api/orders/${encodeURIComponent(result.id)}/bill-printed`, {
         method: 'POST',
       });
@@ -4976,20 +5045,6 @@ document.getElementById('counter-place-order')?.addEventListener('click', async 
     items: counterCart.map((item) => ({ ...item })),
   };
   payload.clientRequestId = counterRequestId(payload);
-  if (payload.loyaltyPoints >= 100) {
-    const first = window.confirm(`Apply ₹${payload.loyaltyPoints} from this customer's wallet?`);
-    const second =
-      first &&
-      window.confirm(
-        `Final confirmation: deduct ${payload.loyaltyPoints} wallet points (₹${payload.loyaltyPoints}) from this order?`
-      );
-    if (!second) {
-      button.disabled = false;
-      status.textContent =
-        'Wallet points were not applied. Review the amount before placing the order.';
-      return;
-    }
-  }
   const orderLabel = counterTable
     ? `${counterTable.area} Table ${String(counterTable.number).padStart(2, '0')}`
     : 'takeaway';
@@ -5215,7 +5270,7 @@ document.getElementById('operations-content')?.addEventListener('click', async (
       if (!response.ok) throw new Error(data.error || 'Unable to mark the print jobs reviewed.');
       await checkPrintBridgeSetup();
     } catch (error) {
-      alert(error.message || 'Unable to mark the print jobs reviewed.');
+      showStaffNotice(error.message || 'Unable to mark the print jobs reviewed.');
       acknowledgeFailures.disabled = false;
     }
     return;
@@ -5230,7 +5285,7 @@ document.getElementById('operations-content')?.addEventListener('click', async (
           copyBridgeSetup.textContent = `Copy ${detectedDesktopPlatform() === 'macOS' ? 'Terminal' : 'PowerShell'} command`;
       }, 1600);
     } catch (_) {
-      alert(
+      showStaffNotice(
         `Run this command in Terminal / PowerShell:\n\n${copyBridgeSetup.dataset.command || ''}`
       );
     }
@@ -5277,7 +5332,7 @@ document.getElementById('operations-content')?.addEventListener('click', async (
       await loadOperations();
     } catch (error) {
       kdsAction.disabled = false;
-      alert(error.message);
+      showStaffNotice(error.message);
     }
     return;
   }
@@ -5287,7 +5342,7 @@ document.getElementById('operations-content')?.addEventListener('click', async (
       if (!document.fullscreenElement) await display?.requestFullscreen?.();
       else await document.exitFullscreen?.();
     } catch (_) {
-      alert('Full screen is not available in this browser.');
+      showStaffNotice('Full screen is not available in this browser.');
     }
     return;
   }
@@ -5311,12 +5366,12 @@ document.getElementById('operations-content')?.addEventListener('click', async (
     const from = fromInput?.valueAsNumber;
     const to = toInput?.valueAsNumber;
     if (!name) {
-      alert('Enter an area name.');
+      showStaffNotice('Enter an area name.');
       document.getElementById('table-area-name')?.focus();
       return;
     }
     if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to) || from < 1 || to < from) {
-      alert(
+      showStaffNotice(
         'Enter whole table numbers. “To table” must be the same as or higher than “From table”.'
       );
       fromInput?.focus();
@@ -5332,7 +5387,7 @@ document.getElementById('operations-content')?.addEventListener('click', async (
       await saveTableAllocation(null);
       renderTableAllocation();
     } catch (error) {
-      alert(
+      showStaffNotice(
         error.message ||
           'Unable to save the table area to the server. It remains saved on this device.'
       );
@@ -5371,7 +5426,7 @@ document.getElementById('operations-content')?.addEventListener('click', async (
     try {
       await saveTableAllocation(button);
     } catch (error) {
-      alert(error.message);
+      showStaffNotice(error.message);
     }
     return;
   }
@@ -5394,7 +5449,7 @@ document.getElementById('operations-content')?.addEventListener('click', async (
         copyBridgeCommand.textContent = 'Copy setup command';
       }, 1600);
     } catch (_) {
-      alert(
+      showStaffNotice(
         `Run this command in Terminal / PowerShell:\n\n${copyBridgeCommand.dataset.command || ''}`
       );
     }
@@ -5416,13 +5471,13 @@ document.getElementById('operations-content')?.addEventListener('click', async (
       await new Promise((resolve) => setTimeout(resolve, 1800));
       await discoverSystemPrinters();
       renderOperations();
-      alert(
+      showStaffNotice(
         printBridgeState === 'available'
           ? 'Print Bridge restarted successfully.'
           : 'Restart requested, but Print Bridge has not come back online yet.'
       );
     } catch (error) {
-      alert(error.message || 'Unable to restart Print Bridge.');
+      showStaffNotice(error.message || 'Unable to restart Print Bridge.');
     }
     return;
   }
@@ -5436,7 +5491,7 @@ document.getElementById('operations-content')?.addEventListener('click', async (
         .trim()
         .slice(0, 60) || deviceName;
     if (!deviceId) {
-      alert('Choose an installed system printer first.');
+      showStaffNotice('Choose an installed system printer first.');
       return;
     }
     if (
@@ -5446,7 +5501,7 @@ document.getElementById('operations-content')?.addEventListener('click', async (
           printerBelongsToWorkstation(printer, localWorkstationId())
       )
     ) {
-      alert('This system printer has already been added.');
+      showStaffNotice('This system printer has already been added.');
       return;
     }
     operationsConfig.printers.push({
@@ -5484,7 +5539,7 @@ document.getElementById('operations-content')?.addEventListener('click', async (
       .trim()
       .slice(0, 60);
     if (!name) {
-      alert('Enter a printer name.');
+      showStaffNotice('Enter a printer name.');
       return;
     }
     const device = document.getElementById('printer-edit-device');
@@ -5619,7 +5674,7 @@ document.getElementById('operations-content')?.addEventListener('click', async (
       assignmentMode = '';
       renderOperations();
     } catch (error) {
-      alert(error.message);
+      showStaffNotice(error.message);
     }
     return;
   }
@@ -5653,7 +5708,7 @@ document.getElementById('operations-content')?.addEventListener('click', async (
         assignmentMode = '';
         renderOperations();
       } catch (error) {
-        alert(error.message);
+        showStaffNotice(error.message);
       }
     }
     return;
@@ -5676,7 +5731,7 @@ document.getElementById('operations-content')?.addEventListener('click', async (
       assignmentMode = '';
       renderOperations();
     } catch (error) {
-      alert(error.message);
+      showStaffNotice(error.message);
     }
     return;
   }
@@ -5694,7 +5749,7 @@ document.getElementById('operations-content')?.addEventListener('click', async (
       }))
       .filter((item) => item.category && item.itemName);
     if (!allCategories && !categories.length && !items.length) {
-      alert('Select all categories, a category, or at least one dish.');
+      showStaffNotice('Select all categories, a category, or at least one dish.');
       return;
     }
     if (printer) {
@@ -5732,7 +5787,7 @@ document.getElementById('operations-content')?.addEventListener('click', async (
         assignmentMode = '';
         renderOperations();
       } catch (error) {
-        alert(error.message);
+        showStaffNotice(error.message);
       }
     }
     return;
@@ -5752,7 +5807,7 @@ document.getElementById('operations-content')?.addEventListener('click', async (
       return;
     }
     if (!deviceId && printBridgeState === 'available') {
-      alert('Choose an installed system printer first.');
+      showStaffNotice('Choose an installed system printer first.');
       return;
     }
     operationsConfig.printers.push({
@@ -5787,12 +5842,12 @@ document.getElementById('operations-content')?.addEventListener('click', async (
   if (addRoute) {
     try {
       if (!addSelectedRoutes()) {
-        alert('Choose a KOT printer and at least one category first.');
+        showStaffNotice('Choose a KOT printer and at least one category first.');
         return;
       }
       renderOperations();
     } catch (error) {
-      alert(error.message);
+      showStaffNotice(error.message);
     }
     return;
   }
@@ -5809,7 +5864,7 @@ document.getElementById('operations-content')?.addEventListener('click', async (
     try {
       addSelectedRoutes();
     } catch (error) {
-      alert(error.message);
+      showStaffNotice(error.message);
       return;
     }
     button.disabled = true;
@@ -5817,7 +5872,7 @@ document.getElementById('operations-content')?.addEventListener('click', async (
     try {
       await saveOperations();
     } catch (error) {
-      alert(error.message);
+      showStaffNotice(error.message);
       button.disabled = false;
       button.textContent = 'Save printer configuration';
     }
@@ -5833,7 +5888,7 @@ document.getElementById('operations-content')?.addEventListener('click', async (
         message: `KOT printing failed: ${error.message}`,
         source: 'KOT print bridge',
       });
-      alert(error.message);
+      showStaffNotice(error.message);
     }
   }
 });
@@ -5889,7 +5944,7 @@ document.getElementById('install-shortcut')?.addEventListener('click', async () 
       '<li>Open the browser menu (⋮).</li><li>Choose <strong>Install app</strong> or <strong>Create shortcut</strong>.</li><li>Pin “RL Orders” to the taskbar or desktop.</li>';
   }
   if (typeof dialog.showModal === 'function') dialog.showModal();
-  else alert(`${message.textContent}\n\n${steps.textContent}`);
+  else showStaffNotice(`${message.textContent}\n\n${steps.textContent}`);
 });
 document
   .getElementById('shortcut-close')
@@ -5955,7 +6010,7 @@ menuResults?.addEventListener('click', async (event) => {
       message: `Menu availability update failed: ${error.message}`,
       source: 'menu availability',
     });
-    alert(error.message);
+    showStaffNotice(error.message);
     button.disabled = false;
   }
 });

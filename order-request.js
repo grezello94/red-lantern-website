@@ -10,9 +10,9 @@
     new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(milliseconds) || 0)));
 
   function retryDelay(response, attempt, delays) {
-    const retryAfter = Number(response?.headers?.get?.('retry-after'));
-    if (Number.isFinite(retryAfter) && retryAfter >= 0)
-      return Math.min(2000, retryAfter * 1000);
+    const header = response?.headers?.get?.('retry-after');
+    const retryAfter = header == null || header === '' ? NaN : Number(header);
+    if (Number.isFinite(retryAfter) && retryAfter >= 0) return Math.min(2000, retryAfter * 1000);
     const configured = Array.isArray(delays) ? delays[attempt - 1] : null;
     return Math.max(0, Number(configured ?? 250 * 3 ** (attempt - 1)) || 0);
   }

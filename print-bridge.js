@@ -22,7 +22,7 @@ const { DatabaseSync } = require('node:sqlite');
 const PORT = Number(process.env.PRINT_BRIDGE_PORT || 9124);
 // Keep this in sync with downloads/print-bridge-release.json. Operations uses
 // that signed-off release record to tell staff whether this computer is current.
-const BRIDGE_VERSION = '1.0.14';
+const BRIDGE_VERSION = '1.0.15';
 const PRINT_JOB_LEASE_MS = Math.max(
   30000,
   Number(process.env.PRINT_BRIDGE_JOB_LEASE_MS || 2 * 60 * 1000)
@@ -314,10 +314,20 @@ function acknowledgePrintJobs(ids) {
 
 function run(command, args, timeout = 5000) {
   return new Promise((resolve, reject) => {
-    execFile(command, args, { windowsHide: true, timeout }, (error, stdout) => {
-      if (error) reject(error);
-      else resolve(String(stdout || ''));
-    });
+    // Apply this centrally to discovery, health recovery and actual printing.
+    // No PowerShell child may prompt for input or display a console in service.
+    const commandArgs = /(?:^|[\\/])powershell(?:\.exe)?$/i.test(command)
+      ? ['-NoLogo', '-NonInteractive', '-WindowStyle', 'Hidden', ...args]
+      : args;
+    execFile(
+      command,
+      commandArgs,
+      { windowsHide: true, shell: false, timeout },
+      (error, stdout) => {
+        if (error) reject(error);
+        else resolve(String(stdout || ''));
+      }
+    );
   });
 }
 
@@ -554,15 +564,21 @@ function workstationIdentity() {
     const saved = await readJson(workstationFile, null);
     if (saved?.id) {
       return {
-        id: String(saved.id).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80),
-        name: String(saved.name || os.hostname() || 'Restaurant computer').trim().slice(0, 120),
+        id: String(saved.id)
+          .replace(/[^a-zA-Z0-9_-]/g, '')
+          .slice(0, 80),
+        name: String(saved.name || os.hostname() || 'Restaurant computer')
+          .trim()
+          .slice(0, 120),
         platform: process.platform,
         createdAt: String(saved.createdAt || ''),
       };
     }
     const identity = {
       id: `ws_${crypto.randomUUID().replace(/-/g, '')}`,
-      name: String(os.hostname() || 'Restaurant computer').trim().slice(0, 120),
+      name: String(os.hostname() || 'Restaurant computer')
+        .trim()
+        .slice(0, 120),
       platform: process.platform,
       createdAt: new Date().toISOString(),
     };
@@ -1296,10 +1312,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'PUT' && req.url === '/v1/config') {
     try {
       const config = (await readBody(req)).config || {};
-      const [identity, installed] = await Promise.all([
-        workstationIdentity(),
-        installedPrinters(),
-      ]);
+      const [identity, installed] = await Promise.all([workstationIdentity(), installedPrinters()]);
       const installedNames = new Set(installed.map((printer) => String(printer.name).trim()));
       const printers = (Array.isArray(config.printers) ? config.printers : [])
         .slice(0, 250)
@@ -1583,4 +1596,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { kotText, billText };
+module.exports = { kotText, billText, run };

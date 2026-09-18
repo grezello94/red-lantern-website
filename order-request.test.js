@@ -49,13 +49,27 @@ describe('reliable order requests', () => {
 
   test('does not retry validation or table-conflict responses', async () => {
     const fetcher = jest.fn().mockResolvedValue(response(409, { code: 'table_changed' }));
-    const result = await ReliableOrderRequests.json('/api/orders/counter', {}, {
-      fetcher,
-      delays: [0],
-      timeoutMs: 1000,
-    });
+    const result = await ReliableOrderRequests.json(
+      '/api/orders/counter',
+      {},
+      {
+        fetcher,
+        delays: [0],
+        timeoutMs: 1000,
+      }
+    );
 
     expect(result.response.status).toBe(409);
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
+});
+
+test('missing Retry-After uses backoff instead of retrying immediately', async () => {
+  const onRetry = jest.fn();
+  const fetcher = jest
+    .fn()
+    .mockResolvedValueOnce(response(503))
+    .mockResolvedValueOnce(response(200, { id: 'saved' }));
+  await ReliableOrderRequests.json('/orders', {}, { fetcher, delays: [10], onRetry });
+  expect(onRetry).toHaveBeenCalledWith(expect.objectContaining({ delayMs: 10 }));
 });

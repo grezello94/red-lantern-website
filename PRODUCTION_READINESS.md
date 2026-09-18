@@ -31,15 +31,33 @@ test below is `[x]` and every failure has been resolved and retested.
 - `npm test` checks the application source, rebuilds the downloadable Bridge bundles, and starts a temporary localhost Print Bridge with a temporary SQLite ledger.
 - In Admin, open **Database Health** after deployment. It checks the Orders database, storage warning threshold, Admin credentials, and Orders-console credentials without exposing secrets.
 
-Latest local automated result:
+Latest local automated result (18 September 2026 re-audit):
 
 - [x] Lint and type checking — passed
-- [x] Unit tests — 92/92 passed
-- [x] Browser regression tests — 23/23 passed
-- [x] Local Print Bridge integration test — passed
-- [x] Smart KDS 100-task rush simulation — no duplicate starts, starvation,
-  capacity breaches, course-sequence violations, synchronization violations,
-  or unfinished tasks
+- [x] Unit tests — 117/117 passed
+- [x] Browser regression tests — full suite 36/36 passed after live KOT dispatch changes
+- [x] Local Print Bridge integration test — passed with an isolated temporary ledger
+- Runtime used locally: Node 24.12.0; CI remains configured for Node 22.
+
+Re-audit fixes:
+
+- Orders bill failures no longer open a browser print window or falsely mark a bill printed.
+- Orders alerts use dismissible in-page notices; explicitly entered wallet redemption no
+  longer asks for two additional confirmations. Destructive/conflict confirmations remain.
+- Register receipt reprints use configured Bridge Bill printers with per-printer formatting.
+- Concurrent repeat clicks cannot dispatch a second manual bill while the first is pending.
+- Bridge health requests used by service printing time out after 2.5 seconds instead of
+  leaving recovery waiting indefinitely. Cloud KOT creation still starts immediately.
+- A failed KOT is no longer hidden by a successful automatic bill result.
+- Recovery preserves different orders queued while an earlier deferred print is processing.
+- Missing Retry-After headers now use the intended retry backoff.
+- Setup readiness can refresh after automatic printer pairing without assigning to a constant.
+- Offline Orders shell asset versions now match the current page.
+
+These changes do not establish an instant physical-print latency guarantee. Test the actual
+billing computer, Bridge, driver, printer, and production database under rush load before
+sign-off. Browser tests use mocked API and printer responses. Explicit report printing and
+legacy browser KOT rendering still use browser print UI; routine order/bill printing does not.
 
 These results verify the software paths, but they do not replace the physical
 printer, production database, network, or staff tests below.
@@ -227,3 +245,53 @@ ______________________________________________________________________________
 - If the ledger says **waiting to sync**, keep `/orders` open and restore internet; it retries cloud sync every 15 seconds.
 - If it says **needs review**, do not clear browser data, uninstall the Bridge, or delete `~/.red-lantern-print-bridge`. Resolve or record the action first.
 - If database health fails, stop accepting non-essential changes, preserve the diagnostic timestamp, and use the verified Neon restore process only if data recovery is required.
+
+## Silent printer-process follow-up — 18 September 2026
+
+Print Bridge 1.0.15 explicitly runs printer PowerShell commands hidden and
+non-interactively, without a command shell. Windows upgrades retire the legacy
+Bridge scheduled task and CMD Startup launcher. WScript startup uses batch mode
+and returns failures as exit codes instead of displaying script-error dialogs.
+The supervisor and restart children retain their hidden-process settings.
+macOS service startup already uses launchd without opening Terminal.
+
+Install the updated Bridge bundle on the billing computer; deploying the website
+alone cannot update its installed local Bridge. The one-time ZIP setup still
+opens its setup console. Normal service startup, recovery and printing are hidden.
+Windows visual verification (sign-in, several KOTs/bills, Bridge restart) remains
+pending; local automated checks cannot verify third-party driver UI on Windows.
+
+## Counter/Captain KOT dispatch follow-up — 18 September 2026
+
+- Counter Send KOT starts dispatch immediately after the cloud save succeeds;
+  KOT creation and Bridge readiness checks run concurrently.
+- Live SSE and persisted events carry the affected order ID. The billing computer
+  dispatches that order directly, independently of history/search filters or a
+  pending full order-list refresh. New events arriving during dispatch trigger
+  a follow-up so an additional round is not skipped.
+- Captain release of saved/held KOTs updates acceptance before notifying the
+  billing computer. Smart KDS timing computation no longer blocks that response.
+- Saved/held/unaccepted orders remain ineligible for automatic kitchen dispatch.
+- Verification: 117 unit tests, 36 browser tests, syntax, lint and type checks passed.
+  Browser coverage includes direct Captain dispatch while history is open and the
+  order-list refresh is blocked, and no early printing of saved/held counter orders.
+
+Dispatch is immediate on a received live event; the cross-instance event poll runs
+once per second. This is not a zero-latency guarantee: database/network round trips,
+OS spooling and paper movement still take time. Keep Orders open on the billing
+computer with Bridge running. Deploy these server/frontend changes and measure
+press-to-paper latency on the restaurant's actual network before service sign-off.
+
+## Captain bill dispatch follow-up — 18 September 2026
+
+Captain bill live events now reuse their already-loaded receipt and dispatch only
+the bill, avoiding an extra receipt fetch and unnecessary KOT processing. Recovery
+without a prepared receipt fetches it concurrently with Bridge readiness/config.
+The print claim still prevents competing workstations from printing the same bill.
+Captain location validation, database confirmation and physical printer time remain
+necessary; zero-millisecond printing cannot be promised. This change needs website
+and server deployment; keep Orders and the local Bridge running on the billing PC.
+
+Validation: Orders browser suite 29/29 passed, including one receipt read and one
+Bill dispatch for a Captain request while history is open. Lint, type checking and
+application syntax checks passed.
