@@ -8,8 +8,8 @@
   },
   "scripts": {
     "minify:css": "cleancss -o style.min.css style.css",
-    "check": "node --check order-request.js && node --check addons-domain.js && node --check analytics-domain.js && node --check payments-domain.js && node --check database-readiness.js && node --check trusted-contacts-domain.js && node --check server.js && node --check printer-domain.js && node --check smart-kds-domain.js && node --check smart-kds-timing.js && node --check smart-kds-scheduler.js && node --check smart-kds-batching.js && node --check smart-kds-capacity.js && node --check smart-kds-pacing.js && node --check smart-kds-fairness.js && node --check smart-kds-unified.js && node --check smart-kds-service-risk.js && node --check smart-kds-simulation.js && node --check smart-kds-workflow.js && node --check smart-kds-reasons.js && node --check smart-kds-metrics.js && node --check smart-kds.js && node --check smart-kds-controls.js && node --check admin-cms.js && node --check admin-analytics.js && node --check air-menu.js && node --check captain.js && node --check captain-sw.js && node --check orders.js && node --check print-bridge.js && node --check orders-sw.js && node --check kds.js && node --check register.js",
-    "bundle:print-bridge": "node scripts/build-print-bridge-bundles.js",
+    "check": "node --check server.js && node --check admin-cms.js && node --check air-menu.js && node --check captain.js && node --check captain-sw.js && node --check orders.js && node --check print-bridge.js && node --check orders-sw.js",
+    "bundle:print-bridge": "bash scripts/build-print-bridge-bundles.sh",
     "package:bridge:macos": "bash scripts/package-print-bridge-macos.sh",
     "package:bridge:windows": "powershell -ExecutionPolicy Bypass -File scripts/package-print-bridge-windows.ps1",
     "build": "npm run check && npm run minify:css && npm run bundle:print-bridge",
@@ -18,8 +18,6 @@
     "print-bridge": "node print-bridge.js",
     "test": "npm run test:unit && npm run build && node scripts/test-print-bridge.js",
     "test:unit": "jest --runInBand",
-    "test:smart-kds": "jest --runInBand smart-kds-domain.test.js smart-kds-phase12.test.js",
-    "simulate:smart-kds": "node scripts/run-smart-kds-simulation.js",
     "lint": "eslint . --ext .js",
     "format": "prettier --write \"**/*.{js,css,html,json}\"",
     "typecheck": "tsc --noEmit",
@@ -47,15 +45,12 @@
     "cloudinary": "^2.5.1",
     "exceljs": "^4.4.0",
     "express": "^5.2.1",
-    "multer": "^2.2.0",
+    "multer": "^2.1.1",
     "pdfjs-dist": "^5.4.149",
     "qrcode": "^1.5.4",
     "sharp": "^0.35.1",
     "tesseract.js": "^6.0.1",
     "web-push": "^3.6.7"
-  },
-  "overrides": {
-    "uuid": "^11.1.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",

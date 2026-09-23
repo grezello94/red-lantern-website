@@ -9,14 +9,10 @@
     <meta name="theme-color" content="#8e1830" />
     <link rel="manifest" href="/captain.webmanifest" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-title" content="Captain" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-    <meta name="format-detection" content="telephone=no" />
     <title>Captain · Red Lantern</title>
     <link rel="stylesheet" href="/captain.css?v=2" />
-    <link rel="stylesheet" href="/captain-ux.css?v=53" />
-    <link rel="stylesheet" href="/captain-modern.css?v=6" />
+    <link rel="stylesheet" href="/captain-ux.css?v=51" />
+    <link rel="stylesheet" href="/captain-modern.css?v=2" />
   </head>
   <body>
     <header class="captain-header">
@@ -84,56 +80,37 @@
       </section>
     </aside>
     <section id="captain-login" class="captain-login" aria-labelledby="captain-login-title" aria-live="polite">
-      <div class="captain-auth-card">
-        <aside class="captain-auth-brand">
-          <img src="/images/red-lantern-logo-600.webp" alt="Red Lantern Restaurant" />
-          <div>
-            <span>Red Lantern Restaurant</span>
-            <h1>Confident service starts here.</h1>
-            <p>Securely access your assigned tables, live kitchen progress and order history.</p>
-          </div>
-          <small><i aria-hidden="true"></i> Protected Captain workspace</small>
-        </aside>
-        <div class="captain-auth-panel">
-          <div class="captain-auth-content">
-            <span class="eyebrow">CAPTAIN ACCESS</span>
-            <h1 id="captain-login-title">Who is taking this order?</h1>
-            <p>Choose your name, then enter your personal PIN.</p>
-            <div id="captain-account-list" class="captain-account-list" aria-live="polite"></div>
-            <form id="captain-pin-form" hidden>
-              <button id="captain-change-account" class="back-button" type="button">
-                ← Change Captain
-              </button>
-              <p id="captain-selected-name" class="captain-selected-name"></p>
-              <label for="captain-pin">Personal PIN</label>
-              <div class="captain-pin-control">
-                <input
-                  id="captain-pin"
-                  type="password"
-                  inputmode="numeric"
-                  autocomplete="current-password"
-                  pattern="[0-9]*"
-                  minlength="4"
-                  maxlength="6"
-                  required
-                  placeholder="••••"
-                />
-                <button id="captain-pin-toggle" type="button" aria-label="Show PIN">Show</button>
-              </div>
-              <label class="captain-stay-logged-in" for="captain-stay-logged-in">
-                <input id="captain-stay-logged-in" type="checkbox" />
-                <span aria-hidden="true"><i></i></span>
-                <b>Stay logged in</b>
-                <small>Keep this trusted device signed in for 30 days.</small>
-              </label>
-              <p id="captain-login-status" class="captain-login-status" aria-live="polite"></p>
-              <button id="captain-login-submit" class="send-button" type="submit">
-                Start taking orders <span aria-hidden="true">→</span>
-              </button>
-              <p class="captain-shared-device">Leave “Stay logged in” unchecked on a shared device.</p>
-            </form>
-          </div>
-        </div>
+      <div class="captain-login-card">
+        <img src="/images/red-lantern-logo-600.webp" alt="Red Lantern Restaurant" />
+        <span class="eyebrow">STAFF ACCESS</span>
+        <h1 id="captain-login-title">Who is taking this order?</h1>
+        <p>
+          Choose your name, then enter your personal PIN. Your table access and order trail are
+          recorded automatically.
+        </p>
+        <div id="captain-account-list" class="captain-account-list" aria-live="polite"></div>
+        <form id="captain-pin-form" hidden>
+          <button id="captain-change-account" class="back-button" type="button">
+            ← Change Captain
+          </button>
+          <p id="captain-selected-name" class="captain-selected-name"></p>
+          <label
+            >Personal PIN<input
+              id="captain-pin"
+              type="password"
+              inputmode="numeric"
+              autocomplete="current-password"
+              pattern="[0-9]*"
+              minlength="4"
+              maxlength="6"
+              required
+              placeholder="••••"
+          /></label>
+          <p id="captain-login-status" class="captain-login-status" aria-live="polite"></p>
+          <button id="captain-login-submit" class="send-button" type="submit">
+            Start taking orders
+          </button>
+        </form>
       </div>
     </section>
     <main class="captain-app" hidden>
@@ -280,7 +257,7 @@
         </div>
         <div id="cart-list" class="cart-list"></div>
         <details class="guest-details">
-          <summary><strong>Guest details &amp; kitchen note</strong><span>Optional</span></summary>
+          <summary>Guest details &amp; kitchen note <span>Optional</span></summary>
           <div>
             <label
               >Name<input
@@ -295,8 +272,6 @@
                 maxlength="16"
                 autocomplete="tel"
                 placeholder="Mobile number" /></label
-            ><label
-              >Serving preference<select id="course-mode"><option value="normal_coursing">Serve course by course</option><option value="serve_together">Serve everything together</option><option value="as_ready">Serve items as ready</option><option value="manual_fire">Manual fire</option></select></label
             ><label class="wide"
               >Kitchen note<textarea
                 id="special-request"
@@ -352,14 +327,9 @@
           <small>+₹10</small></label
         >
       </fieldset>
-      <div id="captain-addon-groups" class="captain-addon-groups"></div>
-      <p id="captain-addon-error" class="captain-addon-error" aria-live="polite"></p>
       <label class="item-note"
         >Kitchen note
         <input id="choice-note" maxlength="80" placeholder="e.g. less spicy, no onion" /></label
-      ><label class="item-note"
-        >Kitchen course
-        <select id="choice-course"></select></label
       ><button type="button" id="choice-add" class="send-button">Add item</button>
     </dialog>
     <dialog id="line-note-sheet" class="line-note-sheet" aria-labelledby="line-note-title">
@@ -416,15 +386,13 @@
       <button type="button" data-captain-table-actions-close aria-label="Close">×</button>
       <h2 id="captain-table-actions-title">Table</h2>
       <div>
-        <button type="button" data-captain-table-action="view">▤ <span>Open order & KOTs</span></button
+        <button type="button" data-captain-table-action="view">▤ <span>View KOT(s)</span></button
         ><button type="button" data-captain-table-action="move">↔ <span>Move Table</span></button
         ><button type="button" data-captain-table-action="bill">▣ <span>Print Bill</span></button>
       </div>
     </dialog>
     <script src="/client-config.js"></script>
-    <script src="/addons-domain.js?v=1"></script>
-    <script src="/order-request.js?v=1"></script>
-    <script src="/captain.js?v=60"></script>
+    <script src="/captain.js?v=54"></script>
     <script>
       if ('serviceWorker' in navigator) {
         let reloadedForCaptainWorker = false;
@@ -435,7 +403,7 @@
           }
         });
         navigator.serviceWorker
-          .register('/captain-sw.js?v=31')
+          .register('/captain-sw.js?v=20')
           .then((registration) => {
             registration.update().catch(() => {});
             if (registration.waiting) registration.waiting.postMessage({ type: 'SKIP_WAITING' });
