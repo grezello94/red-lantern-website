@@ -65,12 +65,12 @@ printer, production database, network, or staff tests below.
 ## One-time production configuration
 
 - [ ] `NEON_DATABASE_URL`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`,
-  `ORDERS_USERNAME`, and `ORDERS_PASSWORD` are set in Vercel Production.
+  `ORDERS_USERNAME`, and `ORDERS_PASSWORD` are set in Coolify Production.
   Verified by/date: ____________________ Evidence: ____________________
 - [ ] Neon backup / point-in-time recovery is enabled and a restore was tested
   against a separate database, never the live database.
   Verified by/date: ____________________ Restore report: ____________________
-- [ ] Vercel deployment and error notifications reach the responsible person.
+- [ ] Coolify deployment and error notifications reach the responsible person.
   Verified by/date: ____________________ Evidence: ____________________
 - [ ] Port `9124` listens only on `127.0.0.1` on the billing computer and no
   router port-forwarding exposes it.

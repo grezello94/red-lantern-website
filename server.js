@@ -128,9 +128,7 @@ const app = express();
 app.set('trust proxy', 1);
 const port = process.env.PORT || 3001;
 const host = process.env.HOST || '0.0.0.0';
-let uploadsDir = process.env.VERCEL
-  ? path.join('/tmp', 'red-lantern-uploads')
-  : path.join(__dirname, 'uploads');
+let uploadsDir = process.env.UPLOADS_DIR || path.join(__dirname, 'uploads');
 
 try {
   fs.mkdirSync(uploadsDir, { recursive: true });
@@ -254,15 +252,15 @@ function distanceInMetres(aLat, aLng, bLat, bLng) {
 function diagnosticSolution(category, message = '') {
   const text = String(message).toLowerCase();
   if (category === 'security')
-    return 'Check the request path and IP hash. If repeated, keep admin credentials strong and consider blocking the source in Vercel Firewall.';
+    return 'Check the request path and IP hash. If repeated, keep admin credentials strong and consider blocking the source in the Coolify proxy or server firewall.';
   if (category === 'auth')
-    return 'Confirm ADMIN_USERNAME and ADMIN_PASSWORD in Vercel Environment Variables. If failures repeat, rotate the admin password.';
+    return 'Confirm ADMIN_USERNAME and ADMIN_PASSWORD in Coolify Environment Variables. If failures repeat, rotate the admin password.';
   if (category === 'cms-save' && text.includes('cloudinary'))
-    return 'Check CLOUDINARY_URL or Cloudinary API credentials in Vercel, then redeploy and try the image upload again.';
+    return 'Check CLOUDINARY_URL or Cloudinary API credentials in Coolify, then redeploy and try the image upload again.';
   if (category === 'cms-save' && (text.includes('neon') || text.includes('database')))
-    return 'Check NEON_DATABASE_URL in Vercel and confirm the Neon database is active.';
+    return 'Check NEON_DATABASE_URL in Coolify and confirm the Neon database is active.';
   if (category === 'performance')
-    return 'Open Vercel Observability for this path, check database/API calls, and reduce image or payload size if this repeats.';
+    return 'Open the Coolify application logs for this path, check database/API calls, and reduce image or payload size if this repeats.';
   if (category === 'frontend')
     return 'Open the listed page in the browser, reproduce the action, and check the script/file named in the log details.';
   if (category === 'orders') {
@@ -914,6 +912,15 @@ function blockSensitiveFiles(req, res, next) {
 
 app.use(securityHeaders);
 app.use(requestDiagnostics);
+
+app.get('/api/healthz', (req, res) => {
+  res.json({
+    ok: true,
+    service: 'red-lantern-website',
+    uptimeSeconds: Math.floor(process.uptime()),
+  });
+});
+
 app.use(requireAdmin);
 app.use(requireOrdersConsole);
 app.use(blockSensitiveFiles);
@@ -9599,8 +9606,7 @@ app.use((error, req, res, next) => {
   res.status(status).send(message);
 });
 
-// Only start server automatically if not running in a Vercel serverless environment
-if (!process.env.VERCEL) {
+if (require.main === module) {
   const server = app.listen(port, host, () => {
     console.log(`Red Lantern backend running on ${host}:${port}`);
   });
