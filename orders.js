@@ -1,40 +1,4 @@
-// Service notices never steal focus or block the next order.
-function showStaffNotice(message) {
-  let notice = document.getElementById('staff-service-notice');
-  if (!notice) {
-    notice = document.createElement('aside');
-    notice.id = 'staff-service-notice';
-    notice.setAttribute('role', 'status');
-    const text = document.createElement('span');
-    const dismiss = document.createElement('button');
-    dismiss.type = 'button';
-    dismiss.textContent = 'Dismiss';
-    dismiss.addEventListener('click', () => {
-      notice.hidden = true;
-    });
-    notice.append(text, dismiss);
-    document.body.append(notice);
-  }
-  notice.firstElementChild.textContent = String(message);
-  notice.hidden = false;
-}
-
-async function bridgeHealth() {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 2500);
-  try {
-    return await fetch(`${printBridgeOrigin}/health`, {
-      cache: 'no-store',
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 const root = document.getElementById('orders');
-const Addons = window.RedLanternAddons;
-const OrderRequests = window.RedLanternOrderRequests;
 const defaultBillHeader =
   'Colva Goa\n9922853605 / 9049558369\n[Follow] Insta ID:\nred_lantern_restaurant';
 const defaultBillFooter =
@@ -47,10 +11,6 @@ const historyDate = document.getElementById('history-date');
 let known = new Set();
 let firstLoad = true;
 let ordersRefreshInFlight = false;
-let fastOrdersRefreshQueued = false;
-let fastOrdersRefreshTimer = null;
-let printUpdateCursor = null;
-let printUpdatePollInFlight = false;
 let renderedOrdersSignature = '';
 let hasRenderedOrders = false;
 let menuItems = [];
@@ -66,19 +26,6 @@ let historyAll = false;
 let orderStatusFilter = 'all';
 let fulfillmentFilter = '';
 let operationsConfig = { printers: [], routes: [] };
-let printOperationsRequest = null;
-let printOperationsLoadedAt = 0;
-const {
-  configuredPrintersFor,
-  printerFormat,
-  printerCapabilities,
-  printerBelongsToWorkstation,
-  printerSupports,
-  setPrinterCapability,
-  setPrinterFormat,
-} = window.RedLanternPrinterDomain;
-let tableViewAreaFilter = 'all';
-let tableViewSearch = '';
 const tableAllocationCacheKey = 'red-lantern-table-allocation';
 function readCachedTableAreas() {
   try {
@@ -121,43 +68,6 @@ function cacheOperationsConfig(config) {
       })
     );
   } catch (_) {}
-}
-async function getPrintOperationsConfig() {
-  const hasRecentConfig =
-    Date.now() - printOperationsLoadedAt < 60000 &&
-    Array.isArray(operationsConfig.printers) &&
-    Array.isArray(operationsConfig.routes);
-  if (hasRecentConfig) return operationsConfig;
-  if (printOperationsRequest) return printOperationsRequest;
-  printOperationsRequest = fetch('/api/orders/operations?configOnly=1', { cache: 'no-store' })
-    .then(async (response) => {
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.error || 'Printer configuration could not load.');
-      const next = data.config || {};
-      operationsConfig = {
-        printers: Array.isArray(next.printers) ? next.printers : [],
-        routes: Array.isArray(next.routes) ? next.routes : [],
-        tableAreas: Array.isArray(next.tableAreas)
-          ? next.tableAreas
-          : Array.isArray(operationsConfig.tableAreas)
-            ? operationsConfig.tableAreas
-            : [],
-      };
-      printOperationsLoadedAt = Date.now();
-      cacheOperationsConfig(operationsConfig);
-      return operationsConfig;
-    })
-    .catch((error) => {
-      // A previously loaded configuration is safe to use when a transient
-      // cloud read fails; job IDs still protect against duplicate output.
-      if (Array.isArray(operationsConfig.printers) && operationsConfig.printers.length)
-        return operationsConfig;
-      throw error;
-    })
-    .finally(() => {
-      printOperationsRequest = null;
-    });
-  return printOperationsRequest;
 }
 const tableOrderSnapshotKey = 'red-lantern-table-order-snapshot';
 function readCachedTableOrders() {
@@ -228,9 +138,6 @@ let installedSystemPrinters = [];
 let printBridgeState = 'checking';
 let printBridgeConfigState = 'not-synced';
 let printBridgeSetupStatus = null;
-let printBridgeRelease = null;
-let printBridgeWorkstation = null;
-let workstationPairingInFlight = false;
 let assignmentPrinterId = '';
 let assignmentMode = '';
 let counterMenu = [];
@@ -242,44 +149,14 @@ let counterLoyaltyTimer = null;
 let counterTable = null;
 let counterBillSplit = null;
 const offlineCounterOrdersKey = 'red-lantern-counter-orders';
-const deferredPrintsKey = 'red-lantern-deferred-prints';
-const ordersWorkspaceKey = 'red-lantern-orders-last-workspace';
 let counterSyncInProgress = false;
-let deferredPrintSyncInProgress = false;
 let bridgeLedgerPending = 0;
-const printBridgeOrigin =
-  (typeof window !== 'undefined' &&
-    window.RED_LANTERN_CONFIG &&
-    window.RED_LANTERN_CONFIG.printBridgeOrigin) ||
-  'http://127.0.0.1:9124';
-
-function rememberPrintBridgeWorkstation(payload) {
-  const workstation = payload?.workstation;
-  if (!workstation?.id) return printBridgeWorkstation;
-  printBridgeWorkstation = {
-    id: String(workstation.id),
-    name: String(workstation.name || 'Restaurant computer'),
-    platform: String(workstation.platform || ''),
-  };
-  return printBridgeWorkstation;
-}
-function localWorkstationId() {
-  return String(printBridgeWorkstation?.id || '');
-}
-function ticketsForThisWorkstation(tickets) {
-  const workstationId = localWorkstationId();
-  return (Array.isArray(tickets) ? tickets : []).filter(
-    (ticket) => !workstationId || !ticket.workstationId || ticket.workstationId === workstationId
-  );
-}
+const printBridgeOrigin = (typeof window !== 'undefined' && window.RED_LANTERN_CONFIG && window.RED_LANTERN_CONFIG.printBridgeOrigin) || 'http://127.0.0.1:9124';
 
 // Bridge support for extracted browser bridge
-const bridgeSupport =
-  typeof window !== 'undefined' && window.RedLanternOrders ? window.RedLanternOrders : null;
-const bridgeDispatch =
-  bridgeSupport && bridgeSupport.sync ? bridgeSupport.sync.dispatchBridgeAction : null;
-const bridgeLedger =
-  bridgeSupport && bridgeSupport.ledger ? bridgeSupport.ledger.flushBridgeLedger : null;
+const bridgeSupport = typeof window !== 'undefined' && window.RedLanternOrders ? window.RedLanternOrders : null;
+const bridgeDispatch = bridgeSupport && bridgeSupport.sync ? bridgeSupport.sync.dispatchBridgeAction : null;
+const bridgeLedger = bridgeSupport && bridgeSupport.ledger ? bridgeSupport.ledger.flushBridgeLedger : null;
 
 const ordersDiagnosticRecent = new Map();
 const orderSearchPanel = document.querySelector('.order-search-panel');
@@ -289,21 +166,9 @@ connectivity.id = 'orders-connectivity';
 connectivity.setAttribute('role', 'status');
 connectivity.setAttribute('aria-live', 'polite');
 connectivity.setAttribute('aria-atomic', 'true');
-document.querySelector('.orders-rail')?.after(connectivity);
-let counterRequestAttempt = { signature: '', id: '' };
-let counterOrderOperation = 0;
-function counterRequestId(payload = {}) {
-  const signature = JSON.stringify(payload);
-  if (counterRequestAttempt.id && counterRequestAttempt.signature === signature)
-    return counterRequestAttempt.id;
-  counterRequestAttempt = {
-    signature,
-    id: `counter-${Date.now()}-${crypto.getRandomValues(new Uint32Array(1))[0].toString(36)}`,
-  };
-  return counterRequestAttempt.id;
-}
-function resetCounterRequestAttempt() {
-  counterRequestAttempt = { signature: '', id: '' };
+document.querySelector('header')?.after(connectivity);
+function counterRequestId() {
+  return `counter-${Date.now()}-${crypto.getRandomValues(new Uint32Array(1))[0].toString(36)}`;
 }
 function settlementRequestId() {
   return `settlement-${Date.now()}-${crypto.getRandomValues(new Uint32Array(1))[0].toString(36)}`;
@@ -321,37 +186,6 @@ function queuedCounterOrders() {
 function saveQueuedCounterOrders(orders) {
   localStorage.setItem(offlineCounterOrdersKey, JSON.stringify(orders));
 }
-function deferredPrints() {
-  try {
-    const value = JSON.parse(localStorage.getItem(deferredPrintsKey) || '[]');
-    return Array.isArray(value) ? value.filter((entry) => entry?.id && entry?.mode) : [];
-  } catch (_) {
-    return [];
-  }
-}
-function saveDeferredPrints(entries) {
-  try {
-    localStorage.setItem(deferredPrintsKey, JSON.stringify(entries.slice(-100)));
-  } catch (_) {}
-}
-function deferAutomaticPrint(order, { kotOnly = false } = {}) {
-  if (!order?.id) return;
-  const entries = deferredPrints();
-  const existing = entries.find((entry) => entry.id === order.id);
-  if (existing) {
-    // A full order print request takes precedence over a KOT-only request.
-    existing.kotOnly = !!existing.kotOnly && !!kotOnly;
-  } else {
-    entries.push({
-      id: order.id,
-      mode: order.mode,
-      status: order.status,
-      kotOnly: !!kotOnly,
-      queuedAt: new Date().toISOString(),
-    });
-  }
-  saveDeferredPrints(entries);
-}
 async function saveToBridgeLedger(payload) {
   const response = await fetch(`${printBridgeOrigin}/v1/ledger/actions`, {
     method: 'POST',
@@ -363,24 +197,6 @@ async function saveToBridgeLedger(payload) {
   bridgeLedgerPending += body.action?.status === 'queued' ? 1 : 0;
   updateConnectivity();
   return body.action;
-}
-function startCounterLedgerSave(payload, source) {
-  return saveToBridgeLedger(payload)
-    .then(() => true)
-    .catch((error) => {
-      reportOrdersDiagnostic({
-        level: 'warning',
-        message: `Local ledger unavailable: ${error.message}`,
-        source,
-      });
-      return false;
-    });
-}
-async function markCounterLedgerSynced(ledgerPromise, clientRequestId) {
-  if (!(await ledgerPromise)) return;
-  await updateBridgeLedger(clientRequestId, 'synced');
-  bridgeLedgerPending = Math.max(0, bridgeLedgerPending - 1);
-  updateConnectivity();
 }
 async function saveBridgeAction(type, payload) {
   const id = offlineActionId(type);
@@ -581,19 +397,13 @@ function updateConnectivity(message) {
         ? `${pending} order${pending === 1 ? '' : 's'} waiting to sync.`
         : '');
 }
-async function sendCounterOrder(payload, options = {}) {
-  const { response, data: result } = await OrderRequests.json(
-    '/api/orders/counter',
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Counter-Order-Id': payload.clientRequestId,
-      },
-      body: JSON.stringify(payload),
-    },
-    { attempts: 3, timeoutMs: 8000, onRetry: options.onRetry }
-  );
+async function sendCounterOrder(payload) {
+  const response = await fetch('/api/orders/counter', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Counter-Order-Id': payload.clientRequestId },
+    body: JSON.stringify(payload),
+  });
+  const result = await response.json().catch(() => ({}));
   if (!response.ok) {
     const error = new Error(result.error || 'Unable to save the order.');
     error.status = response.status;
@@ -666,7 +476,6 @@ window.addEventListener('online', () => {
   updateConnectivity('Internet restored — syncing queued orders…');
   refreshAfterReconnect();
   flushQueuedCounterOrders();
-  flushDeferredAutomaticPrints();
 });
 window.addEventListener('offline', () => {
   updateConnectivity();
@@ -732,7 +541,13 @@ const actionIcon = (name) => {
   };
   return `<svg class="header-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || ''}</svg>`;
 };
-const liveOrdersToggle = document.getElementById('live-orders-toggle');
+const liveOrdersToggle = document.createElement('button');
+liveOrdersToggle.type = 'button';
+liveOrdersToggle.id = 'live-orders-toggle';
+liveOrdersToggle.className = 'live-orders-toggle';
+liveOrdersToggle.setAttribute('aria-expanded', 'false');
+liveOrdersToggle.innerHTML = `${actionIcon('receipt')}<span>Live orders</span><b id="live-orders-count">0</b>`;
+document.querySelector('.header-actions')?.prepend(liveOrdersToggle);
 const operationsPanel = document.createElement('section');
 operationsPanel.id = 'operations-panel';
 operationsPanel.hidden = true;
@@ -743,18 +558,15 @@ const counterPanel = document.createElement('section');
 counterPanel.id = 'counter-order-panel';
 counterPanel.hidden = true;
 counterPanel.innerHTML =
-  '<div class="counter-order-head"><div><span class="eyebrow">Counter order</span><h2>Takeaway</h2><p>Build a walk-in or phone order, then send it directly to the kitchen.</p></div><button type="button" id="counter-order-close" class="new-order-button">New Order</button></div><div class="counter-order-layout"><div class="counter-menu"><label class="counter-search"><span aria-hidden="true">⌕</span><input id="counter-menu-search" type="search" placeholder="Search menu items"></label><div id="counter-categories" class="counter-categories"></div><div id="counter-menu-items" class="counter-menu-items"></div></div><aside class="counter-cart" aria-label="Current order"><div class="counter-cart-head"><h3>Current order</h3><div><button type="button" id="mobile-cart-close" aria-label="Close current order">×</button><button type="button" id="view-table-kot" hidden>View KOT</button><button type="button" id="counter-clear" class="counter-clear">Clear</button></div></div><div id="counter-cart-items" class="counter-cart-items"></div><div class="counter-customer"><label>Customer name <input id="counter-customer-name" maxlength="80" placeholder="Walk-in customer"></label><label>Mobile number <input id="counter-customer-phone" inputmode="tel" maxlength="16" placeholder="Optional for walk-ins"></label><label>Serving preference <select id="counter-course-mode"><option value="normal_coursing">Serve course by course</option><option value="serve_together">Serve everything together</option><option value="as_ready">Serve items as ready</option><option value="manual_fire">Manual fire</option></select></label><label>Kitchen note <textarea id="counter-special-request" maxlength="240" placeholder="e.g. less spicy"></textarea></label></div><div class="counter-total"><span>Total</span><b id="counter-total">₹0</b></div><button type="button" id="counter-place-order" class="counter-place-order">Place takeaway order</button><p id="counter-order-status" class="counter-order-status" aria-live="polite"></p></aside></div><button type="button" id="mobile-cart-toggle" aria-expanded="false"><span><b id="mobile-cart-count">0</b> View order</span><strong id="mobile-cart-total">₹0</strong></button><p id="mobile-add-status" role="status" aria-live="polite"></p><dialog id="counter-choice-dialog" class="counter-choice-dialog"><button type="button" class="dialog-close" data-counter-choice-close aria-label="Close">×</button><div id="counter-choice-content"></div></dialog>';
+  '<div class="counter-order-head"><div><span class="eyebrow">Counter order</span><h2>Takeaway</h2><p>Build a walk-in or phone order, then send it directly to the kitchen.</p></div><button type="button" id="counter-order-close" class="new-order-button">New Order</button></div><div class="counter-order-layout"><div class="counter-menu"><label class="counter-search"><span aria-hidden="true">⌕</span><input id="counter-menu-search" type="search" placeholder="Search menu items"></label><div id="counter-categories" class="counter-categories"></div><div id="counter-menu-items" class="counter-menu-items"></div></div><aside class="counter-cart"><div class="counter-cart-head"><h3>Current order</h3><div><button type="button" id="view-table-kot" hidden>View KOT</button><button type="button" id="counter-clear" class="counter-clear">Clear</button></div></div><div id="counter-cart-items" class="counter-cart-items"></div><div class="counter-customer"><label>Customer name <input id="counter-customer-name" maxlength="80" placeholder="Walk-in customer"></label><label>Mobile number <input id="counter-customer-phone" inputmode="tel" maxlength="16" placeholder="Optional for walk-ins"></label><label>Kitchen note <textarea id="counter-special-request" maxlength="240" placeholder="e.g. less spicy"></textarea></label></div><div class="counter-total"><span>Total</span><b id="counter-total">₹0</b></div><button type="button" id="counter-place-order" class="counter-place-order">Place takeaway order</button><p id="counter-order-status" class="counter-order-status" aria-live="polite"></p></aside></div><dialog id="counter-choice-dialog" class="counter-choice-dialog"><button type="button" class="dialog-close" data-counter-choice-close aria-label="Close">×</button><div id="counter-choice-content"></div></dialog>';
 availability.before(counterPanel);
 const counterPanelCloseButton = document.getElementById('counter-order-close');
-if (counterPanelCloseButton) {
-  counterPanelCloseButton.className = 'counter-back';
-  counterPanelCloseButton.textContent = '← Table view';
-}
+if (counterPanelCloseButton) counterPanelCloseButton.remove();
 const dineInActions = document.createElement('div');
 dineInActions.id = 'dine-in-actions';
 dineInActions.hidden = true;
 dineInActions.innerHTML =
-  '<button type="button" class="dine-in-split" data-dine-action="split">Split</button><button type="button" data-dine-action="save">Save</button><button type="button" data-dine-action="print">Print &amp; eBill</button><button type="button" class="dine-in-kot" data-dine-action="kot-print">Send KOT to kitchen</button><button type="button" class="dine-in-hold" data-dine-action="hold">Hold</button>';
+  '<button type="button" class="dine-in-split" data-dine-action="split">Split</button><button type="button" data-dine-action="save">Save</button><button type="button" data-dine-action="print">Print &amp; eBill</button><button type="button" class="dine-in-kot" data-dine-action="kot-print">Send KOT</button><button type="button" class="dine-in-hold" data-dine-action="hold">Hold</button>';
 counterPanel.querySelector('.counter-cart')?.append(dineInActions);
 const splitBillDialog = document.createElement('dialog');
 splitBillDialog.id = 'split-bill-dialog';
@@ -764,7 +576,7 @@ document.body.appendChild(splitBillDialog);
 const tableViewPanel = document.createElement('section');
 tableViewPanel.id = 'table-view-panel';
 tableViewPanel.innerHTML =
-  '<div class="table-view-head"><div><span class="eyebrow">Dine-in</span><h2>Dine-in management</h2><p>Select a table to start or continue its order.</p></div><div class="table-view-head-note"><b id="table-view-active-count">0</b><span>active tables</span></div></div><div id="table-view-content" class="table-view-content"><div class="table-view-empty">Loading allocated tables…</div></div>';
+  '<div class="table-view-head"><div><span class="eyebrow">Dine-in</span><h2>Table view</h2><p>Select an available table to start a dine-in order.</p></div></div><div id="table-view-content" class="table-view-content"><div class="table-view-empty">Loading allocated tables…</div></div>';
 availability.before(tableViewPanel);
 let moveKotItemsMode = false;
 const moveTableDialog = document.createElement('dialog');
@@ -812,7 +624,15 @@ async function refreshCounterLiveStatus() {
     counterLiveStatusLoading = false;
   }
 }
-const operationsToggle = document.getElementById('operations-toggle');
+const operationsToggle = document.createElement('button');
+operationsToggle.type = 'button';
+operationsToggle.id = 'operations-toggle';
+operationsToggle.className = 'operations-toggle';
+operationsToggle.setAttribute('aria-expanded', 'false');
+operationsToggle.innerHTML = `${actionIcon('operations')}<span>Operations</span>`;
+document
+  .querySelector('.header-actions')
+  ?.insertBefore(operationsToggle, document.getElementById('availability-toggle'));
 const installButton = document.getElementById('install-shortcut');
 const availabilityButton = document.getElementById('availability-toggle');
 const alertsButton = document.getElementById('enable-notifications');
@@ -832,37 +652,11 @@ const closeOpenPanels = (except = null) => {
     availability.hidden = true;
     availabilityButton?.setAttribute('aria-expanded', 'false');
   }
-  if (except !== 'counter') {
-    counterPanel.hidden = true;
-    document.body.classList.remove('is-counter-workspace');
-    counterPanel.classList.remove('mobile-cart-open');
-    document.body.classList.remove('mobile-order-cart-open');
-    document.getElementById('mobile-cart-toggle')?.setAttribute('aria-expanded', 'false');
-  }
+  if (except !== 'counter') counterPanel.hidden = true;
   if (except !== 'tables') tableViewPanel.hidden = true;
   const shortcutDialog = document.getElementById('shortcut-dialog');
   if (except !== 'shortcut' && shortcutDialog?.open) shortcutDialog.close();
 };
-function setOrdersRailActive(workspace) {
-  document.querySelectorAll('[data-orders-rail]').forEach((item) => {
-    item.classList.toggle('is-active', item.dataset.ordersRail === workspace);
-  });
-}
-function rememberOrdersWorkspace(area, tab = '') {
-  try {
-    localStorage.setItem(ordersWorkspaceKey, JSON.stringify({ area, tab }));
-  } catch (_) {}
-}
-function savedOrdersWorkspace() {
-  try {
-    const value = JSON.parse(localStorage.getItem(ordersWorkspaceKey) || 'null');
-    return value && ['tables', 'counter', 'live', 'operations', 'availability'].includes(value.area)
-      ? value
-      : null;
-  } catch (_) {
-    return null;
-  }
-}
 const counterPrice = (item) => {
   const options = [
     ['', item.price],
@@ -889,85 +683,15 @@ const counterPortionOptions = (item) =>
     ['90 ml', '90 ml', item.price90ml],
     ['180 ml', '180 ml', item.price180ml],
   ].filter(([, , price]) => Number(String(price || '').replace(/[^0-9.]/g, '')) > 0);
-const smartKdsCourseOptions = (defaultCourse = '', selected = '') =>
-  `<option value="">Default${defaultCourse ? ` (${esc(defaultCourse)})` : ''}</option>${['drink', 'soup', 'starter', 'main', 'side', 'dessert', 'other'].map((course) => `<option value="${course}" ${selected === course ? 'selected' : ''}>${course[0].toUpperCase() + course.slice(1)}</option>`).join('')}`;
-function updateCounterChoiceTotal() {
-  const selectedPortion = document.querySelector('input[name="counter-portion"]:checked');
-  const addButton = document.getElementById('counter-choice-add');
-  const addPrice = document.getElementById('counter-choice-add-price');
-  if (!selectedPortion || !addButton || !addPrice) return;
-  (counterChoiceItem?.addonGroups || []).forEach((group) => {
-    const inputs = [
-      ...document.querySelectorAll(
-        `[data-counter-addon-group="${group.id}"] input[type="checkbox"]`
-      ),
-    ];
-    const atLimit = inputs.filter((input) => input.checked).length >= Number(group.max || 1);
-    inputs.forEach((input) => {
-      input.disabled = atLimit && !input.checked;
-    });
-  });
-  const style = document.querySelector('input[name="counter-style"]:checked')?.value || '';
-  const modifierResult = Addons.validateSelections(
-    counterChoiceItem?.addonGroups || [],
-    readCounterModifierSelections()
-  );
-  const total =
-    Number(selectedPortion.dataset.counterChoicePrice || 0) +
-    (style ? 10 : 0) +
-    (modifierResult.ok ? modifierResult.total : 0);
-  addPrice.textContent = counterMoney(total);
-  addButton.disabled = !modifierResult.ok;
-  const error = document.getElementById('counter-addon-error');
-  if (error) error.textContent = modifierResult.ok ? '' : modifierResult.error;
-  addButton.setAttribute('aria-label', `Add to order for ${counterMoney(total)}`);
-}
-function readCounterModifierSelections() {
-  return (counterChoiceItem?.addonGroups || []).map((group) => ({
-    groupId: group.id,
-    options: [
-      ...document.querySelectorAll(`[data-counter-addon-group="${group.id}"] input:checked`),
-    ].map((input) => ({ optionId: input.value, quantity: 1 })),
-  }));
-}
-function counterAddonMarkup(groups = []) {
-  return groups
-    .map(
-      (group) =>
-        `<fieldset class="counter-addon-group" data-counter-addon-group="${esc(group.id)}"><legend>${esc(group.displayName || group.name)} <em>${group.min ? `Choose ${group.min}${group.max !== group.min ? `–${group.max}` : ''}` : `Optional · up to ${group.max}`}</em></legend>${group.options
-          .filter((option) => option.active !== false)
-          .map(
-            (option) =>
-              `<label><input type="${group.selection === 'single' ? 'radio' : 'checkbox'}" name="counter-addon-${esc(group.id)}" value="${esc(option.id)}"><span>${esc(option.name)}<b>${option.price ? `+${counterMoney(option.price)}` : 'Included'}</b></span></label>`
-          )
-          .join('')}</fieldset>`
-    )
-    .join('');
-}
 function openCounterChoice(item) {
   counterChoiceItem = item;
   const options = counterPortionOptions(item);
   const dialog = document.getElementById('counter-choice-dialog');
   document.getElementById('counter-choice-content').innerHTML =
-    `<div class="counter-choice-title"><span>${esc(item.category || 'Menu')}</span><h2>${esc(item.name)}</h2></div><section class="counter-portion-section" aria-label="Select portion"><div class="counter-choice-section-head"><h3>Select portion</h3><small>Required</small></div><div class="counter-choice-options">${options.map(([value, label, price], index) => `<label><input type="radio" name="counter-portion" value="${esc(value)}" data-counter-choice-price="${Number(String(price).replace(/[^0-9.]/g, ''))}" ${index === 0 ? 'checked' : ''}><span><i aria-hidden="true"></i><strong>${esc(label)}</strong><b>${counterMoney(String(price).replace(/[^0-9.]/g, ''))}</b></span></label>`).join('')}</div></section>${item.gravyStyleAvailable ? '<fieldset class="counter-style-options"><legend>Preparation style</legend><label><input type="radio" name="counter-style" value="" checked> Regular</label><label><input type="radio" name="counter-style" value="Gravy"> Gravy <b>+₹10</b></label><label><input type="radio" name="counter-style" value="Semi-gravy"> Semi-gravy <b>+₹10</b></label></fieldset>' : ''}${counterAddonMarkup(item.addonGroups)}<p id="counter-addon-error" class="counter-addon-error" aria-live="polite"></p><label class="counter-course-choice"><span>Kitchen course</span><select id="counter-choice-course">${smartKdsCourseOptions(item.defaultCourse || '')}</select></label><button type="button" id="counter-choice-add" class="counter-place-order"><span><i aria-hidden="true">+</i>Add to order</span><b id="counter-choice-add-price"></b></button>`;
-  updateCounterChoiceTotal();
+    `<span class="eyebrow">Add to parcel</span><h2>${esc(item.name)}</h2><p>${esc(item.category || 'Menu')}</p><div class="counter-choice-options">${options.map(([value, label, price], index) => `<label><input type="radio" name="counter-portion" value="${esc(value)}" data-counter-choice-price="${Number(String(price).replace(/[^0-9.]/g, ''))}" ${index === 0 ? 'checked' : ''}><span>${esc(label)} <b>${counterMoney(String(price).replace(/[^0-9.]/g, ''))}</b></span></label>`).join('')}</div>${item.gravyStyleAvailable ? '<fieldset class="counter-style-options"><legend>Preparation style</legend><label><input type="radio" name="counter-style" value="" checked> Regular</label><label><input type="radio" name="counter-style" value="Gravy"> Gravy <b>+₹10</b></label><label><input type="radio" name="counter-style" value="Semi-gravy"> Semi-gravy <b>+₹10</b></label></fieldset>' : ''}<button type="button" id="counter-choice-add" class="counter-place-order">Add to order</button>`;
   if (typeof dialog.showModal === 'function') dialog.showModal();
 }
 const counterMoney = (value) => `₹${Math.round(Number(value) || 0)}`;
-let mobileAddStatusTimer;
-function showMobileAdded(itemName) {
-  const status = document.getElementById('mobile-add-status');
-  if (!status) return;
-  status.textContent = `${itemName} added to order`;
-  status.classList.add('is-visible');
-  clearTimeout(mobileAddStatusTimer);
-  mobileAddStatusTimer = setTimeout(() => status.classList.remove('is-visible'), 1400);
-}
-function setMobileCartOpen(open) {
-  counterPanel.classList.toggle('mobile-cart-open', open);
-  document.getElementById('mobile-cart-toggle')?.setAttribute('aria-expanded', String(open));
-  document.body.classList.toggle('mobile-order-cart-open', open);
-}
 function renderCounterOrder() {
   const search = String(document.getElementById('counter-menu-search')?.value || '')
     .trim()
@@ -1015,7 +739,7 @@ function renderCounterOrder() {
   const categoryButton = (category, label = category) =>
     `<button type="button" class="counter-category ${counterCategory === category ? 'is-active' : ''}" data-counter-category="${esc(category)}">${esc(label)}</button>`;
   document.getElementById('counter-categories').innerHTML =
-    `${categoryButton('all', `All items · ${counterMenu.length}`)}<span class="counter-category-group">Food menu</span>${foodCategories.map((category) => categoryButton(category)).join('')}<span class="counter-category-group">Alcohol & bar</span>${barCategories.map((category) => categoryButton(category)).join('')}`;
+    `${categoryButton('all', 'All items')}<span class="counter-category-group">Food menu</span>${foodCategories.map((category) => categoryButton(category)).join('')}<span class="counter-category-group">Alcohol & bar</span>${barCategories.map((category) => categoryButton(category)).join('')}`;
   const visible = counterMenu.filter(
     (item) =>
       (counterCategory === 'all' || (item.category || 'Menu') === counterCategory) &&
@@ -1030,21 +754,14 @@ function renderCounterOrder() {
       .join('') || '<p class="counter-empty">No menu items match that search.</p>';
   const items = counterCart
     .map((line, index) => {
-      const unit = line.price + (line.style ? 10 : 0) + Addons.lineModifierTotal(line);
-      const modifierText = Addons.modifierText(line.modifiers);
-      return `<div class="counter-cart-line"><div><b>${esc(line.name)}</b><small>${esc(line.portion || 'Regular')}${line.style ? ` · ${esc(line.style)}` : ''} · ${counterMoney(unit)} each</small>${modifierText ? `<small class="counter-line-addons">+ ${esc(modifierText)}</small>` : ''}<label class="counter-line-course">Course <select data-counter-course="${index}">${smartKdsCourseOptions(line.defaultCourse || '', line.courseOverride || '')}</select></label></div><div class="counter-quantity"><button type="button" data-counter-qty="${index}" data-counter-change="-1">−</button><b>${line.quantity}</b><button type="button" data-counter-qty="${index}" data-counter-change="1">+</button></div><strong>${counterMoney(unit * line.quantity)}</strong></div>`;
+      const unit = line.price + (line.style ? 10 : 0);
+      return `<div class="counter-cart-line"><div><b>${esc(line.name)}</b><small>${esc(line.portion || 'Regular')}${line.style ? ` · ${esc(line.style)}` : ''} · ${counterMoney(unit)} each</small></div><div class="counter-quantity"><button type="button" data-counter-qty="${index}" data-counter-change="-1">−</button><b>${line.quantity}</b><button type="button" data-counter-qty="${index}" data-counter-change="1">+</button></div><strong>${counterMoney(unit * line.quantity)}</strong></div>`;
     })
     .join('');
   document.getElementById('counter-cart-items').innerHTML =
     items || '<p class="counter-empty">Choose items from the menu to start an order.</p>';
-  const cartHeading = document.querySelector('#counter-order-panel .counter-cart-head h3');
-  if (cartHeading) {
-    const itemCount = counterCart.reduce((count, line) => count + Number(line.quantity || 0), 0);
-    cartHeading.textContent = `Current order${itemCount ? ` · ${itemCount} item${itemCount === 1 ? '' : 's'}` : ''}`;
-  }
   const subtotal = counterCart.reduce(
-    (sum, line) =>
-      sum + (line.price + (line.style ? 10 : 0) + Addons.lineModifierTotal(line)) * line.quantity,
+    (sum, line) => sum + (line.price + (line.style ? 10 : 0)) * line.quantity,
     0
   );
   const requestedPoints = Math.floor(
@@ -1055,25 +772,6 @@ function renderCounterOrder() {
       ? Math.min(counterLoyaltyPoints, subtotal, Math.max(0, requestedPoints))
       : 0;
   document.getElementById('counter-total').textContent = counterMoney(subtotal - usablePoints);
-  const mobileItemCount = counterCart.reduce(
-    (count, line) => count + Number(line.quantity || 0),
-    0
-  );
-  const mobileCount = document.getElementById('mobile-cart-count');
-  const mobileTotal = document.getElementById('mobile-cart-total');
-  if (mobileCount) mobileCount.textContent = String(mobileItemCount);
-  if (mobileTotal) mobileTotal.textContent = counterMoney(subtotal - usablePoints);
-  const placeOrderButton = document.getElementById('counter-place-order');
-  if (placeOrderButton) {
-    const hasItems = counterCart.length > 0;
-    placeOrderButton.disabled = !hasItems;
-    placeOrderButton.title = hasItems ? '' : 'Add an item before placing the order.';
-    document.querySelectorAll('#dine-in-actions button').forEach((button) => {
-      if (button.classList.contains('is-processing')) return;
-      button.disabled = !hasItems;
-      button.title = hasItems ? '' : 'Add an item before using this action.';
-    });
-  }
   const note = document.getElementById('counter-wallet-note');
   if (note) note.textContent = usablePoints ? `₹${usablePoints} wallet discount applied.` : '';
 }
@@ -1121,15 +819,10 @@ async function loadCounterLoyalty() {
   renderCounterOrder();
 }
 async function openCounterOrder(table = null) {
-  // Remember only the workspace, never unfinished cart or customer data.
-  // A refresh can safely reopen Takeaway without risking a duplicate order.
-  rememberOrdersWorkspace(table ? 'tables' : 'counter');
-  setOrdersRailActive(table ? 'tables' : 'counter');
   counterTable = table;
   const isDineIn = !!table;
   const title = document.querySelector('#counter-order-panel .counter-order-head h2');
   const subtitle = document.querySelector('#counter-order-panel .counter-order-head p');
-  const eyebrow = document.querySelector('#counter-order-panel .counter-order-head .eyebrow');
   const placeButton = document.getElementById('counter-place-order');
   if (title)
     title.textContent = isDineIn
@@ -1139,7 +832,6 @@ async function openCounterOrder(table = null) {
     subtitle.textContent = isDineIn
       ? 'Build a dine-in order, then send its KOT directly to the kitchen.'
       : 'Build a walk-in or phone order, then send it directly to the kitchen.';
-  if (eyebrow) eyebrow.textContent = isDineIn ? 'Dine-in order' : 'Takeaway order';
   if (placeButton)
     placeButton.textContent = isDineIn
       ? `Place order · Table ${String(table.number).padStart(2, '0')}`
@@ -1149,33 +841,19 @@ async function openCounterOrder(table = null) {
     viewKotButton.hidden = !table?.orderId;
     viewKotButton.dataset.orderId = table?.orderId || '';
   }
-  if (dineInActions) dineInActions.hidden = false;
+  if (dineInActions) dineInActions.hidden = !isDineIn;
   if (placeButton) placeButton.hidden = isDineIn;
   const opening = counterPanel.hidden;
   if (!opening) {
     counterPanel.hidden = true;
-    document.body.classList.remove('is-counter-workspace');
-    setMobileCartOpen(false);
     return;
   }
   closeOpenPanels('counter');
   counterPanel.hidden = false;
-  document.body.classList.add('is-counter-workspace');
-  window.scrollTo(0, 0);
-  const snapshot = readOfflineMenuSnapshot();
-  if (!menuItems.length && snapshot) applyAvailabilityData(snapshot.menu, snapshot.availability);
-  if (menuItems.length) {
-    counterMenu = menuItems.filter((item) => !unavailable.has(item.key));
-    renderCounterOrder();
-  } else {
-    document.getElementById('counter-menu-items').innerHTML =
-      '<p class="counter-empty">Loading menu…</p>';
-  }
-  // Live order counts and current menu freshness update independently. Neither
-  // should keep the order-entry workspace blank while the other one responds.
-  void refreshCounterLiveStatus();
+  document.getElementById('counter-menu-items').innerHTML =
+    '<p class="counter-empty">Loading menu…</p>';
   try {
-    await loadAvailability();
+    await Promise.all([loadAvailability(), refreshCounterLiveStatus()]);
     counterMenu = menuItems.filter((item) => !unavailable.has(item.key));
     renderCounterOrder();
     counterPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -1203,10 +881,7 @@ let splitMode = 'equal',
   splitItemAssignments = [],
   splitPercentages = [50, 50];
 function counterItemTotal(item) {
-  return (
-    (Number(item.price) + (item.style ? 10 : 0) + Addons.lineModifierTotal(item)) *
-    Number(item.quantity || 0)
-  );
+  return (Number(item.price) + (item.style ? 10 : 0)) * Number(item.quantity || 0);
 }
 function splitParts(count) {
   return Array.from({ length: count }, (_, index) => ({ label: `Part ${index + 1}`, items: [] }));
@@ -1225,19 +900,7 @@ function renderSplitBill() {
     counterCart.forEach((item) =>
       groups.find(([category]) => category === (item.category || 'Other'))[1].push(item)
     );
-    content.innerHTML = `<div class="split-panel"><b>Group items by menu category</b><p>Each category below will print as its own bill.</p><div class="split-group-list">${groups
-      .map(
-        ([category, items]) =>
-          `<div class="split-group-row"><span><b>${esc(category)}</b><small>${items
-            .map((item) => {
-              const modifiers = Addons.modifierText(item.modifiers);
-              return `${item.quantity}× ${esc(item.name)}${modifiers ? ` + ${esc(modifiers)}` : ''}`;
-            })
-            .join(
-              ', '
-            )}</small></span><b>${counterMoney(items.reduce((sum, item) => sum + counterItemTotal(item), 0))}</b></div>`
-      )
-      .join('')}</div></div>`;
+    content.innerHTML = `<div class="split-panel"><b>Group items by menu category</b><p>Each category below will print as its own bill.</p><div class="split-group-list">${groups.map(([category, items]) => `<div class="split-group-row"><span><b>${esc(category)}</b><small>${items.map((item) => `${item.quantity}× ${esc(item.name)}`).join(', ')}</small></span><b>${counterMoney(items.reduce((sum, item) => sum + counterItemTotal(item), 0))}</b></div>`).join('')}</div></div>`;
   } else {
     const options = splitParts(splitPartCount)
       .map((part, index) => `<option value="${index}">${part.label}</option>`)
@@ -1248,12 +911,9 @@ function renderSplitBill() {
         (count) =>
           `<button type="button" data-split-count="${count}" class="${count === splitPartCount ? 'is-active' : ''}">${count} bills</button>`
       )
-      .join('')}</div></div><div class="split-item-list">${counterCart
-      .map((item, index) => {
-        const modifiers = Addons.modifierText(item.modifiers);
-        return `<label class="split-item-row"><span><b>${Number(item.quantity)}× ${esc(item.name)}</b><small>${esc(item.category || 'Other')}${item.portion ? ` · ${esc(item.portion)}` : ''}${modifiers ? ` · + ${esc(modifiers)}` : ''} · ${counterMoney(counterItemTotal(item))}</small></span><select data-split-item="${index}">${options.replace(`value="${splitItemAssignments[index] || 0}"`, `value="${splitItemAssignments[index] || 0}" selected`)}</select></label>`;
-      })
-      .join('')}</div></div>`;
+      .join(
+        ''
+      )}</div></div><div class="split-item-list">${counterCart.map((item, index) => `<label class="split-item-row"><span><b>${Number(item.quantity)}× ${esc(item.name)}</b><small>${esc(item.category || 'Other')}${item.portion ? ` · ${esc(item.portion)}` : ''} · ${counterMoney(counterItemTotal(item))}</small></span><select data-split-item="${index}">${options.replace(`value="${splitItemAssignments[index] || 0}"`, `value="${splitItemAssignments[index] || 0}" selected`)}</select></label>`).join('')}</div></div>`;
   }
   splitBillDialog
     .querySelectorAll('[data-split-mode]')
@@ -1282,7 +942,7 @@ function saveSplitBill() {
   if (splitMode === 'equal') {
     const percentageTotal = splitPercentages.reduce((sum, value) => sum + Number(value || 0), 0);
     if (Math.abs(percentageTotal - 100) > 0.01) {
-      showStaffNotice(`Percentages must total 100% (currently ${percentageTotal.toFixed(2)}%).`);
+      alert(`Percentages must total 100% (currently ${percentageTotal.toFixed(2)}%).`);
       return;
     }
     parts = splitParts(splitPartCount).map((part, index) => ({
@@ -1306,7 +966,7 @@ function saveSplitBill() {
       })
     );
     if (parts.some((part) => !part.items.length)) {
-      showStaffNotice('Assign at least one item to every bill, or reduce the number of bills.');
+      alert('Assign at least one item to every bill, or reduce the number of bills.');
       return;
     }
   }
@@ -1363,10 +1023,11 @@ function renderTableView() {
     return;
   }
   const legend = [
-    ['blank', 'Available'],
-    ['running', 'Seated'],
-    ['kot', 'KOT active'],
-    ['printed', 'Bill ready'],
+    ['blank', 'Blank table'],
+    ['running', 'Running table'],
+    ['printed', 'Printed Table'],
+    ['paid', 'Paid Table'],
+    ['kot', 'Running KOT Table'],
   ];
   const tableOrders = [...orderRecords.values()].filter(
     (order) => order.mode === 'table' && order.table_area && order.table_number
@@ -1390,72 +1051,36 @@ function renderTableView() {
         ? `${elapsedMinutes} min ago`
         : `${Math.floor(elapsedMinutes / 60)}h ${elapsedMinutes % 60}m ago`;
     if (order.status === 'completed') return { state: 'paid', label: 'Paid · available', order };
-    if (order.bill_printed_at) return { state: 'printed', label: 'Bill ready', order };
+    if (order.bill_printed_at) return { state: 'printed', label: 'Bill printed · settle', order };
     if (['saved', 'held'].includes(order.status))
       return { state: 'running', label: elapsedLabel, order };
     if (['accepted', 'preparing', 'ready'].includes(order.status)) {
       const kots = operationKotHistory.get(order.id);
       return {
         state: Array.isArray(kots) && kots.length ? 'kot' : 'running',
-        label: Array.isArray(kots) && kots.length ? 'KOT active' : elapsedLabel,
+        label: elapsedLabel,
         order,
       };
     }
     return { state: 'running', label: String(order.status || 'Running'), order };
   };
-  const activeTables = tableOrders.filter(
-    (order) => !['completed', 'cancelled', 'rejected'].includes(String(order.status))
-  ).length;
-  const activeCount = document.getElementById('table-view-active-count');
-  if (activeCount) activeCount.textContent = String(activeTables);
-  const query = String(tableViewSearch || '')
-    .trim()
-    .toLowerCase();
-  const visibleAreas =
-    tableViewAreaFilter === 'all'
-      ? areas
-      : areas.filter((area) => String(area.name) === String(tableViewAreaFilter));
-  const matchesSearch = (area, number, table) => {
-    if (!query) return true;
-    const order = table.order || {};
-    const haystack = [
-      area,
-      number,
-      order.customer_name,
-      order.customer_phone,
-      ...(Array.isArray(order.items) ? order.items.map((item) => item.name) : []),
-    ]
-      .join(' ')
-      .toLowerCase();
-    return haystack.includes(query);
-  };
-  const zoneTabs = `<div class="table-floor-toolbar"><div class="table-zone-tabs" role="tablist" aria-label="Dining areas"><button type="button" class="${tableViewAreaFilter === 'all' ? 'is-active' : ''}" data-table-area-filter="all" aria-pressed="${tableViewAreaFilter === 'all'}">All areas</button>${areas.map((area) => `<button type="button" class="${tableViewAreaFilter === area.name ? 'is-active' : ''}" data-table-area-filter="${esc(area.name)}" aria-pressed="${tableViewAreaFilter === area.name}">${esc(area.name)}</button>`).join('')}</div><label class="table-search"><span aria-hidden="true">⌕</span><input id="table-view-search" type="search" autocomplete="off" placeholder="Search table or guest" value="${esc(tableViewSearch)}"></label></div>`;
-  content.innerHTML = `${zoneTabs}<div class="table-view-legend" aria-label="Table status legend"><button type="button" class="table-move-toggle${moveKotItemsMode ? ' is-active' : ''}" data-toggle-move-kot aria-pressed="${moveKotItemsMode}"><i></i>Move KOT / Items</button>${legend.map(([state, label]) => `<span><i class="is-${state}"></i>${label}</span>`).join('')}</div>${
-    visibleAreas
-      .map((area) => {
-        const tables = Array.from(
-          { length: Number(area.to) - Number(area.from) + 1 },
-          (_, index) => Number(area.from) + index
-        )
-          .map((number) => ({ number, table: tableState(area.name, number) }))
-          .filter(({ number, table }) => matchesSearch(area.name, number, table));
-        if (!tables.length) return '';
-        const totalTables = Number(area.to) - Number(area.from) + 1;
-        return `<section class="table-area"><div class="table-area-head"><h3>${esc(area.name)}</h3><span>${totalTables} table${totalTables === 1 ? '' : 's'}</span></div><div class="table-grid">${tables
-          .map(({ number, table }) => {
-            const tableNumber = number,
-              active = table.state !== 'blank' && table.state !== 'paid',
-              movable = active && moveKotItemsMode,
-              settling = table.state === 'printed' && !moveKotItemsMode;
-            const guest = table.order?.customer_name || 'Walk-in customer';
-            const amount = Number(table.order?.total || 0);
-            const status = movable ? 'Select to move' : settling ? 'Settle & save' : table.label;
-            return `<button type="button" class="table-tile is-${table.state}${movable ? ' is-move-target' : ''}" data-dine-table-area="${esc(area.name)}" data-dine-table-number="${tableNumber}"${movable ? ` data-move-table-order="${esc(table.order.id)}"` : ''}${settling ? ` data-settle-table-order="${esc(table.order.id)}"` : ''} title="${esc(status)}"><div class="table-tile-top"><div><span>Table</span><b>${String(tableNumber).padStart(2, '0')}</b></div>${table.state !== 'blank' && table.state !== 'paid' ? `<em>${esc(status)}</em>` : ''}</div>${table.order && table.state !== 'paid' ? `<div class="table-tile-info"><small>${esc(guest)}</small><strong>${counterMoney(amount)}</strong></div>` : `<small>${esc(table.state === 'paid' ? 'Paid · available' : 'Available')}</small>`}</button>`;
-          })
-          .join('')}</div></section>`;
-      })
-      .join('') || '<div class="table-view-empty">No table or guest matches this search.</div>'
-  }`;
+  content.innerHTML = `<div class="table-view-legend" aria-label="Table status legend"><button type="button" class="table-move-toggle${moveKotItemsMode ? ' is-active' : ''}" data-toggle-move-kot aria-pressed="${moveKotItemsMode}"><i></i>Move KOT / Items</button>${legend.map(([state, label]) => `<span><i class="is-${state}"></i>${label}</span>`).join('')}</div>${areas
+    .map((area) => {
+      const tables = Array.from(
+        { length: Number(area.to) - Number(area.from) + 1 },
+        (_, index) => Number(area.from) + index
+      );
+      return `<section class="table-area"><div class="table-area-head"><h3>${esc(area.name)}</h3><span>${tables.length} table${tables.length === 1 ? '' : 's'}</span></div><div class="table-grid">${tables
+        .map((number) => {
+          const table = tableState(area.name, number),
+            active = table.state !== 'blank' && table.state !== 'paid',
+            movable = active && moveKotItemsMode,
+            settling = table.state === 'printed' && !moveKotItemsMode;
+          return `<button type="button" class="table-tile is-${table.state}${movable ? ' is-move-target' : ''}" data-dine-table-area="${esc(area.name)}" data-dine-table-number="${number}"${movable ? ` data-move-table-order="${esc(table.order.id)}"` : ''}${settling ? ` data-settle-table-order="${esc(table.order.id)}"` : ''} title="${esc(movable ? 'Move KOT / Items' : settling ? 'Settle & Save' : table.label)}"><span>Table</span><b>${String(number).padStart(2, '0')}</b><small>${esc(movable ? 'Select to move' : settling ? 'Settle & Save' : table.label)}</small></button>`;
+        })
+        .join('')}</div></section>`;
+    })
+    .join('')}`;
   if (!moveKotItemsMode)
     content.querySelectorAll('.table-tile').forEach((tile) => {
       const table = tableState(tile.dataset.dineTableArea, Number(tile.dataset.dineTableNumber));
@@ -1464,11 +1089,6 @@ function renderTableView() {
       wrap.className = 'table-tile-wrap';
       const actions = document.createElement('div');
       actions.className = 'table-tile-actions';
-      actions.setAttribute('role', 'group');
-      actions.setAttribute(
-        'aria-label',
-        `Table ${String(tile.dataset.dineTableNumber).padStart(2, '0')} quick actions`
-      );
       actions.innerHTML = `<button type="button" class="table-tile-action" data-print-table-bill="${esc(table.order.id)}" aria-label="Print bill for table ${esc(String(tile.dataset.dineTableNumber))}" title="Print bill"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9V3h12v6M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2M6 14h12v7H6zM18 12h.01"/></svg></button><button type="button" class="table-tile-action" data-view-table-order="${esc(table.order.id)}" aria-label="View order for table ${esc(String(tile.dataset.dineTableNumber))}" title="View order"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/></svg></button>`;
       tile.replaceWith(wrap);
       wrap.append(tile, actions);
@@ -1483,7 +1103,6 @@ function renderTableView() {
     );
 }
 async function showTableView() {
-  setOrdersRailActive('tables');
   tableViewPanel.hidden = false;
   if (Array.isArray(operationsConfig.tableAreas) && operationsConfig.tableAreas.length)
     renderTableView();
@@ -1529,7 +1148,7 @@ function openMoveTable(orderId) {
         !(table.area === order.table_area && table.number === Number(order.table_number))
     );
   if (!targets.length) {
-    showStaffNotice('No available tables are configured.');
+    alert('No available tables are configured.');
     return;
   }
   moveTableDialog.dataset.orderId = orderId;
@@ -1568,14 +1187,7 @@ function renderMoveOptions() {
     content.innerHTML = `<p><b>KOT Wise:</b> choose KOTs to transfer.</p><div class="move-choice-list">${kots.length ? kots.map((kot) => `<label class="move-choice"><input type="checkbox" value="${esc(kot.kot_number)}"><span><b>KOT #${esc(kot.kot_number)}</b><small>${esc(new Date(kot.created_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }))}</small></span></label>`).join('') : '<p>No printed KOTs are available for this table.</p>'}</div>`;
     return;
   }
-  content.innerHTML = `<p><b>Item Wise:</b> choose individual items to transfer.</p><div class="move-choice-list">${
-    (order.items || [])
-      .map((item, index) => {
-        const modifiers = Addons.modifierText(item.modifiers);
-        return `<label class="move-choice"><input type="checkbox" value="${index}"><span><b>${Number(item.quantity || 0)}× ${esc(item.name)}</b><small>${esc(item.portion || item.category || '')}${modifiers ? ` · + ${esc(modifiers)}` : ''}</small></span></label>`;
-      })
-      .join('') || '<p>No items are available for this table.</p>'
-  }</div>`;
+  content.innerHTML = `<p><b>Item Wise:</b> choose individual items to transfer.</p><div class="move-choice-list">${(order.items || []).map((item, index) => `<label class="move-choice"><input type="checkbox" value="${index}"><span><b>${Number(item.quantity || 0)}× ${esc(item.name)}</b><small>${esc(item.portion || item.category || '')}</small></span></label>`).join('') || '<p>No items are available for this table.</p>'}</div>`;
 }
 moveTableDialog.addEventListener('click', async (event) => {
   if (event.target.closest('.move-table-close,.move-table-cancel')) {
@@ -1638,7 +1250,7 @@ moveTableDialog.addEventListener('click', async (event) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ tableArea, tableNumber: Number(tableNumber) }),
     });
-    let data = await response.json().catch(() => ({}));
+    const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || 'Unable to move the table.');
     moveTableDialog.close();
     await showTableView();
@@ -1686,24 +1298,6 @@ document.head.appendChild(tableTileIconStyles);
 const tableTileActionLayoutStyles = document.createElement('style');
 tableTileActionLayoutStyles.textContent = `.table-tile-wrap{display:grid;gap:7px}.table-tile-actions{position:static;justify-content:center}.table-tile-wrap .table-tile{min-height:106px}`;
 document.head.appendChild(tableTileActionLayoutStyles);
-const tableViewReferenceStyles = document.createElement('style');
-tableViewReferenceStyles.textContent = `
-#table-view-panel{margin:22px 28px 0;padding:28px;border:1px solid #dfe7f0;border-radius:20px;background:#f6f8fc;box-shadow:0 12px 30px rgba(32,53,82,.06)}
-.table-view-head{display:flex;align-items:end;justify-content:space-between;gap:18px}.table-view-head .eyebrow{color:#d32b38}.table-view-head h2{margin:4px 0;color:#182a45;font-size:27px;letter-spacing:-.04em}.table-view-head p{margin:0;color:#677991;font-weight:650}.table-view-head-note{display:grid;min-width:98px;padding:10px 13px;border:1px solid #d9e4ef;border-radius:13px;color:#71829a;background:#fff;text-align:center}.table-view-head-note b{color:#16375a;font-size:21px;line-height:1}.table-view-head-note span{margin-top:4px;font-size:10px;font-weight:900;letter-spacing:.05em;text-transform:uppercase}
-.table-floor-toolbar{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:16px}.table-zone-tabs{display:flex;max-width:100%;gap:4px;overflow:auto;padding:4px;border:1px solid #dce5ef;border-radius:999px;background:#fff;box-shadow:0 2px 6px rgba(30,54,84,.04)}.table-zone-tabs button{flex:0 0 auto;min-height:36px;padding:7px 15px;border:0;border-radius:999px;color:#5a6b82;background:transparent;font-size:12px;font-weight:900}.table-zone-tabs button:hover{transform:none;filter:none;color:#1d304b;background:#eef3f8}.table-zone-tabs button.is-active{color:#fff;background:#1f304a;box-shadow:0 3px 8px rgba(25,44,69,.22)}
-.table-search{display:flex;align-items:center;gap:8px;min-width:245px;padding:0 12px;border:1px solid #dce5ef;border-radius:999px;color:#8a9bb1;background:#fff}.table-search span{font-size:21px;line-height:1}.table-search input{width:100%;height:40px;border:0;outline:0;color:#23364f;background:transparent;font:700 12px Manrope,sans-serif}.table-search input::placeholder{color:#9aa9bd}
-.table-view-legend{justify-content:flex-end;margin:0 0 20px;padding:0;color:#667990}.table-view-legend span{gap:7px}.table-view-legend .is-running{background:#12b981}.table-view-legend .is-printed{background:#7b61c9}.table-view-legend .is-paid{background:#f4b860}.table-view-legend .is-kot{background:#f59e0b}.table-move-toggle{margin-right:auto;border:1px solid #dce5ef;color:#50627a;background:#fff;box-shadow:0 2px 6px rgba(30,54,84,.04)}
-.table-area{padding:0;border:0;background:transparent}.table-area+.table-area{margin-top:30px}.table-area-head{align-items:center;margin:0 0 14px}.table-area-head h3{color:#1d2d47;font-size:20px;letter-spacing:-.025em}.table-area-head h3:after{content:'';display:inline-block;width:clamp(80px,18vw,230px);height:1px;margin-left:14px;vertical-align:middle;background:#d8e2ee}.table-area-head span{color:#667a96;font-size:12px;font-weight:850}.table-grid{grid-template-columns:repeat(auto-fill,minmax(172px,1fr));gap:14px}
-.table-tile-wrap{position:relative;display:block;min-width:0;min-height:154px}.table-tile-wrap .table-tile{height:100%;min-height:154px}.table-tile{display:flex;min-height:154px;padding:16px;border:1px solid #dce5ef;border-radius:16px;color:#21344e;background:#fff;text-align:left;box-shadow:0 5px 12px rgba(31,52,84,.08);transition:transform .16s,box-shadow .16s,border-color .16s}.table-tile:hover{transform:translateY(-2px);filter:none;border-color:#aebfd2;box-shadow:0 11px 21px rgba(31,52,84,.13)}.table-tile.is-blank{align-items:center;justify-content:center;border:2px dashed #ccd9e8;color:#9aabc0;background:transparent;text-align:center;box-shadow:none}.table-tile.is-blank:hover{border-color:#d32b38;background:#fff}.table-tile.is-blank .table-tile-top{display:block}.table-tile.is-blank .table-tile-top b{margin:6px 0 0;color:#c6d3e4;font-size:38px}.table-tile.is-blank>small{margin-top:7px;color:#8e9eb3;font-size:11px}.table-tile.is-running{border-left:5px solid #12b981;background:#fff}.table-tile.is-kot{border-left:5px solid #f4ac12;background:#fff}.table-tile.is-printed{border-left:5px solid #7b61c9;background:#fff}.table-tile.is-paid{align-items:center;justify-content:center;border:2px dashed #d7dfeb;color:#92a2b8;background:#f9fbfd;text-align:center;box-shadow:none}
-.table-tile-top{display:flex;width:100%;justify-content:space-between;gap:9px}.table-tile-top span{color:#8798ad;font-size:10px;font-weight:900;letter-spacing:.1em;text-transform:uppercase}.table-tile-top b{margin:3px 0 0;color:#182a45;font-size:30px;line-height:1}.table-tile-top em{padding:6px 8px;border-radius:7px;color:#087a50;background:#eafaf3;font-size:10px;font-style:normal;font-weight:900;white-space:nowrap}.table-tile.is-kot .table-tile-top em{color:#a65d00;background:#fff6df}.table-tile.is-printed .table-tile-top em{color:#5e469e;background:#f0ecff}.table-tile-info{align-self:flex-end;width:100%;padding-bottom:25px}.table-tile-info small,.table-tile-info strong{display:block}.table-tile-info small{overflow:hidden;color:#687a92;font-size:11px;font-weight:750;text-overflow:ellipsis;white-space:nowrap}.table-tile-info strong{margin-top:4px;color:#087c50;font-size:18px}.table-tile.is-kot .table-tile-info strong{color:#243650}
-.table-tile-actions{position:absolute;right:10px;bottom:10px;display:flex;gap:5px}.table-tile-action{width:29px;height:29px;border-color:#dbe5ef;border-radius:8px;color:#526780;background:#fff;box-shadow:0 2px 7px rgba(31,52,84,.12)}.table-tile-action:hover,.table-tile-action:focus-visible{color:#fff;background:#263d68}
-/* Keep every card's content in one vertical flow. Without an explicit direction,
-   occupied table metadata competes for the same horizontal row and escapes the card. */
-.table-tile,.table-tile-wrap .table-tile{box-sizing:border-box;min-width:0;flex-direction:column;align-items:stretch;justify-content:flex-start;overflow:hidden}.table-tile:focus-visible{outline:3px solid #2563eb;outline-offset:2px}.table-tile-top{min-width:0;align-items:flex-start}.table-tile-top>div{min-width:0}.table-tile-top em{max-width:82px;overflow:hidden;line-height:1.15;text-align:center;text-overflow:ellipsis}.table-tile-info{box-sizing:border-box;align-self:stretch;min-width:0;margin-top:auto;padding:14px 0 0}.table-tile-info small,.table-tile-info strong{max-width:100%}.table-tile-info strong{max-width:calc(100% - 80px);margin-top:10px;line-height:1.1}.table-tile.is-blank,.table-tile.is-paid{align-items:center;justify-content:center}.table-tile.is-blank .table-tile-top{width:auto}.table-tile.is-blank>small{margin:7px 0 0}.table-tile-actions{z-index:1;right:12px;bottom:12px;gap:6px}.table-tile-action{width:34px;height:34px;border-radius:9px}
-@media(max-width:780px){#table-view-panel{margin:14px 16px 0;padding:18px}.table-view-head{align-items:start}.table-view-head h2{font-size:23px}.table-floor-toolbar{align-items:stretch;flex-direction:column}.table-search{min-width:0}.table-view-legend{justify-content:flex-start}.table-move-toggle{margin-right:0}.table-grid{grid-template-columns:repeat(auto-fill,minmax(142px,1fr));gap:10px}.table-tile,.table-tile-wrap,.table-tile-wrap .table-tile{min-height:142px}.table-area-head h3:after{width:45px}.table-tile-top b{font-size:27px}}
-@media(max-width:420px){#table-view-panel{margin-inline:12px;padding:16px}.table-view-head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px}.table-view-head h2{font-size:21px}.table-view-head-note{min-width:70px;padding:8px}.table-view-head-note b{font-size:18px}.table-view-head-note span{font-size:8px}.table-area-head h3{overflow-wrap:anywhere}}
-`;
-document.head.appendChild(tableViewReferenceStyles);
 const settleTableStyles = document.createElement('style');
 settleTableStyles.textContent = `#settle-table-dialog{width:min(620px,calc(100vw - 28px));padding:26px;border:0;border-radius:16px;color:#263b57;box-shadow:0 24px 70px #14213d55}#settle-table-dialog::backdrop{background:#14213d8a}#settle-table-dialog h2{margin:0}#settle-table-dialog>p{color:#68798f}#settle-table-dialog fieldset{display:flex;flex-wrap:wrap;gap:13px;margin:20px 0;padding:14px;border:1px solid #dbe4ee;border-radius:10px}#settle-table-dialog legend{font-weight:900}#settle-table-dialog label{display:grid;gap:7px;font-weight:800}#settle-table-dialog input[type=number]{padding:11px;border:1px solid #cfdbe8;border-radius:8px;font:700 14px Manrope,sans-serif}#settle-table-dialog>div:last-child{display:flex;justify-content:flex-end;gap:10px;margin-top:22px}#settle-table-dialog button{padding:11px 16px;border-radius:8px;font-weight:900}.settle-confirm{color:#fff;background:#c92a36}.settle-cancel{background:#f2f6fa}.settle-close{position:absolute;top:14px;right:16px;font-size:23px}`;
 document.head.appendChild(settleTableStyles);
@@ -1711,66 +1305,11 @@ const viewKotStyles = document.createElement('style');
 viewKotStyles.textContent = `#view-table-kot{margin-right:9px;color:#2563c9;background:#eef5ff;text-decoration:underline}#view-kot-dialog{width:min(620px,calc(100vw - 28px));max-height:80vh;padding:24px;border:0;border-radius:15px;color:#253b59;box-shadow:0 24px 70px #14213d55}#view-kot-dialog::backdrop{background:#14213d8a}#view-kot-dialog h2{margin:0 0 18px}.view-kot-close{position:absolute;right:15px;top:12px;font-size:23px}.view-kot-ticket{margin:12px 0;border:1px solid #dce5ef;border-radius:10px;overflow:hidden}.view-kot-ticket h3{margin:0;padding:11px 13px;background:#edf2f7;font-size:15px}.view-kot-ticket h3 small{float:right;color:#68798f}.view-kot-ticket div{display:flex;align-items:center;gap:8px;padding:10px 13px;border-top:1px solid #edf1f5}.view-kot-ticket span{margin-left:auto;font-weight:800}.view-kot-edit,.view-kot-delete{margin-left:8px;padding:5px 8px;border-radius:6px;font-size:10px;font-weight:900}.view-kot-edit{color:#1f5da8;background:#eef5ff}.view-kot-delete{color:#b4232b;background:#fff0f1}`;
 document.head.appendChild(viewKotStyles);
 const counterChoiceStyles = document.createElement('style');
-counterChoiceStyles.textContent = `
-.counter-choice-dialog{width:min(650px,calc(100vw - 32px));max-height:calc(100dvh - 32px);padding:0;border:0;border-radius:20px;color:#182641;background:#fff;box-shadow:0 28px 80px rgba(15,27,48,.35);overflow:auto}.counter-choice-dialog::backdrop{background:rgba(24,36,57,.56);backdrop-filter:blur(2px)}.counter-choice-dialog .dialog-close{position:absolute;z-index:2;top:18px;right:20px;display:grid;width:42px;height:42px;place-items:center;padding:0;border:1px solid #dce5ef;border-radius:10px;color:#71839a;background:#fff;font-size:28px;font-weight:400;line-height:1}.counter-choice-dialog .dialog-close:hover{color:#c31f35;border-color:#f0bdc4;background:#fff5f6;filter:none;transform:none}.counter-choice-title{padding:27px 32px 22px;border-bottom:1px solid #e8edf3}.counter-choice-title>span{display:block;margin-right:58px;color:#71829a;font-size:11px;font-weight:900;letter-spacing:.11em;text-transform:uppercase}.counter-choice-title>span:before{display:inline-block;width:13px;height:13px;margin-right:10px;border:2px solid #d3283d;border-radius:3px;vertical-align:-2px;background:radial-gradient(circle,#d3283d 0 4px,transparent 5px);content:''}.counter-choice-dialog h2{margin:5px 58px 0 0;color:#111d35;font-size:30px;line-height:1.1;letter-spacing:-.045em}.counter-portion-section{padding:26px 32px 8px}.counter-choice-section-head{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:16px}.counter-choice-section-head h3{margin:0;color:#1e2b42;font-size:16px;letter-spacing:-.02em}.counter-choice-section-head small{padding:5px 8px;border-radius:6px;color:#62738b;background:#eef3f8;font-size:10px;font-weight:900;letter-spacing:.04em;text-transform:uppercase}.counter-choice-options{display:grid;gap:12px;margin:0}.counter-choice-options label{display:block;cursor:pointer}.counter-choice-options input{position:absolute;opacity:0;pointer-events:none}.counter-choice-options span{display:grid;grid-template-columns:28px minmax(0,1fr) auto;align-items:center;gap:13px;min-height:82px;padding:16px 20px;border:1px solid #dce5ef;border-radius:11px;color:#25334b;background:#fff;transition:border-color .16s,background .16s,box-shadow .16s}.counter-choice-options span:hover{border-color:#c1cfde;background:#fbfcfe}.counter-choice-options span i{display:block;width:21px;height:21px;border:2px solid #c7d4e2;border-radius:50%;background:#fff}.counter-choice-options span strong{font-size:20px;letter-spacing:-.02em}.counter-choice-options span b{color:#44536b;font-size:21px;letter-spacing:-.03em}.counter-choice-options input:checked+span{border:2px solid #c61f34;color:#1d2a41;background:#fffafa;box-shadow:0 5px 13px rgba(192,31,52,.07)}.counter-choice-options input:checked+span i{position:relative;border-color:#c61f34;background:#c61f34}.counter-choice-options input:checked+span i:after{position:absolute;top:4px;left:6px;width:6px;height:3px;border-bottom:2px solid #fff;border-left:2px solid #fff;transform:rotate(-45deg);content:''}.counter-choice-options input:checked+span b{color:#bd1e33}.counter-style-options{display:flex;flex-wrap:wrap;gap:9px;margin:18px 32px 0;padding:13px 15px;border:1px solid #e1e8f0;border-radius:11px}.counter-style-options legend{padding:0 5px;color:#63748b;font-size:11px;font-weight:900}.counter-style-options label{font-size:12px;font-weight:750}.counter-style-options b{color:#148251}.counter-course-choice{display:grid;gap:8px;margin:22px 32px 0;color:#1e2b42;font-size:16px;font-weight:850}.counter-course-choice select{width:100%;min-height:58px;padding:0 18px;border:1px solid #d7e1ec;border-radius:10px;color:#27364e;background:#f9fbfd;font:800 16px Manrope,sans-serif}.counter-course-choice select:focus{outline:0;border-color:#c61f34;box-shadow:0 0 0 3px rgba(198,31,52,.1)}.counter-choice-dialog #counter-choice-add{display:flex;width:calc(100% - 64px);align-items:center;justify-content:space-between;gap:12px;margin:26px 32px 32px;padding:18px 22px;border-radius:10px;color:#fff;background:linear-gradient(135deg,#d72d43,#bc172e);box-shadow:0 10px 18px rgba(190,26,49,.22);font-size:19px;font-weight:900}.counter-choice-dialog #counter-choice-add span{display:flex;align-items:center;gap:12px}.counter-choice-dialog #counter-choice-add i{font-size:29px;font-style:normal;font-weight:400;line-height:.5}.counter-choice-dialog #counter-choice-add b{font-size:22px;letter-spacing:-.03em}.counter-choice-dialog #counter-choice-add:hover{filter:brightness(1.03);transform:translateY(-1px)}@media(max-width:560px){.counter-choice-dialog{width:calc(100vw - 20px);border-radius:16px}.counter-choice-title{padding:23px 20px 18px}.counter-choice-dialog .dialog-close{top:14px;right:14px;width:37px;height:37px}.counter-choice-dialog h2{font-size:25px}.counter-portion-section{padding:21px 20px 4px}.counter-choice-options span{min-height:70px;padding:13px 15px}.counter-choice-options span strong{font-size:17px}.counter-choice-options span b{font-size:18px}.counter-style-options{margin-inline:20px}.counter-course-choice{margin-inline:20px;font-size:14px}.counter-course-choice select{min-height:50px;font-size:14px}.counter-choice-dialog #counter-choice-add{width:calc(100% - 40px);margin:22px 20px 20px;padding:16px;font-size:16px}.counter-choice-dialog #counter-choice-add b{font-size:19px}}
-`;
+counterChoiceStyles.textContent = `.counter-choice-dialog{width:min(430px,calc(100vw - 32px));padding:24px;border:0;border-radius:16px;color:#26344e;box-shadow:0 20px 60px rgba(14,29,55,.25)}.counter-choice-dialog::backdrop{background:rgba(21,34,58,.46)}.counter-choice-dialog h2{margin:4px 30px 3px 0;font-size:21px}.counter-choice-dialog p{margin:0;color:#718097;font-size:12px}.counter-choice-options{display:grid;gap:8px;margin:18px 0}.counter-choice-options label{cursor:pointer}.counter-choice-options input{position:absolute;opacity:0}.counter-choice-options span{display:flex;justify-content:space-between;padding:12px;border:1px solid #d9e3ef;border-radius:9px;font-size:13px;font-weight:800}.counter-choice-options input:checked+span{border-color:#263d68;color:#fff;background:#263d68}.counter-style-options{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0;padding:12px;border:1px solid #e0e7ef;border-radius:9px}.counter-style-options legend{padding:0 4px;color:#68778e;font-size:11px;font-weight:900}.counter-style-options label{font-size:12px;font-weight:700}.counter-style-options b{color:#148251}`;
 document.head.appendChild(counterChoiceStyles);
 const counterLayoutRefinements = document.createElement('style');
 counterLayoutRefinements.textContent = `.counter-menu-items{align-items:start;grid-auto-rows:150px}.counter-menu-item{height:150px;min-height:0}.counter-category-group{display:block;padding:13px 14px 7px;color:#9a2635;background:#f8fafc;font-size:10px;font-weight:900;letter-spacing:.09em;text-transform:uppercase}.counter-category-group~.counter-category{min-height:54px}.counter-cart{height:auto;min-height:0;align-self:start}.counter-cart-items{display:block;height:clamp(190px,28vh,260px);min-height:0;flex:0 0 auto;overflow-y:auto;margin:14px 0}.counter-cart-line{min-height:0;height:72px;padding:10px 0}.counter-customer{flex:0 0 auto;margin-top:0}.counter-customer textarea{resize:none}.counter-total,.counter-place-order,.counter-order-status{flex:0 0 auto}@media(max-width:800px){.counter-menu-items{grid-auto-rows:130px}.counter-menu-item{height:130px}.counter-category-group{display:none}.counter-cart-items{height:220px;max-height:45vh}}`;
 document.head.appendChild(counterLayoutRefinements);
-const counterSmartKdsCourseStyles = document.createElement('style');
-counterSmartKdsCourseStyles.textContent = `.counter-course-choice,.counter-line-course{display:flex;align-items:center;gap:7px;margin:12px 0;color:#5d6d84;font-size:11px;font-weight:900}.counter-course-choice select,.counter-line-course select{min-height:30px;padding:5px 7px;border:1px solid #d4deea;border-radius:7px;color:#26344e;background:#fff;font:700 11px Manrope,sans-serif}.counter-line-course{margin:7px 0 0;font-size:9px;text-transform:uppercase}.counter-cart-line{height:auto!important;min-height:72px}@media(max-width:800px){.counter-cart-line{min-height:84px}}`;
-document.head.appendChild(counterSmartKdsCourseStyles);
-const counterChoiceRefinementStyles = document.createElement('style');
-counterChoiceRefinementStyles.textContent = `
-#counter-choice-dialog .counter-course-choice{display:grid;align-items:stretch;gap:8px;margin:22px 32px 0;color:#1e2b42;font-size:16px;font-weight:850;text-transform:none}#counter-choice-dialog .counter-course-choice select{width:100%;min-height:58px;padding:0 18px;border:1px solid #d7e1ec;border-radius:10px;color:#27364e;background:#f9fbfd;font:800 16px Manrope,sans-serif}#counter-choice-dialog .counter-course-choice select:focus{outline:0;border-color:#c61f34;box-shadow:0 0 0 3px rgba(198,31,52,.1)}@media(max-width:560px){#counter-choice-dialog .counter-course-choice{margin-inline:20px;font-size:14px}#counter-choice-dialog .counter-course-choice select{min-height:50px;font-size:14px}}
-`;
-document.head.appendChild(counterChoiceRefinementStyles);
-const counterChoiceCompactStyles = document.createElement('style');
-counterChoiceCompactStyles.textContent = `
-#counter-choice-dialog{width:min(590px,calc(100vw - 32px)}#counter-choice-dialog .dialog-close{top:15px;right:16px;width:38px;height:38px;font-size:25px}.counter-choice-title{padding:20px 26px 16px}.counter-choice-title>span{font-size:10px}.counter-choice-dialog h2{margin-top:4px;font-size:26px}.counter-portion-section{padding:18px 26px 3px}.counter-choice-section-head{margin-bottom:11px}.counter-choice-section-head h3{font-size:15px}.counter-choice-options{gap:9px}.counter-choice-options span{min-height:64px;padding:11px 15px;gap:11px}.counter-choice-options span strong{font-size:17px}.counter-choice-options span b{font-size:19px}.counter-style-options{margin:14px 26px 0;padding:10px 12px}.counter-course-choice,#counter-choice-dialog .counter-course-choice{gap:6px;margin:15px 26px 0;font-size:14px}.counter-course-choice select,#counter-choice-dialog .counter-course-choice select{min-height:48px;padding-inline:14px;font-size:14px}.counter-choice-dialog #counter-choice-add{width:calc(100% - 52px);margin:18px 26px 24px;padding:14px 18px;font-size:16px}.counter-choice-dialog #counter-choice-add i{font-size:24px}.counter-choice-dialog #counter-choice-add b{font-size:19px}@media(max-width:560px){#counter-choice-dialog{width:calc(100vw - 20px)}.counter-choice-title{padding:19px 18px 15px}.counter-portion-section{padding-inline:18px}.counter-choice-options span{min-height:61px}.counter-style-options{margin-inline:18px}.counter-course-choice,#counter-choice-dialog .counter-course-choice{margin-inline:18px}.counter-choice-dialog #counter-choice-add{width:calc(100% - 36px);margin:18px 18px 20px}}
-`;
-document.head.appendChild(counterChoiceCompactStyles);
-const counterAddonStyles = document.createElement('style');
-counterAddonStyles.textContent = `.counter-addon-group{display:grid;gap:8px;margin:14px 26px 0;padding:13px;border:1px solid #dce5ef;border-radius:11px}.counter-addon-group legend{padding:0 5px;color:#1e2b42;font-size:13px;font-weight:900}.counter-addon-group legend em{margin-left:5px;color:#75849a;font-size:10px;font-style:normal}.counter-addon-group label{cursor:pointer}.counter-addon-group input{position:absolute;opacity:0}.counter-addon-group label span{display:flex;min-height:43px;align-items:center;justify-content:space-between;padding:9px 12px;border:1px solid #dce5ef;border-radius:8px;color:#34445d;font-size:12px;font-weight:800}.counter-addon-group label span b{color:#178554}.counter-addon-group input:checked+span{border-color:#c61f34;color:#a51e31;background:#fff5f6}.counter-addon-error{min-height:16px;margin:8px 26px 0;color:#ba2034;font-size:11px;font-weight:800}.counter-line-addons{color:#a1283b!important}@media(max-width:560px){.counter-addon-group{margin-inline:18px}.counter-addon-error{margin-inline:18px}}`;
-document.head.appendChild(counterAddonStyles);
-const counterWorkspaceStyles = document.createElement('style');
-counterWorkspaceStyles.textContent = `
-#counter-order-panel{max-width:none;margin:14px 12px 0;padding:0;overflow:hidden;border:1px solid #dfe6ef;border-radius:16px;background:#f7f9fc;box-shadow:0 12px 28px rgba(30,48,77,.08)}
-.counter-order-head{align-items:center;min-height:76px;padding:14px 20px;border-bottom:1px solid #e4eaf1;background:#fff}.counter-order-head .eyebrow{margin:0;color:#bc263d;font-size:10px}.counter-order-head h2{margin:3px 0 0;color:#172840;font-size:23px;letter-spacing:-.04em}.counter-order-head p{margin-top:3px;color:#728199;font-size:11px;font-weight:700}.counter-back{min-height:36px;padding:8px 11px;border:1px solid #dce4ee;border-radius:8px;color:#3e5778;background:#fff;font-size:11px;box-shadow:none}.counter-back:hover{border-color:#b7c7d9;color:#bd263d;background:#fff5f6;filter:none;transform:none}
-.counter-order-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(390px,470px);gap:0;min-height:calc(100dvh - 190px);margin:0}.counter-menu{display:grid;grid-template-columns:210px minmax(0,1fr);grid-template-rows:76px minmax(0,1fr);gap:0;padding:0;border:0;border-radius:0;background:#f7f9fc}.counter-search{grid-column:2;grid-row:1;align-self:center;margin:0 20px;padding:0 14px;border-color:#e1e7ef;border-radius:10px;background:#fff}.counter-search:focus-within{border-color:#d33a4b;box-shadow:0 0 0 3px rgba(211,58,75,.1)}.counter-search input{height:44px;color:#243752;font-size:13px}.counter-search input::placeholder{color:#95a2b4}
-.counter-categories{grid-column:1;grid-row:1 / 3;max-height:none;padding:12px 0;border:0;border-right:1px solid #e2e8f0;border-radius:0;background:#fff}.counter-category-group{padding:16px 18px 7px;color:#9a2638;background:#fff;font-size:9px}.counter-category{min-height:43px;padding:9px 18px;border:0;border-right:3px solid transparent;color:#596a81;background:#fff;font-size:12px}.counter-category:first-child{margin-bottom:4px;color:#b8253a;background:#fff5f6}.counter-category:hover{color:#bd263d;background:#fff7f8}.counter-category.is-active{color:#c3263c;border-right-color:#cf293f;background:#fff1f3;box-shadow:none}.counter-category-group~.counter-category{min-height:42px}
-.counter-menu-items{grid-column:2;grid-row:2;align-content:start;grid-template-columns:repeat(auto-fill,minmax(174px,1fr));grid-auto-rows:142px;gap:14px;max-height:none;padding:4px 20px 22px;overflow:auto}.counter-menu-item{height:142px;padding:14px;border:1px solid #e1e7ef;border-left:3px solid #d63146;border-radius:12px;background:#fff;box-shadow:0 3px 9px rgba(34,53,83,.045)}.counter-menu-item:hover{border-color:#c9d4e1;border-left-color:#c52a40;background:#fff;box-shadow:0 8px 16px rgba(34,53,83,.09);transform:translateY(-1px)}.counter-menu-item span{color:#8391a5;font-size:9px}.counter-menu-item b{margin:7px 26px 7px 0;color:#243651;font-size:13px}.counter-menu-item small{position:absolute;bottom:14px;left:14px;color:#172940;font-size:18px}.counter-menu-item i{right:13px;bottom:13px;width:30px;height:30px;border-radius:8px;color:#6d819d;background:#f1f5f9;font-size:25px;font-weight:500}.counter-menu-item:hover i{color:#fff;background:#ca2c42}
-.counter-cart{position:relative;min-height:0;max-height:calc(100dvh - 190px);padding:19px 20px;border:0;border-left:1px solid #e2e8f0;border-radius:0;background:#fff;box-shadow:none}.counter-cart-head{align-items:center;padding-bottom:14px;border-bottom:1px solid #e8edf3}.counter-cart-head h3{color:#172840;font-size:18px;letter-spacing:-.025em}.counter-clear{padding:7px 0;color:#c82b3f;background:transparent;font-size:10px}.counter-clear:hover{background:transparent;filter:none;transform:none;text-decoration:underline}.counter-cart-items{height:clamp(175px,31vh,300px);margin:12px 0;overflow-y:auto}.counter-cart-line{grid-template-columns:minmax(0,1fr) auto;gap:10px;min-height:0!important;height:auto!important;padding:12px 0}.counter-cart-line>strong{display:none}.counter-cart-line b{color:#263751;font-size:12px}.counter-cart-line small{font-size:10px}.counter-quantity{grid-column:2;grid-row:1;gap:0;border:1px solid #e0e7ef;border-radius:8px;overflow:hidden}.counter-quantity button{width:29px;height:29px;border-radius:0;color:#536b88;background:#fff;font-size:16px}.counter-quantity b{display:grid;min-width:28px;height:29px;place-items:center;border-inline:1px solid #e0e7ef;font-size:12px}.counter-line-course{grid-column:1 / -1;margin:2px 0 0}.counter-line-course select{min-height:26px;font-size:10px}
-.counter-customer{grid-template-columns:1fr 1fr;gap:9px;margin-top:auto;padding-top:13px;border-top:1px solid #e8edf3}.counter-customer label{gap:5px;font-size:9px}.counter-customer label:nth-of-type(3),.counter-customer label:nth-of-type(4),#counter-wallet{grid-column:1 / -1}.counter-customer input,.counter-customer textarea,.counter-customer select{min-height:37px;padding:8px 10px;border-color:#e0e7ef;border-radius:8px;font-size:11px}.counter-customer textarea{min-height:44px}.counter-total{margin-top:13px;padding:14px 0;border-top:1px solid #e2e9f1}.counter-total span{color:#74849b;font-size:10px;text-transform:uppercase}.counter-total b{color:#172840;font-size:25px}.counter-place-order{padding:13px;border-radius:9px;background:linear-gradient(135deg,#d72e43,#b71931);box-shadow:0 7px 14px rgba(193,32,55,.16)}#dine-in-actions{gap:7px;margin-top:11px;padding-top:11px;border-top:1px solid #e8edf3}#dine-in-actions button{min-height:39px;font-size:10px}.counter-order-status{margin:7px 0 0}.counter-empty{grid-column:1/-1;margin:44px 0;color:#8291a5}
-@media(max-width:1100px){.counter-order-layout{grid-template-columns:1fr;min-height:0}.counter-cart{max-height:none;border-top:1px solid #e2e8f0;border-left:0}.counter-cart-items{height:230px}.counter-menu{min-height:570px}}@media(max-width:760px){#counter-order-panel{margin:10px 12px 0}.counter-order-head{padding:13px 14px}.counter-order-head h2{font-size:19px}.counter-order-head p{display:none}.counter-order-layout{display:block}.counter-menu{display:grid;min-height:0;grid-template-columns:1fr;grid-template-rows:auto auto auto}.counter-search{grid-column:1;grid-row:1;margin:12px}.counter-categories{grid-column:1;grid-row:2;display:flex;max-height:none;padding:0 10px 10px;overflow-x:auto;border:0;border-bottom:1px solid #e2e8f0}.counter-category-group{display:none}.counter-category{width:auto;min-width:max-content;min-height:36px!important;padding:8px 11px;border-right:0;border-bottom:3px solid transparent;font-size:11px}.counter-category:first-child{margin:0}.counter-category.is-active{border-right:0;border-bottom-color:#ce293f}.counter-menu-items{grid-column:1;grid-row:3;grid-template-columns:repeat(2,minmax(0,1fr));grid-auto-rows:130px;gap:10px;padding:12px}.counter-menu-item{height:130px;padding:12px}.counter-menu-item small{left:12px;bottom:12px;font-size:15px}.counter-menu-item i{right:10px;bottom:10px;width:27px;height:27px}.counter-cart{padding:16px}.counter-customer{grid-template-columns:1fr}.counter-customer label:nth-of-type(3),.counter-customer label:nth-of-type(4){grid-column:auto}.counter-cart-items{height:220px}}
-`;
-counterWorkspaceStyles.textContent = counterWorkspaceStyles.textContent.replaceAll(
-  '@media(max-width:760px)',
-  '@media(max-width:900px)'
-);
-document.head.appendChild(counterWorkspaceStyles);
-const counterWorkspacePolishStyles = document.createElement('style');
-counterWorkspacePolishStyles.textContent = `
-.counter-menu-items{grid-template-columns:repeat(auto-fill,minmax(172px,1fr));grid-auto-rows:118px;gap:10px}.counter-menu-item{display:flex;height:118px;flex-direction:column;padding:12px}.counter-menu-item b{display:-webkit-box;overflow:hidden;margin:5px 30px 0 0;font-size:12px;line-height:1.25;-webkit-line-clamp:2;-webkit-box-orient:vertical}.counter-menu-item small{position:static;display:block;margin-top:auto;padding-right:34px;overflow:hidden;font-size:14px;line-height:1.15;text-overflow:ellipsis;white-space:nowrap}.counter-menu-item i{right:10px;bottom:10px;width:28px;height:28px;font-size:22px}.counter-cart-items .counter-empty{display:grid;min-height:142px;margin:6px 0;place-items:center;padding:18px;border:1px dashed #d5dfeb;border-radius:11px;color:#788aa2;background:#fafcff;font-size:11px;font-weight:750;line-height:1.45;text-align:center}.counter-cart-items .counter-empty:before{display:block;width:32px;height:32px;margin:0 auto 7px;place-content:center;border-radius:50%;color:#b3c0d0;background:#edf2f7;content:'+';font-size:21px;font-weight:500}@media(min-width:1750px){.counter-menu-items{grid-template-columns:repeat(auto-fill,minmax(182px,1fr))}}@media(max-width:760px){.counter-menu-items{grid-template-columns:repeat(2,minmax(0,1fr));grid-auto-rows:122px}.counter-menu-item{height:122px;padding:11px}.counter-menu-item b{font-size:12px}.counter-menu-item small{font-size:14px}.counter-menu-item i{right:9px;bottom:9px;width:28px;height:28px}.counter-cart-items .counter-empty{min-height:110px}}
-`;
-counterWorkspacePolishStyles.textContent = counterWorkspacePolishStyles.textContent.replaceAll(
-  '@media(max-width:760px)',
-  '@media(max-width:900px)'
-);
-document.head.appendChild(counterWorkspacePolishStyles);
-const counterWorkspaceScrollStyles = document.createElement('style');
-counterWorkspaceScrollStyles.textContent = `
-@media(min-width:761px){body.is-counter-workspace{overflow:hidden}body.is-counter-workspace .fulfillment-actions,body.is-counter-workspace>.order-search-panel,body.is-counter-workspace>#orders,body.is-counter-workspace>#order-status-filters{display:none!important}body.is-counter-workspace #counter-order-panel{height:calc(100dvh - 94px);min-height:600px;margin-top:10px}body.is-counter-workspace .counter-order-layout{height:calc(100% - 76px);min-height:0}body.is-counter-workspace .counter-menu{height:100%;min-height:0}body.is-counter-workspace .counter-categories{min-height:0;overflow-y:auto}body.is-counter-workspace .counter-menu-items{min-height:0;height:100%;overflow-y:auto;overscroll-behavior:contain}body.is-counter-workspace .counter-cart{height:100%;max-height:none;min-height:0}body.is-counter-workspace .counter-cart-items{height:auto;min-height:0;flex:1 1 auto;overscroll-behavior:contain}body.is-counter-workspace .counter-cart-items .counter-empty{height:100%;min-height:0}body.is-counter-workspace .counter-customer{margin-top:0}body.is-counter-workspace .counter-order-status{min-height:0}}
-`;
-counterWorkspaceScrollStyles.textContent = counterWorkspaceScrollStyles.textContent.replace(
-  '@media(min-width:761px)',
-  '@media(min-width:901px)'
-);
-document.head.appendChild(counterWorkspaceScrollStyles);
-const counterWorkspaceSafetyStyles = document.createElement('style');
-counterWorkspaceSafetyStyles.textContent = `#dine-in-actions[hidden]{display:none!important}.counter-place-order:disabled{cursor:not-allowed;opacity:.48;box-shadow:none;filter:grayscale(.15)}`;
-document.head.appendChild(counterWorkspaceSafetyStyles);
 const operationsRoutingStyles = document.createElement('style');
 operationsRoutingStyles.textContent = `.operations-section{padding:20px;border:1px solid #e2e9f1;border-radius:15px;background:linear-gradient(145deg,#fff,#fbfcfe)}.operations-section+.operations-section{margin-top:16px}.operations-section-head{display:flex;align-items:start;justify-content:space-between;gap:16px}.operations-section-head h3{margin:3px 0 5px;color:#1f2e47;font-size:18px}.operations-section-head p{max-width:660px;margin:0;color:#6a7890;font-size:12px;line-height:1.5}.operations-count{padding:7px 9px;border-radius:999px;color:#36547d;background:#edf3fb;font-size:10px;font-weight:900;white-space:nowrap}.operations-printer-form,.operations-route-form{display:grid;gap:10px;align-items:end;margin:18px 0}.operations-printer-form{grid-template-columns:minmax(180px,1.2fr) minmax(130px,.55fr) minmax(180px,.9fr) 90px auto}.operations-route-form{grid-template-columns:minmax(180px,.8fr) minmax(320px,1.4fr) auto}.operations-printer-form label,.operations-route-form label{display:grid;gap:5px;color:#55657b;font-size:10px;font-weight:900;letter-spacing:.05em;text-transform:uppercase}.operations-printer-form input,.operations-printer-form select,.operations-route-form select{width:100%;min-height:42px;padding:10px 11px;border:1px solid #d5dfeb;border-radius:9px;color:#23334e;background:#fff;font:700 12px Manrope,sans-serif}.operations-printer-form input:focus,.operations-printer-form select:focus,.operations-route-form select:focus,.category-search:focus{outline:0;border-color:#2e67b1;box-shadow:0 0 0 3px rgba(46,103,177,.12)}.operations-printer-form button,.operations-route-form button{min-height:42px;padding:10px 13px;background:#263d68;font-size:11px;white-space:nowrap}.operations-printer-form button span{font-size:16px}.printer-grid{grid-template-columns:repeat(auto-fill,minmax(255px,1fr))}.operation-printer{min-height:146px;border-color:#dfe7f0;box-shadow:0 4px 12px rgba(30,51,83,.05)}.operation-printer-head{display:grid;grid-template-columns:38px minmax(0,1fr) auto;gap:10px}.printer-card-icon{display:grid;width:38px;height:38px;place-items:center;border-radius:10px;color:#087348;background:#e8f7ef;font-size:22px;font-weight:900}.printer-card-icon.bill{color:#315487;background:#eaf1ff}.operation-printer p{line-height:1.4}.printer-endpoint{margin:9px 0!important;padding:7px 9px;border-radius:8px;color:#56708f!important;background:#f2f6fb;font:800 10px ui-monospace,SFMono-Regular,Menlo,monospace!important}.printer-endpoint.is-pending{color:#9a6c20!important;background:#fff8e9}.routing-section{background:linear-gradient(145deg,#fffdf8,#fff)}.category-picker{border:1px solid #d5dfeb;border-radius:10px;background:#fff;padding:9px}.category-picker-top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}.category-picker-top b{color:#23334e;font-size:12px}.category-picker-top span{color:#64748b;font-size:10px;font-weight:800}.category-search{width:100%;min-height:37px;border:1px solid #d5dfeb;border-radius:8px;padding:8px 10px;font:700 12px Manrope,sans-serif}.category-checklist{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:7px;max-height:190px;overflow:auto;margin-top:9px;padding-right:2px}.category-choice{display:flex!important;align-items:center;gap:8px;padding:8px 9px;border:1px solid #e2e9f1;border-radius:8px;color:#33445f!important;background:#fbfcfe;font-size:11px!important;letter-spacing:0!important;text-transform:none!important;cursor:pointer}.category-choice:hover{border-color:#a9bdd8;background:#f1f6fd}.category-choice input{width:16px;height:16px;accent-color:#1e8b59}.category-choice.is-hidden{display:none!important}.route-row{display:grid;grid-template-columns:28px minmax(0,1fr) auto}.route-icon{display:grid;width:26px;height:26px;place-items:center;border-radius:7px;color:#087348;background:#e8f7ef;font-size:16px}.route-row span{display:block;margin-top:3px}.operations-save-bar{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:16px;padding:13px 15px;border:1px solid #cce8d8;border-radius:12px;background:#f3fbf6;color:#527260;font-size:12px;font-weight:700}.operations-save{margin:0!important;padding:10px 14px;white-space:nowrap}@media(max-width:900px){.operations-printer-form{grid-template-columns:1fr 1fr}.operations-printer-form button{width:100%}}@media(max-width:760px){.operations-printer-form,.operations-route-form{grid-template-columns:1fr}.operations-printer-form button,.operations-route-form button{width:100%}.operations-section{padding:16px}.operations-section-head{align-items:flex-start}.category-checklist{grid-template-columns:1fr}.operations-save-bar{align-items:stretch;flex-direction:column}.operations-save{width:100%}}`;
 document.head.appendChild(operationsRoutingStyles);
@@ -1793,7 +1332,7 @@ const bridgeReadinessStyles = document.createElement('style');
 bridgeReadinessStyles.textContent = `.operations-setup-card{border-color:#bcd7ca;background:linear-gradient(135deg,#fbfffc,#f1fbf5)}.operations-setup-card .operations-home-icon{color:#087348;background:#e3f7eb}.bridge-readiness{padding:24px;border:1px solid #d9e8df;border-radius:16px;background:linear-gradient(145deg,#fff,#f8fcf9)}.bridge-check-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin:22px 0}.bridge-check{display:flex;gap:9px;align-items:flex-start;padding:13px;border:1px solid #e0e8ec;border-radius:11px;background:#fff}.bridge-check>span{display:grid;width:23px;height:23px;place-items:center;flex:0 0 23px;border-radius:50%;color:#596b82;background:#edf2f7;font-weight:900}.bridge-check.is-ok>span{color:#087348;background:#e4f8ec}.bridge-check.is-warn>span{color:#a85c14;background:#fff1dc}.bridge-check b,.bridge-check small{display:block}.bridge-check b{color:#283b56;font-size:12px}.bridge-check small{margin-top:3px;color:#728198;font-size:10px;line-height:1.35}.bridge-install-box{padding:17px;border:1px solid #ecd8b5;border-radius:13px;background:#fffaf0}.bridge-install-box>b{color:#574225;font-size:14px}.bridge-install-box p{margin:6px 0 10px;color:#6f604a;font-size:12px;line-height:1.45}.bridge-install-box code{display:block;padding:11px 12px;border-radius:9px;color:#263b59;background:#f0f4f8;font:800 12px ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-word}.bridge-install-box>div,.bridge-ready-actions{display:flex;gap:9px;align-items:center;margin-top:12px}.bridge-ready-actions{justify-content:flex-end}.bridge-ready-actions .quiet-button,.bridge-install-box .quiet-button{padding:10px 13px;border:1px solid #cdd9e6;border-radius:8px;color:#375170;background:#fff;font-size:12px;font-weight:800}@media(max-width:1000px){.bridge-check-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}@media(max-width:620px){.bridge-readiness{padding:17px}.bridge-check-grid{grid-template-columns:1fr}.bridge-install-box>div,.bridge-ready-actions{align-items:stretch;flex-direction:column}.bridge-ready-actions{justify-content:stretch}.bridge-ready-actions button,.bridge-install-box button{width:100%}}`;
 document.head.appendChild(bridgeReadinessStyles);
 const bridgeDownloadStyles = document.createElement('style');
-bridgeDownloadStyles.textContent = `.bridge-download{display:inline-flex;align-items:center;justify-content:center;padding:10px 13px;border:1px solid #168451;border-radius:8px;color:#fff!important;background:#168451!important;font-size:12px;font-weight:800;text-decoration:none}.bridge-download:hover{color:#fff;filter:brightness(.95)}.bridge-version-info{display:flex;flex-wrap:wrap;gap:7px 16px;align-items:center;margin:12px 0 2px;padding:9px 11px;border:1px solid #dfe8f2;border-radius:9px;color:#65778f;background:#f7faff;font-size:11px}.bridge-version-info span{display:inline-flex;gap:4px}.bridge-version-info b{color:#263c5b}.bridge-version-info em{padding:3px 7px;border-radius:999px;color:#a55618;background:#fff0db;font-style:normal;font-weight:900}.bridge-version-info em.is-current{color:#087348;background:#e5f8ec}.bridge-node-note{display:block;margin-top:10px;color:#78694f!important;font-size:11px!important}@media(max-width:620px){.bridge-install-box>div{align-items:stretch;flex-direction:column}.bridge-download{width:100%;text-align:center}.bridge-version-info{align-items:flex-start;flex-direction:column;gap:5px}}`;
+bridgeDownloadStyles.textContent = `.bridge-download{display:inline-flex;align-items:center;justify-content:center;padding:10px 13px;border:1px solid #168451;border-radius:8px;color:#fff!important;background:#168451!important;font-size:12px;font-weight:800;text-decoration:none}.bridge-download:hover{color:#fff;filter:brightness(.95)}.bridge-node-note{display:block;margin-top:10px;color:#78694f!important;font-size:11px!important}@media(max-width:620px){.bridge-install-box>div{align-items:stretch;flex-direction:column}.bridge-download{width:100%;text-align:center}}`;
 document.head.appendChild(bridgeDownloadStyles);
 const managePrintersStyles = document.createElement('style');
 managePrintersStyles.textContent = `.manage-printers,.printer-assignment{padding:24px;border:1px solid #dfe7f1;border-radius:16px;background:#fff}.manage-printers-head{display:flex;justify-content:space-between;gap:18px;align-items:start}.manage-printers h3,.printer-assignment h3{margin:4px 0;color:#1e3150;font-size:23px}.manage-printers p,.printer-assignment p{margin:0;color:#687a91}.bridge-status{max-width:370px;padding:9px 12px;border-radius:9px;color:#8a5b13;background:#fff5dc;font-size:12px;font-weight:700}.bridge-status.online{color:#087348;background:#e8f7ef}.add-system-printer{display:flex;gap:10px;margin:22px 0}.add-system-printer select{flex:1;min-height:44px;padding:10px;border:1px solid #cfdceb;border-radius:9px}.add-system-printer button,.printer-table-row button{padding:10px 14px;background:#246ce0;color:#fff}.printer-table{border:1px solid #dfe6ee;border-radius:12px;overflow:hidden}.printer-table-head,.printer-table-row{display:grid;grid-template-columns:1.5fr .8fr 1fr auto;gap:16px;align-items:center;padding:16px 18px}.printer-table-head{color:#526680;background:#eef2f6;font-size:11px;font-weight:900;text-transform:uppercase}.printer-table-row+.printer-table-row{border-top:1px solid #e1e7ee}.printer-table-row b,.printer-table-row small{display:block}.printer-table-row b{color:#1d2f4a}.printer-table-row small{margin-top:4px;color:#76869a;font-size:11px}.assignment-tag{display:inline-block;margin:2px;padding:5px 9px;border-radius:999px;color:#087348;background:#e8f7ef;font-size:11px;font-style:normal;font-weight:800}.printer-table-row .remove-printer{margin-left:6px;color:#a52a39;background:#fff0f0}.assignment-back{display:inline-flex!important;align-items:center;min-height:38px;margin-bottom:17px;padding:8px 12px!important;border:1px solid #9bb7d9!important;border-radius:8px!important;color:#123a70!important;background:#dcecff!important;box-shadow:0 1px 2px rgba(18,58,112,.12);font-size:13px!important;font-weight:900!important}.assignment-back:hover,.assignment-back:focus-visible{border-color:#246ce0!important;color:#fff!important;background:#246ce0!important;outline:0;box-shadow:0 0 0 3px rgba(36,108,224,.2)}.assignment-choices{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;max-width:720px;margin-top:24px}.assignment-choices button{display:grid;gap:6px;padding:22px;text-align:left;color:#1e3150;background:#fff;border:1px solid #d6e0ea}.assignment-choices button:hover{border-color:#246ce0;background:#f4f8ff}.assignment-choices b{font-size:16px}.assignment-choices span{color:#718198}.assignment-category-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:22px}.assignment-category-grid label{display:flex;align-items:center;gap:9px;padding:12px;border:1px solid #dce5ee;border-radius:9px;color:#263b59;font-size:12px;font-weight:700}.assignment-category-grid input{width:17px;height:17px;accent-color:#168451}.assignment-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:22px}.assignment-actions button{padding:11px 15px;background:#eef3f8;color:#304562}.assignment-actions .operations-save{color:#fff;background:#168451}@media(max-width:760px){.manage-printers-head{display:grid}.printer-table-head{display:none}.printer-table-row{grid-template-columns:1fr;gap:8px}.add-system-printer{display:grid}.assignment-choices,.assignment-category-grid{grid-template-columns:1fr}}`;
@@ -1830,6 +1369,81 @@ printerEditStyles.textContent = `.printer-edit{max-width:1100px}.printer-edit>p{
 printerEditStyles.textContent += `.printer-typography-fields{display:grid;grid-column:1/-1;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.printer-typography-fields>.printer-format-intro,.printer-typography-fields>.printer-format-group:last-child{grid-column:1/-1}.printer-format-fields{align-items:start}.printer-format-fields>label{display:flex;flex-direction:column;gap:7px;min-height:128px}.printer-format-fields>label>small{min-height:28px;order:3}.printer-format-fields>label>input,.printer-format-fields>label>select{order:2}.receipt-live-preview{grid-column:1/-1;display:grid;grid-template-columns:minmax(0,1fr) minmax(255px,330px);gap:24px;align-items:center;padding:22px;border:1px solid #d8e2ed;border-radius:14px;background:linear-gradient(135deg,#f7fbff,#eef5fa)}.receipt-live-preview>div:first-child{display:grid;gap:7px}.receipt-live-preview b{color:#1b3457;font-size:16px}.receipt-live-preview p{margin:0;color:#60738d;font-size:12px;line-height:1.5}.receipt-preview-paper{position:relative;justify-self:center;width:250px;min-height:390px;padding:calc(var(--top,0px) + 16px) calc(var(--right,0px) + 12px) calc(var(--bottom,0px) + 14px) calc(var(--left,0px) + 12px);border:1px solid #d8d1c7;border-radius:3px;background:#fffef9;box-shadow:0 12px 25px rgba(43,54,70,.16);color:#141414;font-family:var(--receipt-font,Arial),sans-serif;font-size:10px;line-height:1.28;transform:scale(var(--preview-scale,1));transform-origin:center}.receipt-preview-paper [data-preview-target]{cursor:pointer;border-radius:3px}.receipt-preview-paper [data-preview-target]:hover{outline:1px dashed #2d66ad;background:rgba(45,102,173,.08)}.receipt-preview-drag{position:absolute;z-index:3;display:grid;place-items:center;width:22px;height:22px;padding:0;border:1px solid #2d66ad;border-radius:50%;color:#fff;background:#2d66ad;box-shadow:0 2px 5px rgba(30,66,112,.25);font-size:12px;cursor:grab;touch-action:none}.receipt-preview-drag:active{cursor:grabbing}.receipt-preview-drag[data-preview-drag=left]{left:-12px;top:50%}.receipt-preview-drag[data-preview-drag=right]{right:-12px;top:50%}.receipt-preview-drag[data-preview-drag=top]{top:-12px;left:50%}.receipt-preview-drag[data-preview-drag=bottom]{bottom:-12px;left:50%}.receipt-preview-paper .rp-center{text-align:center}.receipt-preview-paper .rp-name{font-size:15px;font-weight:800}.receipt-preview-paper .rp-rule{height:1px;margin:10px 0;background:#232323}.receipt-preview-paper .rp-meta{display:flex;justify-content:space-between;gap:8px}.receipt-preview-paper .rp-table{display:grid;grid-template-columns:minmax(0,1fr) 24px 40px 52px;gap:4px}.receipt-preview-paper .rp-table span:not(:first-child){text-align:right}.receipt-preview-paper .rp-head{font-weight:800}.receipt-preview-paper .rp-grand{font-size:11px;font-weight:900}.receipt-preview-paper .rp-foot{margin-top:12px;text-align:center}@media(max-width:760px){.printer-typography-fields{grid-template-columns:1fr}.printer-typography-fields>.printer-format-group:last-child{grid-column:auto}.printer-format-fields>label{min-height:0}.receipt-live-preview{grid-template-columns:1fr}.receipt-preview-paper{transform:none}}`;
 printerEditStyles.textContent += `.receipt-preview-column-drag{position:absolute;z-index:4;top:42%;bottom:22%;width:12px;padding:0;border:0;border-left:2px dashed #b52936;background:transparent;cursor:ew-resize;touch-action:none}.receipt-preview-column-drag::after{content:'↔';position:absolute;top:-18px;left:-8px;width:18px;height:18px;border-radius:50%;color:#fff;background:#b52936;font-size:11px;line-height:18px;text-align:center}.receipt-preview-column-drag:hover{border-left-color:#193a65}.receipt-column-values{grid-column:1/-1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:4px;padding-top:12px;border-top:1px dashed #d8e2ed}.receipt-column-values label{min-height:0!important}`;
 document.head.appendChild(printerEditStyles);
+document.addEventListener(
+  'click',
+  (event) => {
+    if (!event.target.closest('[data-save-printer-edit]')) return;
+    const printer = operationsConfig.printers.find((item) => item.id === assignmentPrinterId);
+    if (!printer) return;
+    const restaurantName = document.getElementById('printer-edit-restaurant-name');
+    if (restaurantName)
+      printer.restaurantName = String(restaurantName.value || 'Red Lantern Restaurant')
+        .trim()
+        .slice(0, 60);
+    const kotCentered = document.getElementById('printer-edit-kot-details-centered');
+    if (kotCentered) printer.kotDetailsCentered = !!kotCentered.checked;
+    ['itemNameMinWidth', 'quantityColumnWidth', 'priceColumnWidth', 'amountColumnWidth'].forEach(
+      (key) => {
+        const input = document.getElementById(`printer-edit-${key}`);
+        if (input) printer[key] = Math.max(8, Math.min(220, Number(input.value) || 0));
+      }
+    );
+    printer.fontFamily = String(
+      document.getElementById('printer-edit-font-family')?.value || 'Arial'
+    );
+    printer.fontSize = Math.max(
+      8,
+      Math.min(13, Number(document.getElementById('printer-edit-font-size')?.value) || 10)
+    );
+    printer.headerFontSize = Math.max(
+      12,
+      Math.min(18, Number(document.getElementById('printer-edit-header-size')?.value) || 15)
+    );
+    printer.headerBold = !!document.getElementById('printer-edit-header-bold')?.checked;
+    printer.footerBold = !!document.getElementById('printer-edit-footer-bold')?.checked;
+    [
+      'billingMainWidth',
+      'billingOuterTop',
+      'billingOuterRight',
+      'billingOuterBottom',
+      'billingOuterLeft',
+      'billingItemBoxHeight',
+      'restaurantNameFontSize',
+      'headerFooterFontSize',
+      'dateBillFontSize',
+      'itemListingFontSize',
+      'grandTotalFontSize',
+      'itemNameMinWidth',
+      'itemRowGap',
+      'separatorGap',
+      'separatorThickness',
+      'kotHeaderFontSize',
+      'kotTitleFontSize',
+      'kotMetaFontSize',
+      'kotItemFontSize',
+      'kotFooterFontSize',
+    ].forEach((key) => {
+      const input = document.getElementById(`printer-edit-${key}`);
+      if (input) printer[key] = Number(input.value);
+    });
+  },
+  true
+);
+
+document.addEventListener(
+  'click',
+  (event) => {
+    if (!event.target.closest('[data-save-printer-edit]')) return;
+    const printer = operationsConfig.printers.find((item) => item.id === assignmentPrinterId);
+    const input = document.getElementById('printer-edit-kotBottomFeedLines');
+    if (printer && input) {
+      const feed = Number(input.value);
+      printer.kotBottomFeedLines = Number.isFinite(feed) ? Math.max(0, Math.min(12, feed)) : 3;
+    }
+  },
+  true
+);
+
 const esc = (value) =>
   String(value ?? '').replace(
     /[&<>"']/g,
@@ -1855,7 +1469,7 @@ const toPushKey = (value) => {
   return Uint8Array.from(raw, (character) => character.charCodeAt(0));
 };
 
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('/orders-sw.js?v=25');
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/orders-sw.js?v=15');
 document.getElementById('enable-notifications')?.addEventListener('click', async () => {
   closeOpenPanels();
   const button = document.getElementById('enable-notifications');
@@ -1897,7 +1511,7 @@ document.getElementById('enable-notifications')?.addEventListener('click', async
     document.getElementById('shortcut-steps').innerHTML =
       '<li>Install the RL Orders shortcut on this device.</li><li>Open it once and tap Enable alerts.</li><li>Allow notifications when your device asks.</li>';
     if (typeof dialog?.showModal === 'function') dialog.showModal();
-    else showStaffNotice(error.message);
+    else alert(error.message);
   } finally {
     button.disabled = false;
   }
@@ -1945,15 +1559,8 @@ async function loadOrders() {
             })
         );
     if (orderView === 'current') known = ids;
-    if (orderView === 'current') {
-      const activeCount = String(
-        rows.filter((order) => !['completed', 'rejected', 'cancelled'].includes(order.status))
-          .length
-      );
-      document.querySelectorAll('#live-orders-count').forEach((count) => {
-        count.textContent = activeCount;
-      });
-    }
+    const liveCount = document.getElementById('live-orders-count');
+    if (liveCount && orderView === 'current') liveCount.textContent = String(rows.length);
     firstLoad = false;
     const statusRows =
       orderStatusFilter === 'all'
@@ -1989,18 +1596,8 @@ async function loadOrders() {
     root.classList.remove('is-stale');
     // This billing computer owns print dispatch. Retry all accepted live orders
     // after an outage or restart; stable bridge job IDs prevent duplicate tickets.
-    if (orderView === 'current') {
-      rows
-        .filter(
-          (order) =>
-            order.status === 'accepted' ||
-            (order.mode === 'table' && ['preparing', 'ready'].includes(order.status))
-        )
-        .forEach(autoPrintOrder);
-      rows
-        .filter((order) => order.mode === 'table' && order.service_state === 'bill_requested')
-        .forEach(autoPrintRequestedTableBill);
-    }
+    if (orderView === 'current')
+      rows.filter((order) => order.status === 'accepted').forEach(autoPrintOrder);
     if (!tableViewPanel.hidden) renderTableView();
     const clearButton = document.getElementById('clear-order-search');
     const searchStatus = document.getElementById('order-search-status');
@@ -2028,128 +1625,7 @@ async function loadOrders() {
       });
   } finally {
     ordersRefreshInFlight = false;
-    if (fastOrdersRefreshQueued) requestFastOrdersRefresh();
   }
-}
-
-function requestFastOrdersRefresh() {
-  fastOrdersRefreshQueued = true;
-  if (ordersRefreshInFlight || fastOrdersRefreshTimer) return;
-  fastOrdersRefreshTimer = setTimeout(() => {
-    fastOrdersRefreshTimer = null;
-    fastOrdersRefreshQueued = false;
-    void loadOrders();
-  }, 25);
-}
-
-function printRelevantUpdate(type) {
-  return /created|accepted|items-added|kot-created|bill-request|service-request|service-updated/i.test(
-    String(type || '')
-  );
-}
-
-const livePrintDispatches = new Map();
-async function dispatchLivePrintUpdate(update) {
-  if (!printRelevantUpdate(update?.type || update?.reason)) return;
-  const id = String(update.orderId || '');
-  if (!id) {
-    requestFastOrdersRefresh();
-    return;
-  }
-  const active = livePrintDispatches.get(id);
-  if (active) {
-    active.queued = true;
-    return;
-  }
-  const state = { queued: false };
-  livePrintDispatches.set(id, state);
-  try {
-    do {
-      state.queued = false;
-      // Read only the affected order. Printing must not depend on the current
-      // screen, search filter, or an unrelated full-list request finishing.
-      const response = await fetch(`/api/orders/${encodeURIComponent(id)}/print`, {
-        cache: 'no-store',
-      });
-      if (!response.ok) throw new Error('Unable to load the order for printing.');
-      const order = await response.json();
-      if (order.id !== id) throw new Error('Unexpected print order response.');
-      const billRequest =
-        order.service_state === 'bill_requested' &&
-        /service-request|bill-request/.test(String(update.type || update.reason || ''));
-      if (billRequest) {
-        await autoPrintRequestedTableBill(order, { receipt: order });
-      } else {
-        await Promise.all([
-          autoPrintOrder(order),
-          autoPrintRequestedTableBill(order, { receipt: order }),
-        ]);
-      }
-    } while (state.queued);
-  } catch (error) {
-    reportOrdersDiagnostic({
-      level: 'warning',
-      message: error.message,
-      source: 'live print dispatch',
-    });
-    requestFastOrdersRefresh();
-  } finally {
-    livePrintDispatches.delete(id);
-  }
-}
-
-async function pollPrintUpdates() {
-  if (printUpdatePollInFlight || !navigator.onLine) return;
-  printUpdatePollInFlight = true;
-  try {
-    const suffix = Number.isInteger(printUpdateCursor) ? `?after=${printUpdateCursor}` : '';
-    const response = await fetch(`/api/orders/smart-kds/updates${suffix}`, {
-      cache: 'no-store',
-    });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload.error || 'Unable to check printer updates.');
-    const cursor = Number(payload.cursor);
-    if (Number.isInteger(cursor) && cursor >= 0) printUpdateCursor = cursor;
-    const updates = (payload.events || []).filter((event) => printRelevantUpdate(event.type));
-    updates.forEach((event) => void dispatchLivePrintUpdate(event));
-    if (updates.length) requestFastOrdersRefresh();
-  } catch (_) {
-    // The periodic full-list refresh remains the final recovery fallback.
-  } finally {
-    printUpdatePollInFlight = false;
-  }
-}
-
-function connectFastPrintUpdates() {
-  if (!window.EventSource) return;
-  const stream = new EventSource('/api/orders/smart-kds/stream');
-  stream.addEventListener('connected', () => {
-    void pollPrintUpdates();
-  });
-  stream.addEventListener('smart-kds-update', (event) => {
-    try {
-      const update = JSON.parse(event.data || '{}');
-      if (!printRelevantUpdate(update.reason)) return;
-      void dispatchLivePrintUpdate(update);
-    } catch (_) {}
-    requestFastOrdersRefresh();
-  });
-}
-
-function formatOrderAge(createdAt) {
-  const timestamp = new Date(createdAt).getTime();
-  if (!Number.isFinite(timestamp)) return 'Time unavailable';
-  const elapsedMinutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60000));
-  if (elapsedMinutes < 1) return 'Just now';
-  if (elapsedMinutes < 60) return `${elapsedMinutes} min ago`;
-  const elapsedHours = Math.floor(elapsedMinutes / 60);
-  if (elapsedHours < 24) return `${elapsedHours} hr${elapsedHours === 1 ? '' : 's'} ago`;
-  const elapsedDays = Math.floor(elapsedHours / 24);
-  if (elapsedDays < 30) return `${elapsedDays} day${elapsedDays === 1 ? '' : 's'} ago`;
-  const elapsedMonths = Math.floor(elapsedDays / 30);
-  if (elapsedMonths < 12) return `${elapsedMonths} month${elapsedMonths === 1 ? '' : 's'} ago`;
-  const elapsedYears = Math.floor(elapsedDays / 365);
-  return `${elapsedYears} year${elapsedYears === 1 ? '' : 's'} ago`;
 }
 
 function renderOrder(order) {
@@ -2159,15 +1635,12 @@ function renderOrder(order) {
     (sum, item) =>
       sum +
       Number(item.quantity || 0) *
-        (Number(String(item.price || '').replace(/[^0-9.]/g, '')) +
-          (item.style ? 10 : 0) +
-          Addons.lineModifierTotal(item)),
+        (Number(String(item.price || '').replace(/[^0-9.]/g, '')) + (item.style ? 10 : 0)),
     0
   );
   const storedTotal = Number(order.total);
   const total = storedTotal > 0 ? storedTotal : fallbackTotal;
-  const ageMinutes = Math.max(0, Math.floor((Date.now() - new Date(order.created_at)) / 60000));
-  const ageLabel = formatOrderAge(order.created_at);
+  const age = Math.max(0, Math.floor((Date.now() - new Date(order.created_at)) / 60000));
   const placedAt = new Intl.DateTimeFormat('en-IN', {
     timeZone: 'Asia/Kolkata',
     day: '2-digit',
@@ -2192,68 +1665,18 @@ function renderOrder(order) {
     preparing: ['ready', 'completed', 'rejected'],
     ready: ['completed', 'rejected'],
   };
-  const isHistoryView = orderView === 'history';
-  const controls = (isHistoryView ? [] : nextStatuses[order.status] || [])
+  const controls = (nextStatuses[order.status] || [])
     .map(
-      (status) =>
-        `<button class="order-action order-action-${status}" onclick="setStatus('${esc(order.id)}','${status}')">${status}</button>`
+      (status) => `<button onclick="setStatus('${esc(order.id)}','${status}')">${status}</button>`
     )
     .join('');
-  const canCancel =
-    !isHistoryView && ['new', 'accepted', 'preparing', 'ready'].includes(order.status);
-  const canModify =
-    !isHistoryView && ageMinutes < 10 && ['new', 'accepted', 'preparing'].includes(order.status);
-  const statusClass = [
-    'new',
-    'accepted',
-    'preparing',
-    'ready',
-    'completed',
-    'rejected',
-    'cancelled',
-  ].includes(String(order.status || '').toLowerCase())
-    ? String(order.status).toLowerCase()
-    : 'unknown';
+  const canCancel = ['new', 'accepted', 'preparing', 'ready'].includes(order.status);
+  const canModify = age < 10 && ['new', 'accepted', 'preparing'].includes(order.status);
   const service =
     order.mode === 'table' && order.service_state && order.service_state !== 'active'
       ? `<div class="request">Table service: <b>${esc(String(order.service_state).replace('_', ' '))}</b> <button data-clear-service="${esc(order.id)}">Handled</button></div>`
       : '';
-  return `<article class="order${isHistoryView ? ' is-history-order' : ''}" data-order-id="${esc(order.id)}"><div class="order-heading"><span class="daily-order-number">Order #${orderNumber}</span><span class="order-status status-${statusClass}">${esc(order.status)}</span></div><div class="order-reference">Ref ${esc(order.id)}</div><div class="order-time">${ageLabel}</div><div class="placed-at"><span>Placed</span>${esc(placedAt)} <small>Goa time</small></div><div class="meta">${esc(order.customer_name || 'Walk-in customer')}${hasGuestContact ? ` · <b class="phone">${esc(order.customer_phone)}</b>` : ''}</div>${service}${hasGuestContact ? `<div class="customer-trust"><b>${orderCount === 1 ? 'New customer' : `${orderCount} orders from this number`}</b><span>${history}</span></div>` : ''}${order.special_request ? `<div class="request">Special request: ${esc(order.special_request)}</div>` : ''}${order.cancellation_reason ? `<div class="request">Cancelled: ${esc(order.cancellation_reason)}</div>` : ''}<div class="items">${items
-    .map((item) => {
-      const modifiers = Addons.modifierText(item.modifiers);
-      return `<div><b>${Number(item.quantity || 0)}×</b> ${esc(item.name)} ${item.portion ? `(${esc(item.portion)})` : ''}${item.style ? ` — ${esc(item.style)} (+₹10)` : ''}${modifiers ? `<small class="order-item-addons">+ ${esc(modifiers)}</small>` : ''}</div>`;
-    })
-    .join(
-      ''
-    )}</div><div class="totals"><b>${itemCount} item${itemCount === 1 ? '' : 's'}</b><strong>Total ${money(total)}</strong></div><div class="actions">${controls}${canCancel ? `<button class="cancel-order" onclick="cancelOrder('${esc(order.id)}')">Cancel order</button>` : ''}${canModify ? `<button class="modify-order" data-modify-order="${esc(order.id)}">Modify order</button>` : ''}<button class="print" onclick="printOrder('${esc(order.id)}')">${isHistoryView ? 'Reprint' : 'Print'}</button></div></article>`;
-}
-
-function renderOrders(rows) {
-  const query = String(orderSearch?.value || '')
-    .replace(/\D/g, '')
-    .slice(0, 16);
-  const statusRows =
-    orderStatusFilter === 'all' ? rows : rows.filter((order) => order.status === orderStatusFilter);
-  const visibleRows = fulfillmentFilter
-    ? statusRows.filter(
-        (order) => String(order.fulfillment_type || '').toLowerCase() === fulfillmentFilter
-      )
-    : statusRows;
-  const searchedRows = query
-    ? visibleRows.filter((order) => {
-        const searchable = `${order.daily_order_number || ''}${order.customer_phone || ''}`.replace(
-          /\D/g,
-          ''
-        );
-        return searchable.includes(query);
-      })
-    : visibleRows;
-  root.innerHTML =
-    searchedRows.map(renderOrder).join('') ||
-    `<div class="empty-state">${query ? 'No orders match that number.' : 'No orders in this view.'}</div>`;
-  renderedOrdersSignature = '';
-  hasRenderedOrders = true;
-  if (!tableViewPanel.hidden) renderTableView();
+  return `<article class="order" data-order-id="${esc(order.id)}"><div class="order-heading"><span class="daily-order-number">Order #${orderNumber}</span><span class="order-status">${esc(order.status)}</span></div><div class="order-reference">Ref ${esc(order.id)}</div><div class="order-time">${age} min ago</div><div class="placed-at"><span>Placed</span>${esc(placedAt)} <small>Goa time</small></div><div class="meta">${esc(order.customer_name || 'Walk-in customer')}${hasGuestContact ? ` · <b class="phone">${esc(order.customer_phone)}</b>` : ''}</div>${service}${hasGuestContact ? `<div class="customer-trust"><b>${orderCount === 1 ? 'New customer' : `${orderCount} orders from this number`}</b><span>${history}</span></div>` : ''}${order.special_request ? `<div class="request">Special request: ${esc(order.special_request)}</div>` : ''}${order.cancellation_reason ? `<div class="request">Cancelled: ${esc(order.cancellation_reason)}</div>` : ''}<div class="items">${items.map((item) => `<div><b>${Number(item.quantity || 0)}×</b> ${esc(item.name)} ${item.portion ? `(${esc(item.portion)})` : ''}${item.style ? ` — ${esc(item.style)} (+₹10)` : ''}</div>`).join('')}</div><div class="totals"><b>${itemCount} item${itemCount === 1 ? '' : 's'}</b><strong>Total ${money(total)}</strong></div><div class="actions">${controls}${canCancel ? `<button class="cancel-order" onclick="cancelOrder('${esc(order.id)}')">Cancel order</button>` : ''}${canModify ? `<button class="modify-order" data-modify-order="${esc(order.id)}">Modify order</button>` : ''}<button class="print" onclick="printOrder('${esc(order.id)}')">Print</button></div></article>`;
 }
 
 async function setStatus(id, status, reason = '') {
@@ -2279,7 +1702,7 @@ async function setStatus(id, status, reason = '') {
     if (!operationsPanel?.hidden && ['kots', 'kitchen-display'].includes(operationsTab))
       await loadOperations();
   } catch (error) {
-    showStaffNotice(error.message || 'Unable to update the order status.');
+    alert(error.message || 'Unable to update the order status.');
   }
 }
 document.addEventListener('click', async (event) => {
@@ -2300,7 +1723,7 @@ document.addEventListener('click', async (event) => {
     await loadOrders();
   } catch (error) {
     button.disabled = false;
-    showStaffNotice(error.message);
+    alert(error.message);
   }
 });
 
@@ -2310,7 +1733,7 @@ async function cancelOrder(id) {
   );
   if (reason === null) return;
   if (reason.trim().length < 3) {
-    showStaffNotice('Please enter a brief cancellation reason.');
+    alert('Please enter a brief cancellation reason.');
     return;
   }
   await setStatus(id, 'cancelled', reason.trim());
@@ -2366,7 +1789,7 @@ function openModifyOrder(id) {
       loadOrders();
     } catch (error) {
       button.disabled = false;
-      showStaffNotice(error.message);
+      window.alert(error.message);
     }
   });
 }
@@ -2374,9 +1797,7 @@ function openModifyOrder(id) {
 function splitReceiptParts(receipt, split) {
   if (!split?.parts?.length) return [receipt];
   const priceOf = (item) =>
-    Number(String(item.price || 0).replace(/[^0-9.]/g, '')) +
-    (item.style ? 10 : 0) +
-    Addons.lineModifierTotal(item);
+    Number(String(item.price || 0).replace(/[^0-9.]/g, '')) + (item.style ? 10 : 0);
   const total = Math.max(
     0,
     Number(receipt.total) ||
@@ -2416,112 +1837,107 @@ function splitReceiptParts(receipt, split) {
     .filter((part) => Number(part.total) > 0);
 }
 
-async function requireCompletedBridgePrint(response, fallbackMessage) {
-  const body = await response.json().catch(() => ({}));
-  if (response.status === 202 || body.pending)
-    throw new Error(
-      'This print job is still in progress. Wait for it to finish; do not send another copy yet.'
-    );
-  if (!response.ok) throw new Error(body.error || fallbackMessage);
-  return body;
-}
-
-async function printBillOnConfiguredPrinters(printers, order, printJobPrefix) {
-  const results = await Promise.allSettled(
-    printers.map(async (printer) => {
-      const printerKey = String(printer.id || printer.deviceName)
-        .replace(/[^a-zA-Z0-9_-]/g, '_')
-        .slice(0, 80);
-      const response = await fetch(`${printBridgeOrigin}/v1/print-bill`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          printJobId: `${printJobPrefix}:${printerKey}`,
-          printerName: printer.deviceName,
-          workstationId: printer.workstationId || localWorkstationId(),
-          order,
-          // Layout is always taken from the printer receiving this copy. No
-          // bill queue inherits another printer's paper or typography settings.
-          settings: printerFormat(printer, 'bill'),
-        }),
-      });
-      await requireCompletedBridgePrint(
-        response,
-        `${printer.name || printer.deviceName} did not accept the bill.`
-      );
-      return printer;
-    })
-  );
-  const failed = results
-    .map((result, index) => ({ result, printer: printers[index] }))
-    .filter(({ result }) => result.status === 'rejected');
-  if (failed.length) {
-    const printedCount = results.length - failed.length;
-    const error = new Error(
-      `${failed.length} of ${results.length} Bill printer${results.length === 1 ? '' : 's'} failed: ${failed
-        .map(
-          ({ printer, result }) =>
-            `${printer.name || printer.deviceName} (${result.reason?.message || 'unknown error'})`
-        )
-        .join('; ')}`
-    );
-    error.physicalPrintAttempted = true;
-    error.printedCount = printedCount;
-    throw error;
-  }
-  return results.length;
-}
-
-const manualBillsInFlight = new Set();
 async function printOrder(id, split = null) {
-  if (manualBillsInFlight.has(id)) return false;
-  manualBillsInFlight.add(id);
-  let physicalPrintAttempted = false;
   try {
-    // Health, printer configuration, and receipt preparation are independent.
-    // Start all three on the click instead of discovering OS printers first.
-    const [bridgeResponse, printConfig, receiptResponse] = await Promise.all([
-      bridgeHealth(),
-      getPrintOperationsConfig(),
-      fetch(`/api/orders/${encodeURIComponent(id)}/print`, { cache: 'no-store' }),
-    ]);
+    const bridgeResponse = await fetch('http://127.0.0.1:9124/v1/printers', { cache: 'no-store' });
     if (!bridgeResponse.ok) throw new Error('Print Bridge is not available on this computer.');
-    rememberPrintBridgeWorkstation(
-      await bridgeResponse
-        .clone()
-        .json()
-        .catch(() => ({}))
+    const operationsResponse = await fetch('/api/orders/operations', { cache: 'no-store' });
+    const operations = await operationsResponse.json();
+    if (!operationsResponse.ok)
+      throw new Error(operations.error || 'Printer configuration could not load.');
+    const billPrinter = (operations.config?.printers || []).find(
+      (printer) => printer.type === 'bill' && printer.deviceName
     );
-    const billPrinters = configuredPrintersFor(printConfig, 'bill', localWorkstationId());
-    if (!billPrinters.length) throw new Error('No Bill printer is configured.');
+    if (!billPrinter) throw new Error('No Bill printer is configured.');
+    const receiptResponse = await fetch(`/api/orders/${encodeURIComponent(id)}/print`, {
+      cache: 'no-store',
+    });
     const receipt = await receiptResponse.json();
     if (!receiptResponse.ok) throw new Error(receipt.error || 'Unable to prepare the receipt.');
     const receipts = splitReceiptParts(receipt, split);
     if (!receipts.length) throw new Error('Assign at least one item to every split bill.');
-    const printBatchId = Date.now();
-    for (const [index, part] of receipts.entries()) {
-      physicalPrintAttempted = true;
-      await printBillOnConfiguredPrinters(
-        billPrinters,
-        part,
-        `manual-bill:${id}:${printBatchId}:${index + 1}`
-      );
+    for (const part of receipts) {
+      const printed = await fetch('http://127.0.0.1:9124/v1/print-bill', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          printJobId: `manual-bill:${id}:${Date.now()}:${part.label || 'full'}`,
+          printerName: billPrinter.deviceName,
+          order: part,
+          settings: billPrinter,
+        }),
+      });
+      if (!printed.ok)
+        throw new Error(
+          (await printed.json().catch(() => ({}))).error || 'Bill printer did not accept the job.'
+        );
     }
-    return true;
+    return;
   } catch (error) {
     reportOrdersDiagnostic({
       level: 'warning',
       message: `Direct bill reprint failed: ${error.message}`,
       source: 'manual bill printing',
     });
-    const message =
-      physicalPrintAttempted || error.physicalPrintAttempted
-        ? `${error.message} Check assigned Bill printers before reprinting; a copy may already exist.`
-        : `${error.message} Check Print Bridge and the assigned Bill printer in Operations.`;
-    showStaffNotice(message);
-    return false;
-  } finally {
-    manualBillsInFlight.delete(id);
+    if (split) throw error;
+  }
+  const popup = window.open('', 'red-lantern-receipt', 'popup=yes,width=420,height=720');
+  if (!popup) {
+    alert('Please allow pop-ups to print the receipt.');
+    return;
+  }
+  try {
+    popup.document.write('<!doctype html><title>Preparing receipt…</title>');
+    const response = await fetch(`/api/orders/${encodeURIComponent(id)}/print`, {
+      cache: 'no-store',
+    });
+    const order = await response.json();
+    if (!response.ok) throw new Error(order.error || 'Unable to prepare this receipt.');
+    const items = Array.isArray(order.items) ? order.items : [];
+    const itemPrice = (item) =>
+      Number(String(item.price || '').replace(/[^0-9.]/g, '')) + (item.style ? 10 : 0);
+    const quantity = items.reduce((total, item) => total + Number(item.quantity || 0), 0);
+    const calculatedTotal = items.reduce(
+      (total, item) => total + Number(item.quantity || 0) * itemPrice(item),
+      0
+    );
+    const grandTotal = Number(order.total) > 0 ? Number(order.total) : calculatedTotal;
+    const walletDiscount = Math.max(0, Math.floor(Number(order.loyalty_points_redeemed || 0)));
+    const dailyNumber = Number(order.daily_order_number);
+    const token =
+      Number.isFinite(dailyNumber) && dailyNumber > 0 ? String(dailyNumber).padStart(2, '0') : '—';
+    const placedAt = new Intl.DateTimeFormat('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+    }).format(new Date(order.created_at));
+    const orderType =
+      order.mode === 'counter' || order.fulfillment_type === 'takeaway'
+        ? 'TAKEAWAY ORDER'
+        : order.fulfillment_type === 'delivery'
+          ? 'DELIVERY ORDER'
+          : order.mode === 'table'
+            ? 'DINE IN ORDER'
+            : 'QR ORDER';
+    const itemRows = items
+      .map((item) => {
+        const label = `${item.name || 'Item'}${item.portion ? ` (${item.portion})` : ''}${item.style ? ` — ${item.style}` : ''}`;
+        const qty = Number(item.quantity || 0);
+        return `<tr><td class="item-name">${esc(label)}</td><td>${qty}</td><td>${money(itemPrice(item))}</td><td>${money(qty * itemPrice(item))}</td></tr>`;
+      })
+      .join('');
+    popup.document.open();
+    popup.document.write(
+      `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Red Lantern · Token ${esc(token)}</title><style>@page{size:80mm auto;margin:4mm}*{box-sizing:border-box}body{width:72mm;margin:0;color:#111;font:12px Arial,sans-serif}.center{text-align:center}.restaurant{font-size:18px;font-weight:800;letter-spacing:.2px}.sub{margin:3px 0;color:#333}.rule{border:0;border-top:1px dashed #222;margin:10px 0}.wallet{padding:7px 0;font-weight:700}.details{line-height:1.55}.details b{display:inline-block;min-width:68px}table{width:100%;border-collapse:collapse;margin-top:8px;font-size:11px}th{padding:5px 0;border-bottom:1px solid #222;text-align:right;font-size:10px}th:first-child{text-align:left}td{padding:5px 0;vertical-align:top;text-align:right;border-bottom:1px dotted #bbb}.item-name{text-align:left;padding-right:5px}.totals{display:flex;justify-content:space-between;font-size:13px;font-weight:700}.grand{display:flex;justify-content:space-between;margin-top:6px;font-size:16px;font-weight:800}.note{margin-top:8px;font-size:10px;line-height:1.4}.footer{margin-top:14px;font-size:10px;text-align:center;color:#333}@media print{body{width:72mm}}</style></head><body><div class="center"><div class="restaurant">RED LANTERN RESTAURANT</div><div class="sub">Restaurant Mobile Number: 9922853605</div><div class="sub">Direct Order Receipt</div></div><hr class="rule"><div class="wallet">Wallet Points: ${Number(order.loyalty_points || 0)}</div><div class="details"><div><b>Name:</b> ${esc(order.customer_name || 'Not provided')}</div><div><b>Mobile:</b> ${esc(order.customer_phone || '—')}</div><div><b>Type:</b> ${esc(orderType)}</div><div><b>Token No:</b> ${esc(token)}</div><div><b>Placed:</b> ${esc(placedAt)}</div></div>${order.special_request ? `<div class="note"><b>Special request:</b> ${esc(order.special_request)}</div>` : ''}<hr class="rule"><table><thead><tr><th>Item</th><th>Qty</th><th>Price</th><th>Amount</th></tr></thead><tbody>${itemRows}</tbody></table><hr class="rule"><div class="totals"><span>Total Qty: ${quantity}</span><span>Items: ${items.length}</span></div><div class="totals"><span>Subtotal</span><span>${money(calculatedTotal)}</span></div>${walletDiscount ? `<div class="totals"><span>Wallet points discount</span><span>−${money(walletDiscount)}</span></div>` : ''}<div class="grand"><span>GRAND TOTAL</span><span>${money(grandTotal)}</span></div><hr class="rule"><div class="footer">Thank you for ordering with us!<br>Red Lantern Restaurant</div><script>window.onload=()=>setTimeout(()=>window.print(),150);window.onafterprint=()=>window.close();<\/script></body></html>`
+    );
+    popup.document.close();
+  } catch (error) {
+    popup.close();
+    alert(error.message || 'Unable to prepare this receipt.');
   }
 }
 
@@ -2537,9 +1953,7 @@ const operationItemOptions = (item) => {
 const routePrinters = (item) => {
   const printers = new Map(operationsConfig.printers.map((printer) => [printer.id, printer]));
   const routes = operationsConfig.routes.filter(
-    (route) =>
-      printerSupports(printers.get(route.printerId), 'kot') &&
-      printerBelongsToWorkstation(printers.get(route.printerId), localWorkstationId())
+    (route) => printers.get(route.printerId)?.type === 'kot'
   );
   return [
     ...new Map(
@@ -2580,21 +1994,14 @@ function refreshRouteItemOptions() {
 }
 function assignedKinds(printer) {
   const kinds = [];
-  if (printerSupports(printer, 'bill')) kinds.push('Bill');
-  if (
-    printerSupports(printer, 'kot') &&
-    operationsConfig.routes.some((route) => route.printerId === printer.id)
-  )
-    kinds.push('KOT');
+  if (printer.type === 'bill') kinds.push('Bill');
+  if (operationsConfig.routes.some((route) => route.printerId === printer.id)) kinds.push('KOT');
   return kinds;
 }
 function renderPrinterManagement() {
   const content = document.getElementById('operations-content');
   if (!content) return;
-  const isPrinterEdit = assignmentMode === 'edit-bill' || assignmentMode === 'edit-kot';
-  const editCapability = assignmentMode === 'edit-bill' ? 'bill' : 'kot';
-  const savedPrinter = operationsConfig.printers.find((item) => item.id === assignmentPrinterId);
-  const printer = isPrinterEdit ? printerFormat(savedPrinter, editCapability) : savedPrinter;
+  const printer = operationsConfig.printers.find((item) => item.id === assignmentPrinterId);
   const categories = [
     ...new Set(operationsMenu.map((item) => item.category).filter(Boolean)),
   ].sort();
@@ -2609,36 +2016,37 @@ function renderPrinterManagement() {
         .filter((route) => route.printerId === printer.id && route.itemName)
         .map((route) => `${route.category}::${route.itemName}::${route.portion || ''}`)
     );
-    content.innerHTML = isPrinterEdit
-      ? `<section class="printer-assignment printer-edit"><button type="button" class="assignment-back" data-assignment-back>‹ Back</button><h3>Edit ${editCapability === 'bill' ? 'Bill' : 'KOT'} settings · ${esc(printer.name)}</h3><p>Set the printer name, system device, paper, and ${editCapability === 'bill' ? 'receipt' : 'KOT'} format. These settings belong only to this queue.</p><div class="printer-edit-grid"><label>Printer name<input id="printer-edit-name" maxlength="60" value="${esc(printer.name)}"></label><label>System printer<select id="printer-edit-device"><option value="${esc(printer.deviceId || '')}">${esc(printer.deviceName || 'Keep current system printer')}</option>${installedSystemPrinters
-          .filter((item) => item.id !== printer.deviceId)
-          .map((item) => `<option value="${esc(item.id)}">${esc(item.name)}</option>`)
-          .join(
-            ''
-          )}</select></label><label>Paper width<select id="printer-edit-paper"><option value="80" ${String(printer.paperWidth || 80) === '80' ? 'selected' : ''}>80 mm (recommended)</option><option value="58" ${String(printer.paperWidth) === '58' ? 'selected' : ''}>58 mm</option></select></label><label>Header text<textarea id="printer-edit-header" maxlength="160">${esc(printer.receiptHeader || defaultBillHeader)}</textarea></label><label>Footer text<textarea id="printer-edit-footer" maxlength="160">${esc(printer.receiptFooter || defaultBillFooter)}</textarea></label><label class="printer-edit-check"><input id="printer-edit-show-name" type="checkbox" ${printer.showRestaurantName !== false ? 'checked' : ''}> Show restaurant name</label><label class="printer-edit-check"><input id="printer-edit-show-serial" type="checkbox" ${printer.showItemSerial ? 'checked' : ''}> Show item serial numbers</label>${editCapability === 'kot' ? `<label class="printer-edit-check"><input id="printer-edit-customer" type="checkbox" ${printer.showCustomer !== false ? 'checked' : ''}> Show customer details</label><label>Extra bottom space<select id="printer-edit-space"><option value="0">None</option><option value="1" ${Number(printer.extraSpace) === 1 ? 'selected' : ''}>Small</option><option value="2" ${Number(printer.extraSpace) === 2 ? 'selected' : ''}>Large</option></select></label>` : ''}</div><div class="assignment-actions"><button type="button" data-assignment-back>Cancel</button><button type="button" class="operations-save" data-save-printer-edit>Save printer settings</button></div></section>`
-      : assignmentMode === 'choose'
-        ? `<section class="printer-assignment"><button type="button" class="assignment-back" data-assignment-back>‹ Back</button><h3>Printer capabilities · ${esc(printer.name)}</h3><p>Enable either capability or both. One physical queue can handle Bills and routed KOTs with separate format controls.</p><div class="assignment-choices"><button type="button" data-assign-bill><b>▤ ${printerSupports(printer, 'bill') ? 'Disable Bill printing' : 'Enable Bill printing'}</b><span>${printerSupports(printer, 'bill') ? 'Currently receives every final Bill' : 'Customer receipts and bills'}</span></button><button type="button" data-assign-kot><b>⌑ Configure KOT routing</b><span>${printerSupports(printer, 'kot') ? 'KOT capability enabled' : 'Kitchen order tickets'}</span></button>${printerSupports(printer, 'bill') ? '<button type="button" data-edit-printer-capability="bill"><b>✎ Edit Bill format</b><span>Paper, receipt layout and typography</span></button>' : ''}${printerSupports(printer, 'kot') ? '<button type="button" data-edit-printer-capability="kot"><b>✎ Edit KOT format</b><span>Ticket typography and paper feed</span></button><button type="button" data-disable-kot><b>× Disable KOT printing</b><span>Removes this queue\'s KOT routes</span></button>' : ''}</div></section>`
-        : `<section class="printer-assignment"><button type="button" class="assignment-back" data-assignment-back>‹ Back</button><h3>Assign KOT routing · ${esc(printer.name)}</h3><p>Assign whole categories, or expand a category and select only the dishes that belong on this station. Bone-in and boneless options can be routed separately.</p><label class="assignment-all-categories"><input type="checkbox" data-assignment-all-categories ${selected.has('*') ? 'checked' : ''}><span><b>All categories</b><small>Send every current and future menu category to this printer.</small></span></label><div class="assignment-category-grid">${categories
-            .map((category) => {
-              const items = operationsMenu
-                .filter((item) => item.category === category)
-                .sort((a, b) => a.name.localeCompare(b.name));
-              return `<details class="assignment-category-card"><summary><label><input type="checkbox" data-assignment-category value="${esc(category)}" ${selected.has(category) ? 'checked' : ''}><span>${esc(category)}</span></label><i aria-hidden="true">⌄</i></summary><div class="assignment-item-list"><b>Individual dishes</b>${
-                items
-                  .map((item) => {
-                    const variants = operationItemOptions(item);
-                    const allKey = `${category}::${item.name}::`;
-                    return variants.length
-                      ? `<div class="assignment-dish"><label><input type="checkbox" data-assignment-item data-category="${esc(category)}" value="${esc(item.name)}" ${selectedItems.has(allKey) ? 'checked' : ''}><span>${esc(item.name)} <small>all options</small></span></label><div class="assignment-variants">${variants.map((variant) => `<label><input type="checkbox" data-assignment-item data-category="${esc(category)}" data-portion="${esc(variant.portion)}" value="${esc(item.name)}" ${selectedItems.has(`${category}::${item.name}::${variant.portion}`) ? 'checked' : ''}><span>${esc(variant.label)}</span></label>`).join('')}</div></div>`
-                      : `<label><input type="checkbox" data-assignment-item data-category="${esc(category)}" value="${esc(item.name)}" ${selectedItems.has(allKey) ? 'checked' : ''}><span>${esc(item.name)}</span></label>`;
-                  })
-                  .join('') || '<small>No dishes in this category yet.</small>'
-              }</div></details>`;
-            })
+    content.innerHTML =
+      assignmentMode === 'edit'
+        ? `<section class="printer-assignment printer-edit"><button type="button" class="assignment-back" data-assignment-back>‹ Back</button><h3>Edit printer · ${esc(printer.name)}</h3><p>Set the printer name, system device, paper, and ${printer.type === 'bill' ? 'receipt' : 'KOT'} format.</p><div class="printer-edit-grid"><label>Printer name<input id="printer-edit-name" maxlength="60" value="${esc(printer.name)}"></label><label>System printer<select id="printer-edit-device"><option value="${esc(printer.deviceId || '')}">${esc(printer.deviceName || 'Keep current system printer')}</option>${installedSystemPrinters
+            .filter((item) => item.id !== printer.deviceId)
+            .map((item) => `<option value="${esc(item.id)}">${esc(item.name)}</option>`)
             .join(
               ''
-            )}</div><div class="assignment-actions"><button type="button" data-assignment-back>Cancel</button><button type="button" class="operations-save" data-save-kot-assignment>Save KOT routing</button></div></section>`;
-    if (isPrinterEdit) {
+            )}</select></label><label>Paper width<select id="printer-edit-paper"><option value="80" ${String(printer.paperWidth || 80) === '80' ? 'selected' : ''}>80 mm (recommended)</option><option value="58" ${String(printer.paperWidth) === '58' ? 'selected' : ''}>58 mm</option></select></label><label>Header text<textarea id="printer-edit-header" maxlength="160">${esc(printer.receiptHeader || defaultBillHeader)}</textarea></label><label>Footer text<textarea id="printer-edit-footer" maxlength="160">${esc(printer.receiptFooter || defaultBillFooter)}</textarea></label><label class="printer-edit-check"><input id="printer-edit-show-name" type="checkbox" ${printer.showRestaurantName !== false ? 'checked' : ''}> Show restaurant name</label><label class="printer-edit-check"><input id="printer-edit-show-serial" type="checkbox" ${printer.showItemSerial ? 'checked' : ''}> Show item serial numbers</label>${printer.type === 'kot' ? `<label class="printer-edit-check"><input id="printer-edit-customer" type="checkbox" ${printer.showCustomer !== false ? 'checked' : ''}> Show customer details</label><label>Extra bottom space<select id="printer-edit-space"><option value="0">None</option><option value="1" ${Number(printer.extraSpace) === 1 ? 'selected' : ''}>Small</option><option value="2" ${Number(printer.extraSpace) === 2 ? 'selected' : ''}>Large</option></select></label>` : ''}</div><div class="assignment-actions"><button type="button" data-assignment-back>Cancel</button><button type="button" class="operations-save" data-save-printer-edit>Save printer settings</button></div></section>`
+        : assignmentMode === 'choose'
+          ? `<section class="printer-assignment"><button type="button" class="assignment-back" data-assignment-back>‹ Back</button><h3>Assign printer · ${esc(printer.name)}</h3><p>Choose how this installed printer will be used.</p><div class="assignment-choices"><button type="button" data-assign-bill><b>▤ Assign to Bill</b><span>Customer receipts and bills</span></button><button type="button" data-assign-kot><b>⌑ Assign to KOT</b><span>Kitchen order tickets</span></button></div></section>`
+          : `<section class="printer-assignment"><button type="button" class="assignment-back" data-assignment-back>‹ Back</button><h3>Assign KOT routing · ${esc(printer.name)}</h3><p>Assign whole categories, or expand a category and select only the dishes that belong on this station. Bone-in and boneless options can be routed separately.</p><label class="assignment-all-categories"><input type="checkbox" data-assignment-all-categories ${selected.has('*') ? 'checked' : ''}><span><b>All categories</b><small>Send every current and future menu category to this printer.</small></span></label><div class="assignment-category-grid">${categories
+              .map((category) => {
+                const items = operationsMenu
+                  .filter((item) => item.category === category)
+                  .sort((a, b) => a.name.localeCompare(b.name));
+                return `<details class="assignment-category-card"><summary><label><input type="checkbox" data-assignment-category value="${esc(category)}" ${selected.has(category) ? 'checked' : ''}><span>${esc(category)}</span></label><i aria-hidden="true">⌄</i></summary><div class="assignment-item-list"><b>Individual dishes</b>${
+                  items
+                    .map((item) => {
+                      const variants = operationItemOptions(item);
+                      const allKey = `${category}::${item.name}::`;
+                      return variants.length
+                        ? `<div class="assignment-dish"><label><input type="checkbox" data-assignment-item data-category="${esc(category)}" value="${esc(item.name)}" ${selectedItems.has(allKey) ? 'checked' : ''}><span>${esc(item.name)} <small>all options</small></span></label><div class="assignment-variants">${variants.map((variant) => `<label><input type="checkbox" data-assignment-item data-category="${esc(category)}" data-portion="${esc(variant.portion)}" value="${esc(item.name)}" ${selectedItems.has(`${category}::${item.name}::${variant.portion}`) ? 'checked' : ''}><span>${esc(variant.label)}</span></label>`).join('')}</div></div>`
+                        : `<label><input type="checkbox" data-assignment-item data-category="${esc(category)}" value="${esc(item.name)}" ${selectedItems.has(allKey) ? 'checked' : ''}><span>${esc(item.name)}</span></label>`;
+                    })
+                    .join('') || '<small>No dishes in this category yet.</small>'
+                }</div></details>`;
+              })
+              .join(
+                ''
+              )}</div><div class="assignment-actions"><button type="button" data-assignment-back>Cancel</button><button type="button" class="operations-save" data-save-kot-assignment>Save KOT routing</button></div></section>`;
+    if (assignmentMode === 'edit') {
       const grid = content.querySelector('.printer-edit-grid');
       const anchor = content.querySelector('#printer-edit-header')?.closest('label');
       if (grid && anchor) {
@@ -2658,7 +2066,7 @@ function renderPrinterManagement() {
         ];
         const field = (key, label, value, help = '') =>
           `<label>${label}<input id="printer-edit-${key}" type="number" min="0" max="400" value="${Number(printer[key] ?? value)}">${help ? `<small>${help}</small>` : ''}</label>`;
-        if (editCapability === 'kot') {
+        if (printer.type === 'kot') {
           typography.innerHTML = `<div class="printer-format-intro"><span>KOT format</span><b>These font sizes are saved for this kitchen printer only.</b></div><section class="printer-format-group"><div class="printer-format-group-head"><span><b>Text style</b><small>Font and hierarchy for the kitchen ticket</small></span></div><div class="printer-format-fields"><label>Font family<select id="printer-edit-font-family">${fonts.map((font) => `<option value="${esc(font)}" ${String(printer.fontFamily || 'Arial') === font ? 'selected' : ''}>${esc(font)}</option>`).join('')}</select></label>${field('kotHeaderFontSize', 'Header text font size', 12)}${field('kotTitleFontSize', 'Kitchen title font size', 15)}${field('kotMetaFontSize', 'KOT details font size', 10)}${field('kotItemFontSize', 'Item font size', 12)}${field('kotFooterFontSize', 'Footer text font size', 10)}<label class="printer-edit-check"><input id="printer-edit-header-bold" type="checkbox" ${printer.headerBold !== false ? 'checked' : ''}> Bold header</label><label class="printer-edit-check"><input id="printer-edit-footer-bold" type="checkbox" ${printer.footerBold ? 'checked' : ''}> Bold footer</label></div></section><section class="printer-format-group"><div class="printer-format-group-head"><span><b>Spacing</b><small>Controls the ticket dividers and paper after the final line</small></span></div><div class="printer-format-fields">${field('separatorGap', 'Separator gap', 3)}${field('separatorThickness', 'Separator thickness', 1)}</div></section>`;
         } else {
           const billField = (key, label, value, help = '') =>
@@ -2673,24 +2081,24 @@ function renderPrinterManagement() {
             );
           typography.innerHTML = `<div class="printer-format-intro"><span>Bill format</span><b>These are the active controls used by the verified receipt layout.</b></div><details class="printer-format-group" open><summary><span><b>Paper & margins</b><small>Controls receipt width and safe printing area</small></span><i>⌄</i></summary><div class="printer-format-fields">${billField('billingMainWidth', 'Bill print width', 250, '250 is the verified printable width for this printer.')}${billField('billingOuterLeft', 'Left outer space', 14)}${billField('billingOuterTop', 'Top outer space', 0)}${billField('billingOuterRight', 'Right outer space', 0, 'Increase only if content reaches the right edge.')}${billField('billingOuterBottom', 'Bottom outer space', 0)}${billField('billingItemBoxHeight', 'Minimum item row height', 0)}</div></details><details class="printer-format-group"><summary><span><b>Text style</b><small>Font and hierarchy for the printed bill</small></span><i>⌄</i></summary><div class="printer-format-fields"><label>Font family<select id="printer-edit-font-family">${fonts.map((font) => `<option value="${esc(font)}" ${String(printer.fontFamily || 'Arial') === font ? 'selected' : ''}>${esc(font)}</option>`).join('')}</select></label>${billField('restaurantNameFontSize', 'Restaurant name font size', 15)}${billField('headerFooterFontSize', 'Header / footer font size', 10)}${billField('dateBillFontSize', 'Date / bill box font size', 10)}${billField('itemListingFontSize', 'Item listing font size', 10, 'Maximum 10 pt so the full four-column table fits.')}${billField('grandTotalFontSize', 'Grand total font size', 11, 'Maximum 11 pt so the final amount is never cut off.')}<label class="printer-edit-check"><input id="printer-edit-header-bold" type="checkbox" ${printer.headerBold !== false ? 'checked' : ''}> Bold restaurant name</label><label class="printer-edit-check"><input id="printer-edit-footer-bold" type="checkbox" ${printer.footerBold ? 'checked' : ''}> Bold footer</label></div></details><details class="printer-format-group"><summary><span><b>Items & spacing</b><small>Columns are automatically fitted to the verified 250-unit printable width</small></span><i>⌄</i></summary><div class="printer-format-fields">${billField('itemNameMinWidth', 'Minimum item-name width', 110, 'Qty, Price, and Amount are automatically protected and aligned.')}${billField('itemRowGap', 'Item row gap', 5)}${billField('separatorGap', 'Separator gap', 5)}${billField('separatorThickness', 'Separator thickness', 1)}</div></details>`;
         }
-        if (editCapability === 'bill') {
+        if (printer.type === 'bill') {
           const nameControl = document.createElement('label');
           nameControl.innerHTML = `Restaurant name<input id="printer-edit-restaurant-name" maxlength="60" value="${esc(printer.restaurantName || 'Red Lantern Restaurant')}">`;
           typography.querySelectorAll('.printer-format-fields')[1]?.prepend(nameControl);
         }
-        if (editCapability === 'kot') {
+        if (printer.type === 'kot') {
           const centerControl = document.createElement('label');
           centerControl.className = 'printer-edit-check';
           centerControl.innerHTML = `<input id="printer-edit-kot-details-centered" type="checkbox" ${printer.kotDetailsCentered ? 'checked' : ''}> Center KOT details`;
           typography.querySelector('.printer-format-fields')?.append(centerControl);
         }
-        if (editCapability === 'bill') {
+        if (printer.type === 'bill') {
           const columns = document.createElement('div');
           columns.className = 'receipt-column-values';
           columns.innerHTML = `<label>Item column width<input id="printer-edit-itemNameMinWidth" type="number" min="50" max="220" value="${Math.max(50, Number(printer.itemNameMinWidth) || 110)}"></label><label>Qty column width<input id="printer-edit-quantityColumnWidth" type="number" min="25" max="60" value="${Math.max(28, Number(printer.quantityColumnWidth) || 28)}"></label><label>Price column width<input id="printer-edit-priceColumnWidth" type="number" min="40" max="100" value="${Math.max(46, Number(printer.priceColumnWidth) || 46)}"></label><label>Amount column width<input id="printer-edit-amountColumnWidth" type="number" min="52" max="120" value="${Math.max(60, Number(printer.amountColumnWidth) || 60)}"></label>`;
           typography.querySelectorAll('.printer-format-fields')[2]?.append(columns);
         }
-        if (editCapability === 'bill') {
+        if (printer.type === 'bill') {
           const preview = document.createElement('aside');
           preview.className = 'receipt-live-preview';
           preview.innerHTML = `<div><b>Live bill preview</b><p>Click any receipt section to jump to its setting. This is a scaled 80 mm preview that updates before printing.</p></div><div class="receipt-preview-paper" data-receipt-preview-paper data-preview-target="billingMainWidth"><div class="rp-center rp-name" data-rp-name data-preview-target="restaurantNameFontSize">Red Lantern Restaurant</div><div class="rp-center" data-rp-header data-preview-target="header">Colva Goa<br>9922853605 / 9049558369<br>[Follow] Insta ID:<br>red_lantern_restaurant</div><div class="rp-rule"></div><div data-rp-date data-preview-target="dateBillFontSize">Date: 16/08/26 09:59 &nbsp;&nbsp; Dine In · AC</div><div class="rp-meta" data-preview-target="dateBillFontSize"><span>Cashier: biller</span><span>Bill No.: 05</span></div><b data-preview-target="dateBillFontSize">Token No.: 01</b><div class="rp-rule"></div><div class="rp-table rp-head" data-preview-target="itemListingFontSize"><span>Item</span><span>Qty</span><span>Price</span><span>Amount</span></div><div class="rp-rule"></div><div class="rp-table" data-preview-target="itemListingFontSize"><span>Tomato Salad<br>(Regular)</span><span>1</span><span>120.00</span><span>120.00</span></div><div class="rp-table" data-preview-target="itemListingFontSize"><span>Veg Sweet Corn<br>Soup (Regular)</span><span>1</span><span>120.00</span><span>120.00</span></div><div class="rp-rule"></div><div data-rp-summary data-preview-target="itemRowGap">Total Qty: 2 &nbsp;&nbsp; Sub Total: ₹240</div><div class="rp-grand" data-rp-grand data-preview-target="grandTotalFontSize">GRAND TOTAL: ₹240</div><div class="rp-rule"></div><div class="rp-foot" data-rp-footer data-preview-target="footer">Thank you for choosing us!<br>Kindly leave us a review<br>Google | Zomato | Swiggy</div></div>`;
@@ -2705,10 +2113,8 @@ function renderPrinterManagement() {
             '<button type="button" class="receipt-preview-column-drag" data-column-drag="item" title="Drag Item / Qty divider"></button><button type="button" class="receipt-preview-column-drag" data-column-drag="qty" title="Drag Qty / Price divider"></button><button type="button" class="receipt-preview-column-drag" data-column-drag="price" title="Drag Price / Amount divider"></button>'
           );
           const updatePreview = () => {
-            const value = (key, fallback = 0) => {
-              const parsed = Number(typography.querySelector(`#printer-edit-${key}`)?.value);
-              return Number.isFinite(parsed) ? parsed : fallback;
-            };
+            const value = (key, fallback = 0) =>
+              Number(typography.querySelector(`#printer-edit-${key}`)?.value) || fallback;
             const paper = preview.querySelector('[data-receipt-preview-paper]');
             paper.style.setProperty('--left', `${Math.min(30, value('billingOuterLeft')) / 3}px`);
             paper.style.setProperty('--right', `${Math.min(30, value('billingOuterRight')) / 3}px`);
@@ -2882,10 +2288,10 @@ function renderPrinterManagement() {
           });
           updatePreview();
         }
-        if (editCapability === 'kot') {
+        if (printer.type === 'kot') {
           const preview = document.createElement('aside');
           preview.className = 'receipt-live-preview';
-          preview.innerHTML = `<div><b>Live KOT preview</b><p>Click a ticket section to jump to its setting. Text, hierarchy, dividers and customer details update as you edit.</p></div><div class="receipt-preview-paper" data-kot-preview><b data-kp-kot data-preview-target="kotMetaFontSize">KOT # 12</b><div data-kp-customer data-preview-target="showCustomer">Table: AC · 1<br>Guest: Walk-in customer</div><div class="rp-rule"></div><div data-kp-item data-preview-target="kotItemFontSize"></div><div data-kp-item data-preview-target="kotItemFontSize"></div><div class="rp-rule"></div><div class="rp-foot" data-kp-footer data-preview-target="kotBottomFeedLines"></div></div>`;
+          preview.innerHTML = `<div><b>Live KOT preview</b><p>Click a ticket section to jump to its setting. Text, hierarchy, dividers and customer details update as you edit.</p></div><div class="receipt-preview-paper" data-kot-preview><div class="rp-center rp-name" data-kp-title data-preview-target="kotTitleFontSize">Kitchen printer</div><div class="rp-rule"></div><b data-kp-kot data-preview-target="kotMetaFontSize">KOT # 12</b><div data-kp-customer data-preview-target="showCustomer">Table: AC · 1<br>Guest: Walk-in customer</div><div class="rp-rule"></div><div data-kp-item data-preview-target="kotItemFontSize"></div><div data-kp-item data-preview-target="kotItemFontSize"></div><div class="rp-rule"></div><div class="rp-foot" data-kp-footer data-preview-target="kotBottomFeedLines"></div></div>`;
           typography.prepend(preview);
           const updateKotPreview = () => {
             const value = (key, fallback = 0) => {
@@ -2894,11 +2300,6 @@ function renderPrinterManagement() {
             };
             const pt = (points, min, max) => Math.max(min, Math.min(max, points)) * 1.333;
             const paper = preview.querySelector('[data-kot-preview]');
-            const paperWidth =
-              Number(document.getElementById('printer-edit-paper')?.value) === 58 ? 58 : 80;
-            // Keep the browser mock-up proportional to the paper selection so
-            // staff can see the same wrapping difference before printing.
-            paper.style.width = `${Math.round((280 * paperWidth) / 80)}px`;
             const centered = !!document.getElementById('printer-edit-kot-details-centered')
               ?.checked;
             const showSerial = !!document.getElementById('printer-edit-show-serial')?.checked;
@@ -2906,6 +2307,12 @@ function renderPrinterManagement() {
               '--receipt-font',
               typography.querySelector('#printer-edit-font-family')?.value || 'Arial'
             );
+            preview.querySelector('[data-kp-title]').style.fontSize =
+              `${pt(value('kotTitleFontSize', 15), 10, 22)}px`;
+            preview.querySelector('[data-kp-title]').style.fontWeight =
+              document.getElementById('printer-edit-header-bold')?.checked === false
+                ? '400'
+                : '800';
             preview.querySelector('[data-kp-kot]').style.fontSize =
               `${pt(value('kotMetaFontSize', 10), 8, 18)}px`;
             preview.querySelector('[data-kp-kot]').style.textAlign = centered ? 'center' : 'left';
@@ -2933,7 +2340,6 @@ function renderPrinterManagement() {
             'printer-edit-customer',
             'printer-edit-show-serial',
             'printer-edit-kot-details-centered',
-            'printer-edit-paper',
           ].forEach((id) =>
             document.getElementById(id)?.addEventListener('input', updateKotPreview)
           );
@@ -2972,16 +2378,26 @@ function renderPrinterManagement() {
             .forEach((input) => input.addEventListener('input', updateKotFeed));
           document.getElementById('printer-edit-space')?.addEventListener('input', updateKotFeed);
           updateKotFeed();
+          const updateKotTitle = () => {
+            preview.querySelector('[data-kp-title]').textContent =
+              String(
+                document.getElementById('printer-edit-name')?.value || printer.name || 'Kitchen'
+              ).trim() || 'Kitchen';
+          };
+          document.getElementById('printer-edit-name')?.addEventListener('input', updateKotTitle);
+          updateKotTitle();
           preview.addEventListener(
             'click',
             (event) => {
               const target = event.target.closest('[data-preview-target]')?.dataset.previewTarget;
               const input =
-                target === 'footer'
-                  ? document.getElementById('printer-edit-kotBottomFeedLines')
-                  : event.target.closest('.rp-rule')
-                    ? document.getElementById('printer-edit-separatorGap')
-                    : null;
+                target === 'header'
+                  ? document.getElementById('printer-edit-kotTitleFontSize')
+                  : target === 'footer'
+                    ? document.getElementById('printer-edit-kotBottomFeedLines')
+                    : event.target.closest('.rp-rule')
+                      ? document.getElementById('printer-edit-separatorGap')
+                      : null;
               if (!input) return;
               event.stopImmediatePropagation();
               input.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -3000,21 +2416,20 @@ function renderPrinterManagement() {
           section.append(fields);
           group.replaceWith(section);
         });
-        if (editCapability === 'kot') {
+        if (printer.type === 'kot') {
           const spacing = document.createElement('section');
           spacing.className = 'printer-format-group';
           spacing.innerHTML = `<div class="printer-format-group-head"><span><b>Item & paper spacing</b><small>Controls space between KOT items and paper fed after the ticket</small></span></div><div class="printer-format-fields">${field('itemRowGap', 'Item row gap', 5)}${field('kotBottomFeedLines', 'Bottom feed lines', 3, 'Base paper feed after the KOT; Extra bottom space adds to this.')}</div>`;
           typography.append(spacing);
         }
         grid.insertBefore(typography, anchor);
-        if (editCapability === 'kot') {
+        if (printer.type === 'kot') {
           [
             'printer-edit-header',
             'printer-edit-footer',
             'printer-edit-show-name',
             'printer-edit-footer-bold',
             'printer-edit-kotHeaderFontSize',
-            'printer-edit-kotTitleFontSize',
             'printer-edit-kotFooterFontSize',
           ].forEach((id) => document.getElementById(id)?.closest('label')?.remove());
         }
@@ -3026,13 +2441,10 @@ function renderPrinterManagement() {
     printBridgeState === 'available'
       ? 'Print Bridge is running — installed printers are available.'
       : 'Print Bridge is not detected on this computer.';
-  content.innerHTML = `<section class="manage-printers"><div class="manage-printers-head"><div><span class="eyebrow">Printer setup</span><h3>Manage printers</h3><p>Connect any number of installed printers. Every Bill printer receives a bill copy using its own layout; KOT printers receive only their routed menu items.</p></div><span class="bridge-status ${printBridgeState === 'available' ? 'online' : ''}">${bridgeText}</span></div><div class="add-system-printer"><div class="add-printer-copy"><b>Add an installed printer</b><span>Choose a printer already available on this Windows computer.</span></div><label class="quick-printer-name">Printer name <input id="quick-printer-name" maxlength="60" placeholder="e.g. Kitchen Printer"></label><select id="quick-system-printer"><option value="">Choose installed printer</option>${installedSystemPrinters.map((item) => `<option value="${esc(item.id)}">${esc(item.name)}</option>`).join('')}</select><button type="button" id="quick-add-printer">＋ Add printer</button></div><div class="printer-card-list">${
+  content.innerHTML = `<section class="manage-printers"><div class="manage-printers-head"><div><span class="eyebrow">Printer setup</span><h3>Manage printers</h3><p>Connect each installed printer once, then choose whether it handles bills or specific kitchen categories.</p></div><span class="bridge-status ${printBridgeState === 'available' ? 'online' : ''}">${bridgeText}</span></div><div class="add-system-printer"><div class="add-printer-copy"><b>Add an installed printer</b><span>Choose a printer already available on this Windows computer.</span></div><label class="quick-printer-name">Printer name <input id="quick-printer-name" maxlength="60" placeholder="e.g. Kitchen Printer"></label><select id="quick-system-printer"><option value="">Choose installed printer</option>${installedSystemPrinters.map((item) => `<option value="${esc(item.id)}">${esc(item.name)}</option>`).join('')}</select><button type="button" id="quick-add-printer">＋ Add printer</button></div><div class="printer-card-list">${
     operationsConfig.printers
       .map((item) => {
         const kinds = assignedKinds(item);
-        const capabilities = printerCapabilities(item);
-        const isBillPrinter = capabilities.includes('bill');
-        const isKotPrinter = capabilities.includes('kot');
         const routes = operationsConfig.routes.filter((route) => route.printerId === item.id);
         const allCategories = routes.some((route) => route.category === '*' && !route.itemName);
         const categories = [
@@ -3061,23 +2473,21 @@ function renderPrinterManagement() {
         const summary = allCategories
           ? 'Receives every current and future menu category.'
           : [...categories, ...overrideNames].join(' · ');
-        const capabilityLabel = capabilities.length
-          ? `${capabilities.map((capability) => (capability === 'bill' ? 'Bill' : 'KOT')).join(' + ')} printer`
-          : 'Unassigned printer';
-        const assignmentLabel = isBillPrinter
-          ? isKotPrinter
-            ? `Bill enabled · KOT: ${assignment}`
-            : 'Receives every final bill'
-          : assignment;
-        const assignmentSummary = isBillPrinter
-          ? isKotPrinter
-            ? `Bills use this queue's saved receipt format. KOT: ${summary || 'routing is not configured yet.'}`
-            : `Uses ${item.deviceName || 'the selected queue'} with this printer's own saved paper and layout settings.`
-          : summary || 'Choose Bill or KOT capabilities to complete setup.';
-        return `<article class="printer-card"><div class="printer-card-top"><span class="printer-card-mark ${isBillPrinter ? 'is-bill' : ''}" aria-hidden="true">${isBillPrinter && isKotPrinter ? '▣' : isBillPrinter ? '▤' : '⌑'}</span><div><span class="printer-card-label">${esc(capabilityLabel)}</span><h4>${esc(item.name)}</h4><p>${esc(item.deviceName || 'System printer not assigned')}</p></div><span class="printer-card-state ${kinds.length ? 'is-ready' : ''}">${kinds.length ? 'Configured' : 'Needs assignment'}</span></div><div class="printer-routing-summary"><b>${esc(assignmentLabel)}</b><span>${esc(assignmentSummary)}</span></div><div class="printer-card-actions"><button type="button" data-rename-printer="${esc(item.id)}">Edit</button><button type="button" data-assign-printer="${esc(item.id)}">Configure capabilities</button><button type="button" class="remove-printer" data-delete-printer="${esc(item.id)}">Remove</button></div></article>`;
+        return `<article class="printer-card"><div class="printer-card-top"><span class="printer-card-mark ${item.type === 'bill' ? 'is-bill' : ''}" aria-hidden="true">${item.type === 'bill' ? '▤' : '⌑'}</span><div><span class="printer-card-label">${item.type === 'bill' ? 'Bill printer' : 'KOT printer'}</span><h4>${esc(item.name)}</h4><p>${esc(item.deviceName || 'System printer not assigned')}</p></div><span class="printer-card-state ${kinds.length ? 'is-ready' : ''}">${kinds.length ? 'Configured' : 'Needs assignment'}</span></div><div class="printer-routing-summary"><b>${esc(assignment)}</b><span>${esc(summary || 'Choose Bill or KOT categories to complete setup.')}</span></div><div class="printer-card-actions"><button type="button" data-rename-printer="${esc(item.id)}">Rename</button><button type="button" data-assign-printer="${esc(item.id)}">Configure routing</button><button type="button" class="remove-printer" data-delete-printer="${esc(item.id)}">Remove</button></div></article>`;
       })
       .join('') || '<div class="operations-empty">Choose an installed printer above to begin.</div>'
   }</div></section>`;
+  content.querySelectorAll('.printer-card').forEach((card, index) => {
+    const configured = operationsConfig.printers[index];
+    if (configured?.type !== 'bill') return;
+    const title = card.querySelector('.printer-routing-summary b');
+    const description = card.querySelector('.printer-routing-summary span');
+    if (title) title.textContent = 'Final bill printing enabled';
+    if (description)
+      description.textContent = configured.deviceName
+        ? `All final customer bills print on ${configured.deviceName}.`
+        : 'Choose an installed system printer to enable final bill printing.';
+  });
   content.querySelectorAll('[data-rename-printer]').forEach((button) => {
     button.className = 'printer-action-icon';
     button.title = 'Edit printer';
@@ -3104,6 +2514,21 @@ function renderPrinterManagement() {
   content.querySelectorAll('[data-assign-printer]').forEach((button) => {
     button.className = 'printer-assign-button';
     button.textContent = 'Assign';
+  });
+}
+function refreshBillPrinterSummary() {
+  document.querySelectorAll('.printer-card').forEach((card, index) => {
+    const printer = operationsConfig.printers[index];
+    if (printer?.type !== 'bill') return;
+    const summary = card.querySelector('.printer-routing-summary');
+    if (!summary) return;
+    const title = summary.querySelector('b');
+    const description = summary.querySelector('span');
+    if (title) title.textContent = 'Final bill printing enabled';
+    if (description)
+      description.textContent = printer.deviceName
+        ? `All final customer bills print on ${printer.deviceName}.`
+        : 'Choose an installed system printer to enable final bill printing.';
   });
 }
 function renderTableAllocation() {
@@ -3179,14 +2604,7 @@ function renderKitchenDisplay() {
         : stationStatus === 'preparing'
           ? ['ready', 'Mark food ready']
           : ['', 'Food is ready'];
-    return `<article class="kds-ticket" data-kds-status="${esc(stationStatus)}"><div class="kds-ticket-top"><div><span>KOT no.</span><b>${kot?.kot_number ? `#${esc(kot.kot_number)}` : 'Pending print'}</b></div><div class="kds-table-badge ${isTable ? '' : 'is-counter'}"><small>${isTable ? 'Table no.' : 'Order type'}</small><b>${esc(tableText || '—')}</b></div><div><span>Order</span><b>#${esc(String(ticket.order.daily_order_number || '').padStart(2, '0'))}</b></div></div><div class="kds-meta"><span>${esc(ticket.order.customer_name || 'Walk-in customer')}</span><b>◷ ${elapsed}</b></div><div class="kds-station">${esc(ticket.printer.name)} · ${esc(fulfillmentLabel(ticket.order))}</div><div class="kds-items">${kotItems
-      .map((item) => {
-        const modifiers = Addons.modifierText(item.modifiers);
-        return `<div><span><b>${Number(item.quantity || 0)}×</b> ${esc(item.name)}${item.portion ? ` · ${esc(item.portion)}` : ''}${modifiers ? `<small>+ ${esc(modifiers)}</small>` : ''}</span></div>`;
-      })
-      .join(
-        ''
-      )}</div>${ticket.order.special_request ? `<p class="kds-note">Note: ${esc(ticket.order.special_request)}</p>` : ''}${action[0] && kot?.kot_number ? `<button type="button" class="kds-action ${action[0] === 'ready' ? 'is-ready' : ''}" data-kds-status-action="${esc(action[0])}" data-kds-order="${esc(ticket.order.id)}" data-kds-printer="${esc(ticket.printer.id)}" data-kds-kot="${esc(kot.kot_number)}">${action[1]}</button>` : `<button type="button" class="kds-action is-ready" disabled>${kot?.kot_number ? 'Food is ready' : 'Awaiting KOT'}</button>`}</article>`;
+    return `<article class="kds-ticket" data-kds-status="${esc(stationStatus)}"><div class="kds-ticket-top"><div><span>KOT no.</span><b>${kot?.kot_number ? `#${esc(kot.kot_number)}` : 'Pending print'}</b></div><div class="kds-table-badge ${isTable ? '' : 'is-counter'}"><small>${isTable ? 'Table no.' : 'Order type'}</small><b>${esc(tableText || '—')}</b></div><div><span>Order</span><b>#${esc(String(ticket.order.daily_order_number || '').padStart(2, '0'))}</b></div></div><div class="kds-meta"><span>${esc(ticket.order.customer_name || 'Walk-in customer')}</span><b>◷ ${elapsed}</b></div><div class="kds-station">${esc(ticket.printer.name)} · ${esc(fulfillmentLabel(ticket.order))}</div><div class="kds-items">${kotItems.map((item) => `<div><span><b>${Number(item.quantity || 0)}×</b> ${esc(item.name)}${item.portion ? ` · ${esc(item.portion)}` : ''}</span></div>`).join('')}</div>${ticket.order.special_request ? `<p class="kds-note">Note: ${esc(ticket.order.special_request)}</p>` : ''}${action[0] && kot?.kot_number ? `<button type="button" class="kds-action ${action[0] === 'ready' ? 'is-ready' : ''}" data-kds-status-action="${esc(action[0])}" data-kds-order="${esc(ticket.order.id)}" data-kds-printer="${esc(ticket.printer.id)}" data-kds-kot="${esc(kot.kot_number)}">${action[1]}</button>` : `<button type="button" class="kds-action is-ready" disabled>${kot?.kot_number ? 'Food is ready' : 'Awaiting KOT'}</button>`}</article>`;
   };
   content.innerHTML = `<section class="kds"><div class="kds-head"><div><button type="button" class="assignment-back" data-operations-tab="home">‹ Back</button><h3>Kitchen display</h3><p>Choose which KOT-routed stations this screen should show. Printed KOTs continue as normal.</p><div class="kds-station-picker"><button type="button" class="${selectedStations.size ? '' : 'is-active'}" data-kds-station="all">All stations</button>${stations.map((station) => `<button type="button" class="${selectedStations.has(station.id) ? 'is-active' : ''}" data-kds-station="${esc(station.id)}">${esc(station.name)}</button>`).join('') || '<span>Configure a KOT route to add a kitchen station.</span>'}</div><div class="kds-legend"><span>Blue · accepted</span><span>Amber · preparing</span><span>Green · ready</span><span>Auto-refreshes every 3 seconds</span></div></div><button type="button" class="kds-fullscreen" data-kds-fullscreen>⛶ Full screen</button></div><div class="kds-grid">${visibleTickets.map(renderTicket).join('') || '<div class="kds-empty"><b>No active kitchen tickets for this screen</b><br>Choose another station above, or accept an order routed to this station.</div>'}</div></section>`;
 }
@@ -3263,14 +2681,7 @@ function renderOperations() {
               : elapsedMinutes < 60
                 ? `${elapsedMinutes} min`
                 : `${Math.floor(elapsedMinutes / 60)} hr ${elapsedMinutes % 60} min`;
-          return `<tr><td><b class="kot-number">${savedKot?.kot_number ? `#${esc(savedKot.kot_number)}` : '—'}</b><small>${savedKot ? 'Printed KOT' : 'Not printed yet'}</small></td><td><b>#${esc(orderNumber)}</b></td><td>${type}</td><td><b>${esc(ticket.order.customer_name || 'Guest')}</b><small>${esc(ticket.order.customer_phone || '—')}</small></td><td>${ticket.items
-            .map((item) => {
-              const modifiers = Addons.modifierText(item.modifiers);
-              return `<span>${Number(item.quantity || 0)}× ${esc(item.name)}${item.portion ? ` · ${esc(item.portion)}` : ''}${modifiers ? `<small>+ ${esc(modifiers)}</small>` : ''}</span>`;
-            })
-            .join(
-              ''
-            )}</td><td>${createdAt ? new Date(createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—'}</td><td><b>${elapsed}</b></td><td><span class="printer-type kot">${esc(ticket.printer?.name || 'Unassigned')}</span></td><td><span class="kot-status">${esc(ticket.order.status || 'new')}</span></td><td><button type="button" class="kot-print-action" data-print-kot="${esc(ticket.order.id)}" data-printer-id="${esc(ticket.printer?.id || '')}">${savedKot ? 'Reprint KOT' : 'Print KOT'}</button></td></tr>`;
+          return `<tr><td><b class="kot-number">${savedKot?.kot_number ? `#${esc(savedKot.kot_number)}` : '—'}</b><small>${savedKot ? 'Printed KOT' : 'Not printed yet'}</small></td><td><b>#${esc(orderNumber)}</b></td><td>${type}</td><td><b>${esc(ticket.order.customer_name || 'Guest')}</b><small>${esc(ticket.order.customer_phone || '—')}</small></td><td>${ticket.items.map((item) => `<span>${Number(item.quantity || 0)}× ${esc(item.name)}${item.portion ? ` · ${esc(item.portion)}` : ''}</span>`).join('')}</td><td>${createdAt ? new Date(createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—'}</td><td><b>${elapsed}</b></td><td><span class="printer-type kot">${esc(ticket.printer?.name || 'Unassigned')}</span></td><td><span class="kot-status">${esc(ticket.order.status || 'new')}</span></td><td><button type="button" class="kot-print-action" data-print-kot="${esc(ticket.order.id)}" data-printer-id="${esc(ticket.printer?.id || '')}">${savedKot ? 'Reprint KOT' : 'Print KOT'}</button></td></tr>`;
         })
         .join('') ||
       '<tr><td colspan="10" class="kot-table-empty">No live KOTs right now. New and active orders will appear here.</td></tr>'
@@ -3291,7 +2702,119 @@ function renderOperations() {
     );
   } else {
     renderPrinterManagement();
+    refreshBillPrinterSummary();
     return;
+    const kotPrinters = operationsConfig.printers.filter((printer) => printer.type === 'kot');
+    const categories = [
+      ...new Set(operationsMenu.map((item) => item.category).filter(Boolean)),
+    ].sort();
+    const printerOptions = kotPrinters
+      .map((printer) => `<option value="${esc(printer.id)}">${esc(printer.name)}</option>`)
+      .join('');
+    content.innerHTML = `<section class="operations-section"><div class="operations-section-head"><div><span class="eyebrow">Step 1</span><h3>Printers</h3><p>Create every printer used by your restaurant. You can add as many KOT and Bill printers as needed.</p></div><span class="operations-count">${operationsConfig.printers.length} configured</span></div><div class="operations-printer-form"><label>Printer name<input id="operation-printer-name" maxlength="60" placeholder="e.g. Tandoori Printer"></label><label>Printer type<select id="operation-printer-type"><option value="kot">KOT printer</option><option value="bill">Bill printer</option></select></label><button type="button" id="operation-add-printer"><span aria-hidden="true">＋</span> Add printer</button></div><div class="operations-grid printer-grid">${operationsConfig.printers.map((printer) => `<article class="operation-printer"><div class="operation-printer-head"><span class="printer-card-icon ${esc(printer.type)}" aria-hidden="true">${printer.type === 'bill' ? '▣' : '⌑'}</span><div><h3>${esc(printer.name)}</h3><p>${printer.type === 'bill' ? 'Counter / bill receipt printer' : 'Kitchen order ticket printer'}</p></div><span class="printer-type ${esc(printer.type)}">${esc(printer.type)}</span></div><button type="button" data-delete-printer="${esc(printer.id)}">Remove</button></article>`).join('') || '<div class="operations-empty">Add your first printer to start routing KOTs.</div>'}</div></section><section class="operations-section routing-section"><div class="operations-section-head"><div><span class="eyebrow">Step 2</span><h3>KOT routing</h3><p>Select every category this printer should receive. Use the item override only for a single-item exception.</p></div><span class="operations-count">${operationsConfig.routes.length} rules</span></div><div class="operations-route-form"><label>Send to printer<select id="operation-route-printer"><option value="">Choose KOT printer</option>${printerOptions}</select></label><div class="category-picker"><div class="category-picker-top"><b>Categories for this printer</b><span id="route-category-count">0 selected</span></div><input id="operation-route-category-search" class="category-search" type="search" placeholder="Search categories"><div id="operation-route-categories" class="category-checklist">${categories.map((category) => `<label class="category-choice"><input class="operation-route-category-check" type="checkbox" value="${esc(category)}"><span>${esc(category)}</span></label>`).join('')}</div></div><label>Specific item <select id="operation-route-item" disabled><option value="">Select one category first</option></select></label><button type="button" id="operation-add-route">Add selected routes</button></div><div class="routing-list">${
+      operationsConfig.routes
+        .map((route) => {
+          const printer = operationsConfig.printers.find((item) => item.id === route.printerId);
+          return `<div class="route-row"><span class="route-icon" aria-hidden="true">⌑</span><div><b>${esc(route.category)}${route.itemName ? ` · ${esc(route.itemName)}` : ' · all items'}</b><span>Print on ${esc(printer?.name || 'Missing printer')}</span></div><button type="button" data-delete-route="${esc(route.id)}">Remove</button></div>`;
+        })
+        .join('') ||
+      '<div class="operations-empty">No KOT routes yet. Select one or more categories above to set up routing.</div>'
+    }</div></section><div class="operations-save-bar"><span>Changes are saved only when you confirm.</span><button type="button" id="operations-save" class="operations-save">Save printer configuration</button></div>`;
+    const printerForm = document.querySelector('.operations-printer-form');
+    const addPrinterButton = document.getElementById('operation-add-printer');
+    if (printerForm && addPrinterButton) {
+      const setupFlow = document.createElement('div');
+      setupFlow.className = 'printer-setup-flow';
+      const isMac = /macintosh|mac os x/i.test(navigator.userAgent);
+      const bridgeCommand = isMac
+        ? 'bash ./install-print-bridge-macos.sh'
+        : 'powershell -ExecutionPolicy Bypass -File .\\install-print-bridge-windows.ps1';
+      const bridgeLabel =
+        printBridgeState === 'available'
+          ? 'Print Bridge is running on this computer.'
+          : 'Print Bridge is not running on this computer.';
+      setupFlow.innerHTML = `<i aria-hidden="true">▣</i><div><b>Add a restaurant printer</b><span>Give it a clear role, select its installed system printer, then assign its menu categories in Step 2.</span></div><div class="bridge-setup"><b>${bridgeLabel}</b><span>One-time setup on every computer that has printers. Open Terminal / PowerShell in the website folder, then run:</span><code>${esc(bridgeCommand)}</code><button type="button" id="copy-print-bridge-command" data-command="${esc(bridgeCommand)}">Copy setup command</button></div>`;
+      printerForm.before(setupFlow);
+      const deviceField = document.createElement('label');
+      const bridgeMessage =
+        printBridgeState === 'checking'
+          ? 'Detecting installed printers…'
+          : printBridgeState === 'offline'
+            ? 'Print Bridge not detected'
+            : 'Choose installed printer';
+      deviceField.innerHTML = `Installed system printer<select id="operation-printer-device"><option value="">${bridgeMessage}</option>${installedSystemPrinters.map((printer) => `<option value="${esc(printer.id)}">${esc(printer.name)}</option>`).join('')}</select>`;
+      printerForm.insertBefore(deviceField, addPrinterButton);
+    }
+    document.querySelectorAll('.operation-printer').forEach((card, index) => {
+      const printer = operationsConfig.printers[index];
+      if (!printer) return;
+      const endpoint = document.createElement('p');
+      endpoint.className = `printer-endpoint${printer.deviceName ? '' : ' is-pending'}`;
+      endpoint.textContent = printer.deviceName
+        ? `System printer · ${printer.deviceName}`
+        : 'System printer to be assigned during installation';
+      card.querySelector('.operation-printer-head')?.after(endpoint);
+    });
+    const routeForm = document.querySelector('.operations-route-form');
+    const categoryPicker = routeForm?.querySelector('.category-picker');
+    const printerControl = document.getElementById('operation-route-printer')?.closest('label');
+    const itemControl = document.getElementById('operation-route-item')?.closest('label');
+    const addRouteButton = document.getElementById('operation-add-route');
+    if (routeForm && categoryPicker && printerControl && itemControl && addRouteButton) {
+      const controls = document.createElement('div');
+      controls.className = 'route-side-controls';
+      controls.append(printerControl, itemControl, addRouteButton);
+      routeForm.prepend(controls);
+
+      const assignedCategoryCount = new Set(
+        operationsConfig.routes
+          .filter((route) => route.category !== '*' && !route.itemName)
+          .map((route) => route.category)
+      ).size;
+      const assignedItemCount = operationsConfig.routes.filter((route) => route.itemName).length;
+      const allRoute = operationsConfig.routes.find(
+        (route) => route.category === '*' && !route.itemName
+      );
+      categoryPicker.insertAdjacentHTML(
+        'afterbegin',
+        `<label class="all-categories-choice"><input id="operation-route-all-categories" type="checkbox" ${allRoute ? 'checked' : ''}><span><b>All categories</b><small>${allRoute ? `Assigned to ${esc(operationsConfig.printers.find((printer) => printer.id === allRoute.printerId)?.name || 'a KOT printer')}` : `${assignedCategoryCount} categories assigned · ${assignedItemCount} item overrides`}</small></span><em>⌄</em></label><p class="all-categories-help">Use this only when one station should receive every current and future category. Category or item rules still take priority.</p>`
+      );
+      if (allRoute)
+        document
+          .querySelectorAll('.operation-route-category-check, .operation-route-item-check')
+          .forEach((input) => {
+            input.disabled = true;
+            input.checked = false;
+          });
+      document.querySelectorAll('.category-choice').forEach((choice) => {
+        const category = choice.querySelector('input')?.value || '';
+        const items = operationsMenu
+          .filter((item) => item.category === category)
+          .sort((a, b) => a.name.localeCompare(b.name));
+        const assigned = operationsConfig.routes.filter((route) => route.category === category);
+        const preview = document.createElement('div');
+        preview.className = 'category-item-preview';
+        preview.hidden = true;
+        preview.innerHTML = `<div><b>Select individual dishes</b><span>${assigned.length ? `${assigned.length} routing rule${assigned.length === 1 ? '' : 's'} saved` : `${items.length} menu item${items.length === 1 ? '' : 's'}`}</span></div>${items.map((item) => `<label class="category-item-choice"><input class="operation-route-item-check" type="checkbox" value="${esc(item.name)}" data-category="${esc(category)}"><span>${esc(item.name)}</span></label>`).join('') || '<span>No menu items yet</span>'}`;
+        const toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = 'category-expand';
+        toggle.dataset.routeCategoryExpand = category;
+        toggle.setAttribute('aria-label', `Show ${category} items`);
+        toggle.textContent = '⌄';
+        choice.append(toggle);
+        choice.after(preview);
+      });
+    }
+    const saveStatus = document.querySelector('.operations-save-bar span');
+    if (saveStatus) {
+      saveStatus.textContent =
+        printBridgeConfigState === 'synced'
+          ? 'Saved securely in the cloud and on this restaurant computer.'
+          : printBridgeConfigState === 'waiting-for-bridge'
+            ? 'Saved securely in the cloud. The local offline copy will sync when Print Bridge is running.'
+            : 'Save once. The local Print Bridge will retain this routing for offline use.';
+    }
   }
 }
 function detectedDesktopPlatform() {
@@ -3305,160 +2828,46 @@ function printBridgeSetupCommand(platform = detectedDesktopPlatform()) {
     ? 'bash ./install-print-bridge-macos.sh'
     : 'powershell -ExecutionPolicy Bypass -File .\\install-print-bridge-windows.ps1';
 }
-function compareBridgeVersions(first, second) {
-  const firstParts = String(first || '')
-      .split(/[^0-9]+/)
-      .filter(Boolean)
-      .map(Number),
-    secondParts = String(second || '')
-      .split(/[^0-9]+/)
-      .filter(Boolean)
-      .map(Number),
-    partCount = Math.max(firstParts.length, secondParts.length);
-  for (let index = 0; index < partCount; index += 1) {
-    const difference = (firstParts[index] || 0) - (secondParts[index] || 0);
-    if (difference) return difference > 0 ? 1 : -1;
-  }
-  return 0;
-}
-async function fetchPrintBridgeRelease() {
-  const controller = new AbortController(),
-    timeout = setTimeout(() => controller.abort(), 1800);
-  try {
-    const response = await fetch('/downloads/print-bridge-release.json', {
-      cache: 'no-store',
-      signal: controller.signal,
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok || !/^\d+(?:\.\d+)+$/.test(String(data.version || ''))) return null;
-    return data;
-  } catch (_) {
-    return null;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
 function renderPrintBridgeSetup() {
   const content = document.getElementById('operations-content');
   if (!content) return;
   const status = printBridgeSetupStatus;
   const platform = status?.platformLabel || detectedDesktopPlatform();
-  const latestBridgeVersion = String(printBridgeRelease?.version || '');
-  const installedBridgeVersion = String(status?.version || '');
-  const updateAvailable =
-    !!installedBridgeVersion &&
-    !!latestBridgeVersion &&
-    compareBridgeVersions(installedBridgeVersion, latestBridgeVersion) < 0;
   const download =
     platform === 'macOS'
-      ? printBridgeRelease?.downloads?.macOS || '/downloads/Red-Lantern-Print-Bridge-macOS.zip'
-      : printBridgeRelease?.downloads?.windows || '/downloads/Red-Lantern-Print-Bridge-Windows.zip';
-  const bridgeVersionInfo = `<div class="bridge-version-info"><span>Installed: <b>${installedBridgeVersion ? `v${esc(installedBridgeVersion)}` : 'Not installed'}</b></span><span>Latest approved: <b>${latestBridgeVersion ? `v${esc(latestBridgeVersion)}` : 'Checking…'}</b></span>${updateAvailable ? '<em>Update available</em>' : installedBridgeVersion && latestBridgeVersion ? '<em class="is-current">Up to date</em>' : ''}</div>`;
-  const bridgeUpdateAction = `${bridgeVersionInfo}<a class="quiet-button bridge-download" href="${esc(download)}" download title="Download the current Print Bridge setup for this computer">${updateAvailable ? `Update to v${esc(latestBridgeVersion)}` : 'Install / update Bridge'}</a>`;
-  const missingPrinters = Number(status?.missingConfiguredPrinterCount || 0),
-    unavailablePrinters = Number(status?.unavailableConfiguredPrinterCount || 0),
-    unreachablePrinters = Number(status?.unreachableConfiguredPrinterCount || 0),
-    unroutedItems = Number(status?.unroutedItemCount || 0),
-    configured =
-      !!status?.cloud &&
-      Number(status?.configuredBillPrinterCount || 0) > 0 &&
-      Number(status?.configuredKotRouteCount || 0) > 0 &&
-      !missingPrinters &&
-      !unavailablePrinters &&
-      !unreachablePrinters &&
-      !unroutedItems;
-  const failedJobs = Number(
-      status?.ledgerSummary?.printJobs?.unresolvedIssues ??
-        status?.ledgerSummary?.printJobs?.unresolvedFailed ??
-        0
-    ),
+      ? 'https://github.com/grezello94/red-lantern-website/releases/latest/download/Red-Lantern-Print-Bridge-macOS.pkg'
+      : 'https://github.com/grezello94/red-lantern-website/releases/latest/download/Red-Lantern-Print-Bridge-Windows-Setup.exe';
+  const configured =
+    Number(status?.configuredBillPrinterCount || 0) > 0 &&
+    Number(status?.configuredKotRouteCount || 0) > 0;
+  const failedJobs = Number(status?.ledgerSummary?.printJobs?.unresolvedFailed || 0),
     failedIds = (Array.isArray(status?.recentPrintFailures) ? status.recentPrintFailures : [])
       .map((job) => job.id)
       .filter(Boolean),
     failureDetail = (Array.isArray(status?.recentPrintFailures) ? status.recentPrintFailures : [])
-      .map(
-        (job) =>
-          `${job.kind.toUpperCase()} · ${job.printerName}${job.status === 'uncertain' ? ' · output uncertain' : ''}`
-      )
+      .map((job) => `${job.kind.toUpperCase()} · ${job.printerName}`)
       .join(' · ');
-  const unavailablePrinterNames = (
-      Array.isArray(status?.unavailableConfiguredPrinters)
-        ? status.unavailableConfiguredPrinters
-        : []
-    )
-      .map((printer) => printer.name || printer.deviceName)
-      .filter(Boolean)
-      .join(', '),
-    unreachablePrinterNames = (
-      Array.isArray(status?.unreachableConfiguredPrinters)
-        ? status.unreachableConfiguredPrinters
-        : []
-    )
-      .map((printer) => printer.name || printer.deviceName)
-      .filter(Boolean)
-      .join(', ');
   const card = status?.checking
     ? `<span class="printing-status-icon is-checking" aria-hidden="true">…</span><div><h3>Preparing printing…</h3><p>This takes a moment.</p></div>`
     : status?.ok && failedJobs
-      ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Printing needs review</h3><p>${failedJobs} local print job${failedJobs === 1 ? '' : 's'} failed or ended with uncertain output${failureDetail ? ` (${esc(failureDetail)})` : ''}. Check for a physical slip and inspect the Windows printer queue before deliberately reprinting.</p><button type="button" class="quiet-button" data-acknowledge-print-failures="${esc(JSON.stringify(failedIds))}">Mark reviewed</button>${bridgeUpdateAction}<button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
-      : status?.ok && missingPrinters
-        ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Assigned printer is missing</h3><p>${missingPrinters} saved printer ${missingPrinters === 1 ? 'queue is' : 'queues are'} no longer installed in Windows/macOS. Reassign the device before service.</p><button type="button" class="quiet-button" data-operations-tab="printers">Manage printers</button>${bridgeUpdateAction}<button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
-        : status?.ok && unavailablePrinters
-          ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Printer needs a physical check</h3><p>The Bridge already checked Windows automatically. ${esc(unavailablePrinterNames || `${unavailablePrinters} configured printer queue${unavailablePrinters === 1 ? '' : 's'}`)} still reports Offline or Error. Staff only need to check that the printer has power, paper and a connected cable.</p><button type="button" class="quiet-button" data-operations-tab="printers">Manage printers</button>${bridgeUpdateAction}<button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
-          : status?.ok && unreachablePrinters
-            ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Printer needs a physical check</h3><p>The Bridge tested ${esc(unreachablePrinterNames || `${unreachablePrinters} configured LAN printer${unreachablePrinters === 1 ? '' : 's'}`)} automatically, but could not reach it. Staff only need to check printer power and its Ethernet/Wi-Fi connection.</p><button type="button" class="quiet-button" data-operations-tab="printers">Manage printers</button>${bridgeUpdateAction}<button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
-            : status?.ok && unroutedItems
-              ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Menu routing is incomplete</h3><p>${unroutedItems} menu item${unroutedItems === 1 ? '' : 's'} ${unroutedItems === 1 ? 'has' : 'have'} no live KOT printer route${status.unroutedItems?.length ? `: ${esc(status.unroutedItems.slice(0, 5).join(', '))}${unroutedItems > 5 ? '…' : ''}` : ''}.</p><button type="button" class="quiet-button" data-operations-tab="printers">Manage printers</button>${bridgeUpdateAction}</div>`
-              : status?.ok && !status.cloud
-                ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Cloud configuration is unavailable</h3><p>The local Bridge is running, but printer routes could not be checked against the live menu. Restore internet or sign in again, then check printing.</p>${bridgeUpdateAction}<button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
-                : status?.ok && configured
-                  ? `<span class="printing-status-icon" aria-hidden="true">✓</span><div><h3>Printing is ready</h3><p>This computer is ready to print bills and kitchen orders.</p>${bridgeUpdateAction}<button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
-                  : status?.ok
-                    ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Finish printer setup</h3><p>Print Bridge is running, but this computer needs an assigned Bill printer and a KOT route attached to a real system printer before service.</p><button type="button" class="quiet-button" data-operations-tab="printers">Manage printers</button>${bridgeUpdateAction}<button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
-                    : `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Set up printing</h3><p>${esc(status?.detail || `Install printing once on this ${platform} computer.`)}</p>${bridgeVersionInfo}<a class="operations-save bridge-download" href="${esc(download)}" download>Download latest Bridge</a><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`;
+      ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Printing needs review</h3><p>${failedJobs} local print job${failedJobs === 1 ? '' : 's'} failed${failureDetail ? ` (${esc(failureDetail)})` : ''}. Check paper, power, cable/network and the Windows printer queue, then reprint the affected KOT or Bill from Operations.</p><button type="button" class="quiet-button" data-acknowledge-print-failures="${esc(JSON.stringify(failedIds))}">Mark reviewed</button><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
+      : status?.ok && configured
+        ? `<span class="printing-status-icon" aria-hidden="true">✓</span><div><h3>Printing is ready</h3><p>This computer is ready to print bills and kitchen orders${status.version ? ` · Bridge ${esc(status.version)}` : ''}.</p><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
+        : status?.ok
+          ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Finish printer setup</h3><p>Print Bridge is running, but this computer needs an assigned Bill printer and a KOT route attached to a real system printer before service.</p><button type="button" class="quiet-button" data-operations-tab="printers">Manage printers</button><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
+          : `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Set up printing</h3><p>${esc(status?.detail || `Install printing once on this ${platform} computer.`)}</p><a class="operations-save bridge-download" href="${download}">Set up printing</a><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`;
   content.innerHTML = `<section class="simple-printing-setup"><button type="button" class="assignment-back" data-operations-tab="home">‹ Back</button><span class="eyebrow">Printing</span><div class="simple-printing-card">${card}</div></section>`;
-}
-
-function unroutedOperationItems(menu, config) {
-  const printers = new Map(
-    (Array.isArray(config?.printers) ? config.printers : [])
-      .filter((printer) => printerSupports(printer, 'kot') && printer.deviceName)
-      .map((printer) => [String(printer.id), printer])
-  );
-  const routes = (Array.isArray(config?.routes) ? config.routes : []).filter((route) =>
-    printers.has(String(route.printerId))
-  );
-  const missing = [];
-  (Array.isArray(menu) ? menu : []).forEach((item) => {
-    const portions = operationItemOptions(item).map((option) => option.portion);
-    const variants = portions.length ? portions : [''];
-    variants.forEach((portion) => {
-      const routed = routes.some((route) =>
-        route.category === '*'
-          ? !route.itemName && !route.portion
-          : route.category === item.category &&
-            ((!route.itemName && !route.portion) ||
-              (route.itemName === item.name && (!route.portion || route.portion === portion)))
-      );
-      if (!routed) missing.push(`${item.name || 'Unnamed item'}${portion ? ` (${portion})` : ''}`);
-    });
-  });
-  return [...new Set(missing)];
 }
 async function checkPrintBridgeSetup() {
   printBridgeSetupStatus = { checking: true };
   renderPrintBridgeSetup();
-  const releaseCheck = fetchPrintBridgeRelease();
   const cloudCheck = (async () => {
     const controller = new AbortController(),
       timeout = setTimeout(() => controller.abort(), 4000);
     try {
-      const response = await fetch('/api/orders/operations', {
-        cache: 'no-store',
-        signal: controller.signal,
-      });
-      if (!response.ok) return null;
-      return await response.json();
+      return (
+        await fetch('/api/orders/operations', { cache: 'no-store', signal: controller.signal })
+      ).ok;
     } catch (_) {
       return false;
     } finally {
@@ -3473,61 +2882,20 @@ async function checkPrintBridgeSetup() {
       signal: controller.signal,
     });
     clearTimeout(timeout);
-    let data = await response.json().catch(() => ({}));
+    const data = await response.json().catch(() => ({}));
     if (!response.ok || !data.ok)
       throw new Error(data.detail || data.error || 'The local service did not complete its check.');
-    rememberPrintBridgeWorkstation(data);
-    const [cloudData, release] = await Promise.all([cloudCheck, releaseCheck]);
-    printBridgeRelease = release;
+    printBridgeSetupStatus = { ...data, cloud: await cloudCheck };
     installedSystemPrinters = Array.from(
       { length: Number(data.printerCount) || 0 },
       (_, index) => installedSystemPrinters[index]
     ).filter(Boolean);
     printBridgeState = 'available';
-    // Only the authenticated cloud response may refresh the machine's durable
-    // printer routing. A failed/unauthenticated page load must never replace it
-    // with the browser's empty startup defaults.
-    if (cloudData?.config) {
-      operationsConfig = {
-        printers: Array.isArray(cloudData.config.printers) ? cloudData.config.printers : [],
-        routes: Array.isArray(cloudData.config.routes) ? cloudData.config.routes : [],
-        tableAreas: Array.isArray(cloudData.config.tableAreas)
-          ? cloudData.config.tableAreas
-          : operationsConfig.tableAreas || [],
-      };
-      printOperationsLoadedAt = Date.now();
-      cacheOperationsConfig(operationsConfig);
-      await syncOperationsToPrintBridge(operationsConfig);
-      await pairLegacyPrintersToThisWorkstation();
-      // Re-read readiness after automatic sync/pairing so an already working
-      // computer never shows a stale "Finish printer setup" warning.
-      try {
-        const refreshController = new AbortController();
-        const refreshTimeout = setTimeout(() => refreshController.abort(), 1800);
-        const refreshedResponse = await fetch(`${printBridgeOrigin}/v1/setup-status`, {
-          cache: 'no-store',
-          signal: refreshController.signal,
-        });
-        clearTimeout(refreshTimeout);
-        const refreshed = await refreshedResponse.json().catch(() => ({}));
-        if (refreshedResponse.ok && refreshed.ok) {
-          rememberPrintBridgeWorkstation(refreshed);
-          data = refreshed;
-        }
-      } catch (_) {}
-    }
-    const unrouted = cloudData ? unroutedOperationItems(cloudData.menu, operationsConfig) : [];
-    printBridgeSetupStatus = {
-      ...data,
-      cloud: !!cloudData,
-      unroutedItemCount: unrouted.length,
-      unroutedItems: unrouted,
-    };
+    void syncOperationsToPrintBridge(operationsConfig);
   } catch (error) {
-    printBridgeRelease = await releaseCheck;
     printBridgeSetupStatus = {
       ok: false,
-      cloud: !!(await cloudCheck),
+      cloud: await cloudCheck,
       detail: error.message || 'Print Bridge was not found.',
     };
     printBridgeState = 'offline';
@@ -3539,7 +2907,6 @@ async function loadOperations() {
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || 'Unable to load Operations.');
   operationsConfig = data.config || { printers: [], routes: [] };
-  printOperationsLoadedAt = Date.now();
   if (!Array.isArray(operationsConfig.tableAreas) || !operationsConfig.tableAreas.length)
     operationsConfig.tableAreas = readCachedTableAreas();
   else cacheTableAreas(operationsConfig.tableAreas);
@@ -3590,7 +2957,7 @@ async function discoverSystemPrinters() {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 2200);
-    const response = await fetch(`${printBridgeOrigin}/v1/printers`, {
+    const response = await fetch('http://127.0.0.1:9124/v1/printers', {
       cache: 'no-store',
       signal: controller.signal,
     });
@@ -3598,7 +2965,6 @@ async function discoverSystemPrinters() {
     const body = await response.json();
     if (!response.ok || !Array.isArray(body.printers))
       throw new Error('Print Bridge did not return installed printers.');
-    rememberPrintBridgeWorkstation(body);
     installedSystemPrinters = body.printers
       .map((printer) => ({
         id: String(printer.id || printer.name || ''),
@@ -3606,66 +2972,9 @@ async function discoverSystemPrinters() {
       }))
       .filter((printer) => printer.id && printer.name);
     printBridgeState = 'available';
-    void pairLegacyPrintersToThisWorkstation();
   } catch (_) {
     installedSystemPrinters = [];
     printBridgeState = 'offline';
-  }
-}
-async function pairLegacyPrintersToThisWorkstation() {
-  const workstationId = localWorkstationId();
-  if (
-    workstationPairingInFlight ||
-    !workstationId ||
-    !navigator.onLine ||
-    !printOperationsLoadedAt ||
-    !installedSystemPrinters.length ||
-    !Array.isArray(operationsConfig.printers)
-  )
-    return false;
-  const installedIds = new Set(installedSystemPrinters.map((printer) => String(printer.id)));
-  const installedNames = new Set(installedSystemPrinters.map((printer) => String(printer.name)));
-  let changed = false;
-  const printers = operationsConfig.printers.map((printer) => {
-    if (printer.workstationId) return printer;
-    const isInstalledHere =
-      installedIds.has(String(printer.deviceId || '')) ||
-      installedNames.has(String(printer.deviceName || ''));
-    if (!isInstalledHere) return printer;
-    changed = true;
-    return {
-      ...printer,
-      workstationId,
-      workstationName: printBridgeWorkstation.name,
-    };
-  });
-  if (!changed) return false;
-  workstationPairingInFlight = true;
-  try {
-    const response = await fetch('/api/orders/operations', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ config: { ...operationsConfig, printers } }),
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok || !data.config)
-      throw new Error(data.error || 'Automatic printer pairing could not be saved.');
-    operationsConfig = data.config;
-    printOperationsLoadedAt = Date.now();
-    cacheOperationsConfig(operationsConfig);
-    await syncOperationsToPrintBridge(operationsConfig);
-    const operationsPanelElement = document.getElementById('operations-panel');
-    if (operationsPanelElement && !operationsPanelElement.hidden) renderOperations();
-    return true;
-  } catch (error) {
-    reportOrdersDiagnostic({
-      level: 'warning',
-      message: `Automatic workstation pairing will retry: ${error.message}`,
-      source: 'print workstation pairing',
-    });
-    return false;
-  } finally {
-    workstationPairingInFlight = false;
   }
 }
 async function syncOperationsToPrintBridge(config) {
@@ -3676,7 +2985,7 @@ async function syncOperationsToPrintBridge(config) {
   try {
     const controller = new AbortController(),
       timeout = setTimeout(() => controller.abort(), 2800);
-    const response = await fetch(`${printBridgeOrigin}/v1/config`, {
+    const response = await fetch('http://127.0.0.1:9124/v1/config', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ config }),
@@ -3800,13 +3109,7 @@ function addSelectedRoutes() {
   if (!printerId) throw new Error('Choose a KOT printer before saving these categories.');
   if (allCategories) {
     operationsConfig.routes = operationsConfig.routes.filter(
-      (route) =>
-        !(
-          route.printerId === printerId &&
-          route.category === '*' &&
-          !route.itemName &&
-          !route.portion
-        )
+      (route) => !(route.category === '*' && !route.itemName)
     );
     operationsConfig.routes.push({ id: operationId(), printerId, category: '*', itemName: '' });
     return true;
@@ -3848,24 +3151,20 @@ function printKot(orderId, printerId) {
   if (!items.length) return;
   const popup = window.open('', 'red-lantern-kot', 'popup=yes,width=390,height=600');
   if (!popup) {
-    showStaffNotice('Please allow pop-ups to print this KOT.');
+    alert('Please allow pop-ups to print this KOT.');
     return;
   }
   const number = String(order.daily_order_number || '—').padStart(2, '0');
-  const tableLine =
-    order.mode === 'table'
-      ? `Table: ${order.table_area || 'Dining'} · ${order.table_number || '—'}`
-      : `Order: ${fulfillmentLabel(order)}`;
-  const guestLine = `Guest: ${order.customer_name || 'Walk-in customer'}`;
+  const placed = order.created_at
+    ? new Intl.DateTimeFormat('en-IN', {
+        timeZone: 'Asia/Kolkata',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      }).format(new Date(order.created_at))
+    : '';
   popup.document.write(
-    `<!doctype html><title>KOT #${esc(number)}</title><style>@page{size:80mm auto;margin:4mm}body{width:72mm;margin:0;font:12px Arial;color:#111}.center{text-align:center}.name{font-size:17px;font-weight:800}.rule{border:0;border-top:3px solid #111;margin:7px 0}.item{padding:3px 0;font-size:13px}.item b{font-size:15px}.modifier{display:block;margin-left:20px;font-size:11px;font-weight:700}</style><div class="center"><div class="name">${esc(printer?.name || 'Unassigned')}</div></div><hr class="rule"><b>KOT # ${esc(number)}</b><br>${esc(tableLine)}<br>${esc(guestLine)}<hr class="rule">${items
-      .map((item) => {
-        const modifiers = Addons.modifierText(item.modifiers);
-        return `<div class="item"><b>${Number(item.quantity || 0)}×</b> ${esc(item.name)}${item.portion ? ` (${esc(item.portion)})` : ''}${item.style ? ` · ${esc(item.style)}` : ''}${modifiers ? `<span class="modifier">+ ${esc(modifiers)}</span>` : ''}</div>`;
-      })
-      .join(
-        ''
-      )}${order.special_request ? `<div class="item"><b>Note:</b> ${esc(order.special_request)}</div>` : ''}<hr class="rule"><script>window.onload=()=>setTimeout(()=>window.print(),120);window.onafterprint=()=>window.close();<\/script>`
+    `<!doctype html><title>KOT #${esc(number)}</title><style>@page{size:80mm auto;margin:4mm}body{width:72mm;margin:0;font:12px Arial;color:#111}.center{text-align:center}.name{font-size:17px;font-weight:800}.rule{border:0;border-top:1px dashed #111;margin:9px 0}.item{padding:5px 0;font-size:13px}.item b{font-size:15px}small{color:#444}</style><div class="center"><div class="name">${esc(printer?.name || 'Unassigned')}</div></div><hr class="rule"><b>KOT No: ${esc(number)}</b><br><small>From: ${esc(fulfillmentLabel(order))}${placed ? ` · ${esc(placed)}` : ''}</small><hr class="rule">${items.map((item) => `<div class="item"><b>${Number(item.quantity || 0)}×</b> ${esc(item.name)}${item.portion ? ` (${esc(item.portion)})` : ''}${item.style ? ` · ${esc(item.style)}` : ''}</div>`).join('')}${order.special_request ? `<hr class="rule"><b>Note:</b> ${esc(order.special_request)}` : ''}<hr class="rule"><div class="center"><small>${esc(fulfillmentLabel(order))}</small></div><script>window.onload=()=>setTimeout(()=>window.print(),120);window.onafterprint=()=>window.close();<\/script>`
   );
   popup.document.close();
 }
@@ -3876,12 +3175,10 @@ async function dispatchKot(orderId, printerId) {
   });
   const data = await created.json();
   if (!created.ok) {
-    // The Reprint KOT action is already an explicit staff instruction. When
-    // there are no new items, reuse the latest ticket immediately instead of
-    // interrupting service with a browser confirmation dialog.
-    if (data.latestKot) {
+    if (data.latestKot && confirm(`No new items. Reprint KOT #${data.latestKot.kot_number}?`)) {
       data.kotNumber = data.latestKot.kot_number;
       data.tickets = data.latestKot.tickets;
+      data.order = data.order;
       data.reprint = true;
     } else throw new Error(data.error || 'Unable to create KOT.');
   }
@@ -3890,207 +3187,52 @@ async function dispatchKot(orderId, printerId) {
       `KOT #${data.kotNumber} was already sent. Use Reprint if another copy is needed.`
     );
   await Promise.all(
-    ticketsForThisWorkstation(data.tickets).map(async (ticket) => {
-      const response = await fetch(`${printBridgeOrigin}/v1/print-kot`, {
+    data.tickets.map(async (ticket) => {
+      const response = await fetch('http://127.0.0.1:9124/v1/print-kot', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           printJobId: `manual-kot:${orderId}:${data.kotNumber}:${ticket.printerName}:${Date.now()}`,
           printerName: ticket.printerName,
           printerLabel: ticket.printerLabel,
-          workstationId: ticket.workstationId || localWorkstationId(),
-          settings: printerFormat(
+          settings:
             operationsConfig.printers.find(
-              (printer) =>
-                printer.id === ticket.printerId ||
-                (printer.deviceName === ticket.printerName &&
-                  printerBelongsToWorkstation(printer, localWorkstationId()))
-            ),
-            'kot'
-          ),
+              (printer) => printer.deviceName === ticket.printerName
+            ) || {},
           items: ticket.items,
           order: {
             number: data.order.daily_order_number,
             kotNumber: data.kotNumber,
             reprint: !!data.reprint,
             customer: data.order.customer_name,
-            tableArea: data.order.table_area,
-            tableNumber: data.order.table_number,
+            phone: data.order.customer_phone,
             fulfillment: fulfillmentLabel(data.order),
             createdAt: data.order.created_at,
             note: data.order.special_request,
-            source: data.order.order_source,
-            captainName: data.order.captain_name,
-            customerPhone: data.order.customer_phone,
-            mode: data.order.mode,
           },
         }),
       });
-      await requireCompletedBridgePrint(response, 'The Print Bridge could not send this KOT.');
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || 'The Print Bridge could not send this KOT.');
     })
   );
 }
 
 const autoPrintInFlight = new Set();
-const autoPrintFollowups = new Map();
-const requestedTableBillInFlight = new Set();
-async function autoPrintRequestedTableBill(order, { receipt: preparedReceipt = null } = {}) {
-  if (
-    !order?.id ||
-    order.mode !== 'table' ||
-    order.service_state !== 'bill_requested' ||
-    !['accepted', 'preparing', 'ready'].includes(order.status) ||
-    requestedTableBillInFlight.has(order.id)
-  )
-    return;
-  requestedTableBillInFlight.add(order.id);
-  try {
-    // Prepare the receipt alongside local readiness instead of adding another
-    // cloud round trip after the print claim. Live dispatch already has it.
-    const receiptPromise = preparedReceipt
-      ? Promise.resolve({ receipt: preparedReceipt })
-      : fetch(`/api/orders/${encodeURIComponent(order.id)}/print`, { cache: 'no-store' })
-          .then(async (response) => {
-            const receipt = await response.json();
-            if (!response.ok) throw new Error(receipt.error || 'Unable to prepare the receipt.');
-            return { receipt };
-          })
-          .catch((error) => ({ error }));
-    const [bridge, printConfig] = await Promise.all([
-      bridgeHealth().catch(() => null),
-      getPrintOperationsConfig(),
-    ]);
-    if (!bridge?.ok) return;
-    rememberPrintBridgeWorkstation(
-      await bridge
-        .clone()
-        .json()
-        .catch(() => ({}))
-    );
-    const billPrinters = configuredPrintersFor(printConfig, 'bill', localWorkstationId());
-    if (!billPrinters.length) throw new Error('No Bill printer is assigned in Operations.');
-    const claimResponse = await fetch(
-      `/api/orders/${encodeURIComponent(order.id)}/bill-print/claim`,
-      {
-        method: 'POST',
-      }
-    );
-    const claim = await claimResponse.json().catch(() => ({}));
-    if (!claimResponse.ok)
-      throw new Error(claim.error || 'Unable to reserve this bill for printing.');
-    if (!claim.claimed) return;
-    try {
-      const prepared = await receiptPromise;
-      if (prepared.error) throw prepared.error;
-      const receipt = prepared.receipt;
-      await printBillOnConfiguredPrinters(billPrinters, receipt, `captain-bill:${order.id}`);
-      await fetch(`/api/orders/${encodeURIComponent(order.id)}/bill-print/complete`, {
-        method: 'POST',
-      });
-      const marked = await fetch(`/api/orders/${encodeURIComponent(order.id)}/bill-printed`, {
-        method: 'POST',
-      });
-      if (!marked.ok)
-        throw new Error('Bill printed, but the table could not be marked for settlement.');
-      await fetch(`/api/orders/${encodeURIComponent(order.id)}/service`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ serviceState: 'active' }),
-      });
-      await loadOrders();
-    } catch (error) {
-      await fetch(`/api/orders/${encodeURIComponent(order.id)}/bill-print/failed`, {
-        method: 'POST',
-      }).catch(() => {});
-      throw error;
-    }
-  } catch (error) {
-    reportOrdersDiagnostic({
-      level: 'warning',
-      message: `Captain bill request could not print: ${error.message || 'Unknown error'}`,
-      source: 'captain bill request',
-    });
-  } finally {
-    requestedTableBillInFlight.delete(order.id);
-  }
-}
-async function flushDeferredAutomaticPrints() {
-  if (deferredPrintSyncInProgress || !navigator.onLine) return;
-  const entries = deferredPrints();
-  if (!entries.length) return;
-  deferredPrintSyncInProgress = true;
-  try {
-    const health = await bridgeHealth().catch(() => null);
-    if (!health?.ok) return;
-    const remaining = [];
-    for (const entry of entries) {
-      const result = await autoPrintOrder(entry, {
-        deferred: true,
-        kotOnly: !!entry.kotOnly,
-      });
-      if (!result?.ok) {
-        // Keep retrying only if the Bridge disappeared again. A reachable
-        // Bridge that reports a printer/driver failure records that job for
-        // staff review; repeatedly sending it could create duplicate slips.
-        const bridgeStillOffline = !(await bridgeHealth().catch(() => null))?.ok;
-        if (bridgeStillOffline) remaining.push(entry);
-      }
-    }
-    // Do not overwrite orders queued while this recovery pass was awaiting I/O.
-    const processed = new Set(entries.map((entry) => entry.id));
-    saveDeferredPrints([
-      ...remaining,
-      ...deferredPrints().filter((entry) => !processed.has(entry.id)),
-    ]);
-  } finally {
-    deferredPrintSyncInProgress = false;
-  }
-}
-async function autoPrintOrder(order, { deferred = false, kotOnly = false } = {}) {
-  if (order?.id && autoPrintInFlight.has(order.id)) {
-    const previous = autoPrintFollowups.get(order.id);
-    autoPrintFollowups.set(order.id, {
-      order,
-      deferred,
-      kotOnly: previous ? previous.kotOnly && kotOnly : kotOnly,
-    });
-    return { ok: false, reason: 'KOT dispatch is already in progress.' };
-  }
-  const canReleaseToKitchen =
-    deferred ||
-    (['counter', 'table'].includes(order?.mode) &&
-      ['accepted', 'preparing', 'ready'].includes(order?.status));
+async function autoPrintOrder(order) {
+  const canReleaseToKitchen = order?.mode === 'counter' || order?.status === 'accepted';
   if (
     !order?.id ||
     !canReleaseToKitchen ||
     autoPrintInFlight.has(order.id) ||
-    ['rejected', 'cancelled'].includes(order.status) ||
-    (!deferred && order.status === 'completed')
+    ['completed', 'rejected', 'cancelled'].includes(order.status)
   )
     return { ok: false, reason: 'This order is not ready to print yet.' };
   autoPrintInFlight.add(order.id);
   try {
-    // Start cloud KOT creation and config loading immediately. The Bridge
-    // health result still gates physical output, but no longer delays the
-    // durable KOT request.
-    const bridgePromise = bridgeHealth().catch(() => null);
-    const operationsPromise = getPrintOperationsConfig().then(
-      (config) => ({ config }),
-      (error) => ({ error })
-    );
-    const createdPromise = fetch(`/api/orders/${encodeURIComponent(order.id)}/kots`, {
-      method: 'POST',
-    }).then(
-      (response) => ({ response }),
-      (error) => ({ error })
-    );
-    const bridge = await bridgePromise;
-    if (!bridge?.ok) {
-      // The KOT request was already dispatched. Consume it so a rejected
-      // request cannot become an unhandled promise; retry remains idempotent.
-      void createdPromise;
+    const bridge = await fetch('http://127.0.0.1:9124/health', { cache: 'no-store' });
+    if (!bridge.ok) {
       const reason = 'Print Bridge is not available on this counter computer.';
-      deferAutomaticPrint(order, { kotOnly });
       reportOrdersDiagnostic({
         level: 'warning',
         message: `Automatic printing skipped: ${reason}`,
@@ -4098,17 +3240,19 @@ async function autoPrintOrder(order, { deferred = false, kotOnly = false } = {})
       });
       return { ok: false, reason };
     }
-    rememberPrintBridgeWorkstation(
-      await bridge
-        .clone()
-        .json()
-        .catch(() => ({}))
+    const operationsPromise = fetch('/api/orders/operations', { cache: 'no-store' }).then(
+      async (response) => {
+        const operations = await response.json();
+        if (!response.ok)
+          throw new Error(operations.error || 'Printer configuration could not load.');
+        return Array.isArray(operations.config?.printers) ? operations.config.printers : [];
+      }
     );
     const kotPromise = (async () => {
       try {
-        const createdResult = await createdPromise;
-        if (createdResult.error) throw createdResult.error;
-        const created = createdResult.response;
+        const created = await fetch(`/api/orders/${encodeURIComponent(order.id)}/kots`, {
+          method: 'POST',
+        });
         const kot = await created.json().catch(() => ({}));
         const savedKot =
           !created.ok && created.status === 409 && kot.latestKot
@@ -4119,49 +3263,36 @@ async function autoPrintOrder(order, { deferred = false, kotOnly = false } = {})
               }
             : kot;
         if (created.ok || savedKot.kotNumber) {
-          const operationsResult = await operationsPromise;
-          if (operationsResult.error) throw operationsResult.error;
-          const printers = Array.isArray(operationsResult.config?.printers)
-            ? operationsResult.config.printers
-            : [];
+          const printers = await operationsPromise;
           await Promise.all(
-            ticketsForThisWorkstation(savedKot.tickets).map(async (ticket) => {
-              const settings = printerFormat(
-                printers.find(
-                  (printer) =>
-                    printer.id === ticket.printerId ||
-                    (printer.deviceName === ticket.printerName &&
-                      printerBelongsToWorkstation(printer, localWorkstationId()))
-                ),
-                'kot'
-              );
-              const response = await fetch(`${printBridgeOrigin}/v1/print-kot`, {
+            (savedKot.tickets || []).map(async (ticket) => {
+              const settings =
+                printers.find((printer) => printer.deviceName === ticket.printerName) || {};
+              const response = await fetch('http://127.0.0.1:9124/v1/print-kot', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                   printJobId: `auto-kot:${order.id}:${savedKot.kotNumber}:${ticket.printerName}`,
                   printerName: ticket.printerName,
                   printerLabel: ticket.printerLabel,
-                  workstationId: ticket.workstationId || localWorkstationId(),
                   settings,
                   items: ticket.items,
                   order: {
                     number: savedKot.order?.daily_order_number,
                     kotNumber: savedKot.kotNumber,
                     customer: savedKot.order?.customer_name,
-                    tableArea: savedKot.order?.table_area,
-                    tableNumber: savedKot.order?.table_number,
+                    phone: savedKot.order?.customer_phone,
                     fulfillment: fulfillmentLabel(savedKot.order),
                     createdAt: savedKot.order?.created_at,
                     note: savedKot.order?.special_request,
-                    source: savedKot.order?.order_source,
-                    captainName: savedKot.order?.captain_name,
-                    customerPhone: savedKot.order?.customer_phone,
-                    mode: savedKot.order?.mode,
                   },
                 }),
               });
-              await requireCompletedBridgePrint(response, 'KOT printer did not accept the job.');
+              if (!response.ok)
+                throw new Error(
+                  (await response.json().catch(() => ({}))).error ||
+                    'KOT printer did not accept the job.'
+                );
             })
           );
         }
@@ -4178,19 +3309,14 @@ async function autoPrintOrder(order, { deferred = false, kotOnly = false } = {})
         return { ok: false, reason };
       }
     })();
-    if (order.mode === 'table' || kotOnly) {
+    if (order.mode === 'table') {
       const kotResult = await kotPromise;
       return kotResult.ok ? { ok: true, kotOnly: true } : kotResult;
     }
     // The bill starts at the same time as the KOT. Neither printer can delay the other.
-    const billPromise = operationsPromise.then(async (operationsResult) => {
-      if (operationsResult.error) throw operationsResult.error;
-      const billPrinters = configuredPrintersFor(
-        operationsResult.config,
-        'bill',
-        localWorkstationId()
-      );
-      if (!billPrinters.length) {
+    const billPromise = operationsPromise.then(async (printers) => {
+      const billPrinter = printers.find((printer) => printer.type === 'bill' && printer.deviceName);
+      if (!billPrinter) {
         const reason = 'No Bill printer is assigned in Operations.';
         reportOrdersDiagnostic({
           level: 'warning',
@@ -4204,16 +3330,27 @@ async function autoPrintOrder(order, { deferred = false, kotOnly = false } = {})
         { method: 'POST' }
       );
       const claim = await claimResponse.json().catch(() => ({}));
-      if (!claimResponse.ok)
-        throw new Error(claim.error || 'Unable to reserve this bill for printing.');
-      if (!claim.claimed) return { ok: true };
+      if (!claimResponse.ok || !claim.claimed) return { ok: true };
       try {
         const receiptResponse = await fetch(`/api/orders/${encodeURIComponent(order.id)}/print`, {
           cache: 'no-store',
         });
         const receipt = await receiptResponse.json();
         if (!receiptResponse.ok) throw new Error(receipt.error || 'Unable to prepare the receipt.');
-        await printBillOnConfiguredPrinters(billPrinters, receipt, `auto-bill:${order.id}`);
+        const printed = await fetch('http://127.0.0.1:9124/v1/print-bill', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            printJobId: `auto-bill:${order.id}`,
+            printerName: billPrinter.deviceName,
+            order: receipt,
+            settings: billPrinter,
+          }),
+        });
+        if (!printed.ok)
+          throw new Error(
+            (await printed.json().catch(() => ({}))).error || 'Bill printer did not accept the job.'
+          );
         await fetch(`/api/orders/${encodeURIComponent(order.id)}/bill-print/complete`, {
           method: 'POST',
         });
@@ -4225,8 +3362,8 @@ async function autoPrintOrder(order, { deferred = false, kotOnly = false } = {})
         throw error;
       }
     });
-    const [kotResult, billResult] = await Promise.all([kotPromise, billPromise]);
-    return kotResult.ok ? billResult : kotResult;
+    const [, billResult] = await Promise.all([kotPromise, billPromise]);
+    return billResult;
   } catch (error) {
     const reason = error.message || 'Automatic printing failed.';
     reportOrdersDiagnostic({
@@ -4236,11 +3373,6 @@ async function autoPrintOrder(order, { deferred = false, kotOnly = false } = {})
     return { ok: false, reason };
   } finally {
     autoPrintInFlight.delete(order.id);
-    const followup = autoPrintFollowups.get(order.id);
-    if (followup) {
-      autoPrintFollowups.delete(order.id);
-      void autoPrintOrder(followup.order, followup);
-    }
   }
 }
 const offlineMenuSnapshotKey = 'red-lantern-counter-menu-snapshot';
@@ -4260,10 +3392,6 @@ function readOfflineMenuSnapshot() {
     return null;
   }
 }
-function applyAvailabilityData(menu, availability) {
-  menuItems = menu;
-  unavailable = new Map(availability.map((item) => [item.item_key, item.unavailable_until]));
-}
 async function loadAvailability() {
   try {
     const [menuResponse, availabilityResponse] = await Promise.all([
@@ -4276,12 +3404,16 @@ async function loadAvailability() {
       availability = await availabilityResponse.json();
     if (!Array.isArray(menu) || !Array.isArray(availability))
       throw new Error('Menu availability could not be read.');
-    applyAvailabilityData(menu, availability);
+    menuItems = menu;
+    unavailable = new Map(availability.map((item) => [item.item_key, item.unavailable_until]));
     saveOfflineMenuSnapshot(menu, availability);
   } catch (error) {
     const snapshot = readOfflineMenuSnapshot();
     if (!snapshot) throw error;
-    applyAvailabilityData(snapshot.menu, snapshot.availability);
+    menuItems = snapshot.menu;
+    unavailable = new Map(
+      snapshot.availability.map((item) => [item.item_key, item.unavailable_until])
+    );
   }
   renderAvailability();
 }
@@ -4327,33 +3459,14 @@ function renderAvailability() {
       );
     })
     .sort((a, b) => `${a.category} ${a.name}`.localeCompare(`${b.category} ${b.name}`));
-  const resultsMeta = document.getElementById('availability-results-meta');
-  if (resultsMeta) {
-    const matchingUnavailable = visible.filter((item) => activeUnavailable.has(item.key)).length;
-    resultsMeta.textContent = visible.length
-      ? `${visible.length} ${visible.length === 1 ? 'item' : 'items'} shown · ${visible.length - matchingUnavailable} available now`
-      : 'No items match these filters.';
-  }
   menuResults.innerHTML = visible.length
     ? visible
         .map((item) => {
           const until = activeUnavailable.has(item.key) ? unavailable.get(item.key) : null;
-          const restockAt = until
-            ? new Date(until).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
-            : '';
-          return `<article class="menu-item ${until ? 'is-out' : ''}" data-key="${esc(item.key)}">
-            <div class="menu-item-topline">
-              <div class="menu-item-name"><span>${esc(item.category || 'Menu')}</span><b>${esc(item.name)}</b></div>
-              <div class="availability-state"><i aria-hidden="true"></i>${until ? 'Unavailable' : 'Available'}</div>
-            </div>
-            <div class="availability-controls ${until ? 'is-restocking' : ''}">
-              ${
-                until
-                  ? `<div class="availability-return"><span>Scheduled to return</span><strong>${esc(restockAt)}</strong></div><button class="stock-in" data-stock-action="restore">Make available</button>`
-                  : `<label class="availability-date"><span>Return to stock</span><input type="datetime-local" value="${tomorrowLocal()}" data-stock-until></label><div class="availability-actions"><button class="stock-tomorrow" data-stock-action="tomorrow">Until tomorrow</button><button class="stock-date" data-stock-action="date">Mark unavailable</button></div>`
-              }
-            </div>
-          </article>`;
+          const status = until
+            ? `Out until ${new Date(until).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}`
+            : 'In stock';
+          return `<article class="menu-item ${until ? 'is-out' : ''}" data-key="${esc(item.key)}"><div class="menu-item-name"><b>${esc(item.name)}</b><span>${esc(item.category || 'Menu')}</span></div><div class="availability-state"><i aria-hidden="true"></i>${status}</div><div class="availability-controls">${until ? `<button class="stock-in" data-stock-action="restore">Mark in stock</button>` : `<button class="stock-tomorrow" data-stock-action="tomorrow">Out until tomorrow</button><label><span>Custom restock</span><input type="datetime-local" value="${tomorrowLocal()}" data-stock-until></label><button class="stock-date" data-stock-action="date">Mark unavailable</button>`}</div></article>`;
         })
         .join('')
     : '<div class="empty-state">No menu items match that search.</div>';
@@ -4391,13 +3504,7 @@ document.getElementById('availability-toggle')?.addEventListener('click', async 
   if (isOpening) closeOpenPanels('availability');
   availability.hidden = !isOpening;
   document.getElementById('availability-toggle').setAttribute('aria-expanded', String(isOpening));
-  if (!isOpening) {
-    setOrdersRailActive('tables');
-    rememberOrdersWorkspace('tables');
-  }
   if (isOpening) {
-    setOrdersRailActive('availability');
-    rememberOrdersWorkspace('availability');
     try {
       await loadAvailability();
     } catch (error) {
@@ -4411,13 +3518,7 @@ liveOrdersToggle.addEventListener('click', () => {
   liveOrdersPanel.hidden = !isOpening;
   liveOrdersToggle.classList.toggle('is-open', isOpening);
   liveOrdersToggle.setAttribute('aria-expanded', String(isOpening));
-  if (!isOpening) {
-    setOrdersRailActive('tables');
-    rememberOrdersWorkspace('tables');
-  }
   if (isOpening) {
-    setOrdersRailActive('live');
-    rememberOrdersWorkspace('live');
     orderView = 'current';
     historyAll = false;
     document
@@ -4432,13 +3533,9 @@ liveOrdersToggle.addEventListener('click', () => {
 document.getElementById('availability-close')?.addEventListener('click', () => {
   availability.hidden = true;
   document.getElementById('availability-toggle').setAttribute('aria-expanded', 'false');
-  setOrdersRailActive('tables');
-  rememberOrdersWorkspace('tables');
 });
 document.getElementById('counter-order-close')?.addEventListener('click', () => {
   counterPanel.hidden = true;
-  document.body.classList.remove('is-counter-workspace');
-  rememberOrdersWorkspace('tables');
   showTableView();
 });
 document.getElementById('view-table-kot')?.addEventListener('click', () => {
@@ -4461,11 +3558,7 @@ document.getElementById('view-table-kot')?.addEventListener('click', () => {
                     String(candidate.portion || '') === String(item.portion || '') &&
                     Number(candidate.quantity || 0) > 0
                 );
-                const modifiers = Addons.modifierText(item.modifiers);
-                const unitPrice =
-                  Number(String(item.price || 0).replace(/[^0-9.]/g, '') || 0) +
-                  Addons.lineModifierTotal(item);
-                return `<div><b>${Number(item.quantity || 0)}×</b> ${esc(item.name)}${item.portion ? ` · ${esc(item.portion)}` : ''}${modifiers ? `<small>+ ${esc(modifiers)}</small>` : ''}<span>₹${unitPrice.toFixed(0)}</span>${index >= 0 ? `<button type="button" class="view-kot-edit" data-view-kot-edit="${index}">Edit qty</button><button type="button" class="view-kot-delete" data-view-kot-delete="${index}">Delete</button>` : ''}</div>`;
+                return `<div><b>${Number(item.quantity || 0)}×</b> ${esc(item.name)}${item.portion ? ` · ${esc(item.portion)}` : ''}<span>₹${Number(String(item.price || 0).replace(/[^0-9.]/g, '') || 0).toFixed(0)}</span>${index >= 0 ? `<button type="button" class="view-kot-edit" data-view-kot-edit="${index}">Edit qty</button><button type="button" class="view-kot-delete" data-view-kot-delete="${index}">Delete</button>` : ''}</div>`;
               })
               .join('')}</section>`
         )
@@ -4495,7 +3588,7 @@ viewKotDialog.addEventListener('click', async (event) => {
     if (entered === null) return;
     quantity = Number(entered);
     if (!Number.isInteger(quantity) || quantity < 1 || quantity > 20) {
-      showStaffNotice('Enter a whole quantity from 1 to 20.');
+      alert('Enter a whole quantity from 1 to 20.');
       return;
     }
   } else if (!confirm('Delete this item from the active table bill?')) return;
@@ -4527,17 +3620,11 @@ viewKotDialog.addEventListener('click', async (event) => {
     await loadOrders();
     viewKotDialog.close();
   } catch (error) {
-    showStaffNotice(error.message || `Unable to ${edit ? 'modify' : 'delete'} this item.`);
+    alert(error.message || `Unable to ${edit ? 'modify' : 'delete'} this item.`);
     button.disabled = false;
   }
 });
 document.getElementById('table-view-content')?.addEventListener('click', async (event) => {
-  const areaFilter = event.target.closest('[data-table-area-filter]');
-  if (areaFilter) {
-    tableViewAreaFilter = areaFilter.dataset.tableAreaFilter || 'all';
-    renderTableView();
-    return;
-  }
   if (event.target.closest('[data-toggle-move-kot]')) {
     moveKotItemsMode = !moveKotItemsMode;
     renderTableView();
@@ -4574,10 +3661,7 @@ document.getElementById('table-view-content')?.addEventListener('click', async (
     printBill.disabled = true;
     printBill.textContent = '…';
     try {
-      if (!(await printOrder(order.id))) {
-        renderTableView();
-        return;
-      }
+      await printOrder(order.id);
       const marked = await fetch(`/api/orders/${encodeURIComponent(order.id)}/bill-printed`, {
         method: 'POST',
       });
@@ -4589,7 +3673,7 @@ document.getElementById('table-view-content')?.addEventListener('click', async (
       await loadOrders();
       renderTableView();
     } catch (error) {
-      showStaffNotice(error.message || 'Unable to print this table bill.');
+      alert(error.message || 'Unable to print this table bill.');
       printBill.disabled = false;
       renderTableView();
     }
@@ -4652,7 +3736,7 @@ document.getElementById('table-view-content')?.addEventListener('click', async (
       !['completed', 'rejected', 'cancelled'].includes(order.status)
   );
   if (String(existing?.id || '').startsWith('offline:')) {
-    showStaffNotice(
+    alert(
       'This table order is safely stored on this device and waiting to sync. Reconnect to continue editing it.'
     );
     return;
@@ -4662,11 +3746,6 @@ document.getElementById('table-view-content')?.addEventListener('click', async (
     number: Number(table.dataset.dineTableNumber),
     orderId: existing?.id || '',
   });
-});
-document.getElementById('table-view-content')?.addEventListener('input', (event) => {
-  if (event.target.id !== 'table-view-search') return;
-  tableViewSearch = event.target.value || '';
-  renderTableView();
 });
 const newOrderAction = document.createElement('button');
 newOrderAction.type = 'button';
@@ -4679,7 +3758,6 @@ newOrderActionStyles.textContent = '';
 document.head.appendChild(newOrderActionStyles);
 newOrderAction.addEventListener('click', async () => {
   closeOpenPanels('tables');
-  rememberOrdersWorkspace('tables');
   await showTableView();
   tableViewPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
 });
@@ -4769,7 +3847,7 @@ document.getElementById('counter-menu-items')?.addEventListener('click', (event)
   const item = counterMenu[Number(button.dataset.counterItem)];
   if (!item) return;
   const options = counterPortionOptions(item);
-  if (options.length > 1 || item.gravyStyleAvailable || item.addonGroups?.length) {
+  if (options.length > 1 || item.gravyStyleAvailable) {
     openCounterChoice(item);
     return;
   }
@@ -4784,35 +3862,21 @@ document.getElementById('counter-menu-items')?.addEventListener('click', (event)
     (line) =>
       line.name === item.name &&
       line.category === item.category &&
-      line.menuType === item.menuType &&
       line.portion === portion &&
-      !line.style &&
-      !line.courseOverride
+      !line.style
   );
   if (existing) existing.quantity += 1;
   else
     counterCart.push({
       name: item.name,
       category: item.category,
-      menuType: item.menuType,
       portion,
       style: '',
-      defaultCourse: item.defaultCourse || '',
-      courseOverride: '',
       price,
       quantity: 1,
     });
   counterBillSplit = null;
   renderCounterOrder();
-  showMobileAdded(item.name);
-});
-document.getElementById('counter-choice-dialog')?.addEventListener('change', (event) => {
-  if (
-    event.target.matches(
-      'input[name="counter-portion"], input[name="counter-style"], .counter-addon-group input'
-    )
-  )
-    updateCounterChoiceTotal();
 });
 document.getElementById('counter-choice-dialog')?.addEventListener('click', (event) => {
   if (event.target.closest('[data-counter-choice-close]')) {
@@ -4824,53 +3888,26 @@ document.getElementById('counter-choice-dialog')?.addEventListener('click', (eve
   const portion = portionInput?.value || '',
     price = Number(portionInput?.dataset.counterChoicePrice || 0);
   const style = document.querySelector('input[name="counter-style"]:checked')?.value || '';
-  const courseOverride = document.getElementById('counter-choice-course')?.value || '';
-  const modifierResult = Addons.validateSelections(
-    counterChoiceItem.addonGroups || [],
-    readCounterModifierSelections()
-  );
-  if (!modifierResult.ok) {
-    document.getElementById('counter-addon-error').textContent = modifierResult.error;
-    return;
-  }
-  const modifiers = modifierResult.modifiers;
-  const modifierTotal = modifierResult.total;
-  const modifierFingerprint = Addons.selectionFingerprint(modifiers);
   const existing = counterCart.find(
     (line) =>
       line.name === counterChoiceItem.name &&
       line.category === counterChoiceItem.category &&
-      line.menuType === counterChoiceItem.menuType &&
       line.portion === portion &&
-      line.style === style &&
-      String(line.courseOverride || '') === courseOverride &&
-      Addons.selectionFingerprint(line.modifiers) === modifierFingerprint
+      line.style === style
   );
   if (existing) existing.quantity += 1;
   else
     counterCart.push({
       name: counterChoiceItem.name,
       category: counterChoiceItem.category,
-      menuType: counterChoiceItem.menuType,
       portion,
       style,
-      defaultCourse: counterChoiceItem.defaultCourse || '',
-      courseOverride,
       price,
-      modifiers,
-      modifierTotal,
       quantity: 1,
     });
   counterBillSplit = null;
   document.getElementById('counter-choice-dialog').close();
   renderCounterOrder();
-  showMobileAdded(counterChoiceItem.name);
-});
-document.getElementById('mobile-cart-toggle')?.addEventListener('click', () => {
-  setMobileCartOpen(!counterPanel.classList.contains('mobile-cart-open'));
-});
-document.getElementById('mobile-cart-close')?.addEventListener('click', () => {
-  setMobileCartOpen(false);
 });
 document.getElementById('counter-cart-items')?.addEventListener('click', (event) => {
   const button = event.target.closest('[data-counter-qty]');
@@ -4883,150 +3920,72 @@ document.getElementById('counter-cart-items')?.addEventListener('click', (event)
   counterBillSplit = null;
   renderCounterOrder();
 });
-document.getElementById('counter-cart-items')?.addEventListener('change', (event) => {
-  const select = event.target.closest('[data-counter-course]');
-  if (!select) return;
-  const line = counterCart[Number(select.dataset.counterCourse)];
-  if (!line) return;
-  line.courseOverride = select.value || '';
-  counterBillSplit = null;
-  renderCounterOrder();
-});
 document.getElementById('counter-clear')?.addEventListener('click', () => {
   counterBillSplit = null;
   counterCart = [];
-  resetCounterRequestAttempt();
-  setCounterOrderStatus('');
+  document.getElementById('counter-order-status').textContent = '';
   renderCounterOrder();
 });
-function setCounterOrderStatus(message, state = '') {
-  const status = document.getElementById('counter-order-status');
-  if (!status) return;
-  status.textContent = message;
-  if (state) status.dataset.state = state;
-  else delete status.dataset.state;
-}
 async function submitDineInAction(action) {
-  if (!counterCart.length) {
-    setCounterOrderStatus('Add at least one menu item first.', 'error');
+  const status = document.getElementById('counter-order-status');
+  if (!counterTable || !counterCart.length) {
+    status.textContent = 'Add at least one menu item first.';
     return;
   }
-  const isDineIn = !!counterTable;
-  const operationId = ++counterOrderOperation;
   const button = document.querySelector(`[data-dine-action="${action}"]`);
-  const actionButtons = [...document.querySelectorAll('#dine-in-actions button')];
-  const idleButtonLabel = button?.textContent || '';
-  actionButtons.forEach((actionButton) => {
-    actionButton.disabled = true;
-  });
-  if (button) {
-    button.classList.add('is-processing');
-    button.setAttribute('aria-busy', 'true');
-    button.textContent =
-      action === 'kot-print'
-        ? 'Saving KOT…'
-        : action === 'print'
-          ? 'Preparing bill…'
-          : action === 'hold'
-            ? 'Holding…'
-            : 'Saving…';
-  }
+  if (button) button.disabled = true;
   const payload = {
+    clientRequestId: counterRequestId(),
     action,
     customerName: document.getElementById('counter-customer-name').value.trim(),
     customerPhone: document.getElementById('counter-customer-phone').value.trim(),
     specialRequest: document.getElementById('counter-special-request').value.trim(),
-    courseMode: document.getElementById('counter-course-mode')?.value || 'normal_coursing',
     loyaltyPoints: Math.floor(Number(document.getElementById('counter-wallet-redeem')?.value || 0)),
-    tableArea: counterTable?.area || '',
-    tableNumber: counterTable?.number || '',
+    tableArea: counterTable.area,
+    tableNumber: counterTable.number,
     items: counterCart.map((item) => ({ ...item })),
   };
-  payload.clientRequestId = counterRequestId(payload);
-  const orderLabel = isDineIn
-    ? `${counterTable.area} · Table ${String(counterTable.number).padStart(2, '0')}`
-    : 'Takeaway order';
+  const tableLabel = `${counterTable.area} · Table ${String(counterTable.number).padStart(2, '0')}`;
   let savedInBridgeLedger = false;
-  let ledgerSavePromise = Promise.resolve(false);
   try {
-    setCounterOrderStatus(
+    status.textContent =
       action === 'hold'
-        ? `Holding ${isDineIn ? 'table bill' : 'takeaway order'}…`
+        ? 'Holding table bill…'
         : action === 'save'
-          ? `Saving ${isDineIn ? 'table bill' : 'takeaway order'}…`
-          : action === 'kot-print'
-            ? 'Saving the order securely…'
-            : `Saving ${isDineIn ? 'dine-in bill' : 'takeaway order'}…`,
-      'sending'
-    );
+          ? 'Saving table bill…'
+          : 'Saving dine-in bill…';
     if (['save', 'hold'].includes(action)) {
-      // Start the local durability write and cloud save together. A healthy
-      // online order must never wait for localhost printer/ledger discovery.
-      ledgerSavePromise = startCounterLedgerSave(
-        payload,
-        isDineIn ? 'offline dine-in ledger' : 'offline takeaway ledger'
-      );
+      try {
+        await saveToBridgeLedger(payload);
+        savedInBridgeLedger = true;
+      } catch (ledgerError) {
+        reportOrdersDiagnostic({
+          level: 'warning',
+          message: `Local ledger unavailable: ${ledgerError.message}`,
+          source: 'offline dine-in ledger',
+        });
+      }
     }
     if (!navigator.onLine) {
-      savedInBridgeLedger = await ledgerSavePromise;
       if (!['save', 'hold'].includes(action))
         throw new Error(
-          'KOT and final bill printing need an online order confirmation. Save or hold the order first; it will sync safely when the connection returns.'
+          'KOT and final bill printing need an online order confirmation. Save or hold the table first; it will sync safely when the connection returns.'
         );
       throw new TypeError('Offline');
     }
-    const result = await sendCounterOrder(payload, {
-      onRetry: ({ nextAttempt, attempts }) =>
-        setCounterOrderStatus(
-          `Connection delayed — confirming the same order safely (${nextAttempt}/${attempts})…`,
-          'sending'
-        ),
-    });
-    void markCounterLedgerSynced(ledgerSavePromise, payload.clientRequestId).catch(() => {});
+    const result = await sendCounterOrder(payload);
+    if (savedInBridgeLedger) {
+      await updateBridgeLedger(payload.clientRequestId, 'synced');
+      bridgeLedgerPending = Math.max(0, bridgeLedgerPending - 1);
+      updateConnectivity();
+    }
     if (action === 'kot-print') {
-      const savedOrderLabel = isDineIn ? orderLabel : `Takeaway order #${result.orderNumber}`;
-      counterBillSplit = null;
-      counterCart = [];
-      resetCounterRequestAttempt();
-      counterLoyaltyPoints = 0;
-      document.getElementById('counter-customer-name').value = '';
-      document.getElementById('counter-customer-phone').value = '';
-      document.getElementById('counter-special-request').value = '';
-      document.getElementById('counter-wallet-redeem').value = '0';
-      counterWallet.hidden = true;
-      renderCounterOrder();
-      setCounterOrderStatus(`${savedOrderLabel} saved. Sending the KOT to the kitchen…`, 'sending');
-      // Saving to the database is the success boundary for the POS. Printer
-      // discovery and physical output continue without blocking the counter.
-      void autoPrintOrder(
-        {
-          id: result.id,
-          mode: isDineIn ? 'table' : 'counter',
-          status: result.status || 'accepted',
-        },
-        { kotOnly: true }
-      ).then((printing) => {
-        if (operationId !== counterOrderOperation) return;
-        if (printing?.ok)
-          setCounterOrderStatus(
-            `${savedOrderLabel} saved — KOT sent to the configured kitchen printers.`,
-            'success'
-          );
-        else
-          setCounterOrderStatus(
-            `${savedOrderLabel} is safely saved, but KOT printing needs attention. ${printing?.reason || 'Check Operations.'}`,
-            'error'
-          );
-      });
-      void loadOrders();
-      void refreshCounterLiveStatus();
-      if (isDineIn) void showTableView();
-      return;
+      const printing = await autoPrintOrder({ id: result.id, mode: 'table', status: 'accepted' });
+      if (!printing.ok)
+        throw new Error(printing.reason || 'KOTs could not be sent to the kitchen.');
+      status.textContent = `${tableLabel}: KOTs sent to the kitchen.`;
     } else if (action === 'print') {
-      if (!(await printOrder(result.id, counterBillSplit)))
-        throw new Error(
-          'Order saved. Bill printing needs attention; check Operations before retrying.'
-        );
+      await printOrder(result.id, counterBillSplit);
       const marked = await fetch(`/api/orders/${encodeURIComponent(result.id)}/bill-printed`, {
         method: 'POST',
       });
@@ -5035,25 +3994,16 @@ async function submitDineInAction(action) {
         throw new Error(
           markedData.error || 'Bill printed, but the table could not be marked for settlement.'
         );
-      setCounterOrderStatus(
-        isDineIn
-          ? `${orderLabel}: bill printed and waiting for settlement.`
-          : `${orderLabel}: eBill printed.`,
-        'success'
-      );
+      status.textContent = `${tableLabel}: bill printed and waiting for settlement.`;
     } else
-      setCounterOrderStatus(
-        action === 'hold' ? `${orderLabel} is on hold.` : `${orderLabel} saved for later.`,
-        'success'
-      );
+      status.textContent =
+        action === 'hold' ? `${tableLabel} is on hold.` : `${tableLabel} saved in Saved bills.`;
     counterBillSplit = null;
     counterCart = [];
-    resetCounterRequestAttempt();
     renderCounterOrder();
     await loadOrders();
-    if (isDineIn) await showTableView();
+    await showTableView();
   } catch (error) {
-    savedInBridgeLedger = savedInBridgeLedger || (await ledgerSavePromise);
     if (
       (!navigator.onLine || !error.status || error.status >= 500) &&
       ['save', 'hold'].includes(action)
@@ -5063,35 +4013,15 @@ async function submitDineInAction(action) {
         queued.push(payload);
         saveQueuedCounterOrders(queued);
       }
-      if (isDineIn) reserveOfflineTable(payload);
+      reserveOfflineTable(payload);
       counterBillSplit = null;
       counterCart = [];
-      resetCounterRequestAttempt();
       renderCounterOrder();
-      setCounterOrderStatus(
-        isDineIn
-          ? `${orderLabel} is saved offline and reserved. It will sync automatically when internet returns.`
-          : `${orderLabel} is saved offline. It will sync automatically when internet returns.`,
-        'success'
-      );
+      status.textContent = `${tableLabel} is saved offline and reserved. It will sync automatically when internet returns.`;
       updateConnectivity();
-    } else
-      setCounterOrderStatus(
-        !error.status && /failed to fetch|network\s*error/i.test(String(error.message || ''))
-          ? 'Unable to confirm the save because the connection was interrupted. Your order is still here—press Send KOT again.'
-          : error.message || `Unable to save this ${isDineIn ? 'dine-in bill' : 'takeaway order'}.`,
-        'error'
-      );
+    } else status.textContent = error.message || 'Unable to save this dine-in bill.';
   } finally {
-    if (button) {
-      button.classList.remove('is-processing');
-      button.removeAttribute('aria-busy');
-      button.textContent = idleButtonLabel;
-    }
-    const hasItems = counterCart.length > 0;
-    actionButtons.forEach((actionButton) => {
-      actionButton.disabled = !hasItems;
-    });
+    if (button) button.disabled = false;
   }
 }
 document.getElementById('dine-in-actions')?.addEventListener('click', async (event) => {
@@ -5110,19 +4040,31 @@ document.getElementById('counter-place-order')?.addEventListener('click', async 
     return;
   }
   const button = document.getElementById('counter-place-order');
-  const operationId = ++counterOrderOperation;
   button.disabled = true;
   const payload = {
+    clientRequestId: counterRequestId(),
     customerName: document.getElementById('counter-customer-name').value.trim(),
     customerPhone: document.getElementById('counter-customer-phone').value.trim(),
     specialRequest: document.getElementById('counter-special-request').value.trim(),
-    courseMode: document.getElementById('counter-course-mode')?.value || 'normal_coursing',
     loyaltyPoints: Math.floor(Number(document.getElementById('counter-wallet-redeem')?.value || 0)),
     tableArea: counterTable?.area || '',
     tableNumber: counterTable?.number || '',
     items: counterCart.map((item) => ({ ...item })),
   };
-  payload.clientRequestId = counterRequestId(payload);
+  if (payload.loyaltyPoints >= 100) {
+    const first = window.confirm(`Apply ₹${payload.loyaltyPoints} from this customer's wallet?`);
+    const second =
+      first &&
+      window.confirm(
+        `Final confirmation: deduct ${payload.loyaltyPoints} wallet points (₹${payload.loyaltyPoints}) from this order?`
+      );
+    if (!second) {
+      button.disabled = false;
+      status.textContent =
+        'Wallet points were not applied. Review the amount before placing the order.';
+      return;
+    }
+  }
   const orderLabel = counterTable
     ? `${counterTable.area} Table ${String(counterTable.number).padStart(2, '0')}`
     : 'takeaway';
@@ -5130,22 +4072,27 @@ document.getElementById('counter-place-order')?.addEventListener('click', async 
     ? `Saving ${orderLabel} order…`
     : 'Internet is unavailable — saving this order safely on this device…';
   let savedInBridgeLedger = false;
-  const ledgerSavePromise = startCounterLedgerSave(payload, 'offline order ledger');
   try {
     let result;
-    if (!navigator.onLine) {
-      savedInBridgeLedger = await ledgerSavePromise;
-      throw new TypeError('Offline');
+    try {
+      await saveToBridgeLedger(payload);
+      savedInBridgeLedger = true;
+    } catch (ledgerError) {
+      reportOrdersDiagnostic({
+        level: 'warning',
+        message: `Local ledger unavailable: ${ledgerError.message}`,
+        source: 'offline order ledger',
+      });
     }
-    result = await sendCounterOrder(payload, {
-      onRetry: ({ nextAttempt, attempts }) => {
-        status.textContent = `Connection delayed — confirming the same order safely (${nextAttempt}/${attempts})…`;
-      },
-    });
-    void markCounterLedgerSynced(ledgerSavePromise, payload.clientRequestId).catch(() => {});
+    if (!navigator.onLine) throw new TypeError('Offline');
+    result = await sendCounterOrder(payload);
+    if (savedInBridgeLedger) {
+      await updateBridgeLedger(payload.clientRequestId, 'synced');
+      bridgeLedgerPending = Math.max(0, bridgeLedgerPending - 1);
+      updateConnectivity();
+    }
     status.textContent = `${counterTable ? `${counterTable.area} Table ${String(counterTable.number).padStart(2, '0')}` : `Takeaway order #${result.orderNumber}`} accepted. Sending KOTs…`;
     counterCart = [];
-    resetCounterRequestAttempt();
     counterLoyaltyPoints = 0;
     document.getElementById('counter-customer-name').value = '';
     document.getElementById('counter-customer-phone').value = '';
@@ -5158,7 +4105,6 @@ document.getElementById('counter-place-order')?.addEventListener('click', async 
       mode: counterTable ? 'table' : 'counter',
       status: result.status || 'accepted',
     }).then((printing) => {
-      if (operationId !== counterOrderOperation) return;
       if (printing?.ok)
         status.textContent = `${counterTable ? `${counterTable.area} Table ${String(counterTable.number).padStart(2, '0')}` : `Takeaway order #${result.orderNumber}`} accepted. KOTs were sent to the configured kitchens.`;
       else if (printing?.reason)
@@ -5167,7 +4113,6 @@ document.getElementById('counter-place-order')?.addEventListener('click', async 
     loadOrders();
     refreshCounterLiveStatus();
   } catch (error) {
-    savedInBridgeLedger = savedInBridgeLedger || (await ledgerSavePromise);
     if (!navigator.onLine || !error.status || error.status >= 500) {
       if (!savedInBridgeLedger) {
         const queued = queuedCounterOrders();
@@ -5176,7 +4121,6 @@ document.getElementById('counter-place-order')?.addEventListener('click', async 
       }
       reserveOfflineTable(payload);
       counterCart = [];
-      resetCounterRequestAttempt();
       document.getElementById('counter-customer-name').value = '';
       document.getElementById('counter-customer-phone').value = '';
       document.getElementById('counter-special-request').value = '';
@@ -5203,13 +4147,7 @@ operationsToggle.addEventListener('click', async () => {
   operationsPanel.hidden = !opening;
   operationsToggle.classList.toggle('is-open', opening);
   operationsToggle.setAttribute('aria-expanded', String(opening));
-  if (!opening) {
-    setOrdersRailActive('tables');
-    rememberOrdersWorkspace('tables');
-    return;
-  }
-  setOrdersRailActive('operations');
-  rememberOrdersWorkspace('operations', operationsTab);
+  if (!opening) return;
   const hasSnapshot =
     (operationsConfig.printers || []).length ||
     (operationsConfig.routes || []).length ||
@@ -5234,47 +4172,10 @@ operationsToggle.addEventListener('click', async () => {
     .catch(() => {});
   void discoverSystemPrinters();
 });
-document.querySelector('.orders-rail')?.addEventListener('click', async (event) => {
-  const control = event.target.closest('[data-orders-rail]');
-  if (!control) return;
-  const workspace = control.dataset.ordersRail;
-  if (workspace === 'tables') {
-    event.preventDefault();
-    closeOpenPanels('tables');
-    rememberOrdersWorkspace('tables');
-    await showTableView();
-    tableViewPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    return;
-  }
-  if (workspace === 'counter') {
-    event.preventDefault();
-    if (counterPanel.hidden) await openCounterOrder();
-    else counterPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    return;
-  }
-  if (workspace === 'live') {
-    event.preventDefault();
-    if (liveOrdersPanel.hidden) liveOrdersToggle.click();
-    else liveOrdersPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    return;
-  }
-  if (workspace === 'availability') {
-    event.preventDefault();
-    if (availability.hidden) availabilityButton?.click();
-    else availability.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    return;
-  }
-  if (workspace === 'operations') {
-    event.preventDefault();
-    if (operationsPanel.hidden) operationsToggle.click();
-    else operationsPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }
-});
 document.getElementById('operations-close')?.addEventListener('click', async () => {
   operationsPanel.hidden = true;
   operationsToggle.classList.remove('is-open');
   operationsToggle.setAttribute('aria-expanded', 'false');
-  rememberOrdersWorkspace('tables');
   await showTableView();
 });
 document.getElementById('operations-content')?.addEventListener('change', (event) => {
@@ -5312,7 +4213,6 @@ document.getElementById('operations-content')?.addEventListener('click', async (
   const operationsNavigation = event.target.closest('[data-operations-tab]');
   if (operationsNavigation) {
     operationsTab = operationsNavigation.dataset.operationsTab || 'home';
-    rememberOrdersWorkspace('operations', operationsTab);
     assignmentPrinterId = '';
     assignmentMode = '';
     renderOperations();
@@ -5348,7 +4248,7 @@ document.getElementById('operations-content')?.addEventListener('click', async (
       if (!response.ok) throw new Error(data.error || 'Unable to mark the print jobs reviewed.');
       await checkPrintBridgeSetup();
     } catch (error) {
-      showStaffNotice(error.message || 'Unable to mark the print jobs reviewed.');
+      alert(error.message || 'Unable to mark the print jobs reviewed.');
       acknowledgeFailures.disabled = false;
     }
     return;
@@ -5363,7 +4263,7 @@ document.getElementById('operations-content')?.addEventListener('click', async (
           copyBridgeSetup.textContent = `Copy ${detectedDesktopPlatform() === 'macOS' ? 'Terminal' : 'PowerShell'} command`;
       }, 1600);
     } catch (_) {
-      showStaffNotice(
+      alert(
         `Run this command in Terminal / PowerShell:\n\n${copyBridgeSetup.dataset.command || ''}`
       );
     }
@@ -5410,7 +4310,7 @@ document.getElementById('operations-content')?.addEventListener('click', async (
       await loadOperations();
     } catch (error) {
       kdsAction.disabled = false;
-      showStaffNotice(error.message);
+      alert(error.message);
     }
     return;
   }
@@ -5420,7 +4320,7 @@ document.getElementById('operations-content')?.addEventListener('click', async (
       if (!document.fullscreenElement) await display?.requestFullscreen?.();
       else await document.exitFullscreen?.();
     } catch (_) {
-      showStaffNotice('Full screen is not available in this browser.');
+      alert('Full screen is not available in this browser.');
     }
     return;
   }
@@ -5444,12 +4344,12 @@ document.getElementById('operations-content')?.addEventListener('click', async (
     const from = fromInput?.valueAsNumber;
     const to = toInput?.valueAsNumber;
     if (!name) {
-      showStaffNotice('Enter an area name.');
+      alert('Enter an area name.');
       document.getElementById('table-area-name')?.focus();
       return;
     }
     if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to) || from < 1 || to < from) {
-      showStaffNotice(
+      alert(
         'Enter whole table numbers. “To table” must be the same as or higher than “From table”.'
       );
       fromInput?.focus();
@@ -5465,7 +4365,7 @@ document.getElementById('operations-content')?.addEventListener('click', async (
       await saveTableAllocation(null);
       renderTableAllocation();
     } catch (error) {
-      showStaffNotice(
+      alert(
         error.message ||
           'Unable to save the table area to the server. It remains saved on this device.'
       );
@@ -5504,7 +4404,7 @@ document.getElementById('operations-content')?.addEventListener('click', async (
     try {
       await saveTableAllocation(button);
     } catch (error) {
-      showStaffNotice(error.message);
+      alert(error.message);
     }
     return;
   }
@@ -5527,7 +4427,7 @@ document.getElementById('operations-content')?.addEventListener('click', async (
         copyBridgeCommand.textContent = 'Copy setup command';
       }, 1600);
     } catch (_) {
-      showStaffNotice(
+      alert(
         `Run this command in Terminal / PowerShell:\n\n${copyBridgeCommand.dataset.command || ''}`
       );
     }
@@ -5544,18 +4444,18 @@ document.getElementById('operations-content')?.addEventListener('click', async (
     restartBridge.disabled = true;
     restartBridge.textContent = 'Restarting…';
     try {
-      const response = await fetch(`${printBridgeOrigin}/v1/restart`, { method: 'POST' });
+      const response = await fetch('http://127.0.0.1:9124/v1/restart', { method: 'POST' });
       if (!response.ok) throw new Error('Print Bridge could not restart.');
       await new Promise((resolve) => setTimeout(resolve, 1800));
       await discoverSystemPrinters();
       renderOperations();
-      showStaffNotice(
+      alert(
         printBridgeState === 'available'
           ? 'Print Bridge restarted successfully.'
           : 'Restart requested, but Print Bridge has not come back online yet.'
       );
     } catch (error) {
-      showStaffNotice(error.message || 'Unable to restart Print Bridge.');
+      alert(error.message || 'Unable to restart Print Bridge.');
     }
     return;
   }
@@ -5569,29 +4469,20 @@ document.getElementById('operations-content')?.addEventListener('click', async (
         .trim()
         .slice(0, 60) || deviceName;
     if (!deviceId) {
-      showStaffNotice('Choose an installed system printer first.');
+      alert('Choose an installed system printer first.');
       return;
     }
-    if (
-      operationsConfig.printers.some(
-        (printer) =>
-          printer.deviceId === deviceId &&
-          printerBelongsToWorkstation(printer, localWorkstationId())
-      )
-    ) {
-      showStaffNotice('This system printer has already been added.');
+    if (operationsConfig.printers.some((printer) => printer.deviceId === deviceId)) {
+      alert('This system printer has already been added.');
       return;
     }
     operationsConfig.printers.push({
       id: operationId(),
       name,
-      capabilities: [],
       type: 'kot',
       connection: 'system',
       deviceId,
       deviceName,
-      workstationId: localWorkstationId(),
-      workstationName: printBridgeWorkstation?.name || '',
     });
     renderOperations();
     return;
@@ -5599,63 +4490,45 @@ document.getElementById('operations-content')?.addEventListener('click', async (
   const renamePrinter = event.target.closest('[data-rename-printer]');
   if (renamePrinter) {
     assignmentPrinterId = renamePrinter.dataset.renamePrinter || '';
-    const printer = operationsConfig.printers.find((item) => item.id === assignmentPrinterId);
-    assignmentMode = printerSupports(printer, 'bill')
-      ? 'edit-bill'
-      : printerSupports(printer, 'kot')
-        ? 'edit-kot'
-        : 'choose';
+    assignmentMode = 'edit';
     renderOperations();
     return;
   }
   if (event.target.closest('[data-save-printer-edit]')) {
     const printer = operationsConfig.printers.find((item) => item.id === assignmentPrinterId);
     if (!printer) return;
-    const capability = assignmentMode === 'edit-bill' ? 'bill' : 'kot';
-    const format = printerFormat(printer, capability);
     const name = String(document.getElementById('printer-edit-name')?.value || '')
       .trim()
       .slice(0, 60);
     if (!name) {
-      showStaffNotice('Enter a printer name.');
+      alert('Enter a printer name.');
       return;
     }
     const device = document.getElementById('printer-edit-device');
-    const numberSetting = (key, min, max, fallback) => {
-      const parsed = Number(document.getElementById(`printer-edit-${key}`)?.value);
-      return Math.max(min, Math.min(max, Number.isFinite(parsed) ? parsed : fallback));
-    };
+    const numberSetting = (key, min, max, fallback) =>
+      Math.max(
+        min,
+        Math.min(max, Number(document.getElementById(`printer-edit-${key}`)?.value) || fallback)
+      );
     printer.name = name;
     printer.deviceId = String(device?.value || printer.deviceId || '');
     printer.deviceName = String(
       device?.selectedOptions?.[0]?.textContent || printer.deviceName || ''
     ).trim();
-    printer.workstationId = localWorkstationId();
-    printer.workstationName = printBridgeWorkstation?.name || '';
-    format.paperWidth =
+    printer.paperWidth =
       Number(document.getElementById('printer-edit-paper')?.value) == 58 ? 58 : 80;
-    format.receiptHeader = String(document.getElementById('printer-edit-header')?.value || '')
+    printer.receiptHeader = String(document.getElementById('printer-edit-header')?.value || '')
       .trim()
       .slice(0, 160);
-    format.receiptFooter = String(document.getElementById('printer-edit-footer')?.value || '')
+    printer.receiptFooter = String(document.getElementById('printer-edit-footer')?.value || '')
       .trim()
       .slice(0, 160);
-    const restaurantNameControl = document.getElementById('printer-edit-restaurant-name');
-    if (restaurantNameControl)
-      format.restaurantName = String(restaurantNameControl.value || 'Red Lantern Restaurant')
-        .trim()
-        .slice(0, 60);
-    format.showRestaurantName = !!document.getElementById('printer-edit-show-name')?.checked;
-    format.showItemSerial = !!document.getElementById('printer-edit-show-serial')?.checked;
-    const customerControl = document.getElementById('printer-edit-customer');
-    if (customerControl) format.showCustomer = !!customerControl.checked;
-    const centeredControl = document.getElementById('printer-edit-kot-details-centered');
-    if (centeredControl) format.kotDetailsCentered = !!centeredControl.checked;
-    // Kitchen tickets have one standard order: quantity always leads the item.
-    format.quantityFirst = true;
-    const notesControl = document.getElementById('printer-edit-notes');
-    format.showNotes = notesControl ? !!notesControl.checked : format.showNotes !== false;
-    format.extraSpace = Math.max(
+    printer.showRestaurantName = !!document.getElementById('printer-edit-show-name')?.checked;
+    printer.showItemSerial = !!document.getElementById('printer-edit-show-serial')?.checked;
+    printer.showCustomer = !!document.getElementById('printer-edit-customer')?.checked;
+    printer.quantityFirst = !!document.getElementById('printer-edit-qty-first')?.checked;
+    printer.showNotes = !!document.getElementById('printer-edit-notes')?.checked;
+    printer.extraSpace = Math.max(
       0,
       Math.min(2, Number(document.getElementById('printer-edit-space')?.value) || 0)
     );
@@ -5671,11 +4544,7 @@ document.getElementById('operations-content')?.addEventListener('click', async (
       dateBillFontSize: [8, 20, 10],
       itemListingFontSize: [8, 10, 10],
       grandTotalFontSize: [10, 11, 11],
-      serialColumnWidth: [0, 40, 10],
       itemNameMinWidth: [50, 220, 110],
-      quantityColumnWidth: [8, 60, 28],
-      priceColumnWidth: [15, 100, 46],
-      amountColumnWidth: [15, 120, 60],
       itemRowGap: [0, 20, 5],
       separatorGap: [0, 20, 5],
       separatorThickness: [1, 4, 1],
@@ -5684,75 +4553,23 @@ document.getElementById('operations-content')?.addEventListener('click', async (
       kotMetaFontSize: [8, 20, 10],
       kotItemFontSize: [8, 22, 12],
       kotFooterFontSize: [8, 20, 10],
-      kotBottomFeedLines: [0, 12, 3],
     };
     Object.entries(fields).forEach(([key, [min, max, fallback]]) => {
       const input = document.getElementById(`printer-edit-${key}`);
-      if (input) format[key] = numberSetting(key, min, max, fallback);
+      if (input) printer[key] = numberSetting(key, min, max, fallback);
     });
-    format.fontFamily = String(
+    printer.fontFamily = String(
       document.getElementById('printer-edit-font-family')?.value || 'Arial'
     );
-    format.headerBold = !!document.getElementById('printer-edit-header-bold')?.checked;
-    format.footerBold = !!document.getElementById('printer-edit-footer-bold')?.checked;
-    const formatKeys = [
-      'paperWidth',
-      'restaurantName',
-      'receiptHeader',
-      'receiptFooter',
-      'showRestaurantName',
-      'showItemSerial',
-      'showCustomer',
-      'kotDetailsCentered',
-      'quantityFirst',
-      'showNotes',
-      'extraSpace',
-      'fontFamily',
-      'fontSize',
-      'headerFontSize',
-      'headerBold',
-      'footerBold',
-      'billingMainWidth',
-      'billingOuterTop',
-      'billingOuterRight',
-      'billingOuterBottom',
-      'billingOuterLeft',
-      'billingItemBoxHeight',
-      'restaurantNameFontSize',
-      'headerFooterFontSize',
-      'dateBillFontSize',
-      'itemListingFontSize',
-      'grandTotalFontSize',
-      'serialColumnWidth',
-      'itemNameMinWidth',
-      'quantityColumnWidth',
-      'priceColumnWidth',
-      'amountColumnWidth',
-      'itemRowGap',
-      'separatorGap',
-      'separatorThickness',
-      'kotHeaderFontSize',
-      'kotTitleFontSize',
-      'kotMetaFontSize',
-      'kotItemFontSize',
-      'kotFooterFontSize',
-      'kotBottomFeedLines',
-      'itemsPerPage',
-    ];
-    setPrinterFormat(
-      printer,
-      capability,
-      Object.fromEntries(
-        formatKeys.filter((key) => format[key] !== undefined).map((key) => [key, format[key]])
-      )
-    );
+    printer.headerBold = !!document.getElementById('printer-edit-header-bold')?.checked;
+    printer.footerBold = !!document.getElementById('printer-edit-footer-bold')?.checked;
     try {
       await saveOperations();
       assignmentPrinterId = '';
       assignmentMode = '';
       renderOperations();
     } catch (error) {
-      showStaffNotice(error.message);
+      alert(error.message);
     }
     return;
   }
@@ -5760,13 +4577,6 @@ document.getElementById('operations-content')?.addEventListener('click', async (
   if (assignPrinter) {
     assignmentPrinterId = assignPrinter.dataset.assignPrinter || '';
     assignmentMode = 'choose';
-    renderOperations();
-    return;
-  }
-  const editPrinterCapability = event.target.closest('[data-edit-printer-capability]');
-  if (editPrinterCapability) {
-    assignmentMode =
-      editPrinterCapability.dataset.editPrinterCapability === 'bill' ? 'edit-bill' : 'edit-kot';
     renderOperations();
     return;
   }
@@ -5779,14 +4589,17 @@ document.getElementById('operations-content')?.addEventListener('click', async (
   if (event.target.closest('[data-assign-bill]')) {
     const printer = operationsConfig.printers.find((item) => item.id === assignmentPrinterId);
     if (printer) {
-      setPrinterCapability(printer, 'bill', !printerSupports(printer, 'bill'));
+      printer.type = 'bill';
+      operationsConfig.routes = operationsConfig.routes.filter(
+        (route) => route.printerId !== printer.id
+      );
       try {
         await saveOperations();
         assignmentPrinterId = '';
         assignmentMode = '';
         renderOperations();
       } catch (error) {
-        showStaffNotice(error.message);
+        alert(error.message);
       }
     }
     return;
@@ -5794,23 +4607,6 @@ document.getElementById('operations-content')?.addEventListener('click', async (
   if (event.target.closest('[data-assign-kot]')) {
     assignmentMode = 'kot';
     renderOperations();
-    return;
-  }
-  if (event.target.closest('[data-disable-kot]')) {
-    const printer = operationsConfig.printers.find((item) => item.id === assignmentPrinterId);
-    if (!printer) return;
-    setPrinterCapability(printer, 'kot', false);
-    operationsConfig.routes = operationsConfig.routes.filter(
-      (route) => route.printerId !== printer.id
-    );
-    try {
-      await saveOperations();
-      assignmentPrinterId = '';
-      assignmentMode = '';
-      renderOperations();
-    } catch (error) {
-      showStaffNotice(error.message);
-    }
     return;
   }
   if (event.target.closest('[data-save-kot-assignment]')) {
@@ -5827,11 +4623,11 @@ document.getElementById('operations-content')?.addEventListener('click', async (
       }))
       .filter((item) => item.category && item.itemName);
     if (!allCategories && !categories.length && !items.length) {
-      showStaffNotice('Select all categories, a category, or at least one dish.');
+      alert('Select all categories, a category, or at least one dish.');
       return;
     }
     if (printer) {
-      setPrinterCapability(printer, 'kot', true);
+      printer.type = 'kot';
       operationsConfig.routes = operationsConfig.routes.filter(
         (route) => route.printerId !== printer.id
       );
@@ -5865,7 +4661,7 @@ document.getElementById('operations-content')?.addEventListener('click', async (
         assignmentMode = '';
         renderOperations();
       } catch (error) {
-        showStaffNotice(error.message);
+        alert(error.message);
       }
     }
     return;
@@ -5885,19 +4681,16 @@ document.getElementById('operations-content')?.addEventListener('click', async (
       return;
     }
     if (!deviceId && printBridgeState === 'available') {
-      showStaffNotice('Choose an installed system printer first.');
+      alert('Choose an installed system printer first.');
       return;
     }
     operationsConfig.printers.push({
       id: operationId(),
       name,
-      capabilities: [type],
       type,
       connection: 'system',
       deviceId,
       deviceName,
-      workstationId: localWorkstationId(),
-      workstationName: printBridgeWorkstation?.name || '',
     });
     renderOperations();
     return;
@@ -5920,12 +4713,12 @@ document.getElementById('operations-content')?.addEventListener('click', async (
   if (addRoute) {
     try {
       if (!addSelectedRoutes()) {
-        showStaffNotice('Choose a KOT printer and at least one category first.');
+        alert('Choose a KOT printer and at least one category first.');
         return;
       }
       renderOperations();
     } catch (error) {
-      showStaffNotice(error.message);
+      alert(error.message);
     }
     return;
   }
@@ -5942,7 +4735,7 @@ document.getElementById('operations-content')?.addEventListener('click', async (
     try {
       addSelectedRoutes();
     } catch (error) {
-      showStaffNotice(error.message);
+      alert(error.message);
       return;
     }
     button.disabled = true;
@@ -5950,7 +4743,7 @@ document.getElementById('operations-content')?.addEventListener('click', async (
     try {
       await saveOperations();
     } catch (error) {
-      showStaffNotice(error.message);
+      alert(error.message);
       button.disabled = false;
       button.textContent = 'Save printer configuration';
     }
@@ -5966,7 +4759,7 @@ document.getElementById('operations-content')?.addEventListener('click', async (
         message: `KOT printing failed: ${error.message}`,
         source: 'KOT print bridge',
       });
-      showStaffNotice(error.message);
+      alert(error.message);
     }
   }
 });
@@ -6022,7 +4815,7 @@ document.getElementById('install-shortcut')?.addEventListener('click', async () 
       '<li>Open the browser menu (⋮).</li><li>Choose <strong>Install app</strong> or <strong>Create shortcut</strong>.</li><li>Pin “RL Orders” to the taskbar or desktop.</li>';
   }
   if (typeof dialog.showModal === 'function') dialog.showModal();
-  else showStaffNotice(`${message.textContent}\n\n${steps.textContent}`);
+  else alert(`${message.textContent}\n\n${steps.textContent}`);
 });
 document
   .getElementById('shortcut-close')
@@ -6040,15 +4833,11 @@ document.getElementById('clear-order-search')?.addEventListener('click', () => {
 });
 historyDate?.addEventListener('change', () => {
   historyAll = false;
-  document.getElementById('all-history')?.classList.remove('is-active');
-  document.getElementById('all-history')?.setAttribute('aria-pressed', 'false');
   loadOrders();
 });
 document.getElementById('all-history')?.addEventListener('click', () => {
   historyAll = true;
   if (historyDate) historyDate.value = '';
-  document.getElementById('all-history')?.classList.add('is-active');
-  document.getElementById('all-history')?.setAttribute('aria-pressed', 'true');
   loadOrders();
 });
 document.getElementById('order-view-tabs')?.addEventListener('click', (event) => {
@@ -6092,7 +4881,7 @@ menuResults?.addEventListener('click', async (event) => {
       message: `Menu availability update failed: ${error.message}`,
       source: 'menu availability',
     });
-    showStaffNotice(error.message);
+    alert(error.message);
     button.disabled = false;
   }
 });
@@ -6108,72 +4897,12 @@ if (cachedTableAreas.length) {
   tableViewPanel.hidden = false;
   renderTableView();
 }
-async function restoreLastOrdersWorkspace() {
-  const saved = savedOrdersWorkspace();
-  if (!saved || saved.area === 'tables') return;
-  if (saved.area === 'counter') {
-    await openCounterOrder();
-    return;
-  }
-  if (saved.area === 'live') {
-    closeOpenPanels('live');
-    liveOrdersPanel.hidden = false;
-    liveOrdersToggle.classList.add('is-open');
-    liveOrdersToggle.setAttribute('aria-expanded', 'true');
-    setOrdersRailActive('live');
-    return;
-  }
-  if (saved.area === 'availability') {
-    closeOpenPanels('availability');
-    availability.hidden = false;
-    availabilityButton?.setAttribute('aria-expanded', 'true');
-    setOrdersRailActive('availability');
-    try {
-      await loadAvailability();
-    } catch (_) {}
-    return;
-  }
-  if (saved.area !== 'operations') return;
-  const allowedTabs = new Set(['home', 'setup', 'tables', 'kots', 'kitchen-display', 'printers']);
-  operationsTab = allowedTabs.has(saved.tab) ? saved.tab : 'home';
-  closeOpenPanels('operations');
-  operationsPanel.hidden = false;
-  operationsToggle.classList.add('is-open');
-  operationsToggle.setAttribute('aria-expanded', 'true');
-  setOrdersRailActive('operations');
-  renderOperations();
-  try {
-    await loadOrders();
-    await loadOperations();
-  } catch (_) {}
-  if (!operationsPanel.hidden) renderOperations();
-  if (operationsTab === 'setup') void checkPrintBridgeSetup();
-  void discoverSystemPrinters();
-}
 // Detect the local workstation service on every app launch. This keeps the
 // Operations readiness state current without requiring staff to press Check again.
 void checkPrintBridgeSetup();
 loadOrders();
 showTableView();
-void restoreLastOrdersWorkspace();
-void pollPrintUpdates();
-connectFastPrintUpdates();
-if ('serviceWorker' in navigator)
-  navigator.serviceWorker.addEventListener('message', (event) => {
-    if (event.data?.type === 'order-update') requestFastOrdersRefresh();
-  });
-// Same-instance SSE and the durable event cursor trigger immediate refreshes.
-// This is only a quiet fallback, so avoid re-downloading the full order list
-// every three seconds on every open register, tablet, and admin screen.
-setInterval(() => {
-  if (document.visibilityState === 'visible' && navigator.onLine) void loadOrders();
-}, 15000);
-// Same-instance SSE is effectively immediate. This small persisted-event poll
-// covers serverless instance changes and reconnects without reloading all orders.
-setInterval(pollPrintUpdates, 1000);
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && navigator.onLine) requestFastOrdersRefresh();
-});
+setInterval(loadOrders, 3000);
 // Cloud reconciliation is deliberately slower than the live table refresh:
 // it retries durable local work promptly without flooding the API or printers.
 setInterval(() => {
@@ -6186,10 +4915,6 @@ setInterval(() => {
       })
     );
 }, 15000);
-// A bridge outage must delay printing, never silently discard the automatic KOT/bill.
-setInterval(() => {
-  void flushDeferredAutomaticPrints();
-}, 10000);
 setInterval(() => {
   if (!operationsPanel.hidden && operationsTab === 'kitchen-display')
     loadOperations().catch(() => {});
