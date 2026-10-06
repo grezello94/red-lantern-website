@@ -176,6 +176,62 @@ async function mockAdmin(page, { onRequest, content = sampleContent() } = {}) {
   });
 }
 
+test('admin can reveal and assign a newly generated Captain PIN', async ({ page }) => {
+  await mockAdmin(page);
+  let savedPin = '';
+  await page.route('**/api/admin/captains', async (route) => {
+    const request = route.request();
+    if (request.method() === 'PUT') savedPin = request.postDataJSON().captains[0].pin;
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        captains: [{ id: 'cap_lalit', name: 'Lalit', areas: [], active: true, pinConfigured: true, pinViewable: true }],
+        areas: [],
+        settings: { idleMinutes: 15 },
+      }),
+    });
+  });
+  await page.goto('/admin.html#tab-captain-app');
+  const pin = page.locator('[data-captain-pin="0"]');
+  await expect(pin).toHaveValue('');
+  await page.locator('[data-captain-pin-generate="0"]').click();
+  const generated = await pin.inputValue();
+  expect(generated).toMatch(/^\d{6}$/);
+  await expect(pin).toHaveAttribute('type', 'text');
+  await page.locator('[data-captain-pin-toggle="0"]').click();
+  await expect(pin).toHaveAttribute('type', 'password');
+  await page.locator('[data-captain-pin-toggle="0"]').click();
+  await expect(pin).toHaveAttribute('type', 'text');
+  await page.locator('#captain-save').click();
+  await expect(page.locator('#captain-admin-status')).toContainText('1 new PIN assigned');
+  expect(savedPin).toBe(generated);
+  await expect(page.locator('[data-captain-pin="0"]')).toHaveValue('');
+});
+
+test('admin can show and hide the currently saved Captain PIN', async ({ page }) => {
+  await mockAdmin(page);
+  await page.route('**/api/admin/captains/cap_lalit/pin', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '{"pin":"482916"}' });
+  });
+  await page.route('**/api/admin/captains', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        captains: [{ id: 'cap_lalit', name: 'Lalit', areas: [], active: true, pinConfigured: true, pinViewable: true }],
+        areas: [],
+        settings: { idleMinutes: 15 },
+      }),
+    });
+  });
+  await page.goto('/admin.html#tab-captain-app');
+  await page.locator('[data-captain-pin-toggle="0"]').click();
+  await expect(page.locator('[data-captain-current-pin="0"]')).toContainText('482916');
+  await page.locator('[data-captain-pin-toggle="0"]').click();
+  await expect(page.locator('[data-captain-current-pin="0"]')).toBeHidden();
+});
+
 test('sales dashboard presents operational controls and fits a phone', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockAdmin(page);

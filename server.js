@@ -33,6 +33,8 @@ const Analytics = require('./analytics-domain');
 const Payments = require('./payments-domain');
 const { schemaProbe } = require('./database-readiness');
 const TrustedContacts = require('./trusted-contacts-domain');
+const { encryptCaptainPin, decryptCaptainPin } = require('./captain-pin-vault');
+const OrderWindows = require('./order-windows');
 
 const envPath = path.join(__dirname, '.env');
 if (fs.existsSync(envPath)) {
@@ -2937,6 +2939,22 @@ function normalizeAirMenu(body) {
     tableQrDisabled = {};
   }
   const isValidTime = (value) => /^([01]\d|2[0-3]):[0-5]\d$/.test(String(value || ''));
+  const cardOrderWindow = OrderWindows.normalize(
+    body.airCardOrderWindowEnabled === 'on',
+    body.airCardOrderWindowStart,
+    body.airCardOrderWindowEnd
+  );
+  const deliveryOrderWindow = OrderWindows.normalize(
+    body.airDeliveryOrderWindowEnabled === 'on',
+    body.airDeliveryOrderWindowStart,
+    body.airDeliveryOrderWindowEnd
+  );
+  const cardOrderPhone = String(body.airCardOrderPhone || '').trim();
+  if (
+    (cardOrderWindow.enabled || deliveryOrderWindow.enabled) &&
+    cardOrderPhone.replace(/\D/g, '').length < 7
+  )
+    throw new Error('Enter the QR Order Phone number before enabling an order timing window.');
   const proximity = {
     latitude:
       Number.isFinite(Number(body.airProximityLatitude)) &&
@@ -2983,10 +3001,12 @@ function normalizeAirMenu(body) {
     tableDirectOrders: body.airTableDirectOrders === 'on',
     cardDirectOrders: body.airCardDirectOrders === 'on',
     deliveryEnabled: body.airDeliveryEnabled === 'on',
+    cardOrderWindow,
+    deliveryOrderWindow,
     showTablePrices: body.airShowTablePrices === 'on',
     showCardPrices: body.airShowCardPrices === 'on',
     cardCallEnabled: body.airCardCallEnabled === 'on',
-    cardOrderPhone: String(body.airCardOrderPhone || '').trim(),
+    cardOrderPhone,
     proximity,
     loyalty: {
       enabled: body.airLoyaltyEnabled === 'on',
@@ -4824,6 +4844,8 @@ app.get('/api/air-menu', async (req, res) => {
     showPrices: isCard ? menu.showCardPrices === true : menu.showTablePrices !== false,
     directOrdersEnabled: isCard ? menu.cardDirectOrders !== false : menu.tableDirectOrders === true,
     deliveryEnabled: menu.deliveryEnabled !== false,
+    cardOrderWindow: menu.cardOrderWindow || { enabled: false },
+    deliveryOrderWindow: menu.deliveryOrderWindow || { enabled: false },
     cardCallEnabled: isCard && menu.cardCallEnabled === true,
     cardOrderPhone: String(menu.cardOrderPhone || ''),
     proximity: {
@@ -4912,6 +4934,15 @@ app.post('/api/direct-orders', async (req, res) => {
       return res
         .status(423)
         .json({ error: `${operatingStatus.message} ${operatingStatus.reopensAt}`.trim() });
+    const orderWindows = OrderWindows.state(menu);
+    const callMessage = String(menu.cardOrderPhone || '').trim()
+      ? `You can call ${String(menu.cardOrderPhone).trim()} to check or place an order.`
+      : 'Please call the restaurant to check or place an order.';
+    if (mode === 'card' && !orderWindows.cardOpen)
+      return res.status(423).json({
+        error: `Business Card QR direct ordering is closed at this time. ${callMessage}`,
+        reason: 'card-order-window',
+      });
     const phone = String(customerPhone || '').replace(/\D/g, '');
     if (phone.length < 7) return res.status(400).json({ error: 'Enter a valid mobile number.' });
     const fulfilment =
@@ -4926,6 +4957,11 @@ app.post('/api/direct-orders', async (req, res) => {
       return res
         .status(403)
         .json({ error: 'Delivery is temporarily unavailable. Please choose pickup.' });
+    if (fulfilment === 'delivery' && !orderWindows.deliveryOpen)
+      return res.status(423).json({
+        error: `Delivery ordering is closed at this time. Pickup may still be available. ${callMessage}`,
+        reason: 'delivery-order-window',
+      });
     const priceNumber = (value) => Number(String(value || '').replace(/[^0-9.]/g, '')) || 0;
     const displayItemName = (value) =>
       String(value || '')
@@ -8449,15 +8485,48 @@ app.get('/api/admin/captains', async (req, res) => {
         ? rows[0].config.tableAreas.map((area) => String(area.name || '').trim()).filter(Boolean)
         : [],
       idleMinutes = Math.max(2, Math.min(120, Number(config.settings?.idleMinutes) || 15));
+    res.set('Cache-Control', 'no-store');
     res.json({
       captains: (Array.isArray(config.captains) ? config.captains : []).map(
-        ({ pinHash, ...captain }) => ({ ...captain, pinConfigured: !!pinHash })
+        ({ pinHash, pinEncrypted, ...captain }) => ({
+          ...captain,
+          pinConfigured: !!pinHash,
+          pinViewable: !!pinEncrypted,
+        })
       ),
       areas,
       settings: { idleMinutes },
     });
   } catch (error) {
     res.status(500).json({ error: 'Unable to load Captain accounts.' });
+  }
+});
+app.get('/api/admin/captains/:id/pin', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  try {
+    const config = await getSection('captain');
+    const captain = (Array.isArray(config.captains) ? config.captains : []).find(
+      (entry) => entry.id === req.params.id
+    );
+    if (!captain) return res.status(404).json({ error: 'Captain account was not found.' });
+    if (!captain.pinEncrypted)
+      return res.status(409).json({
+        error: 'This PIN predates viewing support. Set a new PIN once to enable Show PIN.',
+      });
+    const pin = decryptCaptainPin(
+      captain.pinEncrypted,
+      captain.id,
+      process.env.CAPTAIN_PIN_ENCRYPTION_KEY || process.env.ADMIN_PASSWORD
+    );
+    const expected = crypto.scryptSync(pin, `captain:${captain.id}`, 64).toString('hex');
+    if (!secureCompare(expected, captain.pinHash))
+      throw new Error('Stored Captain PIN does not match its login hash.');
+    return res.json({ pin });
+  } catch (error) {
+    console.error('Captain PIN reveal failed:', error.message);
+    return res.status(503).json({
+      error: 'This PIN cannot be viewed. Set a new PIN for this Captain.',
+    });
   }
 });
 app.get('/api/admin/captains/activity', async (req, res) => {
@@ -8536,13 +8605,21 @@ app.put('/api/admin/captains', async (req, res) => {
       const pinHash = pin
         ? crypto.scryptSync(pin, `captain:${id}`, 64).toString('hex')
         : previous.pinHash;
-      return { id, name, areas, active: entry.active !== false, pinHash };
+      const pinEncrypted = pin
+        ? encryptCaptainPin(
+            pin,
+            id,
+            process.env.CAPTAIN_PIN_ENCRYPTION_KEY || process.env.ADMIN_PASSWORD
+          )
+        : previous.pinEncrypted || null;
+      return { id, name, areas, active: entry.active !== false, pinHash, pinEncrypted };
     });
     await saveSection('captain', { captains, settings: { idleMinutes } });
     res.json({
-      captains: captains.map(({ pinHash, ...captain }) => ({
+      captains: captains.map(({ pinHash, pinEncrypted, ...captain }) => ({
         ...captain,
         pinConfigured: !!pinHash,
+        pinViewable: !!pinEncrypted,
       })),
       settings: { idleMinutes },
     });

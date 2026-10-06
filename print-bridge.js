@@ -22,7 +22,7 @@ const { DatabaseSync } = require('node:sqlite');
 const PORT = Number(process.env.PRINT_BRIDGE_PORT || 9124);
 // Keep this in sync with downloads/print-bridge-release.json. Operations uses
 // that signed-off release record to tell staff whether this computer is current.
-const BRIDGE_VERSION = '2026.09.18.5';
+const BRIDGE_VERSION = '2026.10.06.1';
 const PRINT_JOB_LEASE_MS = Math.max(
   30000,
   Number(process.env.PRINT_BRIDGE_JOB_LEASE_MS || 2 * 60 * 1000)
@@ -643,9 +643,10 @@ async function assertRequestedWorkstation(payload) {
 }
 
 async function printText(printerName, text, settings = {}) {
-  // Repair the software printing path before accepting a new job. This is
-  // silent and cached, so normal one-click printing stays fast.
-  await ensureWindowsSpoolerRunning();
+  // The background monitor repairs the spooler. Do not hold a print request
+  // behind printer enumeration or a PowerShell health check.
+  if (process.platform === 'win32' && Date.now() - windowsSpoolerCheck.checkedAt >= 30000)
+    void ensureWindowsSpoolerRunning();
   const file = path.join(os.tmpdir(), `red-lantern-kot-${crypto.randomUUID()}.txt`);
   await fs.writeFile(file, text, 'utf8');
   try {
@@ -1125,7 +1126,9 @@ const server = http.createServer(async (req, res) => {
     try {
       localLedger().prepare('SELECT 1 AS ok').get();
       const workstation = await workstationIdentity();
-      const automaticRecovery = await ensureWindowsSpoolerRunning();
+      // Health is used before automatic KOT dispatch. Keep it independent of
+      // the slower Windows spooler probe so a ready Bridge answers at once.
+      const automaticRecovery = windowsSpoolerCheck.result;
       return reply(
         res,
         200,

@@ -9,6 +9,24 @@
   --line: #eee2dc;
   --shadow: 0 8px 22px rgba(57, 29, 21, 0.08);
 }
+
+.order-window-notice {
+  margin: 14px 0 18px;
+  padding: 14px 16px;
+  border: 1px solid #f0cf9d;
+  border-radius: 12px;
+  color: #6d3d0a;
+  background: #fff8e9;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.5;
+}
+.order-window-notice a {
+  display: inline-block;
+  margin-left: 4px;
+  color: #a5212b;
+  font-weight: 900;
+}
 * {
   box-sizing: border-box;
 }

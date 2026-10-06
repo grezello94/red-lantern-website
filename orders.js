@@ -2818,10 +2818,15 @@ function renderOperations() {
   }
 }
 function detectedDesktopPlatform() {
+  const userAgent = String(navigator.userAgent || '').toLowerCase();
+  if (/iphone|ipad|ipod|android/.test(userAgent)) return null;
   const hint = String(
-    navigator.userAgentData?.platform || navigator.platform || navigator.userAgent || ''
+    navigator.userAgentData?.platform || navigator.platform || userAgent
   ).toLowerCase();
-  return /mac|iphone|ipad/.test(hint) ? 'macOS' : /win/.test(hint) ? 'Windows' : 'this computer';
+  if (/^macintel$/.test(hint) && navigator.maxTouchPoints > 1) return null;
+  if (/mac/.test(hint)) return 'macOS';
+  if (/win/.test(hint)) return 'Windows';
+  return null;
 }
 function printBridgeSetupCommand(platform = detectedDesktopPlatform()) {
   return platform === 'macOS'
@@ -2832,11 +2837,21 @@ function renderPrintBridgeSetup() {
   const content = document.getElementById('operations-content');
   if (!content) return;
   const status = printBridgeSetupStatus;
-  const platform = status?.platformLabel || detectedDesktopPlatform();
-  const download =
-    platform === 'macOS'
-      ? 'https://github.com/grezello94/red-lantern-website/releases/latest/download/Red-Lantern-Print-Bridge-macOS.pkg'
-      : 'https://github.com/grezello94/red-lantern-website/releases/latest/download/Red-Lantern-Print-Bridge-Windows-Setup.exe';
+  const bridgePlatform = status?.ok ? status.platformLabel : null;
+  const platform = ['macOS', 'Windows'].includes(bridgePlatform)
+    ? bridgePlatform
+    : detectedDesktopPlatform();
+  const downloads = [
+    { platform: 'Windows', url: '/downloads/Red-Lantern-Print-Bridge-Windows.zip' },
+    { platform: 'macOS', url: '/downloads/Red-Lantern-Print-Bridge-macOS.zip' },
+  ];
+  const setupDownloads = downloads
+    .filter((item) => !platform || item.platform === platform)
+    .map(
+      (item) =>
+        `<a class="operations-save bridge-download" href="${item.url}" download>Download latest ${item.platform} setup</a>`
+    )
+    .join('');
   const configured =
     Number(status?.configuredBillPrinterCount || 0) > 0 &&
     Number(status?.configuredKotRouteCount || 0) > 0;
@@ -2855,8 +2870,14 @@ function renderPrintBridgeSetup() {
         ? `<span class="printing-status-icon" aria-hidden="true">✓</span><div><h3>Printing is ready</h3><p>This computer is ready to print bills and kitchen orders${status.version ? ` · Bridge ${esc(status.version)}` : ''}.</p><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
         : status?.ok
           ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Finish printer setup</h3><p>Print Bridge is running, but this computer needs an assigned Bill printer and a KOT route attached to a real system printer before service.</p><button type="button" class="quiet-button" data-operations-tab="printers">Manage printers</button><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
-          : `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Set up printing</h3><p>${esc(status?.detail || `Install printing once on this ${platform} computer.`)}</p><a class="operations-save bridge-download" href="${download}">Set up printing</a><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`;
-  content.innerHTML = `<section class="simple-printing-setup"><button type="button" class="assignment-back" data-operations-tab="home">‹ Back</button><span class="eyebrow">Printing</span><div class="simple-printing-card">${card}</div></section>`;
+          : `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Set up printing</h3><p>${esc(status?.detail || `Install printing once on this ${platform || 'billing'} computer.`)}</p><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`;
+  const launcher =
+    platform === 'macOS'
+      ? 'START-SETUP.command'
+      : platform === 'Windows'
+        ? 'START-SETUP.cmd'
+        : 'START-SETUP.cmd or START-SETUP.command on the matching computer';
+  content.innerHTML = `<section class="simple-printing-setup"><button type="button" class="assignment-back" data-operations-tab="home">‹ Back</button><span class="eyebrow">Printing</span><div class="simple-printing-card">${card}</div><p class="bridge-setup-download">${setupDownloads}<span>Requires Node.js 22 or newer. Unzip the setup on the billing computer, open ${launcher}, then select Check again.</span></p></section>`;
 }
 async function checkPrintBridgeSetup() {
   printBridgeSetupStatus = { checking: true };

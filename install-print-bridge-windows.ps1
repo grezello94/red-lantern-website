@@ -94,7 +94,7 @@ try {
   $trigger = New-ScheduledTaskTrigger -AtLogOn -User $currentUser
   # Keep the Bridge alive, with no visible terminal. It starts at every sign-in
   # and Task Scheduler restarts it after an unexpected exit.
-  $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Seconds 0) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)
+  $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Seconds 0) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew
   # Run with the highest token granted by the one-time elevated installer. The
   # Bridge uses it only to start Windows Print Spooler automatically when it is
   # stopped, keeping service recovery out of the counter staff workflow.
@@ -102,7 +102,7 @@ try {
   Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description 'Starts and automatically recovers the Red Lantern local printer bridge for this counter user.' -Force | Out-Null
   Start-ScheduledTask -TaskName $taskName
   $ready = $false
-  1..8 | ForEach-Object {
+  1..20 | ForEach-Object {
     if (!$ready) {
       Start-Sleep -Milliseconds 500
       try { $ready = (Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 'http://127.0.0.1:9124/health').StatusCode -eq 200 } catch {}
@@ -117,6 +117,11 @@ try {
   Write-Host 'Print Bridge is installed, running, and will restart at sign-in or after an unexpected stop.'
 } catch {
   $failure = $_.Exception.Message
+  # An installed task already owns startup and recovery. Do not add a second
+  # Startup launcher if its initial health check happened to time out.
+  if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
+    throw "Print Bridge task was installed, but readiness needs attention: $failure"
+  }
   # A .vbs launcher keeps the bridge completely out of the staff workflow:
   # no Command Prompt window appears at sign-in or when the fallback starts.
   @(

@@ -1045,6 +1045,10 @@ function fillAirMenu(menu = {}) {
   setField('airSourceFileName', menu.sourceFileName);
   setField('airBarSourceFileName', menu.barSourceFileName);
   setField('airCardOrderPhone', menu.cardOrderPhone);
+  setField('airCardOrderWindowStart', menu.cardOrderWindow?.start || '10:00');
+  setField('airCardOrderWindowEnd', menu.cardOrderWindow?.end || '22:00');
+  setField('airDeliveryOrderWindowStart', menu.deliveryOrderWindow?.start || '10:00');
+  setField('airDeliveryOrderWindowEnd', menu.deliveryOrderWindow?.end || '22:00');
   setField('airTableQrDisabled', JSON.stringify(menu.tableQrDisabled || {}));
   setField('airProximityLatitude', menu.proximity?.latitude ?? '');
   setField('airProximityLongitude', menu.proximity?.longitude ?? '');
@@ -1072,6 +1076,8 @@ function fillAirMenu(menu = {}) {
     airTableDirectOrders: menu.tableDirectOrders === true,
     airCardDirectOrders: menu.cardDirectOrders !== false,
     airDeliveryEnabled: menu.deliveryEnabled !== false,
+    airCardOrderWindowEnabled: menu.cardOrderWindow?.enabled === true,
+    airDeliveryOrderWindowEnabled: menu.deliveryOrderWindow?.enabled === true,
     airRestaurantClosed: menu.restaurantClosed === true,
     airLoyaltyEnabled: menu.loyalty?.enabled !== false,
   };

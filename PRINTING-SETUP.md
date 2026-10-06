@@ -13,6 +13,8 @@ Printer configuration is capability-based and does not depend on saved printer n
 
 The bridge tries CIM, PowerShell PrinterManagement, and WMIC discovery, in that order, so it continues working when one Windows management provider is unavailable. The installer registers a per-user scheduled task with automatic restart; if task registration is unavailable, it retains a Startup-folder fallback instead.
 
+After setup, the Bridge starts silently when the counter user signs in after a reboot. No Command Prompt or PowerShell window is needed during daily operation. Keep the Orders console open on that computer for automatic KOT and bill dispatch. An interrupted print is held for review rather than blindly reprinted; physical printer and network speed still determine when paper comes out.
+
 The Orders readiness check also blocks a green “Printing is ready” state when Windows or CUPS reports a configured queue as Offline/Error, when a saved queue is missing, when a configured LAN endpoint does not accept a TCP connection, or when a live menu item has no KOT route.
 
 ## macOS
@@ -23,6 +25,8 @@ The Orders readiness check also blocks a green “Printing is ready” state whe
 4. Install or update the automatic startup agent by running `bash ./install-print-bridge-macos.sh` in the extracted setup folder. Every run replaces the stable per-user runtime and restarts the installed version.
 
 The bridge reads the macOS CUPS printer list through `lpstat`.
+
+The LaunchAgent starts silently when the counter user signs in and restarts the Bridge if it exits. Keep the Orders console open on the same Mac for automatic dispatch.
 
 ## Why this is a separate installer
 

@@ -44,6 +44,8 @@ cat > "$plist.new" <<EOF
   <key>WorkingDirectory</key><string>$install_dir</string>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/dev/null</string>
+  <key>StandardErrorPath</key><string>/dev/null</string>
 </dict></plist>
 EOF
 mv -f "$plist.new" "$plist"

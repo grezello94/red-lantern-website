@@ -1,6 +1,7 @@
 const params = new URLSearchParams(window.location.search);
 const Addons = window.RedLanternAddons;
 const OrderRequests = window.RedLanternOrderRequests;
+const OrderWindows = window.RedLanternOrderWindows;
 const fallbackUrl = 'https://www.redlanternrestaurant.in/menu';
 const expires = Number(params.get('expires'));
 const orderStorageKey = `red-lantern-order:${params.get('signature') || expires}`;
@@ -19,6 +20,7 @@ let loyaltyLookupTimer = null;
 let directOrderRequestId = sessionStorage.getItem(directOrderRequestKey) || '';
 let proximityProof = null;
 let activeMenu = null;
+let lastOrderWindowState = '';
 const menuCacheKey = `red-lantern-menu:${params.get('signature') || expires || 'public'}`;
 function distanceInMetres(latitudeA, longitudeA, latitudeB, longitudeB) {
   const radians = (value) => (Number(value) * Math.PI) / 180;
@@ -630,6 +632,17 @@ function setupOrderShortlist() {
   });
   document.getElementById('place-direct-order').addEventListener('click', async () => {
     const status = document.getElementById('order-action-status');
+    const orderWindows = OrderWindows.state(activeMenu);
+    if (activeMenu?.mode === 'card' && !orderWindows.cardOpen) {
+      configureOrderActions(activeMenu);
+      status.textContent = 'Business Card QR direct ordering has closed. Please call the number shown above to check or order.';
+      return;
+    }
+    if (document.getElementById('order-fulfillment-type')?.value === 'delivery' && !orderWindows.deliveryOpen) {
+      configureOrderActions(activeMenu);
+      status.textContent = 'Delivery ordering has closed. Please choose pickup or call the number shown above.';
+      return;
+    }
     const phone = document.getElementById('order-customer-phone').value.trim();
     const items = Object.entries(orderSelections)
       .filter(([, quantity]) => quantity > 0)
@@ -705,6 +718,7 @@ function setupOrderShortlist() {
       if (!error.status || error.status >= 500 || error.status === 429) {
         showOrderOutageFallback();
       } else {
+        if (error.status === 423 && activeMenu) configureOrderActions(activeMenu);
         status.textContent = error.message || 'Unable to place the order. Please call us.';
       }
     } finally {
@@ -728,22 +742,42 @@ function configureOrderActions(menu) {
   const isCard = menu.mode === 'card';
   orderIsBusinessCard = isCard;
   const fulfillmentType = document.getElementById('order-fulfillment-type');
-  const deliveryEnabled = menu.deliveryEnabled !== false;
+  const state = OrderWindows.state(menu);
+  lastOrderWindowState = JSON.stringify(state);
+  const deliveryEnabled = menu.deliveryEnabled !== false && state.deliveryOpen;
   if (fulfillmentType) {
+    const previous = fulfillmentType.dataset.initialized ? fulfillmentType.value : '';
     fulfillmentType.innerHTML = `${deliveryEnabled ? '<option value="delivery">Delivery</option>' : ''}<option value="pickup">Pick Up</option>`;
-    fulfillmentType.value = isCard && deliveryEnabled ? 'delivery' : 'pickup';
+    fulfillmentType.value = previous === 'delivery' && deliveryEnabled
+      ? 'delivery'
+      : previous === 'pickup'
+        ? 'pickup'
+        : isCard && deliveryEnabled
+          ? 'delivery'
+          : 'pickup';
+    fulfillmentType.dataset.initialized = 'true';
   }
   document.body.classList.toggle('card-menu-mode', isCard);
   const whatsapp = document.getElementById('share-whatsapp');
-  directOrdersEnabled = menu.directOrdersEnabled === true;
+  directOrdersEnabled = menu.directOrdersEnabled === true && (!isCard || state.cardOpen);
   document.getElementById('place-direct-order').hidden = !directOrdersEnabled;
-  whatsapp.hidden = !isCard;
+  whatsapp.hidden = !isCard || !state.cardOpen;
   const call = document.getElementById('call-to-order');
   const phone = String(menu.cardOrderPhone || '').trim();
   const phoneDigits = phone.replace(/\D/g, '');
   const dialNumber = `${phone.startsWith('+') ? '+' : ''}${phoneDigits}`;
+  const notice = document.getElementById('order-window-notice');
+  const closedChannel = isCard && menu.directOrdersEnabled === true && !state.cardOpen
+    ? 'Business Card QR direct ordering is closed right now.'
+    : menu.directOrdersEnabled === true && menu.deliveryEnabled !== false && !state.deliveryOpen
+      ? 'Delivery ordering is closed right now. Pickup may still be available.'
+      : '';
+  notice.hidden = !closedChannel;
+  notice.innerHTML = closedChannel
+    ? `${closedChannel} ${phoneDigits.length >= 7 ? `You can <a href="tel:${dialNumber}">call ${escapeHtml(phone)} to check or order</a>.` : 'Please call the restaurant to check or order.'}`
+    : '';
   orderWhatsAppNumber = phoneDigits.length >= 7 ? phoneDigits : '';
-  const showCall = isCard && menu.cardCallEnabled && phoneDigits.length >= 7;
+  const showCall = isCard && (menu.cardCallEnabled || !state.cardOpen) && phoneDigits.length >= 7;
   call.hidden = !showCall;
   call.href = showCall ? `tel:${dialNumber}` : '#';
   if (directOrdersEnabled && String(orderCustomerPhone).replace(/\D/g, '').length >= 7)
@@ -1005,6 +1039,11 @@ async function loadMenu() {
 
 updateTimer();
 setInterval(updateTimer, 1000);
+setInterval(() => {
+  if (!activeMenu || activeMenu.closed) return;
+  if (JSON.stringify(OrderWindows.state(activeMenu)) !== lastOrderWindowState)
+    configureOrderActions(activeMenu);
+}, 30000);
 setupPrivacyDeterrents();
 setupOrderShortlist();
 loadMenu();
