@@ -351,6 +351,81 @@ body {
   .captain-auth-content > h1 { font-size: 27px; }
   .captain-account-list { max-height: 240px; }
 }
+
+/* Authentication shell safety across phones, tablets, desktop browsers and
+   installed PWAs. Keep intrinsic images and long staff names inside the card. */
+.captain-auth-card,
+.captain-auth-card * {
+  min-width: 0;
+}
+.captain-auth-card img {
+  display: block;
+  max-width: 100%;
+}
+.captain-auth-content,
+.captain-account,
+.captain-account b,
+.captain-account small {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 380px) {
+  .captain-login {
+    padding: max(9px, env(safe-area-inset-top)) max(9px, env(safe-area-inset-right)) max(9px, env(safe-area-inset-bottom)) max(9px, env(safe-area-inset-left));
+  }
+  .captain-auth-card {
+    width: 100%;
+    border-radius: 17px;
+  }
+  .captain-auth-brand {
+    min-height: 142px;
+    padding: 18px;
+  }
+  .captain-auth-brand > img {
+    width: 52px;
+    height: 52px;
+    border-radius: 15px;
+  }
+  .captain-auth-brand h1,
+  .captain-auth-content > h1 {
+    font-size: 23px;
+  }
+  .captain-auth-panel {
+    padding: 24px 18px 27px;
+  }
+}
+@media (max-height: 620px) and (orientation: landscape) {
+  .captain-login {
+    min-height: 100dvh;
+    place-content: start center;
+    overflow-y: auto;
+  }
+  .captain-auth-card {
+    grid-template-columns: minmax(220px, .8fr) minmax(330px, 1.2fr);
+    width: min(900px, calc(100vw - 28px));
+    min-height: 0;
+  }
+  .captain-auth-brand {
+    min-height: 0;
+    padding: 24px;
+  }
+  .captain-auth-brand > img {
+    width: 58px;
+    height: 58px;
+  }
+  .captain-auth-brand h1 {
+    font-size: 25px;
+  }
+  .captain-auth-brand p,
+  .captain-auth-brand > small {
+    display: none;
+  }
+  .captain-auth-panel {
+    padding: 25px 28px;
+  }
+  .captain-account-list {
+    max-height: 190px;
+  }
+}
 .captain-ready-alerts,
 .captain-pending-sync {
   display: grid;
