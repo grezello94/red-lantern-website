@@ -1500,6 +1500,37 @@ main {
   color: #48647f;
   background: #eaf1f8;
 }
+.printing-status-icon.is-checking i {
+  width: 18px;
+  height: 18px;
+  border: 3px solid #bfd0df;
+  border-top-color: #315f87;
+  border-radius: 50%;
+  animation: printing-status-spin 0.8s linear infinite;
+}
+.printing-live-steps {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 12px;
+}
+.printing-live-steps span {
+  color: #8a98a8;
+  font-size: 11px;
+  font-weight: 700;
+}
+.printing-live-steps span.is-active { color: #315f87; }
+.printing-live-steps span.is-done { color: #087b45; }
+.printing-live-steps i {
+  width: 24px;
+  height: 2px;
+  border-radius: 2px;
+  background: #dce6ee;
+}
+@keyframes printing-status-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .printing-status-icon.is-checking i { animation: none; }
+}
 @media (max-width: 620px) {
   .simple-printing-setup {
     padding: 16px;

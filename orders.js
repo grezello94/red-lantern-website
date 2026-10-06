@@ -139,6 +139,7 @@ let printBridgeState = 'checking';
 let printBridgeConfigState = 'not-synced';
 let printBridgeSetupStatus = null;
 let printBridgeSetupCheckId = 0;
+let printBridgeInstallMonitor = null;
 let assignmentPrinterId = '';
 let assignmentMode = '';
 let counterMenu = [];
@@ -1309,7 +1310,7 @@ const counterChoiceStyles = document.createElement('style');
 counterChoiceStyles.textContent = `.counter-choice-dialog{width:min(430px,calc(100vw - 32px));padding:24px;border:0;border-radius:16px;color:#26344e;box-shadow:0 20px 60px rgba(14,29,55,.25)}.counter-choice-dialog::backdrop{background:rgba(21,34,58,.46)}.counter-choice-dialog h2{margin:4px 30px 3px 0;font-size:21px}.counter-choice-dialog p{margin:0;color:#718097;font-size:12px}.counter-choice-options{display:grid;gap:8px;margin:18px 0}.counter-choice-options label{cursor:pointer}.counter-choice-options input{position:absolute;opacity:0}.counter-choice-options span{display:flex;justify-content:space-between;padding:12px;border:1px solid #d9e3ef;border-radius:9px;font-size:13px;font-weight:800}.counter-choice-options input:checked+span{border-color:#263d68;color:#fff;background:#263d68}.counter-style-options{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0;padding:12px;border:1px solid #e0e7ef;border-radius:9px}.counter-style-options legend{padding:0 4px;color:#68778e;font-size:11px;font-weight:900}.counter-style-options label{font-size:12px;font-weight:700}.counter-style-options b{color:#148251}`;
 document.head.appendChild(counterChoiceStyles);
 const counterLayoutRefinements = document.createElement('style');
-counterLayoutRefinements.textContent = `.counter-menu-items{align-items:start;grid-auto-rows:150px}.counter-menu-item{height:150px;min-height:0}.counter-category-group{display:block;padding:13px 14px 7px;color:#9a2635;background:#f8fafc;font-size:10px;font-weight:900;letter-spacing:.09em;text-transform:uppercase}.counter-category-group~.counter-category{min-height:54px}.counter-cart{height:auto;min-height:0;align-self:start}.counter-cart-items{display:block;height:clamp(190px,28vh,260px);min-height:0;flex:0 0 auto;overflow-y:auto;margin:14px 0}.counter-cart-line{min-height:0;height:72px;padding:10px 0}.counter-customer{flex:0 0 auto;margin-top:0}.counter-customer textarea{resize:none}.counter-total,.counter-place-order,.counter-order-status{flex:0 0 auto}@media(max-width:800px){.counter-menu-items{grid-auto-rows:130px}.counter-menu-item{height:130px}.counter-category-group{display:none}.counter-cart-items{height:220px;max-height:45vh}}`;
+counterLayoutRefinements.textContent = `.counter-menu-items{align-items:start;grid-template-columns:repeat(auto-fill,minmax(135px,1fr));grid-auto-rows:100px;gap:8px}.counter-menu-item{display:flex;height:100px;min-height:0;flex-direction:column;justify-content:center;padding:11px 12px;border-radius:3px;box-shadow:0 2px 8px rgba(25,44,75,.13)}.counter-menu-item>span{display:none}.counter-menu-item>b{margin:0 20px 8px 0;font-size:17px;line-height:1.14;font-weight:800}.counter-menu-item>small{margin-top:auto;color:#087b45;font-size:13px;line-height:1;font-weight:900}.counter-menu-item>i{right:8px;bottom:8px;width:21px;height:21px;font-size:16px}.counter-category-group{display:block;padding:13px 14px 7px;color:#9a2635;background:#f8fafc;font-size:10px;font-weight:900;letter-spacing:.09em;text-transform:uppercase}.counter-category-group~.counter-category{min-height:54px}.counter-cart{height:auto;min-height:0;align-self:start}.counter-cart-items{display:block;height:clamp(190px,28vh,260px);min-height:0;flex:0 0 auto;overflow-y:auto;margin:14px 0}.counter-cart-line{min-height:0;height:72px;padding:10px 0}.counter-customer{flex:0 0 auto;margin-top:0}.counter-customer textarea{resize:none}.counter-total,.counter-place-order,.counter-order-status{flex:0 0 auto}@media(max-width:800px){.counter-menu-items{grid-template-columns:repeat(auto-fill,minmax(125px,1fr));grid-auto-rows:96px}.counter-menu-item{height:96px}.counter-menu-item>b{font-size:16px}.counter-category-group{display:none}.counter-cart-items{height:220px;max-height:45vh}}`;
 document.head.appendChild(counterLayoutRefinements);
 const operationsRoutingStyles = document.createElement('style');
 operationsRoutingStyles.textContent = `.operations-section{padding:20px;border:1px solid #e2e9f1;border-radius:15px;background:linear-gradient(145deg,#fff,#fbfcfe)}.operations-section+.operations-section{margin-top:16px}.operations-section-head{display:flex;align-items:start;justify-content:space-between;gap:16px}.operations-section-head h3{margin:3px 0 5px;color:#1f2e47;font-size:18px}.operations-section-head p{max-width:660px;margin:0;color:#6a7890;font-size:12px;line-height:1.5}.operations-count{padding:7px 9px;border-radius:999px;color:#36547d;background:#edf3fb;font-size:10px;font-weight:900;white-space:nowrap}.operations-printer-form,.operations-route-form{display:grid;gap:10px;align-items:end;margin:18px 0}.operations-printer-form{grid-template-columns:minmax(180px,1.2fr) minmax(130px,.55fr) minmax(180px,.9fr) 90px auto}.operations-route-form{grid-template-columns:minmax(180px,.8fr) minmax(320px,1.4fr) auto}.operations-printer-form label,.operations-route-form label{display:grid;gap:5px;color:#55657b;font-size:10px;font-weight:900;letter-spacing:.05em;text-transform:uppercase}.operations-printer-form input,.operations-printer-form select,.operations-route-form select{width:100%;min-height:42px;padding:10px 11px;border:1px solid #d5dfeb;border-radius:9px;color:#23334e;background:#fff;font:700 12px Manrope,sans-serif}.operations-printer-form input:focus,.operations-printer-form select:focus,.operations-route-form select:focus,.category-search:focus{outline:0;border-color:#2e67b1;box-shadow:0 0 0 3px rgba(46,103,177,.12)}.operations-printer-form button,.operations-route-form button{min-height:42px;padding:10px 13px;background:#263d68;font-size:11px;white-space:nowrap}.operations-printer-form button span{font-size:16px}.printer-grid{grid-template-columns:repeat(auto-fill,minmax(255px,1fr))}.operation-printer{min-height:146px;border-color:#dfe7f0;box-shadow:0 4px 12px rgba(30,51,83,.05)}.operation-printer-head{display:grid;grid-template-columns:38px minmax(0,1fr) auto;gap:10px}.printer-card-icon{display:grid;width:38px;height:38px;place-items:center;border-radius:10px;color:#087348;background:#e8f7ef;font-size:22px;font-weight:900}.printer-card-icon.bill{color:#315487;background:#eaf1ff}.operation-printer p{line-height:1.4}.printer-endpoint{margin:9px 0!important;padding:7px 9px;border-radius:8px;color:#56708f!important;background:#f2f6fb;font:800 10px ui-monospace,SFMono-Regular,Menlo,monospace!important}.printer-endpoint.is-pending{color:#9a6c20!important;background:#fff8e9}.routing-section{background:linear-gradient(145deg,#fffdf8,#fff)}.category-picker{border:1px solid #d5dfeb;border-radius:10px;background:#fff;padding:9px}.category-picker-top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}.category-picker-top b{color:#23334e;font-size:12px}.category-picker-top span{color:#64748b;font-size:10px;font-weight:800}.category-search{width:100%;min-height:37px;border:1px solid #d5dfeb;border-radius:8px;padding:8px 10px;font:700 12px Manrope,sans-serif}.category-checklist{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:7px;max-height:190px;overflow:auto;margin-top:9px;padding-right:2px}.category-choice{display:flex!important;align-items:center;gap:8px;padding:8px 9px;border:1px solid #e2e9f1;border-radius:8px;color:#33445f!important;background:#fbfcfe;font-size:11px!important;letter-spacing:0!important;text-transform:none!important;cursor:pointer}.category-choice:hover{border-color:#a9bdd8;background:#f1f6fd}.category-choice input{width:16px;height:16px;accent-color:#1e8b59}.category-choice.is-hidden{display:none!important}.route-row{display:grid;grid-template-columns:28px minmax(0,1fr) auto}.route-icon{display:grid;width:26px;height:26px;place-items:center;border-radius:7px;color:#087348;background:#e8f7ef;font-size:16px}.route-row span{display:block;margin-top:3px}.operations-save-bar{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:16px;padding:13px 15px;border:1px solid #cce8d8;border-radius:12px;background:#f3fbf6;color:#527260;font-size:12px;font-weight:700}.operations-save{margin:0!important;padding:10px 14px;white-space:nowrap}@media(max-width:900px){.operations-printer-form{grid-template-columns:1fr 1fr}.operations-printer-form button{width:100%}}@media(max-width:760px){.operations-printer-form,.operations-route-form{grid-template-columns:1fr}.operations-printer-form button,.operations-route-form button{width:100%}.operations-section{padding:16px}.operations-section-head{align-items:flex-start}.category-checklist{grid-template-columns:1fr}.operations-save-bar{align-items:stretch;flex-direction:column}.operations-save{width:100%}}`;
@@ -2837,14 +2838,24 @@ function printBridgeSetupCommand(platform = detectedDesktopPlatform()) {
 function waitForBridgeRetry(delay) {
   return new Promise((resolve) => setTimeout(resolve, delay));
 }
-async function fetchPrintBridgeSetupStatus() {
+async function fetchPrintBridgeSetupStatus(onProgress = () => {}) {
   const retryDelays = [0, 700, 1400, 2400];
   let lastError = null;
-  for (const delay of retryDelays) {
-    if (delay) await waitForBridgeRetry(delay);
+  for (const [attempt, delay] of retryDelays.entries()) {
+    if (delay) {
+      onProgress('waiting', attempt + 1);
+      await waitForBridgeRetry(delay);
+    }
+    onProgress('bridge', attempt + 1);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
     try {
+      const healthResponse = await fetch(`${printBridgeOrigin}/health`, {
+        cache: 'no-store',
+        signal: controller.signal,
+      });
+      if (!healthResponse.ok) throw new Error('Print Bridge is not ready yet.');
+      onProgress('printers', attempt + 1);
       const response = await fetch(`${printBridgeOrigin}/v1/setup-status`, {
         cache: 'no-store',
         signal: controller.signal,
@@ -2893,6 +2904,10 @@ function renderPrintBridgeSetup() {
   const configured =
     Number(status?.configuredBillPrinterCount || 0) > 0 &&
     Number(status?.configuredKotRouteCount || 0) > 0;
+  const printerProblems =
+    Number(status?.missingConfiguredPrinterCount || 0) +
+    Number(status?.unavailableConfiguredPrinterCount || 0) +
+    Number(status?.unreachableConfiguredPrinterCount || 0);
   const failedJobs = Number(status?.ledgerSummary?.printJobs?.unresolvedFailed || 0),
     failedIds = (Array.isArray(status?.recentPrintFailures) ? status.recentPrintFailures : [])
       .map((job) => job.id)
@@ -2900,10 +2915,22 @@ function renderPrintBridgeSetup() {
     failureDetail = (Array.isArray(status?.recentPrintFailures) ? status.recentPrintFailures : [])
       .map((job) => `${job.kind.toUpperCase()} · ${job.printerName}`)
       .join(' · ');
+  const checkingCopy = {
+    cloud: ['Checking connection…', 'Confirming the website and your account are reachable.'],
+    bridge: ['Looking for Print Bridge…', `Checking this computer${status?.attempt > 1 ? ` · attempt ${status.attempt} of 4` : ''}.`],
+    waiting: ['Waiting for Print Bridge…', 'The installer or service may still be starting. Checking again automatically.'],
+    printers: ['Checking installed printers…', 'Print Bridge responded. Reading the spooler, printer queues and saved routes.'],
+  };
+  const activeCheck = checkingCopy[status?.phase] || checkingCopy.cloud;
+  const liveSteps = status?.checking
+    ? `<div class="printing-live-steps" role="status" aria-live="polite"><span class="${status.phase === 'cloud' ? 'is-active' : 'is-done'}">Website</span><i></i><span class="${['bridge', 'waiting'].includes(status.phase) ? 'is-active' : status.phase === 'printers' ? 'is-done' : ''}">Bridge</span><i></i><span class="${status.phase === 'printers' ? 'is-active' : ''}">Printers</span></div>`
+    : '';
   const card = status?.checking
-    ? `<span class="printing-status-icon is-checking" aria-hidden="true">…</span><div><h3>Preparing printing…</h3><p>This takes a moment.</p></div>`
+    ? `<span class="printing-status-icon is-checking" aria-hidden="true"><i></i></span><div><h3>${activeCheck[0]}</h3><p>${activeCheck[1]}</p>${liveSteps}</div>`
     : status?.ok && failedJobs
       ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Printing needs review</h3><p>${failedJobs} local print job${failedJobs === 1 ? '' : 's'} failed${failureDetail ? ` (${esc(failureDetail)})` : ''}. Check paper, power, cable/network and the Windows printer queue, then reprint the affected KOT or Bill from Operations.</p><button type="button" class="quiet-button" data-acknowledge-print-failures="${esc(JSON.stringify(failedIds))}">Mark reviewed</button><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
+      : status?.ok && printerProblems
+        ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Printer needs attention</h3><p>${printerProblems} configured printer${printerProblems === 1 ? '' : 's'} cannot be reached right now. Check printer power, cable/network and the system print queue, then check again.</p><button type="button" class="quiet-button" data-operations-tab="printers">View printers</button><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
       : status?.ok && configured
         ? `<span class="printing-status-icon" aria-hidden="true">✓</span><div><h3>Printing is ready</h3><p>This computer is ready to print bills and kitchen orders${status.version ? ` · Bridge ${esc(status.version)}` : ''}.</p><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
         : status?.ok
@@ -2923,7 +2950,12 @@ function renderPrintBridgeSetup() {
 }
 async function checkPrintBridgeSetup() {
   const checkId = ++printBridgeSetupCheckId;
-  printBridgeSetupStatus = { checking: true };
+  const showProgress = (phase, attempt = 1) => {
+    if (checkId !== printBridgeSetupCheckId) return;
+    printBridgeSetupStatus = { checking: true, phase, attempt };
+    renderPrintBridgeSetup();
+  };
+  printBridgeSetupStatus = { checking: true, phase: 'cloud', attempt: 1 };
   renderPrintBridgeSetup();
   const cloudCheck = (async () => {
     const controller = new AbortController(),
@@ -2939,11 +2971,16 @@ async function checkPrintBridgeSetup() {
     }
   })();
   try {
-    const data = await fetchPrintBridgeSetupStatus();
+    const cloud = await cloudCheck;
+    const data = await fetchPrintBridgeSetupStatus(showProgress);
     if (checkId !== printBridgeSetupCheckId) return;
-    printBridgeSetupStatus = { ...data, cloud: await cloudCheck };
+    printBridgeSetupStatus = { ...data, cloud };
     if (Array.isArray(data.printers)) installedSystemPrinters = data.printers;
     printBridgeState = 'available';
+    if (printBridgeInstallMonitor) {
+      clearInterval(printBridgeInstallMonitor);
+      printBridgeInstallMonitor = null;
+    }
     void syncOperationsToPrintBridge(operationsConfig);
   } catch (error) {
     if (checkId !== printBridgeSetupCheckId) return;
@@ -2955,6 +2992,20 @@ async function checkPrintBridgeSetup() {
     printBridgeState = 'offline';
   }
   renderPrintBridgeSetup();
+}
+function monitorPrintBridgeInstallation() {
+  if (printBridgeInstallMonitor) clearInterval(printBridgeInstallMonitor);
+  void checkPrintBridgeSetup();
+  let checks = 0;
+  printBridgeInstallMonitor = setInterval(() => {
+    checks += 1;
+    if (checks >= 40 || printBridgeState === 'available') {
+      clearInterval(printBridgeInstallMonitor);
+      printBridgeInstallMonitor = null;
+      return;
+    }
+    if (operationsTab === 'setup') void checkPrintBridgeSetup();
+  }, 3000);
 }
 async function loadOperations() {
   const response = await fetch('/api/orders/operations', { cache: 'no-store' });
@@ -4264,6 +4315,11 @@ document.getElementById('operations-content')?.addEventListener('input', (event)
   });
 });
 document.getElementById('operations-content')?.addEventListener('click', async (event) => {
+  const bridgeDownload = event.target.closest('.bridge-download');
+  if (bridgeDownload) {
+    monitorPrintBridgeInstallation();
+    return;
+  }
   const operationsNavigation = event.target.closest('[data-operations-tab]');
   if (operationsNavigation) {
     operationsTab = operationsNavigation.dataset.operationsTab || 'home';
