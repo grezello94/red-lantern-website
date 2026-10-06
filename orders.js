@@ -138,6 +138,7 @@ let installedSystemPrinters = [];
 let printBridgeState = 'checking';
 let printBridgeConfigState = 'not-synced';
 let printBridgeSetupStatus = null;
+let printBridgeSetupCheckId = 0;
 let assignmentPrinterId = '';
 let assignmentMode = '';
 let counterMenu = [];
@@ -2833,6 +2834,43 @@ function printBridgeSetupCommand(platform = detectedDesktopPlatform()) {
     ? 'bash ./install-print-bridge-macos.sh'
     : 'powershell -ExecutionPolicy Bypass -File .\\install-print-bridge-windows.ps1';
 }
+function waitForBridgeRetry(delay) {
+  return new Promise((resolve) => setTimeout(resolve, delay));
+}
+async function fetchPrintBridgeSetupStatus() {
+  const retryDelays = [0, 700, 1400, 2400];
+  let lastError = null;
+  for (const delay of retryDelays) {
+    if (delay) await waitForBridgeRetry(delay);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    try {
+      const response = await fetch(`${printBridgeOrigin}/v1/setup-status`, {
+        cache: 'no-store',
+        signal: controller.signal,
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.ok) {
+        const serviceError = new Error(
+          data.detail || data.error || 'The local service did not complete its check.'
+        );
+        serviceError.bridgeResponse = true;
+        throw serviceError;
+      }
+      return data;
+    } catch (error) {
+      if (error.bridgeResponse) throw error;
+      lastError = error;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+  const unavailable = new Error(
+    'Print Bridge is still restarting. Wait a few seconds, then choose Check again.'
+  );
+  unavailable.cause = lastError;
+  throw unavailable;
+}
 function renderPrintBridgeSetup() {
   const content = document.getElementById('operations-content');
   if (!content) return;
@@ -2877,9 +2915,14 @@ function renderPrintBridgeSetup() {
       : platform === 'Windows'
         ? 'START-SETUP.cmd'
         : 'START-SETUP.cmd or START-SETUP.command on the matching computer';
-  content.innerHTML = `<section class="simple-printing-setup"><button type="button" class="assignment-back" data-operations-tab="home">‹ Back</button><span class="eyebrow">Printing</span><div class="simple-printing-card">${card}</div><p class="bridge-setup-download">${setupDownloads}<span>Requires Node.js 22 or newer. Unzip the setup on the billing computer, open ${launcher}, then select Check again.</span></p></section>`;
+  const installGuide = `<div class="bridge-easy-steps"><b>Install or update in 3 easy steps</b><ol><li>Download and open the ZIP.</li><li>Open <strong>${launcher}</strong>${platform === 'Windows' ? ' and choose Yes if Windows asks' : ''}.</li><li>Wait for “installed and running”, then return here. The Bridge restarts automatically.</li></ol><p><strong>New printer driver?</strong> Install it in ${platform || 'the computer settings'}, then choose Check again. A computer restart is normally not needed.</p></div>`;
+  const controls = status?.ok
+    ? '<div class="bridge-setup-actions"><button type="button" class="quiet-button" data-restart-print-bridge>Restart Print Bridge</button><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>'
+    : '<div class="bridge-setup-actions"><button type="button" class="quiet-button" data-run-bridge-check>I’ve installed it — check now</button></div>';
+  content.innerHTML = `<section class="simple-printing-setup"><button type="button" class="assignment-back" data-operations-tab="home">‹ Back</button><span class="eyebrow">Printing</span><div class="simple-printing-card">${card}</div>${installGuide}<p class="bridge-setup-download">${setupDownloads}<span>The setup restarts Print Bridge automatically. Keep this page open and check again when setup finishes.</span></p>${controls}</section>`;
 }
 async function checkPrintBridgeSetup() {
+  const checkId = ++printBridgeSetupCheckId;
   printBridgeSetupStatus = { checking: true };
   renderPrintBridgeSetup();
   const cloudCheck = (async () => {
@@ -2896,24 +2939,14 @@ async function checkPrintBridgeSetup() {
     }
   })();
   try {
-    const controller = new AbortController(),
-      timeout = setTimeout(() => controller.abort(), 2800);
-    const response = await fetch(`${printBridgeOrigin}/v1/setup-status`, {
-      cache: 'no-store',
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok || !data.ok)
-      throw new Error(data.detail || data.error || 'The local service did not complete its check.');
+    const data = await fetchPrintBridgeSetupStatus();
+    if (checkId !== printBridgeSetupCheckId) return;
     printBridgeSetupStatus = { ...data, cloud: await cloudCheck };
-    installedSystemPrinters = Array.from(
-      { length: Number(data.printerCount) || 0 },
-      (_, index) => installedSystemPrinters[index]
-    ).filter(Boolean);
+    if (Array.isArray(data.printers)) installedSystemPrinters = data.printers;
     printBridgeState = 'available';
     void syncOperationsToPrintBridge(operationsConfig);
   } catch (error) {
+    if (checkId !== printBridgeSetupCheckId) return;
     printBridgeSetupStatus = {
       ok: false,
       cloud: await cloudCheck,
@@ -4454,26 +4487,18 @@ document.getElementById('operations-content')?.addEventListener('click', async (
     }
     return;
   }
-  const restartBridge = event.target.closest('#restart-print-bridge');
+  const restartBridge = event.target.closest('#restart-print-bridge, [data-restart-print-bridge]');
   if (restartBridge) {
-    if (
-      !confirm(
-        'Restart Print Bridge on this computer? Printing will be unavailable for a few seconds.'
-      )
-    )
-      return;
     restartBridge.disabled = true;
     restartBridge.textContent = 'Restarting…';
     try {
-      const response = await fetch('http://127.0.0.1:9124/v1/restart', { method: 'POST' });
+      const response = await fetch(`${printBridgeOrigin}/v1/restart`, { method: 'POST' });
       if (!response.ok) throw new Error('Print Bridge could not restart.');
-      await new Promise((resolve) => setTimeout(resolve, 1800));
-      await discoverSystemPrinters();
-      renderOperations();
+      await checkPrintBridgeSetup();
       alert(
         printBridgeState === 'available'
-          ? 'Print Bridge restarted successfully.'
-          : 'Restart requested, but Print Bridge has not come back online yet.'
+          ? 'Print Bridge restarted successfully. Printers were checked again automatically.'
+          : 'The restart was requested. Wait a few seconds, then choose Check again.'
       );
     } catch (error) {
       alert(error.message || 'Unable to restart Print Bridge.');

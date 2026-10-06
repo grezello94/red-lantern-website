@@ -1253,6 +1253,9 @@ const server = http.createServer(async (req, res) => {
           automaticRecovery,
           workstation,
           printerCount: printers.length,
+          // Return fresh discovery with readiness so a newly installed driver
+          // appears in Operations after this same one-click check.
+          printers,
           configuredPrinterCount: configuredPrinters.length,
           configuredPrinterIds: configuredPrinters.map((printer) => String(printer.id || '')),
           configuredBillPrinterCount: configuredPrinters.filter((printer) =>

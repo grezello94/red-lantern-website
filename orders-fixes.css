@@ -1449,6 +1449,37 @@ main {
   margin-top: 14px;
   text-decoration: none;
 }
+.bridge-easy-steps {
+  margin-top: 14px;
+  padding: 13px 15px;
+  border: 1px solid #d9e5f0;
+  border-radius: 10px;
+  color: #40536d;
+  background: #f7faff;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.bridge-easy-steps > b {
+  color: #26394e;
+  font-size: 13px;
+}
+.bridge-easy-steps ol {
+  margin: 7px 0 8px;
+  padding-left: 21px;
+}
+.bridge-easy-steps p {
+  margin: 0;
+  font-size: 12px;
+}
+.bridge-setup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.bridge-setup-actions .quiet-button {
+  margin: 0;
+}
 .printing-status-icon {
   display: grid;
   flex: none;

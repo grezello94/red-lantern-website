@@ -128,6 +128,7 @@ async function main() {
       !Array.isArray(setup.recentPrintFailures) ||
       setup.recentPrintFailures[0]?.status !== 'uncertain' ||
       typeof setup.ledgerSummary?.printJobs?.unresolvedIssues !== 'number' ||
+      !Array.isArray(setup.printers) ||
       typeof setup.unavailableConfiguredPrinterCount !== 'number' ||
       typeof setup.unreachableConfiguredPrinterCount !== 'number' ||
       setup.workstation?.id !== health.workstation.id
