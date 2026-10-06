@@ -1362,6 +1362,7 @@ tableAllocationStyles.textContent = `.table-allocation-form{display:grid;grid-te
 document.head.appendChild(tableAllocationStyles);
 const printerActionStyles = document.createElement('style');
 printerActionStyles.textContent = `.printer-card-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:14px}.printer-action-icon{display:grid!important;width:38px;height:38px;place-items:center;padding:0!important;border:1px solid #d9e3ee!important;border-radius:9px!important;color:#304a72!important;background:#f8fbff!important;font-size:20px!important;line-height:1!important}.printer-action-icon:hover{border-color:#8ba5c5!important;background:#eaf2fd!important;transform:none!important}.printer-action-icon.is-delete{color:#b52c3b!important;background:#fff6f6!important}.printer-action-icon.is-delete:hover{border-color:#e6a5ad!important;background:#ffecee!important}.printer-assign-button{min-width:88px;height:38px;padding:0 14px!important;border:1px solid #263d68!important;border-radius:9px!important;color:#fff!important;background:#263d68!important;font-size:12px!important;font-weight:900!important}.printer-assign-button:hover{background:#34558a!important;transform:none!important}@media(max-width:520px){.printer-card-actions{justify-content:stretch}.printer-assign-button{flex:1}}`;
+printerActionStyles.textContent += `.printer-test-button{min-width:82px!important;height:38px!important;padding:0 12px!important;border:1px solid #9ccdb3!important;border-radius:9px!important;color:#087348!important;background:#effaf4!important;font-size:11px!important;font-weight:900!important}.printer-test-button:hover{border-color:#45a575!important;background:#e0f6e9!important;transform:none!important}.printer-test-button:disabled{cursor:not-allowed;opacity:.5}.printer-test-button.is-success{border-color:#138451!important;color:#fff!important;background:#138451!important}@media(max-width:520px){.printer-card-actions{flex-wrap:wrap}.printer-test-button{flex:1}}`;
 document.head.appendChild(printerActionStyles);
 const managePrintersBackStyles = document.createElement('style');
 managePrintersBackStyles.textContent = `.manage-printers-back{display:inline-flex;align-items:center;min-height:34px;margin:0 0 12px;padding:7px 10px;border:1px solid #9bb7d9;border-radius:8px;color:#123a70;background:#f4f8ff;font-size:12px;font-weight:900}.manage-printers-back:hover,.manage-printers-back:focus-visible{border-color:#246ce0;color:#fff;background:#246ce0;outline:0;box-shadow:0 0 0 3px rgba(36,108,224,.2)}`;
@@ -2475,7 +2476,7 @@ function renderPrinterManagement() {
         const summary = allCategories
           ? 'Receives every current and future menu category.'
           : [...categories, ...overrideNames].join(' · ');
-        return `<article class="printer-card"><div class="printer-card-top"><span class="printer-card-mark ${item.type === 'bill' ? 'is-bill' : ''}" aria-hidden="true">${item.type === 'bill' ? '▤' : '⌑'}</span><div><span class="printer-card-label">${item.type === 'bill' ? 'Bill printer' : 'KOT printer'}</span><h4>${esc(item.name)}</h4><p>${esc(item.deviceName || 'System printer not assigned')}</p></div><span class="printer-card-state ${kinds.length ? 'is-ready' : ''}">${kinds.length ? 'Configured' : 'Needs assignment'}</span></div><div class="printer-routing-summary"><b>${esc(assignment)}</b><span>${esc(summary || 'Choose Bill or KOT categories to complete setup.')}</span></div><div class="printer-card-actions"><button type="button" data-rename-printer="${esc(item.id)}">Rename</button><button type="button" data-assign-printer="${esc(item.id)}">Configure routing</button><button type="button" class="remove-printer" data-delete-printer="${esc(item.id)}">Remove</button></div></article>`;
+        return `<article class="printer-card"><div class="printer-card-top"><span class="printer-card-mark ${item.type === 'bill' ? 'is-bill' : ''}" aria-hidden="true">${item.type === 'bill' ? '▤' : '⌑'}</span><div><span class="printer-card-label">${item.type === 'bill' ? 'Bill printer' : 'KOT printer'}</span><h4>${esc(item.name)}</h4><p>${esc(item.deviceName || 'System printer not assigned')}</p></div><span class="printer-card-state ${kinds.length ? 'is-ready' : ''}">${kinds.length ? 'Configured' : 'Needs assignment'}</span></div><div class="printer-routing-summary"><b>${esc(assignment)}</b><span>${esc(summary || 'Choose Bill or KOT categories to complete setup.')}</span></div><div class="printer-card-actions"><button type="button" class="printer-test-button" data-test-printer="${esc(item.id)}" ${item.deviceName ? '' : 'disabled'}>Test print</button><button type="button" data-rename-printer="${esc(item.id)}">Rename</button><button type="button" data-assign-printer="${esc(item.id)}">Configure routing</button><button type="button" class="remove-printer" data-delete-printer="${esc(item.id)}">Remove</button></div></article>`;
       })
       .join('') || '<div class="operations-empty">Choose an installed printer above to begin.</div>'
   }</div></section>`;
@@ -4590,6 +4591,48 @@ document.getElementById('operations-content')?.addEventListener('click', async (
       deviceName,
     });
     renderOperations();
+    return;
+  }
+  const testPrinter = event.target.closest('[data-test-printer]');
+  if (testPrinter) {
+    const printer = operationsConfig.printers.find(
+      (item) => item.id === testPrinter.dataset.testPrinter
+    );
+    if (!printer?.deviceName) {
+      alert('Assign an installed system printer before testing.');
+      return;
+    }
+    const originalText = testPrinter.textContent;
+    testPrinter.disabled = true;
+    testPrinter.textContent = 'Printing…';
+    try {
+      const response = await fetch(`${printBridgeOrigin}/v1/test-print`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          printerName: printer.deviceName,
+          label: printer.name,
+          type: printer.type,
+          workstationId: printer.workstationId || printBridgeSetupStatus?.workstation?.id || '',
+          settings: printer,
+        }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok)
+        throw new Error(result.detail || result.error || 'The printer rejected the test page.');
+      testPrinter.classList.add('is-success');
+      testPrinter.textContent = 'Test sent ✓';
+      setTimeout(() => {
+        if (!testPrinter.isConnected) return;
+        testPrinter.classList.remove('is-success');
+        testPrinter.disabled = false;
+        testPrinter.textContent = originalText;
+      }, 2500);
+    } catch (error) {
+      testPrinter.disabled = false;
+      testPrinter.textContent = originalText;
+      alert(error.message || 'Test print failed. Check the printer and Print Bridge.');
+    }
     return;
   }
   const renamePrinter = event.target.closest('[data-rename-printer]');

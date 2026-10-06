@@ -1524,6 +1524,44 @@ const server = http.createServer(async (req, res) => {
       return reply(res, 400, { error: error.message || 'Unable to queue KOT.' }, origin);
     }
   }
+  if (req.method === 'POST' && req.url === '/v1/test-print') {
+    try {
+      const payload = await readBody(req);
+      await assertRequestedWorkstation(payload);
+      const printerName = String(payload.printerName || '').trim().slice(0, 160);
+      if (!printerName) throw new Error('Assign an installed system printer before testing.');
+      const printers = await installedPrinters();
+      if (!printers.some((printer) => printer.name === printerName))
+        throw new Error(`${printerName} is not installed on this computer.`);
+      const label = String(payload.label || printerName).trim().slice(0, 80);
+      const role = payload.type === 'bill' ? 'BILL PRINTER' : 'KOT PRINTER';
+      const timestamp = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+      const testText = [
+        '__CENTER__RED LANTERN',
+        '__SEPARATOR__',
+        '__CENTER__TEST PRINT SUCCESSFUL',
+        '',
+        `Printer: ${label}`,
+        `System queue: ${printerName}`,
+        `Role: ${role}`,
+        `Checked: ${timestamp}`,
+        '',
+        'This printer is connected and ready.',
+        '__SEPARATOR__',
+        '',
+        '',
+      ].join('\n');
+      await printText(printerName, testText, payload.settings || {});
+      return reply(res, 200, { ok: true, printerName }, origin);
+    } catch (error) {
+      return reply(
+        res,
+        400,
+        { error: 'Test print failed.', detail: error.message || 'Unable to print.' },
+        origin
+      );
+    }
+  }
   if (req.method === 'POST' && req.url === '/v1/print-kot') {
     let printJobId = '';
     try {
