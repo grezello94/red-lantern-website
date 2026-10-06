@@ -11,7 +11,7 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <title>Captain · Red Lantern</title>
     <link rel="stylesheet" href="/captain.css?v=2" />
-    <link rel="stylesheet" href="/captain-ux.css?v=51" />
+    <link rel="stylesheet" href="/captain-ux.css?v=52" />
     <link rel="stylesheet" href="/captain-modern.css?v=2" />
   </head>
   <body>
@@ -80,37 +80,49 @@
       </section>
     </aside>
     <section id="captain-login" class="captain-login" aria-labelledby="captain-login-title" aria-live="polite">
-      <div class="captain-login-card">
-        <img src="/images/red-lantern-logo-600.webp" alt="Red Lantern Restaurant" />
-        <span class="eyebrow">STAFF ACCESS</span>
-        <h1 id="captain-login-title">Who is taking this order?</h1>
-        <p>
-          Choose your name, then enter your personal PIN. Your table access and order trail are
-          recorded automatically.
-        </p>
-        <div id="captain-account-list" class="captain-account-list" aria-live="polite"></div>
-        <form id="captain-pin-form" hidden>
-          <button id="captain-change-account" class="back-button" type="button">
-            ← Change Captain
-          </button>
-          <p id="captain-selected-name" class="captain-selected-name"></p>
-          <label
-            >Personal PIN<input
-              id="captain-pin"
-              type="password"
-              inputmode="numeric"
-              autocomplete="current-password"
-              pattern="[0-9]*"
-              minlength="4"
-              maxlength="6"
-              required
-              placeholder="••••"
-          /></label>
-          <p id="captain-login-status" class="captain-login-status" aria-live="polite"></p>
-          <button id="captain-login-submit" class="send-button" type="submit">
-            Start taking orders
-          </button>
-        </form>
+      <div class="captain-auth-card">
+        <section class="captain-auth-brand" aria-label="Red Lantern Captain">
+          <img src="/images/red-lantern-logo-600.webp" alt="Red Lantern Restaurant" />
+          <div>
+            <span>Restaurant operations</span>
+            <h1>Fast table service, without the paperwork.</h1>
+            <p>Take orders, follow kitchen progress and keep every table moving from one screen.</p>
+          </div>
+          <small><i aria-hidden="true"></i> Secure staff workspace</small>
+        </section>
+        <div class="captain-auth-panel">
+          <div class="captain-auth-content">
+            <span class="eyebrow">STAFF ACCESS</span>
+            <h1 id="captain-login-title">Who is taking this order?</h1>
+            <p>
+              Choose your name, then enter your personal PIN. Your table access and order trail are
+              recorded automatically.
+            </p>
+            <div id="captain-account-list" class="captain-account-list" aria-live="polite"></div>
+            <form id="captain-pin-form" hidden>
+              <button id="captain-change-account" class="back-button" type="button">
+                ← Change Captain
+              </button>
+              <p id="captain-selected-name" class="captain-selected-name"></p>
+              <label
+                >Personal PIN<input
+                  id="captain-pin"
+                  type="password"
+                  inputmode="numeric"
+                  autocomplete="current-password"
+                  pattern="[0-9]*"
+                  minlength="4"
+                  maxlength="6"
+                  required
+                  placeholder="••••"
+              /></label>
+              <p id="captain-login-status" class="captain-login-status" aria-live="polite"></p>
+              <button id="captain-login-submit" class="send-button" type="submit">
+                Start taking orders
+              </button>
+            </form>
+          </div>
+        </div>
       </div>
     </section>
     <main class="captain-app" hidden>
