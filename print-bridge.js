@@ -532,19 +532,21 @@ async function tcpEndpointReachable(host, port, timeout = 900) {
     const cached = networkReachability.get(cacheKey);
     if (cached?.reachable && Date.now() - cached.checkedAt < 120000) return true;
     const safeHost = String(host).replace(/'/g, "''");
-    const safeTimeout = Math.max(timeout, 5000);
+    const safeTimeout = Math.max(timeout, 750);
     let reachable = false;
-    for (let attempt = 0; attempt < 2 && !reachable; attempt += 1) {
+    for (let attempt = 0; attempt < 1 && !reachable; attempt += 1) {
       try {
-        const output = await run('powershell.exe', [
-          '-NoProfile',
-          '-Command',
-          `$hostName='${safeHost}'; $port=${safePort}; $timeout=${safeTimeout}; $client=[System.Net.Sockets.TcpClient]::new(); try { $task=$client.ConnectAsync($hostName,$port); if($task.Wait($timeout) -and $client.Connected){"reachable"}else{"unreachable"} } catch { "unreachable" } finally { $client.Dispose() }`,
-        ]);
+        const output = await run(
+          'powershell.exe',
+          [
+            '-NoProfile',
+            '-Command',
+            `$hostName='${safeHost}'; $port=${safePort}; $timeout=${safeTimeout}; $client=[System.Net.Sockets.TcpClient]::new(); try { $task=$client.ConnectAsync($hostName,$port); if($task.Wait($timeout) -and $client.Connected){"reachable"}else{"unreachable"} } catch { "unreachable" } finally { $client.Dispose() }`,
+          ],
+          safeTimeout + 2500
+        );
         reachable = output.trim() === 'reachable';
       } catch (_) {}
-      if (!reachable && attempt === 0)
-        await new Promise((resolve) => setTimeout(resolve, 350));
     }
     networkReachability.set(cacheKey, { reachable, checkedAt: Date.now() });
     // RAW printer ports can briefly refuse a health connection after a job or
@@ -1162,9 +1164,12 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && req.url === '/v1/setup-status') {
     try {
       localLedger().prepare('SELECT 1 AS ok').get();
-      const automaticRecovery = await ensureWindowsSpoolerRunning();
-      const workstation = await workstationIdentity();
-      const [printers, config, unavailableNames, networkEndpoints] = await Promise.all([
+      // These checks do not depend on one another while the spooler is already
+      // healthy (the normal case). Running them together avoids stacking four
+      // separate PowerShell startup costs on every visit to Operations.
+      const [automaticRecovery, workstation, printers, config, unavailableNames, networkEndpoints] = await Promise.all([
+        ensureWindowsSpoolerRunning(),
+        workstationIdentity(),
         installedPrinters(),
         readJson(configFile, { printers: [], routes: [] }),
         unavailablePrinterNames(),

@@ -2848,7 +2848,10 @@ async function fetchPrintBridgeSetupStatus(onProgress = () => {}) {
     }
     onProgress('bridge', attempt + 1);
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
+    // A fresh Windows spooler query can take longer than ten seconds on older
+    // counters. Allow one authoritative result instead of aborting it and
+    // immediately starting the same expensive discovery again.
+    const timeout = setTimeout(() => controller.abort(), 20000);
     try {
       const healthResponse = await fetch(`${printBridgeOrigin}/health`, {
         cache: 'no-store',
