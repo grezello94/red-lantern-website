@@ -268,3 +268,22 @@ body>#register-service-notice{margin:16px 24px}
 [data-theme=light] .register-connection-notice button{background:#fde9ee;border-color:#e7b5c3;color:#a52548}
 [data-theme=light] :is(button,input,select):focus-visible{outline-color:#2563eb}
 .register-theme-toggle>span{display:inline}
+
+/* Keep busy order lists compact; detailed dialogs retain their generous sizing. */
+.register-grid{gap:16px;padding:18px}
+.register-panel>header{padding:16px 18px}
+.register-list{gap:10px;padding:12px}
+.order-strip:not(.parcel-strip),.parcel-strip{grid-template-columns:88px minmax(0,1fr) auto;padding:12px;gap:10px}
+.table-identity .token{min-height:48px;padding:5px 8px;border-radius:8px}
+.table-identity .token span{font-size:10px}.table-identity .token b{font-size:22px}
+.meta b{font-size:15px}.meta small{margin-top:3px;font-size:12px}.amount{font-size:23px}
+.order-strip .actions,.order-strip:not(.parcel-strip) .actions{display:flex;flex-wrap:wrap;justify-content:flex-start;align-items:center;gap:7px;width:100%}
+.actions button{flex:none;min-height:44px;min-width:44px;padding:8px 11px;font-size:13px;border-radius:8px}
+.actions button[data-view]{width:auto;min-width:104px;white-space:nowrap}
+.actions .icon{display:inline-flex;align-items:center;justify-content:center;flex:none;width:44px;min-width:44px;height:44px;padding:0}
+.actions .icon svg{display:block;pointer-events:none}
+.actions .pay-group{display:flex;flex-wrap:wrap;flex:0 1 auto;gap:6px;padding:0;border:0;min-width:0}
+.pay-group button{width:auto;min-height:44px;min-width:44px;padding:8px 10px;font-size:13px}
+.employee-order-actions-link{flex-basis:100%;min-height:44px}
+@media(min-width:1500px){.actions .pay-group{margin-left:auto}}
+@media(max-width:600px){.register-grid{padding:10px;gap:12px}.register-list{padding:10px}.order-strip:not(.parcel-strip),.parcel-strip{grid-template-columns:minmax(0,1fr) auto;padding:12px;gap:9px}.table-identity .token{min-height:48px;width:88px}.meta b{font-size:14px}.amount{font-size:22px}.actions .pay-group{flex-basis:100%}.actions .pay-group button{flex:1}.actions button[data-view]{min-width:104px}}

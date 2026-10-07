@@ -35,3 +35,29 @@ test('assigned-area scope requires an area and the editor fits a phone', async (
   expect(await page.locator('[data-captain-scope]').evaluate(input => input.checkValidity())).toBe(true);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
+
+test('permission help works on hover, keyboard and tap without changing grants', async ({ page }) => {
+  await openEditor(page);
+  const grant = page.locator('[data-captain-permission][value="specialDiscounts"]');
+  const row = grant.locator('..').locator('..');
+  await row.hover();
+  const tooltip = page.getByRole('tooltip');
+  await expect(tooltip).toContainText('does not bypass the limit');
+  await expect(grant).not.toBeChecked();
+  await page.keyboard.press('Escape');
+  await expect(tooltip).toBeHidden();
+  await grant.focus();
+  await expect(tooltip).toBeVisible();
+  await page.setViewportSize({ width:390, height:844 });
+  const help = row.getByRole('button');
+  await help.click();
+  await expect(help).toHaveAttribute('aria-expanded', 'true');
+  await expect(tooltip).toBeVisible();
+  await expect(grant).not.toBeChecked();
+  const bounds = await tooltip.boundingBox();
+  expect(bounds.x).toBeGreaterThanOrEqual(0);
+  expect(bounds.x + bounds.width).toBeLessThanOrEqual(390);
+  await help.click();
+  await expect(tooltip).toBeHidden();
+  expect(await page.locator('.employee-permission-option').evaluateAll(rows => rows.every(row => row.dataset.permissionHelp && row.querySelector('input').getAttribute('aria-describedby')))).toBe(true);
+});

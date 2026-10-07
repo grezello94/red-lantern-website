@@ -17,7 +17,9 @@ const elapsed = (date) => {
 };
 let orders = [];
 function icon(name) {
-  return name === 'print' ? '⎙' : '◉ View';
+  return name === 'print'
+    ? '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 8V3h10v5M7 17H4a1 1 0 0 1-1-1v-6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v6a1 1 0 0 1-1 1h-3"/><path d="M7 14h10v7H7z"/><path d="M17 11h1"/></svg>'
+    : 'View order';
 }
 function active(order) {
   return !['rejected', 'cancelled'].includes(order.status);

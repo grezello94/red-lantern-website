@@ -124,7 +124,7 @@ for (const size of [{width:810,height:1080}, {width:1180,height:820}, {width:144
     await page.goto('/register.html');
     await expect(page.locator('.parcel-strip .token')).toHaveText('Bill #13');
     const cash = page.locator('[data-pay="cash"]').first();
-    expect((await cash.boundingBox()).height).toBeGreaterThanOrEqual(48);
+    expect((await cash.boundingBox()).height).toBeGreaterThanOrEqual(44);
     await cash.click();
     const modal = page.locator('#payment-modal');
     await expect(modal).toBeVisible();
@@ -201,4 +201,25 @@ test('Register theme toggle persists and covers payment, split and bill dialogs'
   await expect(page.locator('html')).toHaveAttribute('data-theme','dark');
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('data-theme','dark');
+});
+
+
+test('busy Register lists use compact View order and printer controls', async ({page}) => {
+  await page.setViewportSize({width:1180,height:820});
+  await page.route('**/api/**', async route => {
+    const path = new URL(route.request().url()).pathname;
+    const orders = Array.from({length:24}, (_, index) => ({...registerOrder(),id:`busy-${index}`,mode:index < 12 ? 'table' : 'counter',table_number:index+1,daily_order_number:index+1}));
+    await route.fulfill({contentType:'application/json',body:JSON.stringify(path === '/api/orders' ? orders : {})});
+  });
+  await page.goto('/register.html');
+  await expect(page.locator('.order-strip')).toHaveCount(24);
+  const view = page.getByRole('button',{name:'View order',exact:true}).first();
+  await expect(view).toBeVisible();
+  expect((await view.boundingBox()).width).toBeLessThan(160);
+  expect((await page.locator('.order-strip').first().boundingBox()).height).toBeLessThan(150);
+  const printer = page.getByRole('button',{name:'Reprint existing bill',exact:true}).first();
+  await expect(printer.locator('svg')).toHaveCount(1);
+  expect((await printer.boundingBox()).height).toBeGreaterThanOrEqual(44);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({path:test.info().outputPath('register-compact-list.png')});
 });
