@@ -27,7 +27,7 @@ function displayOrder(order, kind) {
   const table = kind === 'table';
   const needsAcceptance = !table && order.status === 'new';
   const identifier =
-    order.customer_phone || `Token #TK-${String(order.daily_order_number || '').padStart(3, '0')}`;
+    order.customer_phone && !order.customer_phone.startsWith('walkin-') ? order.customer_phone : `Bill #${String(order.daily_order_number || '').padStart(2, '0')}`;
   const tableNumber = String(order.table_number || '').padStart(2, '0');
   const name = table
     ? order.customer_name || order.table_area || 'Dine-in'
@@ -45,7 +45,7 @@ function displayOrder(order, kind) {
     ? `Paid via ${String(order.settlement_type).toUpperCase()}`
     : 'Settled';
   const tableIdentity = `<div class="table-identity"><div class="token"><span>Table</span><b>${escapeHtml(tableNumber)}</b></div>${captainLabel ? `<small class="captain-assignment">${escapeHtml(captainLabel)}</small>` : ''}</div>`;
-  return `<article data-order-id="${escapeHtml(order.id)}" class="order-strip ${table ? '' : 'parcel-strip'} ${settled ? 'settled' : ''} ${needsAcceptance ? 'needs-acceptance' : ''}">${table ? tableIdentity : `<div class="token">${escapeHtml(identifier)}</div>`}<div class="meta"><b>${escapeHtml(name)}${settled ? ` <small>• ${escapeHtml(paid)}</small>` : ''}</b><small>${needsAcceptance ? 'New order · waiting for acceptance' : settled ? 'Settled' : table ? 'Occupied' : 'Counter Pick'} • ${elapsed(order.created_at)}</small></div><div class="amount">${money(order.total)}</div><div class="actions">${needsAcceptance ? `<button class="accept-order" data-accept="${order.id}">✓ Accept</button>` : settled ? `<button class="clear" data-clear="${order.id}">✓ Ready to Clear</button><button class="icon" data-reprint="${order.id}" title="Reprint receipt">${icon('print')}</button>` : `<button data-view="${order.id}">${icon('view')}</button><button class="icon" data-reprint="${order.id}" title="Reprint existing bill">${icon('print')}</button><span class="pay-group"><button data-pay="cash" data-id="${order.id}">Cash</button><button data-pay="upi" data-id="${order.id}">UPI</button><button data-pay="card" data-id="${order.id}">Card</button><button data-pay="zomato" data-id="${order.id}">Zomato</button><button data-pay="split" data-id="${order.id}">Split</button></span>`}</div></article>`;
+  return `<article data-order-id="${escapeHtml(order.id)}" class="order-strip ${table ? '' : 'parcel-strip'} ${settled ? 'settled' : ''} ${needsAcceptance ? 'needs-acceptance' : ''}">${table ? tableIdentity : `<div class="token">${escapeHtml(identifier)}</div>`}<div class="meta"><b>${escapeHtml(name)}${settled ? ` <small>• ${escapeHtml(paid)}</small>` : ''}</b><small>${needsAcceptance ? 'New order · waiting for acceptance' : settled ? 'Settled' : table ? 'Occupied' : 'Counter Pick'} • ${elapsed(order.created_at)}</small></div><div class="amount">${money(order.total)}</div><div class="actions">${needsAcceptance ? `<button class="accept-order" data-accept="${order.id}">✓ Accept</button>` : settled ? `<button class="clear" data-clear="${order.id}">✓ Ready to Clear</button><button class="icon" data-reprint="${order.id}" title="Reprint receipt" aria-label="Reprint receipt">${icon('print')}</button>` : `<button data-view="${order.id}">${icon('view')}</button><button class="icon" data-reprint="${order.id}" title="Reprint existing bill" aria-label="Reprint existing bill">${icon('print')}</button><span class="pay-group"><button data-pay="cash" data-id="${order.id}">Cash</button><button data-pay="upi" data-id="${order.id}">UPI</button><button data-pay="card" data-id="${order.id}">Card</button><button data-pay="zomato" data-id="${order.id}">Zomato</button><button data-pay="split" data-id="${order.id}">Split</button></span>`}</div></article>`;
 }
 function render() {
   const tables = orders.filter((o) => active(o) && o.mode === 'table'),
@@ -73,10 +73,12 @@ async function load() {
     orders = Array.isArray(data) ? data : [];
     $('#connection-dot').style.background = '#10b981';
     $('#connection-label').textContent = 'Live';
+    $('#register-connection-notice').hidden = true;
     render();
   } catch (error) {
     $('#connection-dot').style.background = '#f43f5e';
     $('#connection-label').textContent = 'Offline';
+    $('#register-connection-notice').hidden = false;
   }
 }
 const savedItemTotal = (item) =>
@@ -303,6 +305,7 @@ function openPayment(id, type) {
   const order = orders.find((o) => String(o.id) === String(id));
   if (!order) return;
   paymentOrder = order;
+  $('#register-service-notice')?.remove();
   paymentSplit = type === 'split';
   paymentType = paymentSplit ? '' : type;
   document.getElementById('payment-title').textContent = paymentSplit
@@ -320,6 +323,12 @@ function openPayment(id, type) {
         ? 'UPI / GPay received'
         : 'Amount received';
   document.getElementById('payment-received').value = Number(order.total || 0).toFixed(2);
+  const shortcuts = document.getElementById('payment-cash-shortcuts');
+  shortcuts.hidden = paymentSplit || type !== 'cash';
+  const total = Number(order.total || 0);
+  const roundAmounts = [...new Set([Math.ceil(total / 100) * 100, Math.ceil(total / 500) * 500, Math.ceil(total / 1000) * 1000])].filter(amount => amount > total);
+  shortcuts.innerHTML = `<button type="button" data-cash-amount="${total}">Exact amount</button>${roundAmounts.map(amount => `<button type="button" data-cash-amount="${amount}">${money(amount)}</button>`).join('')}`;
+
   document.getElementById('payment-split-rows').replaceChildren();
   if (paymentSplit) addSplitPayment('cash', Number(order.total || 0));
   document.getElementById('payment-confirm').textContent = paymentSplit
@@ -435,6 +444,9 @@ document.addEventListener('click', async (event) => {
       orders = orders.filter((o) => String(o.id) !== target.dataset.clear);
       render();
     }
+    if (target.id === 'register-retry') await load();
+    const cashAmount = target.closest('[data-cash-amount]');
+    if (cashAmount) { $('#payment-received').value = Number(cashAmount.dataset.cashAmount).toFixed(2); updatePaymentPreview(); }
     if (target.id === 'payment-confirm') await savePayment();
     if (target.id === 'payment-add-method') {
       const rows = splitPaymentRows(),
@@ -476,7 +488,7 @@ document.addEventListener('click', async (event) => {
       notice.setAttribute('role', 'status');
       (document.querySelector("dialog[open]") || document.body).prepend(notice);
     }
-    notice.textContent = error.message;
+    notice.textContent = error.message === 'Failed to fetch' ? 'Unable to reach the server or print bridge. Check the connection and try again.' : error.message;
   }
 });
 $('.modal-close').addEventListener('click', () => $('#bill-modal').close());
