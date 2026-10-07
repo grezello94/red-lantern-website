@@ -7,10 +7,25 @@
     'Workspaces': { captainApp: 'Captain / waiter phone app', billingConsole: 'Orders and billing console', register: 'Register and settlement', kitchenDisplay: 'Kitchen displays', deliveryApp: 'Assigned delivery workspace', onlineAcceptance: 'Online order acceptance' },
     'Orders and kitchen tickets': { createOrders: 'Create dine-in orders', pickupOrders: 'Create pickup / takeaway orders', deliveryOrders: 'Create delivery orders', addRounds: 'Add items to active orders', viewKots: 'View KOTs and kitchen progress', releaseKots: 'Send or reprint KOTs', editOrders: 'Edit order / KOT item quantities', cancelOrders: 'Cancel orders and their KOTs', acceptOrders: 'Accept or reject incoming online orders', updateKitchen: 'Update kitchen preparation status' },
     'Tables and service': { markServed: 'Mark KOTs served', moveTables: 'Move tables', addTables: 'Add a table in an assigned area', requestBills: 'Generate / request bill printing', requestService: 'Request water or assistance', clearTables: 'Clear a settled table', assignTables: 'Assign table orders to an employee' },
-    'Payments': { takePayments: 'Collect and settle payments', applyDiscounts: 'Apply discounts within the assigned limit', readHistory: 'View previous orders and daily collection summary' },
+    'Payments': { takePayments: 'Collect and settle payments', applyDiscounts: 'Apply dine-in discounts within the assigned limit', specialDiscounts: 'Apply special dine-in discounts within the assigned limit', readHistory: 'View previous orders and daily collection summary' },
     'Delivery and online availability': { manageDeliveries: 'Assign delivery staff', fulfillDeliveries: 'Update assigned delivery progress', storeToggle: 'Open / close online ordering', itemToggle: 'Change item availability' },
-    'Configuration': { operationsManage: 'Configure printers, routing and table allocation' },
+    'Configuration': { setPriority: 'Set order priority', operationsManage: 'Configure printers, routing and table allocation' },
   };
+  const captainSettingGroups = {
+    'Service options': { homeDelivery: 'Enable home delivery', takeAway: 'Enable takeaway orders' },
+    'Menu and display': { recommendations: 'Show recommended items', showCustomerName: 'Show guest names on tables', showTableOrders: 'Show order totals and status on tables', customerFirst: 'Ask for guest details before choosing items', speechSearch: 'Enable voice search' },
+    'KOT workflow': { waiterAssignment: 'Enable waiter assignment', mandatoryKot: 'Require kitchen KOT printing', autoSync: 'Automatically retry unsuccessful KOTs', enablePriority: 'Enable order priority', printKot: 'Allow kitchen KOT printing from Captain' },
+  };
+  const captainDefaults = Object.freeze({ idleMinutes: 15, homeDelivery: true, takeAway: true, recommendations: true, showCustomerName: false, showTableOrders: true, customerFirst: false, speechSearch: false, waiterAssignment: false, mandatoryKot: false, autoSync: true, enablePriority: false, printKot: true, itemSort: 'rank', notifications: 'kot' });
+  function captainSettings(input = {}) {
+    const result = { ...captainDefaults };
+    for (const key of Object.keys(result)) if (typeof result[key] === 'boolean' && typeof input[key] === 'boolean') result[key] = input[key];
+    result.idleMinutes = Math.max(2, Math.min(120, Number(input.idleMinutes) || 15));
+    result.itemSort = input.itemSort === 'az' ? 'az' : 'rank';
+    result.notifications = ['item', 'kot', 'none'].includes(input.notifications) ? input.notifications : 'kot';
+    if (result.mandatoryKot) result.printKot = true;
+    return result;
+  }
   const labels = Object.assign({}, ...Object.values(groups));
   const keys = Object.keys(labels);
   const roles = {
@@ -51,7 +66,8 @@
       if (employee.areas?.length && !employee.areas.includes(String(order.table_area || ''))) return false;
       if (occupancy) return rights.captainApp || rights.billingConsole || rights.register;
       const scope = employee.tableScope || 'own';
-      return scope === 'all' || scope === 'assigned_areas' ||
+      if (scope === 'assigned_areas') return !!employee.areas?.length;
+      return scope === 'all' ||
         String(order.employee_assigned_id || order.captain_id || '') === String(employee.id);
     }
     if (rights.deliveryApp && String(order.delivery_employee_id || '') === String(employee.id)) return true;
@@ -65,7 +81,8 @@
   }
   function routePermission(method, path, body = {}) {
     if (/^\/api\/orders\/[^/]+\/settle$/.test(path) && method === 'POST') return 'takePayments';
-    if (/^\/api\/orders\/[^/]+\/discount$/.test(path)) return 'applyDiscounts';
+    if (/^\/api\/orders\/[^/]+\/discount$/.test(path)) return body.special === true ? 'specialDiscounts' : 'applyDiscounts';
+    if (/^\/api\/orders\/[^/]+\/priority$/.test(path)) return 'setPriority';
     if (/^\/api\/orders\/[^/]+\/assignment$/.test(path)) return 'assignTables';
     if (/^\/api\/orders\/[^/]+\/delivery-assignment$/.test(path)) return 'manageDeliveries';
     if (/^\/api\/orders\/[^/]+\/delivery-progress$/.test(path)) return 'fulfillDeliveries';
@@ -101,5 +118,5 @@
     if (discount > base || discount > limit + 0.005) throw new Error('This discount exceeds your assigned limit.');
     return Math.round(discount * 100) / 100;
   }
-  return { groups, labels, keys, roles, normalizeRole, permissions, can, home, pagePermission, orderAccessible, routePermission, discountAmount };
+  return { captainSettingGroups, captainDefaults, captainSettings, groups, labels, keys, roles, normalizeRole, permissions, can, home, pagePermission, orderAccessible, routePermission, discountAmount };
 });

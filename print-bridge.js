@@ -938,7 +938,7 @@ function kotText(payload) {
   const labels = kotHighlightLabels(items);
   const rows = items.flatMap((item, index) =>
     [
-      `__KOTITEM__${Number(item.quantity || 0)}|${labels[index]}`,
+      `__KOTITEM__${Number(item.quantity || 0)}|${settings.showItemSerial ? `${index + 1}. ` : ''}${labels[index]}`,
       [item.portion ? `(${item.portion})` : '', item.style || ''].filter(Boolean).join(' ')
         ? `__KOTMODIFIER__${[item.portion ? `(${item.portion})` : '', item.style || ''].filter(Boolean).join(' ')}`
         : '',
@@ -956,6 +956,8 @@ function kotText(payload) {
     order.reprint ? '__KOTCENTERMETABOLD__DUPLICATE COPY' : '',
     isRunningTable ? '__KOTCENTERMETABOLD__RUNNING TABLE' : '',
     `${boldMetaLine}KOT # ${order.kotNumber || '—'}`,
+    order.waiterName ? `${metaLine}Waiter: ${order.waiterName}` : '',
+    order.servicePriority === 'urgent' ? `${boldMetaLine}URGENT` : '',
     tableLine ? `${metaLine}${tableLine}` : '',
     `${metaLine}${originLine}`,
     settings.showCustomer !== false

@@ -6705,8 +6705,8 @@ Watch competitors ranking for Colva Beach, seafood, Goan food, Chinese food, fam
       </div>
     </main>
 
-    <script src="/staff-domain.js?v=1"></script>
-    <script src="/employee-admin.js?v=1"></script>
+    <script src="/staff-domain.js?v=2"></script>
+    <script src="/employee-admin.js?v=2"></script>
     <!-- Simple JS to handle tab switching -->
     <script>
       const navItems = document.querySelectorAll('.nav-item');
@@ -6812,6 +6812,25 @@ Watch competitors ranking for Colva Beach, seafood, Goan food, Chinese food, fam
         document.getElementById('captain-admin-list'),
         { childList: true }
       );
+      const collectCaptainEdits = () => captainAccounts.map((captain, index) => ({
+          ...captain,
+          name: document.querySelector(`[data-captain-name="${index}"]`)?.value.trim(),
+          pin: document.querySelector(`[data-captain-pin="${index}"]`)?.value,
+          areas: [...document.querySelectorAll(`[data-captain-area="${index}"]:checked`)].map(
+            (input) => input.value
+          ),
+          active: !!document.querySelector(`[data-captain-active="${index}"]`)?.checked,
+          username: document.querySelector(`[data-employee-username="${index}"]`)?.value.trim(),
+          userCode: document.querySelector(`[data-employee-code="${index}"]`)?.value.trim(),
+          phone: document.querySelector(`[data-employee-phone="${index}"]`)?.value.trim(),
+          password: document.querySelector(`[data-employee-password="${index}"]`)?.value || '',
+          requireEditReason: !!document.querySelector(`[data-employee-reason="${index}"]`)?.checked,
+          discountLimit: { type: document.querySelector(`[data-employee-discount-type="${index}"]`)?.value || 'fixed', value: Number(document.querySelector(`[data-employee-discount-value="${index}"]`)?.value || 0) },
+          role: document.querySelector(`[data-captain-role="${index}"]`)?.value || 'captain',
+          tableScope: document.querySelector(`[data-captain-scope="${index}"]`)?.value || 'own',
+          permissions: Object.fromEntries(Object.keys(captainPermissionLabels).map((key) =>
+            [key, !!document.querySelector(`[data-captain-permission="${index}"][value="${key}"]`)?.checked])),
+        }));
       const renderCaptains = () => {
         const list = document.getElementById('captain-admin-list');
         if (list) list.innerHTML = window.renderEmployeeCards(captainAccounts, captainAreas);
@@ -6824,6 +6843,7 @@ Watch competitors ranking for Colva Beach, seafood, Goan food, Chinese food, fam
           captainAccounts = data.captains || [];
           captainAreas = data.areas || [];
           captainSettings = data.settings || captainSettings;
+          window.renderCaptainSettings?.(captainSettings);
           document.getElementById('captain-idle-minutes').value = captainSettings.idleMinutes || 15;
           renderCaptains();
           captainStatus(message);
@@ -6915,6 +6935,7 @@ Watch competitors ranking for Colva Beach, seafood, Goan food, Chinese food, fam
         }
       };
       document.getElementById('captain-add')?.addEventListener('click', () => {
+        captainAccounts = collectCaptainEdits();
         captainAccounts.push({
           id: `cap_${Date.now()}`,
           name: '',
@@ -7035,18 +7056,11 @@ Watch competitors ranking for Colva Beach, seafood, Goan food, Chinese food, fam
           )
         )
           return;
+        captainAccounts = collectCaptainEdits();
         const before = structuredClone(captainAccounts);
-        captainAccounts = captainAccounts.map((entry, row) => ({
-          ...entry,
-          name: document.querySelector(`[data-captain-name="${row}"]`)?.value.trim(),
-          pin: document.querySelector(`[data-captain-pin="${row}"]`)?.value,
-          areas: [...document.querySelectorAll(`[data-captain-area="${row}"]:checked`)].map(
-            (input) => input.value
-          ),
-          active: !!document.querySelector(`[data-captain-active="${row}"]`)?.checked,
-        }));
         captainAccounts.splice(index, 1);
         captainSettings = {
+          ...captainSettings, ...window.collectCaptainSettings?.(),
           idleMinutes: Number(document.getElementById('captain-idle-minutes')?.value) || 15,
         };
         button.disabled = true;
@@ -7118,26 +7132,19 @@ Watch competitors ranking for Colva Beach, seafood, Goan food, Chinese food, fam
       });
       document.getElementById('captain-save')?.addEventListener('click', async () => {
         const saveButton = document.getElementById('captain-save');
-        captainAccounts = captainAccounts.map((captain, index) => ({
-          ...captain,
-          name: document.querySelector(`[data-captain-name="${index}"]`)?.value.trim(),
-          pin: document.querySelector(`[data-captain-pin="${index}"]`)?.value,
-          areas: [...document.querySelectorAll(`[data-captain-area="${index}"]:checked`)].map(
-            (input) => input.value
-          ),
-          active: !!document.querySelector(`[data-captain-active="${index}"]`)?.checked,
-          username: document.querySelector(`[data-employee-username="${index}"]`)?.value.trim(),
-          userCode: document.querySelector(`[data-employee-code="${index}"]`)?.value.trim(),
-          phone: document.querySelector(`[data-employee-phone="${index}"]`)?.value.trim(),
-          password: document.querySelector(`[data-employee-password="${index}"]`)?.value || '',
-          requireEditReason: !!document.querySelector(`[data-employee-reason="${index}"]`)?.checked,
-          discountLimit: { type: document.querySelector(`[data-employee-discount-type="${index}"]`)?.value || 'fixed', value: Number(document.querySelector(`[data-employee-discount-value="${index}"]`)?.value || 0) },
-          role: document.querySelector(`[data-captain-role="${index}"]`)?.value || 'captain',
-          tableScope: document.querySelector(`[data-captain-scope="${index}"]`)?.value || 'own',
-          permissions: Object.fromEntries(Object.keys(captainPermissionLabels).map((key) =>
-            [key, !!document.querySelector(`[data-captain-permission="${index}"][value="${key}"]`)?.checked])),
-        }));
+        const invalid = [...document.querySelectorAll('#captain-admin-list input, #captain-admin-list select, #captain-idle-minutes')].find((input) => !input.disabled && !input.checkValidity());
+        if (invalid) {
+          const panel = invalid.closest('[data-employee-panel]');
+          if (panel?.hidden) panel.closest('[data-captain-card]').querySelector(`[data-employee-tab="${panel.dataset.employeePanel}"]`).click();
+          invalid.reportValidity();
+          invalid.focus();
+          captainStatus('Review the highlighted employee setting before saving.', true);
+          return;
+        }
+
+        captainAccounts = collectCaptainEdits();
         captainSettings = {
+          ...captainSettings, ...window.collectCaptainSettings?.(),
           idleMinutes: Number(document.getElementById('captain-idle-minutes')?.value) || 15,
         };
         const changedPins = captainAccounts.filter((captain) => captain.pin).length;

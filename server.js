@@ -27,7 +27,7 @@ const { evaluateServiceRisk, applyServiceRiskPriority } = require('./smart-kds-s
 const { transitionForAction } = require('./smart-kds-workflow');
 const { reasonCodesForRecommendation } = require('./smart-kds-reasons');
 const { buildKitchenMetrics } = require('./smart-kds-metrics');
-const { printerCapabilities, printerSupports } = require('./printer-domain');
+const { printerCapabilities, printerSupports, printerFormat } = require('./printer-domain');
 const Addons = require('./addons-domain');
 const Analytics = require('./analytics-domain');
 const Payments = require('./payments-domain');
@@ -878,14 +878,29 @@ async function authorizeEmployeeOrderRequest(req, res) {
     const area = String(req.body?.tableArea || '').trim();
     const permission = area ? 'createOrders' : req.body?.fulfillmentType === 'delivery' ? 'deliveryOrders' : 'pickupOrders';
     if (!Staff.can(employee, permission)) return deny('This order type is not enabled for your account.');
+    if (Staff.can(employee, 'captainApp')) {
+      const settings = Staff.captainSettings(employee.captainSettings);
+      if (permission === 'deliveryOrders' && !settings.homeDelivery) return deny('Home delivery is disabled in Captain settings.');
+      if (permission === 'pickupOrders' && !settings.takeAway) return deny('Takeaway orders are disabled in Captain settings.');
+      if (settings.mandatoryKot && (req.body?.sendKot !== true || req.body?.action !== 'submit')) return deny('Kitchen KOT printing is required for Captain orders.');
+      if (settings.mandatoryKot) {
+        await ensureOperationsConfigTable();
+        const rows = await sql`SELECT config FROM order_operations_config WHERE config_key='default' LIMIT 1`;
+        if (!(rows[0]?.config?.printers || []).some((printer) => printerSupports(printer,'kot') && printer.deviceName)) return deny('Configure a kitchen printer before using mandatory KOT printing.');
+      }
+
+      if (req.body?.sendKot === true && (!settings.printKot || !Staff.can(employee, 'releaseKots'))) return deny('Kitchen KOT printing is not enabled for your account.');
+    }
+
     if (area && employee.areas.length && !employee.areas.includes(area)) return deny('This dining area is not assigned to you.');
     if (area) {
       await Promise.all([ensureDirectOrdersTable(), ensureOrderEventsTable()]);
       const current = await sql`SELECT o.*,COALESCE((SELECT e.details->>'captainId' FROM order_events e WHERE e.order_id=o.id AND e.event_type='created' ORDER BY e.created_at ASC LIMIT 1),'') AS captain_id FROM direct_orders o WHERE o.mode='table' AND o.table_area=${area} AND o.table_number=${Number(req.body?.tableNumber) || 0} AND o.order_day=${kolkataOrderDay()}::date AND o.status IN ('saved','held','accepted','preparing','ready') LIMIT 1`;
       if (current.length && (!Staff.can(employee, 'addRounds') || !Staff.orderAccessible(employee, current[0]))) return deny('This active table is outside your assigned order access.');
     }
-  } else if (!Staff.can(employee, right)) return deny(`${Staff.labels[right] || 'This action'} is not enabled for your account.`);
-  const orderMatch = req.path.match(/^\/api\/orders\/([^/]+)(?:\/(?:items|table|service|kots|print|bill-printed|bill-print\/[^/]+|settle|discount|assignment|delivery-assignment|delivery-progress|kitchen-status\/[^/]+))?$/);
+  } else if (right === 'releaseKots' && Staff.can(employee, 'captainApp') && !Staff.captainSettings(employee.captainSettings).printKot) return deny('Captain KOT printing is disabled.');
+  else if (!Staff.can(employee, right)) return deny(`${Staff.labels[right] || 'This action'} is not enabled for your account.`);
+  const orderMatch = req.path.match(/^\/api\/orders\/([^/]+)(?:\/(?:items|table|service|kots|print|bill-printed|bill-print\/[^/]+|settle|discount|priority|assignment|delivery-assignment|delivery-progress|kitchen-status\/[^/]+))?$/);
   if (orderMatch && !['menu','operations','availability','counter','live-summary','push-key','push-subscriptions','kot-history','kitchen-statuses','smart-kds'].includes(orderMatch[1])) {
     await Promise.all([ensureDirectOrdersTable(), ensureOrderEventsTable()]);
     const rows = await sql`SELECT o.*,
@@ -1769,7 +1784,7 @@ async function getSmartKdsTimingPreview() {
   await ensureDirectOrdersTable();
   const [profileData, savedOrders] = await Promise.all([
     getSmartKdsMenuProfiles(),
-    sql`SELECT id,daily_order_number,mode,fulfillment_type,course_mode,table_area,table_number,customer_name,status,items,created_at,updated_at FROM direct_orders WHERE status IN ('accepted','preparing','ready') ORDER BY created_at ASC`,
+    sql`SELECT id,daily_order_number,mode,fulfillment_type,course_mode,service_priority,table_area,table_number,customer_name,status,items,created_at,updated_at FROM direct_orders WHERE status IN ('accepted','preparing','ready') ORDER BY created_at ASC`,
   ]);
   const now = new Date();
   // An order left open from a previous shift must never be treated as food to
@@ -1916,7 +1931,7 @@ async function getSmartKdsTimingPreview() {
           quantity,
           course,
           stationId: stationId || '',
-          profile,
+          profile: { ...profile, priorityModifier: Number(profile.priorityModifier || 0) + (order.service_priority === 'urgent' ? 50 : 0) },
           ...withPersistedSmartKdsTiming(calculatedTiming, persisted, now, profileData.config),
         };
       });
@@ -2610,6 +2625,7 @@ async function ensureDirectOrdersTable() {
       await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS loyalty_awarded_at TIMESTAMPTZ`;
       await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS fulfillment_type TEXT`;
       await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS course_mode TEXT NOT NULL DEFAULT 'normal_coursing'`;
+      await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS service_priority TEXT NOT NULL DEFAULT 'normal'`;
       await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS client_request_id TEXT`;
       await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS table_area TEXT`;
       await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS table_number INTEGER`;
@@ -6369,7 +6385,7 @@ app.post('/api/orders/:id/kots', async (req, res) => {
       ensureKotRoundStatusTable(),
     ]);
     const [orderRows, configRows, previous] = await Promise.all([
-      sql`SELECT o.id, o.status, o.mode, o.daily_order_number, o.customer_name, o.customer_phone, o.fulfillment_type, o.table_area, o.table_number, o.special_request, o.items, o.created_at,
+      sql`SELECT o.id, o.status, o.mode, o.daily_order_number, o.customer_name, o.customer_phone, o.fulfillment_type, o.table_area, o.table_number, o.special_request, o.items, o.created_at, o.service_priority,
         COALESCE((SELECT e.details->>'source' FROM order_events e WHERE e.order_id=o.id AND e.event_type='created' ORDER BY e.created_at ASC LIMIT 1), CASE WHEN o.mode='table' THEN 'counter' ELSE o.mode END) AS order_source,
         COALESCE((SELECT e.details->>'captainName' FROM order_events e WHERE e.order_id=o.id AND e.event_type='created' ORDER BY e.created_at ASC LIMIT 1), '') AS captain_name
         FROM direct_orders o WHERE o.id=${req.params.id} LIMIT 1`,
@@ -6378,19 +6394,17 @@ app.post('/api/orders/:id/kots', async (req, res) => {
     ]);
     if (!orderRows.length) return res.status(404).json({ error: 'Order not found.' });
     if (req.captain) {
-      if (!captainCan(req.captain, 'releaseKots'))
+      if (!captainCan(req.captain, 'releaseKots') || !Staff.captainSettings(req.captain.captainSettings).printKot)
         return res.status(403).json({ error: 'KOT release is not enabled for this staff account.' });
-      const assignedAreas = Array.isArray(req.captain.areas) ? req.captain.areas : [];
-      if (
-        orderRows[0].mode !== 'table' ||
-        (assignedAreas.length && !assignedAreas.includes(String(orderRows[0].table_area || '')))
-      )
-        return res
-          .status(403)
-          .json({ error: 'This order is not assigned to your Captain account.' });
-      const accessible = await captainOrderAccess(req.captain, req.params.id, ['saved','held','accepted','preparing','ready']);
-      if (!accessible)
-        return res.status(403).json({ error: 'This active table is outside your assigned order access.' });
+      if (!req.employeeOrder || !Staff.orderAccessible(req.captain, req.employeeOrder))
+        return res.status(403).json({ error: 'This active order is outside your assigned access.' });
+    }
+    let kotWaiter = null;
+    if (req.body?.waiterId) {
+      if (!Staff.can(req.employee, 'assignTables') || !Staff.captainSettings(req.employee.captainSettings).waiterAssignment) return res.status(403).json({ error: 'KOT waiter assignment is not enabled for your account.' });
+      const employeeConfig = await getSection('captain');
+      kotWaiter = (employeeConfig.captains || []).find((employee) => employee.id === req.body.waiterId && employee.active !== false && Staff.can(employee,'captainApp') && (!employee.areas?.length || employee.areas.includes(orderRows[0].table_area)));
+      if (!kotWaiter) return res.status(400).json({ error: 'Choose an active waiter assigned to this dining area.' });
     }
     const config = configRows[0]?.config || { printers: [], routes: [] };
     const printers = Array.isArray(config.printers) ? config.printers : [];
@@ -6474,7 +6488,7 @@ app.post('/api/orders/:id/kots', async (req, res) => {
       return res
         .status(400)
         .json({ error: 'No routed KOT items have an assigned system printer.' });
-    const tickets = [...groups.values()];
+    const tickets = [...groups.values()].map((ticket) => ({ ...ticket, ...(kotWaiter ? { waiterId:kotWaiter.id, waiterName:kotWaiter.name } : {}) }));
     const fingerprint = crypto.createHash('sha256').update(JSON.stringify({ pending, previousRounds: previous.length, corrections: corrections.length })).digest('hex');
     const { kotDay, number: dailyKotNumber } = await nextDailyKotNumber();
     const created =
@@ -8685,6 +8699,7 @@ function publicEmployee(employee) {
     discountLimit: employee.discountLimit || { type: 'fixed', value: 0 },
     pinConfigured: !!employee.pinHash, pinViewable: !!employee.pinEncrypted,
     passwordConfigured: !!employee.passwordHash, idleMinutes: employee.idleMinutes || 15,
+    ...(employee.captainSettings ? { captainSettings: Staff.captainSettings(employee.captainSettings) } : {}),
   };
 }
 let employeeAuditTableReady;
@@ -8725,7 +8740,7 @@ app.get('/api/admin/captains', async (req, res) => {
       captains: (Array.isArray(config.captains) ? config.captains : []).map(publicEmployee),
       roles: Staff.roles, permissionGroups: Staff.groups,
       areas,
-      settings: { idleMinutes },
+      settings: Staff.captainSettings(config.settings),
     });
   } catch (error) {
     res.status(500).json({ error: 'Unable to load Captain accounts.' });
@@ -8857,6 +8872,17 @@ app.get('/api/staff/store', async (req, res) => {
   const menu = await getSection('airMenu');
   res.set('Cache-Control', 'no-store').json({ open: menu.restaurantClosed !== true || !!temporaryClosureExpired(menu), acceptingOrders: restaurantStatus(menu).open });
 });
+app.post('/api/orders/:id/priority', async (req, res) => {
+  try {
+    if (req.employee && !Staff.captainSettings(req.employee.captainSettings).enablePriority) return res.status(403).json({ error: 'Order priority is disabled in Captain settings.' });
+    if (!['normal', 'urgent'].includes(req.body?.priority)) return res.status(400).json({ error: 'Choose normal or urgent priority.' });
+    await ensureDirectOrdersTable();
+    const changed = await sql`UPDATE direct_orders SET service_priority=${req.body.priority},updated_at=NOW() WHERE id=${req.params.id} AND status IN ('saved','held','accepted','preparing','ready') RETURNING id`;
+    if (!changed.length) return res.status(409).json({ error: 'Only active orders can change priority.' });
+    await recordOrderEvent(req.params.id, 'service-priority-changed', { priority: req.body.priority });
+    res.json({ ok: true });
+  } catch (error) { res.status(503).json({ error: 'Unable to change order priority.' }); }
+});
 app.post('/api/orders/:id/discount', async (req, res) => {
   try {
     await ensureDirectOrdersTable();
@@ -8973,7 +8999,9 @@ app.put('/api/admin/captains', async (req, res) => {
         passwordHash: password ? crypto.scryptSync(password, `employee:${id}`, 64).toString('hex') : previous?.passwordHash || null,
         requireEditReason: entry.requireEditReason !== false, discountLimit: { type: discountType, value: discountValue }, authVersion };
     });
-    await saveSection('captain', { captains, settings: { idleMinutes } });
+    const settings = Staff.captainSettings({ ...existing.settings, ...req.body?.settings, idleMinutes });
+    await saveSection('captain', { captains, settings });
+    if (JSON.stringify(Staff.captainSettings(existing.settings)) !== JSON.stringify(settings)) await recordEmployeeAudit(req, 'captain-settings', 'settings-updated', { name:'Captain App settings', before:Staff.captainSettings(existing.settings), after:settings });
     for (const employee of captains) {
       const previous = old.get(employee.id);
       const changes = Object.keys(publicEmployee(employee)).filter((key) =>
@@ -8988,7 +9016,7 @@ app.put('/api/admin/captains', async (req, res) => {
     for (const [id, previous] of old) if (!ids.has(id)) await recordEmployeeAudit(req, id, 'removed', { name: previous.name });
     res.json({
       captains: captains.map(publicEmployee),
-      settings: { idleMinutes },
+      settings,
     });
   } catch (error) {
     res.status(400).json({ error: error.message || 'Unable to save Captain accounts.' });
@@ -9051,7 +9079,7 @@ const getActiveCaptainSession = async (token) => {
         (entry) => entry.id === session.id && entry.active !== false && (entry.pinHash || entry.passwordHash)
       );
     const active = captain && session.credential === captainCredentialFingerprint(captain)
-        ? { ...publicEmployee(captain), remembered: session.remembered === true, idleMinutes: Math.max(2, Math.min(120, Number(config.settings?.idleMinutes) || 15)), exp: session.exp }
+        ? { ...publicEmployee(captain), remembered: session.remembered === true, idleMinutes: Math.max(2, Math.min(120, Number(config.settings?.idleMinutes) || 15)), captainSettings: Staff.captainSettings(config.settings), exp: session.exp }
       : null;
     const request = employeeRequestContext.getStore()?.req;
     if (active && request) request.employee = active;
@@ -9129,7 +9157,7 @@ app.post('/api/captain/login', async (req, res) => {
     await recordEmployeeAudit(req, captain.id, 'signed-in', { workspace: 'captain' });
     res.set('Cache-Control', 'no-store');
     res.json({
-      captain: { ...publicEmployee(captain), idleMinutes },
+      captain: { ...publicEmployee(captain), idleMinutes, captainSettings: Staff.captainSettings(config.settings) },
       token,
       remembered,
     });
@@ -9160,11 +9188,35 @@ app.get('/api/captain/menu-insights', async (req, res) => {
     res.status(500).json({ error: 'Unable to load menu insights.' });
   }
 });
+app.get('/api/captain/printers', async (req, res) => {
+  if (!req.employee || !Staff.can(req.employee, 'captainApp')) return res.status(401).json({ error: 'Captain sign-in is required.' });
+  try {
+    await ensureOperationsConfigTable();
+    const rows = await sql`SELECT config FROM order_operations_config WHERE config_key='default' LIMIT 1`;
+    const printers = (rows[0]?.config?.printers || []).filter((printer) => printerSupports(printer, 'kot'));
+    res.set('Cache-Control', 'no-store').json({ printers: printers.map((printer) => ({ id:printer.id,name:printer.name,deviceName:printer.deviceName,workstationName:printer.workstationName,paperWidth:printerFormat(printer,'kot').paperWidth,showItemSerial:printerFormat(printer,'kot').showItemSerial })) });
+  } catch (error) { res.status(503).json({ error: 'Unable to load kitchen printers.' }); }
+});
+app.patch('/api/captain/printers/:id', async (req, res) => {
+  if (!Staff.can(req.employee, 'operationsManage')) return res.status(403).json({ error: 'Printer configuration is not enabled for your account.' });
+  if (![58,80].includes(Number(req.body?.paperWidth)) || typeof req.body?.showItemSerial !== 'boolean') return res.status(400).json({ error: 'Choose a supported paper width and serial number setting.' });
+  try {
+    await ensureOperationsConfigTable();
+    const rows = await sql`SELECT config,updated_at FROM order_operations_config WHERE config_key='default' LIMIT 1`;
+    const config = rows[0]?.config;
+    const printer = config?.printers?.find((entry) => entry.id === req.params.id && printerSupports(entry, 'kot'));
+    if (!printer) return res.status(404).json({ error: 'Kitchen printer not found.' });
+    printer.formats = { ...printer.formats, kot: { ...printer.formats?.kot, paperWidth:Number(req.body.paperWidth),showItemSerial:req.body.showItemSerial } };
+    const changed = await sql`UPDATE order_operations_config SET config=${JSON.stringify(config)},updated_at=NOW() WHERE config_key='default' AND updated_at=${rows[0].updated_at} RETURNING config_key`;
+    if (!changed.length) return res.status(409).json({ error: 'Printer configuration changed. Refresh before saving.' });
+    res.json({ ok:true });
+  } catch (error) { res.status(503).json({ error: 'Unable to update this printer.' }); }
+});
 app.get('/api/captain/ready-alerts', async (req, res) => {
   const captain = await getActiveCaptainSession(req.get('X-Captain-Session') || cookieValue(req, employeeSessionCookie));
   if (!captain)
     return res.status(401).json({ error: 'Captain sign-in has expired. Sign in again.' });
-  if (!captainCan(captain, 'markServed')) return res.status(403).json({ error: 'Serving KOTs is not enabled for this account.' });
+  if (!captainCan(captain, 'viewKots')) return res.status(403).json({ error: 'KOT notifications are not enabled for this account.' });
   try {
     await Promise.all([
       ensureDirectOrdersTable(),
@@ -9172,6 +9224,15 @@ app.get('/api/captain/ready-alerts', async (req, res) => {
       ensureKotsTable(),
       ensureKotRoundStatusTable(),
     ]);
+    if (req.query.mode === 'item') {
+      await ensureSmartKdsTables();
+      const items = await sql`SELECT o.id,o.employee_assigned_id,o.table_area,o.table_number,o.daily_order_number,t.task_id,t.ready_at,COALESCE(line.item->>'name','Item') AS item_name,
+        COALESCE((SELECT e.details->>'captainId' FROM order_events e WHERE e.order_id=o.id AND e.event_type='created' ORDER BY e.created_at ASC LIMIT 1),'') AS captain_id
+        FROM kitchen_production_tasks t JOIN direct_orders o ON o.id=t.order_id
+        LEFT JOIN LATERAL (SELECT item FROM jsonb_array_elements(o.items) AS item WHERE item->>'lineId'=t.source_line_id LIMIT 1) line ON TRUE
+        WHERE o.order_day=${kolkataOrderDay()}::date AND o.mode='table' AND o.status IN ('accepted','preparing','ready') AND t.task_state IN ('ready','expo') ORDER BY t.ready_at DESC LIMIT 100`;
+      return res.set('Cache-Control','no-store').json({ alerts: items.filter((order) => captainOwnsOrder(captain, order)).slice(0, 40) });
+    }
     const day = kolkataOrderDay(),
       alerts =
         await sql`SELECT o.id,o.employee_assigned_id,o.daily_order_number,o.table_area,o.table_number,o.updated_at,s.kot_number,MAX(s.updated_at) AS ready_at,

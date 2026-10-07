@@ -14,6 +14,7 @@
     <link rel="stylesheet" href="/captain-ux.css?v=53" />
     <link rel="stylesheet" href="/captain-modern.css?v=2" />
     <link rel="stylesheet" href="/captain-native.css?v=1" />
+      <link rel="stylesheet" href="/captain-tools.css?v=1" />
   </head>
   <body>
     <header class="captain-header">
@@ -78,6 +79,7 @@
           <div><b>My active tables</b><small>Active orders in your assigned access</small></div>
           <div id="captain-nav-active-list"></div>
         </div>
+        <button type="button" id="captain-open-tools" class="captain-nav-signout">Service tools &amp; sync</button>
         <button id="captain-nav-signout" class="captain-nav-signout" type="button">Sign out</button>
       </section>
     </aside>
@@ -248,7 +250,7 @@
             type="search"
             placeholder="Search menu items"
             autocomplete="off"
-          /><button type="button" id="clear-menu-search" aria-label="Clear search">×</button></label
+          /><button type="button" id="captain-voice-search" aria-label="Search menu by voice" hidden>🎙</button><button type="button" id="clear-menu-search" aria-label="Clear search">×</button></label
         >
         <p id="captain-draft-status" class="captain-draft-status" hidden aria-live="polite"></p>
         <div id="menu-quick-picks" class="menu-quick-picks" hidden></div>
@@ -444,8 +446,9 @@
     <script src="/client-config.js"></script>
     <script src="/addons-domain.js?v=1"></script>
     <script src="/order-request.js?v=1"></script>
-    <script src="/staff-domain.js?v=1"></script>
-    <script src="/captain.js?v=63"></script>
+    <script src="/staff-domain.js?v=2"></script>
+    <script src="/captain.js?v=64"></script>
+    <script src="/captain-tools.js?v=1"></script>
     <script>
       if ('serviceWorker' in navigator) {
         let reloadedForCaptainWorker = false;
@@ -456,7 +459,7 @@
           }
         });
         navigator.serviceWorker
-          .register('/captain-sw.js?v=24')
+          .register('/captain-sw.js?v=25')
           .then((registration) => {
             registration.update().catch(() => {});
             if (registration.waiting) registration.waiting.postMessage({ type: 'SKIP_WAITING' });

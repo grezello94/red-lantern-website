@@ -13,20 +13,26 @@ const esc = (value) =>
       ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[character]
   );
 const money = (value) => `₹${Number(value || 0).toFixed(0)}`;
+const captainSettings = () => window.RedLanternStaff.captainSettings(state.captain?.captainSettings);
 const captainAllowed = (permission) => window.RedLanternStaff.can(state.captain, permission);
 function applyCaptainPermissionsUI() {
   const create = captainAllowed('createOrders');
   $('#captain-order-action-toggle').hidden = !['createOrders','pickupOrders','deliveryOrders','addTables'].some(captainAllowed);
-  document.querySelector('[data-start-takeaway]').hidden = !captainAllowed('pickupOrders');
-  document.querySelector('[data-start-delivery]').hidden = !captainAllowed('deliveryOrders');
+  document.querySelector('[data-start-takeaway]').hidden = !captainAllowed('pickupOrders') || !captainSettings().takeAway;
+  document.querySelector('[data-start-delivery]').hidden = !captainAllowed('deliveryOrders') || !captainSettings().homeDelivery;
   document.querySelector('[data-new-table-help]').hidden = !create && !captainAllowed('addTables');
   document.querySelectorAll('[data-table-service]').forEach((button) => {
     button.hidden = !captainAllowed(button.dataset.tableService === 'bill_requested' ? 'requestBills' : 'requestService');
   });
+  const settings = captainSettings();
+  $('#send-kot').disabled = settings.mandatoryKot || !settings.printKot || !captainAllowed('releaseKots');
+  if (settings.mandatoryKot) $('#send-kot').checked = true;
+  else if (!settings.printKot || !captainAllowed('releaseKots')) $('#send-kot').checked = false;
+  window.applyCaptainToolsUI?.();
   const service = $('#captain-table-service');
   if (service && ![...service.querySelectorAll('button')].some((button) => !button.hidden)) service.hidden = true;
 }
-const readyAlertKey = (alert) => `${alert?.id || ''}:${alert?.kot_number || ''}`;
+const readyAlertKey = (alert) => `${alert?.id || ''}:${alert?.task_id || alert?.kot_number || ''}`;
 const readJSON = (key, fallback) => {
   try {
     return JSON.parse(sessionStorage.getItem(key) || '');
@@ -168,7 +174,7 @@ const captainDay = () =>
   }).format(new Date());
 const draftKey = () =>
   state.captain && state.table
-    ? `red-lantern-captain-draft:${captainDay()}:${state.captain.id}:${state.table.area}:${state.table.number}`
+    ? `red-lantern-captain-draft:${captainDay()}:${state.captain.id}:${state.table.area}:${state.table.number}${state.table.fulfillmentType === 'delivery' ? ':delivery' : ''}`
     : '';
 const pendingKey = () => (state.captain ? `red-lantern-captain-pending:${state.captain.id}` : '');
 const snapshotKey = () => (state.captain ? `red-lantern-captain-snapshot:${state.captain.id}` : '');
@@ -278,6 +284,7 @@ function draftFields() {
     customerName: $('#customer-name')?.value || '',
     customerPhone: $('#customer-phone')?.value || '',
     courseMode: $('#course-mode')?.value || 'normal_coursing',
+    kotWaiterId: $('#captain-kot-waiter')?.value || '',
     specialRequest: $('#special-request')?.value || '',
   };
 }
@@ -338,6 +345,7 @@ function restoreDraft() {
   $('#customer-name').value = draft.fields?.customerName || '';
   $('#customer-phone').value = draft.fields?.customerPhone || '';
   $('#course-mode').value = draft.fields?.courseMode || 'normal_coursing';
+  if ($('#captain-kot-waiter')) $('#captain-kot-waiter').dataset.draftWaiter = draft.fields?.kotWaiterId || '';
   $('#special-request').value = draft.fields?.specialRequest || '';
   notice.hidden = false;
   notice.textContent = `Restored unsent draft from ${new Date(draft.savedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}.`;
@@ -423,7 +431,7 @@ function pendingOrderCard(entry, index, inNav = false) {
       .slice(0, 4)
       .map((item) => `${Number(item.quantity || 0)}× ${esc(item.name)}`)
       .join(' · ');
-  return `<article class="${review ? 'is-review' : ''}"><div><b>${kotRetry ? 'KOT waiting · ' : review ? 'Needs review · ' : ''}${esc(order.tableArea || 'Table')} · Table ${esc(String(order.tableNumber || ''))}</b><small>${kotRetry ? `Order #${esc(entry.orderNumber || '')} is saved; the kitchen has not been notified yet.` : review ? live : `${itemCount} item${itemCount === 1 ? '' : 's'} · ${when}`}</small>${review && liveItems ? `<em>Already on table: ${liveItems}</em>` : ''}<span>${items.map((item) => `${Number(item.quantity || 0)}× ${esc(item.name)}`).join(' · ')}</span></div><div>${review && conflict?.id ? `<button type="button" data-accept-pending="${index}">${inNav ? 'Review & merge' : 'Accept as new round'}</button>` : ''}${kotRetry ? `<button type="button" data-retry-pending-kot="${index}">Send KOT</button>` : ''}${!review && !kotRetry ? `<button type="button" data-recover-pending="${index}">Edit</button>` : ''}<button type="button" data-discard-pending="${index}">${review ? 'Reject' : kotRetry ? 'Dismiss' : 'Discard'}</button></div></article>`;
+  return `<article class="${review ? 'is-review' : ''}"><div><b>${kotRetry ? 'KOT waiting · ' : review ? 'Needs review · ' : ''}${order.mode === 'takeaway' || order.mode === 'counter' ? (order.fulfillmentType === 'delivery' ? 'Delivery' : 'Takeaway') : `${esc(order.tableArea || 'Table')} · Table ${esc(String(order.tableNumber || ''))}`}</b><small>${kotRetry ? `Order #${esc(entry.orderNumber || '')} is saved; the kitchen has not been notified yet.` : review ? live : `${itemCount} item${itemCount === 1 ? '' : 's'} · ${when}`}</small>${review && liveItems ? `<em>Already on table: ${liveItems}</em>` : ''}<span>${items.map((item) => `${Number(item.quantity || 0)}× ${esc(item.name)}`).join(' · ')}</span></div><div>${review && conflict?.id ? `<button type="button" data-accept-pending="${index}">${inNav ? 'Review & merge' : 'Accept as new round'}</button>` : ''}${kotRetry ? `<button type="button" data-retry-pending-kot="${index}">Send KOT</button>` : ''}${!review && !kotRetry ? `<button type="button" data-recover-pending="${index}">Edit</button>` : ''}<button type="button" data-discard-pending="${index}">${review ? 'Reject' : kotRetry ? 'Dismiss' : 'Discard'}</button></div></article>`;
 }
 function renderPendingSync(message = '') {
   const root = $('#captain-pending-sync'),
@@ -505,7 +513,8 @@ function recoverPending(index) {
   const entry = state.pending[index],
     payload = entry?.payload;
   if (!payload) return;
-  if (!state.areas.some((area) => area.name === payload.tableArea)) {
+  const counter = payload.mode === 'takeaway' || payload.mode === 'counter';
+  if (!counter && !state.areas.some((area) => area.name === payload.tableArea)) {
     state.pendingError = 'This saved order is for an area no longer assigned to this Captain.';
     renderPendingSync();
     return;
@@ -515,6 +524,8 @@ function recoverPending(index) {
     area: payload.tableArea,
     number: Number(payload.tableNumber),
     orderId: active?.id || '',
+    mode: counter ? 'takeaway' : 'table',
+    fulfillmentType: payload.fulfillmentType || '',
   };
   state.cart = (Array.isArray(payload.items) ? payload.items : [])
     .filter((item) => item && item.name && Number(item.quantity) > 0)
@@ -526,6 +537,8 @@ function recoverPending(index) {
   $('#customer-name').value = payload.customerName || '';
   $('#customer-phone').value = payload.customerPhone || '';
   $('#special-request').value = payload.specialRequest || '';
+  $('#course-mode').value = payload.courseMode || 'normal_coursing';
+  if ($('#captain-kot-waiter')) $('#captain-kot-waiter').dataset.draftWaiter = payload.kotWaiterId || '';
   state.pending.splice(index, 1);
   state.pendingError = '';
   savePending();
@@ -581,10 +594,11 @@ function clearQueuedKotRetry(orderId) {
   state.pending = next;
   savePending();
 }
-async function postCaptainKot(orderId) {
+async function postCaptainKot(orderId, waiterId = '') {
   const response = await fetchWithTimeout(`/api/orders/${encodeURIComponent(orderId)}/kots`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...captainHeaders() },
+      body: JSON.stringify({ waiterId }),
     }),
     data = await response.json().catch(() => ({}));
   if (response.status === 401) {
@@ -634,7 +648,7 @@ async function postCaptainOrder(payload, options = {}) {
   }
   if (payload.sendKot) {
     try {
-      const kotData = await postCaptainKot(data.id);
+      const kotData = await postCaptainKot(data.id, payload.kotWaiterId);
       return { ...data, kotNumber: kotData.kotNumber, kotReused: !!kotData.reused };
     } catch (error) {
       queueKotRetry(payload, data);
@@ -644,7 +658,8 @@ async function postCaptainOrder(payload, options = {}) {
   }
   return data;
 }
-async function flushPending() {
+async function flushPending({ automatic = false } = {}) {
+  if (automatic && !captainSettings().autoSync) return;
   if (!state.captain || state.syncingPending || !state.pending.length || !navigator.onLine) return;
   state.syncingPending = true;
   state.pendingError = '';
@@ -656,7 +671,7 @@ async function flushPending() {
       const pending = state.pending[index];
       try {
         if (pending.kind === 'kot-retry') {
-          await postCaptainKot(pending.savedOrderId);
+          await postCaptainKot(pending.savedOrderId, pending.payload?.kotWaiterId);
           const settledIndex = state.pending.indexOf(pending);
           if (settledIndex >= 0) state.pending.splice(settledIndex, 1);
           savePending();
@@ -699,16 +714,16 @@ function renderReadyAlerts() {
   root.innerHTML = visible
     .map(
       (alert) =>
-        `<article><span aria-hidden="true">✓</span><div><b>Ready to serve · ${esc(alert.table_area)} Table ${String(alert.table_number || '').padStart(2, '0')}</b><small>Order #${esc(String(alert.daily_order_number || '').padStart(2, '0'))} · KOT #${esc(alert.kot_number)} is ready from the kitchen.</small></div><button type="button" data-ready-served="${esc(alert.id)}" data-ready-kot="${esc(alert.kot_number)}">Served</button></article>`
+        `<article><span aria-hidden="true">✓</span><div><b>Ready to serve · ${esc(alert.table_area)} Table ${String(alert.table_number || '').padStart(2, '0')}</b><small>Order #${esc(String(alert.daily_order_number || '').padStart(2, '0'))} · ${alert.item_name ? `${esc(alert.item_name)} is ready from the kitchen.` : `KOT #${esc(alert.kot_number)} is ready from the kitchen.`}</small></div>${captainAllowed('markServed') && !alert.task_id ? `<button type="button" data-ready-served="${esc(alert.id)}" data-ready-kot="${esc(alert.kot_number)}">Served</button>` : ''}</article>`
     )
     .join('');
   renderCaptainNav();
   if (state.areas.length) renderTables();
 }
 async function loadReadyAlerts() {
-  if (!state.captain || !captainAllowed('markServed')) return;
+  if (!state.captain || !captainAllowed('viewKots')) return;
   try {
-    const response = await fetch('/api/captain/ready-alerts', {
+    const response = await fetch(`/api/captain/ready-alerts?mode=${captainSettings().notifications === 'item' ? 'item' : 'kot'}`,  {
         cache: 'no-store',
         headers: captainHeaders(),
       }),
@@ -722,7 +737,7 @@ async function loadReadyAlerts() {
     state.readyAlerts
       .filter(
         (alert) =>
-          !state.readySeen[readyAlertKey(alert)] && !state.readyNotified[readyAlertKey(alert)]
+          captainSettings().notifications !== 'none' && !state.readySeen[readyAlertKey(alert)] && !state.readyNotified[readyAlertKey(alert)]
       )
       .forEach((alert) => {
         const key = readyAlertKey(alert);
@@ -734,11 +749,11 @@ async function loadReadyAlerts() {
           );
         } catch {}
         if (navigator.vibrate) navigator.vibrate([160, 80, 160]);
-        if (Notification.permission === 'granted')
+        if ('Notification' in window && Notification.permission === 'granted')
           navigator.serviceWorker?.ready
             .then((registration) =>
               registration.showNotification(`Table ${alert.table_number} ready`, {
-                body: `${alert.table_area} · Order #${String(alert.daily_order_number).padStart(2, '0')} · KOT #${alert.kot_number}`,
+                body: `${alert.table_area} · Order #${String(alert.daily_order_number).padStart(2, '0')} · ${alert.item_name || `KOT #${alert.kot_number}`}`,
                 icon: '/images/red-lantern-logo-600.webp',
                 tag: key,
                 renotify: true,
@@ -932,7 +947,7 @@ function renderCaptainNav() {
     ? ready
         .map(
           (alert) =>
-            `<button type="button" data-captain-ready-table="${esc(alert.table_area)}" data-captain-ready-number="${Number(alert.table_number)}"><span>✓</span><div><b>Table ${String(alert.table_number).padStart(2, '0')} is ready</b><small>${esc(alert.table_area)} · KOT #${esc(alert.kot_number)}</small></div><i>›</i></button>`
+            `<button type="button" data-captain-ready-table="${esc(alert.table_area)}" data-captain-ready-number="${Number(alert.table_number)}"><span>✓</span><div><b>Table ${String(alert.table_number).padStart(2, '0')} is ready</b><small>${esc(alert.table_area)} · ${alert.item_name ? esc(alert.item_name) : `KOT #${esc(alert.kot_number)}`}</small></div><i>›</i></button>`
         )
         .join('')
     : '<p><span aria-hidden="true">✓</span><b>Nothing ready right now</b><small>Kitchen updates will appear here automatically.</small></p>';
@@ -1164,6 +1179,7 @@ async function load() {
       unavailable: unavailable.has(item.key),
     }));
     state.orders = Array.isArray(orderData) ? orderData : [];
+    state.operations = operationData.config || {};
     applyCaptainPermissionsUI();
     state.salesOrders = (Array.isArray(insightData.items) ? insightData.items : []).map((item) => ({
       items: [item],
@@ -1174,6 +1190,7 @@ async function load() {
     renderMenu();
     renderCaptainNav();
     void loadReadyAlerts();
+    return true;
   } catch (error) {
     if (!restoreOfflineSnapshot()) {
       const message =
@@ -1181,6 +1198,7 @@ async function load() {
       $('#captain-connection').textContent = message;
       renderTableLoadFailure(message);
     }
+    return false;
   }
 }
 function renderTables() {
@@ -1233,12 +1251,13 @@ function renderTables() {
   stats.innerHTML = `<span><b>${cards.length}</b><small>Tables</small></span><span class="is-free"><b>${available}</b><small>Available</small></span>${occupied ? `<span class="is-live"><b>${occupied}</b><small>Active</small></span>` : ''}${attention ? `<span class="is-ready"><b>${attention}</b><small>Need attention</small></span>` : ''}<p>${state.area === 'all' ? 'Choose a table to begin an order.' : `${esc(state.area)} dining area`}</p>`;
   const filterEntries = [
     ['all', 'All tables', cards.length],
-    ['available', 'Available', available],
-    ['active', 'Active', occupied],
+    ['available', 'Empty tables', available],
+    ['active', 'Running tables', occupied],
     ['attention', 'Attention', attention],
+    ['pending_bill', 'Pending bills', cards.filter((card) => { const order = meta(card).active; return !!order && !!(order.bill_printed_at || order.service_state === 'bill_requested'); }).length],
   ];
   filters.innerHTML = filterEntries
-    .filter(([, key, count]) => key === 'All tables' || count)
+    .filter(() => true)
     .map(
       ([key, label, count]) =>
         `<button type="button" data-table-filter="${key}" class="${state.tableFilter === key ? 'is-active' : ''}"><span>${label}</span><b>${count}</b></button>`
@@ -1250,7 +1269,8 @@ function renderTables() {
       state.tableFilter === 'all' ||
       (state.tableFilter === 'available' && !data.active) ||
       (state.tableFilter === 'active' && data.active) ||
-      (state.tableFilter === 'attention' && data.attention)
+      (state.tableFilter === 'attention' && data.attention) ||
+      (state.tableFilter === 'pending_bill' && !!data.active && !!(data.active.bill_printed_at || data.active.service_state === 'bill_requested'))
     );
   };
   const tile = ({ area, number }) => {
@@ -1333,7 +1353,7 @@ function renderMenu() {
     quickRoot = $('#menu-quick-picks'),
     quickTitle = bestItems.length ? 'Best selling' : 'Quick order',
     quickDetail = bestItems.length ? 'Based on recent restaurant orders' : 'Recently added by you';
-  quickRoot.hidden = !(state.category === 'all' && !query && quickItems.length);
+  quickRoot.hidden = !captainSettings().recommendations || !(state.category === 'all' && !query && quickItems.length);
   quickRoot.innerHTML = quickItems.length
     ? `<div><b>${quickTitle}</b><small>${quickDetail}</small></div><section>${quickItems.map((item) => `<button type="button" data-menu-index="${state.menu.indexOf(item)}"><span>${esc(item.name)}</span><b>${money((priceOptions(item)[0] || ['', 0])[1])}</b><i>+</i></button>`).join('')}</section>`
     : '';
@@ -1349,7 +1369,7 @@ function renderMenu() {
       state.category === 'quick'
         ? state.recent.indexOf(`${a.category || ''}::${a.name || ''}`) -
           state.recent.indexOf(`${b.category || ''}::${b.name || ''}`)
-        : 0
+        : captainSettings().itemSort === 'az' ? a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }) : (salesCount.get(`${b.category || ''}::${b.name || ''}`) || 0) - (salesCount.get(`${a.category || ''}::${a.name || ''}`) || 0) || Number(a.rank || 0) - Number(b.rank || 0)
     );
   $('#menu-list').innerHTML = visible.length
     ? visible
@@ -1643,7 +1663,7 @@ $('#captain-pin-form').addEventListener('submit', async (event) => {
     setCaptainUI();
     resetCaptainIdleLock();
     await load();
-    void flushPending();
+    void flushPending({ automatic: true });
   } catch (error) {
     status.textContent = error.message || 'Unable to sign in.';
     $('#captain-pin').select();
@@ -1796,10 +1816,11 @@ $('#captain-order-action-list').addEventListener('click', (event) => {
   };
   if (event.target.closest('[data-start-takeaway], [data-start-delivery]')) {
     const delivery = !!event.target.closest('[data-start-delivery]');
-    if (!captainAllowed(delivery ? 'deliveryOrders' : 'pickupOrders')) return;
+    if (!captainAllowed(delivery ? 'deliveryOrders' : 'pickupOrders') || !(delivery ? captainSettings().homeDelivery : captainSettings().takeAway)) return;
     state.kotRetry = null;
     state.table = { area: '', number: 0, orderId: '', mode: 'takeaway', fulfillmentType: delivery ? 'delivery' : 'takeaway' };
     state.cart = [];
+    restoreDraft();
     $('#captain-table-service').hidden = true;
     closeActions();
     renderCart();
@@ -1807,7 +1828,7 @@ $('#captain-order-action-list').addEventListener('click', (event) => {
     return;
   }
   if (event.target.closest('[data-new-table-help]')) {
-    if (captainAllowed('addTables')) { location.href = '/staff?newTable=1'; return; }
+    if (captainAllowed('addTables')) { closeActions(); window.openCaptainAddTable?.(); return; }
     closeActions();
     $('#captain-connection').textContent = 'Choose an available table to start a dine-in order.';
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -1834,6 +1855,7 @@ $('#table-board').addEventListener('click', (event) => {
   renderTables();
   renderCart();
   setScreen('menu');
+  if (captainSettings().customerFirst && !active) window.openCaptainGuestDetails?.();
   if (active) void loadKotProgress(active.id);
 });
 const categoryKey = (value) =>
@@ -2113,6 +2135,7 @@ $('#place-order').addEventListener('click', async () => {
       fulfillmentType: state.table.fulfillmentType || '',
       action: sendKot ? 'submit' : 'save',
       sendKot,
+      kotWaiterId: $('#captain-kot-waiter')?.value || '',
       tableArea: state.table.area,
       tableNumber: state.table.number,
       tableOrderId: state.table.orderId || '',
@@ -2194,7 +2217,7 @@ function clock() {
 window.addEventListener('online', async () => {
   await load();
   renderCart();
-  void flushPending();
+  void flushPending({ automatic: true });
 });
 window.addEventListener('offline', () => {
   $('#captain-connection').textContent =
@@ -2290,6 +2313,7 @@ saveDraft = function () {
           number: state.table.number,
           orderId: state.table.orderId || '',
           mode: state.table.mode || '',
+          fulfillmentType: state.table.fulfillmentType || '',
         },
       })
     );
@@ -2320,6 +2344,7 @@ function restoreLatestDraft() {
     number: Number(table.number),
     orderId: table.orderId || '',
     mode: table.mode || '',
+    fulfillmentType: table.fulfillmentType || '',
   };
   restoreDraft();
   if (!state.cart.length) {
@@ -2384,16 +2409,22 @@ renderTables = function () {
     const order = activeTable(tile.dataset.tableArea, Number(tile.dataset.tableNumber));
     tile.classList.toggle('is-settlement', !!order?.bill_printed_at);
     tile.classList.toggle('is-ongoing', !!order && !order?.bill_printed_at);
-    if (order) {
+    if (order && captainSettings().showTableOrders) {
       const age = document.createElement('mark');
       age.textContent = `◷ ${orderAge(order)}`;
       tile.prepend(age);
+    }
+    if (order && order.captain_accessible !== false) {
+      const detail = document.createElement('span');
+      detail.className = 'captain-table-detail';
+      detail.textContent = [captainSettings().showCustomerName ? order.customer_name : '', captainSettings().showTableOrders ? money(order.total) : '', order.service_priority === 'urgent' ? 'Urgent' : ''].filter(Boolean).join(' · ');
+      if (detail.textContent) tile.append(detail);
     }
     const cell = document.createElement('div');
     cell.className = 'table-cell';
     tile.replaceWith(cell);
     cell.append(tile);
-    if (order && order.captain_accessible !== false && ['viewKots','moveTables','requestBills','editOrders','cancelOrders','takePayments','applyDiscounts','assignTables'].some(captainAllowed)) {
+    if (order && order.captain_accessible !== false && ['viewKots','moveTables','requestBills','editOrders','cancelOrders','takePayments','applyDiscounts','specialDiscounts','assignTables','setPriority'].some(captainAllowed)) {
       cell.classList.add('has-actions');
       const actions = document.createElement('button');
       actions.type = 'button';
@@ -2419,7 +2450,7 @@ function openCaptainTableActions(tile) {
   captainTableActionSheet.querySelector('[data-captain-table-action="view"]').hidden = !captainAllowed('viewKots');
   captainTableActionSheet.querySelector('[data-captain-table-action="move"]').hidden = !captainAllowed('moveTables');
   captainTableActionSheet.querySelector('[data-captain-table-action="bill"]').hidden = !captainAllowed('requestBills');
-  captainTableActionSheet.querySelector('[data-captain-table-action="manage"]').hidden = !['editOrders','cancelOrders','takePayments','applyDiscounts','assignTables'].some(captainAllowed);
+  captainTableActionSheet.querySelector('[data-captain-table-action="manage"]').hidden = !['editOrders','cancelOrders','takePayments','applyDiscounts','specialDiscounts','assignTables','setPriority'].some(captainAllowed);
   if (![...captainTableActionSheet.querySelectorAll('[data-captain-table-action]')].some((button) => !button.hidden)) return;
   if (!captainTableActionSheet.open) captainTableActionSheet.showModal();
   return true;
@@ -2497,7 +2528,7 @@ captainTableActionSheet.addEventListener('click', async (event) => {
     return captainTableActionSheet.close();
   const action = event.target.closest('[data-captain-table-action]')?.dataset.captainTableAction;
   if (!action || !captainHeldTable) return;
-  if (action === 'manage') { location.href = `/staff?order=${encodeURIComponent(captainHeldTable.order.id)}`; return; }
+  if (action === 'manage') { captainTableActionSheet.close(); window.openCaptainOrderTools?.(captainHeldTable.order); return; }
   if (action === 'view') {
     const { area, number, order } = captainHeldTable;
     captainTableActionSheet.close();
@@ -2672,7 +2703,7 @@ if (state.captain) {
   resetCaptainIdleLock();
   void (async () => {
     await load();
-    await flushPending();
+    await flushPending({ automatic: true });
   })();
 } else {
   void (async () => {
@@ -2696,6 +2727,6 @@ setInterval(() => {
       void loadReadyAlerts();
       if (state.table?.orderId) void loadKotProgress(state.table.orderId);
     }
-    void flushPending();
+    void flushPending({ automatic: true });
   }
 }, 10000);

@@ -19,6 +19,9 @@ describe('employee roles and order scope', () => {
     expect(Staff.orderAccessible({ id: 'cap', role: 'captain', areas: ['AC'], tableScope: 'assigned_areas' }, order)).toBe(true);
     expect(Staff.orderAccessible({ id: 'cap', role: 'captain', areas: ['BAR'], tableScope: 'all' }, order)).toBe(false);
   });
+  test('assigned-area scope fails closed without areas', () => {
+    expect(Staff.orderAccessible({id:'cap',role:'captain',tableScope:'assigned_areas',areas:[]}, {mode:'table',table_area:'AC',captain_id:'cap'})).toBe(false);
+  });
   test('explicit assignment controls ownership while occupancy remains visible', () => {
     const employee = { id: 'waiter', role: 'waiter', tableScope: 'own', areas: ['AC'] };
     const order = { mode: 'table', table_area: 'AC', captain_id: 'old-captain', employee_assigned_id: 'waiter' };
@@ -54,5 +57,19 @@ describe('employee roles and order scope', () => {
     expect(Staff.discountAmount({type:'percent',value:10},{type:'fixed',value:50},500)).toBe(50);
     expect(() => Staff.discountAmount({type:'fixed',value:50},{type:'percent',value:20},500)).toThrow('assigned limit');
     expect(() => Staff.discountAmount({type:'fixed',value:50},{type:'fixed',value:-1},500)).toThrow('valid discount');
+  });
+});
+
+
+describe('Captain App settings and additional grants', () => {
+  test('normalizes settings and keeps mandatory KOT printing enabled', () => {
+    expect(Staff.captainSettings({ mandatoryKot:true,printKot:false,itemSort:'unknown',notifications:'unknown',idleMinutes:999 })).toMatchObject({ mandatoryKot:true,printKot:true,itemSort:'rank',notifications:'kot',idleMinutes:120 });
+    expect(Staff.captainSettings({autoSync:false,homeDelivery:false})).toMatchObject({autoSync:false,homeDelivery:false,takeAway:true});
+  });
+  test('special discounts and priority require their own grants', () => {
+    expect(Staff.routePermission('POST','/api/orders/one/discount',{special:true})).toBe('specialDiscounts');
+    expect(Staff.routePermission('POST','/api/orders/one/priority',{})).toBe('setPriority');
+    expect(Staff.can({role:'captain'},'specialDiscounts')).toBe(false);
+    expect(Staff.can({role:'captain'},'setPriority')).toBe(false);
   });
 });

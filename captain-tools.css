@@ -1,0 +1,19 @@
+.captain-tool-sheet{width:min(560px,calc(100vw - 28px));max-height:calc(100dvh - 32px);box-sizing:border-box;border:1px solid #eadfe0;border-radius:22px;padding:22px;color:#273345;background:#fff;overflow:auto;overscroll-behavior:contain}
+.captain-tool-sheet::backdrop{background:rgba(28,18,22,.5);backdrop-filter:blur(3px)}
+.captain-tool-sheet header,.captain-tool-sheet footer{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.captain-tool-sheet h2{font-size:21px;margin:0}.captain-tool-sheet h3{font-size:16px;margin:22px 0 10px}
+.captain-tool-sheet p{font-size:14px;line-height:1.6;color:#64748b}
+.captain-tool-sheet button{min-height:44px;border:1px solid #eadfe0;background:#fff;border-radius:10px;padding:10px 14px;font:inherit;color:#273345;cursor:pointer}
+.captain-tool-sheet header button{font-size:22px;flex:none}.captain-tool-sheet footer{margin-top:20px;border-top:1px solid #f0e7e8;padding-top:16px}
+#captain-tool-save{background:#9e1834;color:#fff;border-color:#9e1834;font-weight:700}.captain-tool-sheet :disabled{opacity:.6;cursor:wait}
+.captain-tool-list{display:grid;gap:10px}.captain-tool-list button{text-align:left;display:grid;grid-template-columns:1fr auto;gap:4px 12px;padding:14px}
+.captain-tool-list small{grid-column:1;color:#64748b;font-size:13px;line-height:1.5}.captain-tool-list span{grid-column:2;grid-row:1/3;align-self:center;font-size:22px}
+.captain-tool-sheet label{display:grid;gap:7px;font-size:14px;font-weight:600;margin:14px 0}
+.captain-tool-sheet :is(input,select,textarea){width:100%;min-height:46px;box-sizing:border-box;border:1px solid #d8c9ce;border-radius:10px;background:#fff;color:#273345;padding:10px;font:inherit;font-size:16px}
+.captain-tool-sheet textarea{min-height:86px;resize:vertical}.captain-tool-sheet :focus-visible{outline:3px solid #9e1834;outline-offset:3px}
+#captain-tool-error{color:#9e1834}.captain-tool-sheet dl{font-size:14px}.captain-tool-sheet dl div{display:flex;justify-content:space-between;gap:16px;padding:10px 0;border-bottom:1px solid #f2e9ec}.captain-tool-sheet dd{font-weight:700;flex:none;margin:0}
+.captain-tool-sheet code{display:block;overflow-wrap:anywhere;padding:14px;background:#faf4f5;border-radius:10px}
+.captain-printer{border:1px solid #eadfe0;padding:14px;border-radius:12px;margin:12px 0}.captain-table-detail{font-size:12px!important;overflow-wrap:anywhere}
+#captain-voice-search{min-width:44px}.captain-settings-card input[type=checkbox]{accent-color:#9e1834}
+
+.captain-tool-sheet .captain-tool-check{display:flex;align-items:center;gap:10px}.captain-tool-sheet input[type=checkbox]{width:18px;min-height:18px;accent-color:#9e1834}.captain-kot-waiter{display:grid;gap:8px;margin:16px 0;font-size:14px}.captain-kot-waiter select{min-height:46px;border:1px solid #d8c9ce;border-radius:10px;padding:10px;background:#fff;font-size:16px}

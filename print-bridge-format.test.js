@@ -57,3 +57,11 @@ test('bill output includes add-ons in the label and authoritative line amount', 
   expect(output).toContain('__ITEM__Test Soup (Regular)|2|160.00|320.00');
   expect(output).toContain('__TOTAL__GRAND TOTAL|₹320');
 });
+
+
+test('KOT formats print item serial numbers and assigned waiter when configured', () => {
+  const output = kotText({settings:{showItemSerial:true},order:{kotNumber:3,waiterName:'Waiter One',servicePriority:'urgent'},items:[{name:'Soup',quantity:2}]});
+  expect(output).toContain('__KOTITEM__2|1. Soup');
+  expect(output).toContain('Waiter: Waiter One');
+  expect(output).toContain('URGENT');
+});

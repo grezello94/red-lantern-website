@@ -3316,6 +3316,8 @@ async function dispatchKot(orderId, printerId) {
           order: {
             number: data.order.daily_order_number,
             kotNumber: data.kotNumber,
+            waiterName: ticket.waiterName,
+            servicePriority: data.order.service_priority,
             reprint: !!data.reprint,
             customer: data.order.customer_name,
             phone: data.order.customer_phone,
@@ -3393,6 +3395,8 @@ async function autoPrintOrder(order) {
                   order: {
                     number: savedKot.order?.daily_order_number,
                     kotNumber: savedKot.kotNumber,
+                    waiterName: ticket.waiterName,
+                    servicePriority: savedKot.order?.service_priority,
                     customer: savedKot.order?.customer_name,
                     phone: savedKot.order?.customer_phone,
                     fulfillment: fulfillmentLabel(savedKot.order),

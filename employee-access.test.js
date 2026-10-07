@@ -68,6 +68,29 @@ describe('employee server authorization', () => {
     expect((await request('/api/orders/delivery-b/delivery-progress',{method:'POST',cookie,body:{status:'picked_up'}})).status).toBe(403);
     expect((await request('/api/orders/own-table/items',{method:'PATCH',cookie,body:{quantities:[1]}})).status).toBe(403);
   });
+  test('Captain service settings are returned with sessions and enforced on direct requests', async () => {
+    const cookie = await login('own');
+    mockConfig.settings.homeDelivery = false;
+    mockConfig.settings.takeAway = false;
+    mockConfig.captains[0].permissions = { deliveryOrders:true,pickupOrders:true };
+    expect((await request('/api/admin/captains',{method:'PUT',admin:true,body:mockConfig})).status).toBe(200);
+    expect((await request('/api/staff/session',{cookie})).data.employee.captainSettings.homeDelivery).toBe(false);
+    const delivery = await request('/api/orders/counter',{method:'POST',cookie,body:{fulfillmentType:'delivery'}});
+    expect(delivery.status).toBe(403);
+    expect(delivery.data.error).toContain('Home delivery');
+    expect((await request('/api/orders/counter',{method:'POST',cookie,body:{}})).status).toBe(403);
+    mockConfig.settings.takeAway = mockConfig.settings.homeDelivery = true;
+    mockConfig.settings.mandatoryKot = true;
+    expect((await request('/api/admin/captains',{method:'PUT',admin:true,body:mockConfig})).status).toBe(200);
+    expect((await request('/api/orders/counter',{method:'POST',cookie,body:{tableArea:'AC',sendKot:false,action:'save'}})).status).toBe(403);
+    mockConfig.settings.mandatoryKot = false;
+    expect((await request('/api/admin/captains',{method:'PUT',admin:true,body:mockConfig})).status).toBe(200);
+  });
+  test('special discounts and priority cannot bypass permission checks', async () => {
+    const cookie = await login('own');
+    expect((await request('/api/orders/own-table/discount',{method:'POST',cookie,body:{special:true,type:'fixed',value:10,reason:'Guest courtesy'}})).status).toBe(403);
+    expect((await request('/api/orders/own-table/priority',{method:'POST',cookie,body:{priority:'urgent'}})).status).toBe(403);
+  });
   test('permission changes and deactivation affect an existing session immediately', async () => {
     const cookie = await login('area');
     const captains = mockConfig.captains.map((employee) => ({...employee,permissions:Staff.permissions(employee)}));
