@@ -1,38 +1,19 @@
-require('dotenv').config();
-const { neon } = require('@neondatabase/serverless');
+// Use the same idempotent migrations as startup and PWA readiness. Keeping a
+// separate list here previously left the live order and KOT schema unprepared.
+const { prepareDatabase } = require('./server');
 
 async function initDB() {
-  const sql = neon(process.env.NEON_DATABASE_URL);
-  try {
-    console.log('Creating website_content table...');
-    await sql`
-      CREATE TABLE IF NOT EXISTS website_content (
-        id VARCHAR(255) PRIMARY KEY,
-        data JSONB NOT NULL
-      );
-    `;
-    await sql`
-      CREATE TABLE IF NOT EXISTS website_diagnostics (
-        id BIGSERIAL PRIMARY KEY,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        level TEXT NOT NULL,
-        category TEXT NOT NULL,
-        message TEXT NOT NULL,
-        solution TEXT,
-        location TEXT,
-        method TEXT,
-        path TEXT,
-        status_code INTEGER,
-        duration_ms INTEGER,
-        ip_hash TEXT,
-        user_agent TEXT,
-        details JSONB NOT NULL DEFAULT '{}'::jsonb
-      );
-    `;
-    console.log('✅ Table website_content created successfully.');
-  } catch (err) {
-    console.error('❌ Error creating table:', err);
-  }
+  console.log('Preparing website, order and printing database schema…');
+  const readiness = await prepareDatabase();
+  console.log(`Database ready (${readiness.schemaVersion}).`);
+  return readiness;
 }
 
-initDB();
+if (require.main === module) {
+  initDB().catch((error) => {
+    console.error('Database preparation failed:', error.message);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = { initDB };

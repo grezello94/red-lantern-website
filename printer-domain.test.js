@@ -78,8 +78,26 @@ describe('printer capability domain', () => {
   });
 
   test('legacy top-level format settings remain the fallback during migration', () => {
-    expect(printerFormat({ type: 'kot', fontFamily: 'Tahoma' }, 'kot').fontFamily).toBe(
-      'Tahoma'
-    );
+    expect(printerFormat({ type: 'kot', fontFamily: 'Tahoma' }, 'kot').fontFamily).toBe('Tahoma');
   });
+});
+
+const { resolveSystemPrinter } = require('./printer-domain');
+test('legacy address and case changes bind to a unique installed OS queue', () => {
+  const queues = [
+    { name: 'Tandoor Queue', host: '192.168.31.97', portName: 'IP_192.168.31.97' },
+    { name: 'Bar Queue', host: '192.168.1.23' },
+  ];
+  expect(resolveSystemPrinter('tandoor queue', queues)?.name).toBe('Tandoor Queue');
+  expect(resolveSystemPrinter('192.168.31.97', queues)?.name).toBe('Tandoor Queue');
+  expect(resolveSystemPrinter('IP_192.168.31.97', queues)?.name).toBe('Tandoor Queue');
+});
+test('ambiguous port aliases and similarly named queues cannot silently change routing', () => {
+  const queues = [
+    { name: 'Kitchen Printer', host: '192.168.1.20' },
+    { name: 'Kitchen Printer (Copy 1)', host: '192.168.1.20' },
+  ];
+  expect(resolveSystemPrinter('192.168.1.20', queues)).toBeNull();
+  expect(resolveSystemPrinter('Kitchen', queues)).toBeNull();
+  expect(resolveSystemPrinter('Kitchen Printer', queues)?.name).toBe('Kitchen Printer');
 });

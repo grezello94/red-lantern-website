@@ -55,7 +55,7 @@ async function freePort() {
 async function main() {
   const port = await freePort();
   const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'red-lantern-bridge-test-'));
-  const child = spawn(process.execPath, ['print-bridge.js'], {
+  const child = spawn(process.execPath, ['print-bridge-supervisor.js'], {
     cwd: path.resolve(__dirname, '..'),
     env: { ...process.env, PRINT_BRIDGE_PORT: String(port), PRINT_BRIDGE_DATA_DIR: dataDir },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -77,7 +77,14 @@ async function main() {
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
     }
-    if (!health?.ok || health.ledger !== 'ready' || !health.version || !health.workstation?.id)
+    if (
+      !health?.ok ||
+      health.ledger !== 'ready' ||
+      !health.version ||
+      !health.workstation?.id ||
+      !health.capabilities?.durablePrintJobs ||
+      !health.capabilities?.testPrint
+    )
       throw new Error(`Bridge health check failed. ${output}`);
     const printerDiscovery = await request(port, '/v1/printers');
     if (printerDiscovery.workstation?.id !== health.workstation.id)
@@ -98,10 +105,38 @@ async function main() {
     const status = await request(port, '/health');
     if (status.ledgerSummary?.pendingActions !== 1)
       throw new Error('Bridge ledger health did not report the queued action.');
+    // Exercise the installed watchdog, not just a direct Bridge launch. Kill
+    // the child exactly as a Windows process failure would, then prove both the
+    // durable workstation identity and queued order survive automatic recovery.
+    const originalPid = health.pid;
+    process.kill(originalPid, 'SIGTERM');
+    let restarted;
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      try {
+        const response = await request(port, '/health');
+        if (response.pid !== originalPid) {
+          restarted = response;
+          break;
+        }
+      } catch (_) {}
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    if (
+      !restarted?.ok ||
+      restarted.workstation.id !== health.workstation.id ||
+      restarted.ledgerSummary?.pendingActions !== 1
+    )
+      throw new Error(`Supervisor did not recover Bridge and its durable ledger. ${output}`);
+    try {
+      await request(port, '/v1/test-print?check=compatibility', { method: 'POST', body: {} });
+      throw new Error('Bridge accepted an empty test-print request.');
+    } catch (error) {
+      if (!/Test print failed/i.test(error.message)) throw error;
+    }
     const testLedger = new DatabaseSync(path.join(dataDir, 'orders-ledger.sqlite'));
     testLedger
       .prepare(
-        "INSERT INTO print_jobs (id,kind,printer_name,status,created_at,content_hash,lease_expires_at) VALUES (?,?,?,?,?,?,?)"
+        'INSERT INTO print_jobs (id,kind,printer_name,status,created_at,content_hash,lease_expires_at) VALUES (?,?,?,?,?,?,?)'
       )
       .run(
         'stale-print-1',

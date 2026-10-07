@@ -11,7 +11,7 @@ const http = require('http');
 const net = require('net');
 const { execFile, spawn } = require('child_process');
 const crypto = require('crypto');
-const { printerCapabilities, printerSupports } = require('./printer-domain');
+const { printerCapabilities, printerSupports, resolveSystemPrinter } = require('./printer-domain');
 const Addons = require('./addons-domain');
 const fs = require('fs/promises');
 const fsSync = require('fs');
@@ -22,7 +22,13 @@ const { DatabaseSync } = require('node:sqlite');
 const PORT = Number(process.env.PRINT_BRIDGE_PORT || 9124);
 // Keep this in sync with downloads/print-bridge-release.json. Operations uses
 // that signed-off release record to tell staff whether this computer is current.
-const BRIDGE_VERSION = '2026.10.06.1';
+const BRIDGE_VERSION = '2026.10.08.1';
+const BRIDGE_CAPABILITIES = Object.freeze({
+  testPrint: true,
+  setupStatus: true,
+  durablePrintJobs: true,
+  queueBindings: true,
+});
 const PRINT_JOB_LEASE_MS = Math.max(
   30000,
   Number(process.env.PRINT_BRIDGE_JOB_LEASE_MS || 2 * 60 * 1000)
@@ -46,6 +52,10 @@ let windowsSpoolerCheck = {
   result: { attempted: false, recovered: false },
 };
 const networkReachability = new Map();
+const networkProbePromises = new Map();
+let windowsPrinterSnapshotPromise = null;
+let windowsPrinterSnapshotCache = null;
+const physicalPrintQueues = new Map();
 
 function closeLedger() {
   try {
@@ -131,11 +141,15 @@ function claimPrintJob(id, kind, printerName, contentHash = '') {
   const existing = db
     .prepare('SELECT status, content_hash, lease_expires_at FROM print_jobs WHERE id=?')
     .get(safeId);
-  // A retry with the same payload must never create a second physical slip.
-  // If the content has changed, however, it is a genuinely new print request
-  // and must not be hidden behind an old completed job.
-  if (existing?.status === 'printed' && (!contentHash || existing.content_hash === contentHash))
-    return { claim: false, duplicate: true };
+  // The durable job ID identifies the physical slip. Editing a guest name,
+  // priority or note must not turn an automatic retry into a second KOT.
+  // Intentional corrections/reprints must receive a new explicit job ID.
+  if (existing?.status === 'printed')
+    return {
+      claim: false,
+      duplicate: true,
+      contentChanged: !!contentHash && existing.content_hash !== contentHash,
+    };
   if (existing?.status === 'printing') return { claim: false, pending: true };
   if (existing?.status === 'uncertain') return { claim: false, uncertain: true };
   db.prepare(
@@ -166,6 +180,33 @@ function finishPrintJob(id, result) {
       'UPDATE print_jobs SET status=?, completed_at=?, acknowledged_at=NULL, lease_expires_at=NULL WHERE id=?'
     )
     .run(status, status === 'printed' ? new Date().toISOString() : null, safeId);
+}
+
+async function withPrintJobLease(id, dispatch) {
+  const safeId = String(id || '')
+    .trim()
+    .slice(0, 160);
+  let heartbeat = null;
+  if (safeId) {
+    // A busy receipt queue may have several accepted jobs waiting their turn.
+    // Keep this process's ownership alive during the wait as well as dispatch.
+    heartbeat = setInterval(
+      () => {
+        try {
+          localLedger()
+            .prepare("UPDATE print_jobs SET lease_expires_at=? WHERE id=? AND status='printing'")
+            .run(new Date(Date.now() + PRINT_JOB_LEASE_MS).toISOString(), safeId);
+        } catch (_) {}
+      },
+      Math.min(20000, Math.floor(PRINT_JOB_LEASE_MS / 3))
+    );
+    heartbeat.unref();
+  }
+  try {
+    return await dispatch();
+  } finally {
+    clearInterval(heartbeat);
+  }
 }
 
 function ledgerAction(row) {
@@ -332,45 +373,77 @@ function run(command, args, timeout = 5000) {
   });
 }
 
+async function windowsPrinterSnapshot({ force = false } = {}) {
+  if (windowsPrinterSnapshotPromise) return windowsPrinterSnapshotPromise;
+  if (
+    !force &&
+    windowsPrinterSnapshotCache &&
+    Date.now() - windowsPrinterSnapshotCache.checkedAt < 5000
+  )
+    return windowsPrinterSnapshotCache.printers;
+  windowsPrinterSnapshotPromise = (async () => {
+    // Enumeration during spooler startup can return an empty list or stale
+    // Offline flags. Finish recovery before asking Windows for queue details.
+    await ensureWindowsSpoolerRunning();
+    const script = `$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); $ports=@{}; try { Get-PrinterPort -ErrorAction Stop | ForEach-Object { $ports[$_.Name]=$_ } } catch {}; $queues=@(Get-Printer -ErrorAction Stop); @($queues | ForEach-Object { $port=$ports[$_.PortName]; $protocol=[int]$port.Protocol; $number=if($protocol -eq 2){515}elseif($port.PortNumber){[int]$port.PortNumber}else{9100}; [PSCustomObject]@{ Name=[string]$_.Name; PortName=[string]$_.PortName; Host=[string]$port.PrinterHostAddress; Port=$number; Protocol=$protocol; Status=[string]$_.PrinterStatus } }) | ConvertTo-Json -Compress`;
+    let printers;
+    try {
+      const output = await run('powershell.exe', ['-NoProfile', '-Command', script], 10000);
+      const parsed = JSON.parse(output.trim().replace(/^\uFEFF/, '') || '[]');
+      printers = (Array.isArray(parsed) ? parsed : [parsed])
+        .filter((entry) => entry?.Name)
+        .map((entry) => ({
+          id: String(entry.Name).trim(),
+          name: String(entry.Name).trim(),
+          portName: String(entry.PortName || ''),
+          host: String(entry.Host || ''),
+          port: Number(entry.Port) || 9100,
+          protocol: Number(entry.Protocol) || 1,
+          status: String(entry.Status || ''),
+        }));
+    } catch (_) {
+      // Windows Home/older drivers may omit PrintManagement. CIM and WMIC
+      // still provide the installed queue names; absence of status is unknown.
+      printers = [];
+    }
+    if (!printers.length) {
+      let discovered = false;
+      for (const [command, args] of [
+        [
+          'powershell.exe',
+          [
+            '-NoProfile',
+            '-Command',
+            '[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); Get-CimInstance -ClassName Win32_Printer -ErrorAction Stop | Select-Object -ExpandProperty Name',
+          ],
+        ],
+        ['wmic.exe', ['printer', 'get', 'name', '/value']],
+      ]) {
+        try {
+          const output = await run(command, args);
+          discovered = true;
+          printers = formatPrinters(
+            output.split(/\r?\n/).map((line) => line.replace(/^Name=/i, ''))
+          );
+          if (printers.length) break;
+        } catch (_) {}
+      }
+      if (!discovered)
+        throw new Error(
+          'Windows could not read installed printers. Confirm the Print Spooler is running and install the printer manufacturer’s Windows driver.'
+        );
+    }
+    windowsPrinterSnapshotCache = { checkedAt: Date.now(), printers };
+    return printers;
+  })().finally(() => {
+    windowsPrinterSnapshotPromise = null;
+  });
+  return windowsPrinterSnapshotPromise;
+}
+
 async function installedPrinters() {
   let output = '';
-  if (process.platform === 'win32') {
-    // Different Windows installations expose printer data through different
-    // management providers, so try all supported built-in discovery routes.
-    const attempts = [
-      [
-        'powershell.exe',
-        [
-          '-NoProfile',
-          '-Command',
-          'Get-CimInstance -ClassName Win32_Printer | Select-Object -ExpandProperty Name',
-        ],
-      ],
-      [
-        'powershell.exe',
-        ['-NoProfile', '-Command', 'Get-Printer | Select-Object -ExpandProperty Name'],
-      ],
-      ['wmic.exe', ['printer', 'get', 'name', '/value']],
-    ];
-    const failures = [];
-    for (const [command, args] of attempts) {
-      try {
-        output = await run(command, args);
-        break;
-      } catch (error) {
-        failures.push(error.message);
-      }
-    }
-    if (!output && failures.length === attempts.length) {
-      throw new Error(
-        'Windows could not read installed printers. Confirm the Print Spooler is running and install the printer manufacturer’s Windows driver.'
-      );
-    }
-    const names = output.includes('Name=')
-      ? output.split(/\r?\n/).map((line) => line.replace(/^Name=/i, ''))
-      : output.split(/\r?\n/);
-    return formatPrinters(names);
-  }
+  if (process.platform === 'win32') return windowsPrinterSnapshot();
   if (process.platform === 'darwin') {
     try {
       output = await run('lpstat', ['-p']);
@@ -454,16 +527,15 @@ async function ensureWindowsSpoolerRunning({ force = false } = {}) {
 async function unavailablePrinterNames() {
   try {
     if (process.platform === 'win32') {
-      const output = await run('powershell.exe', [
-        '-NoProfile',
-        '-Command',
-        'Get-Printer | Where-Object { "$($_.PrinterStatus)" -match \'Offline|Error\' } | Select-Object -ExpandProperty Name',
-      ]);
+      const printers = await windowsPrinterSnapshot();
       return new Set(
-        output
-          .split(/\r?\n/)
-          .map((name) => name.trim())
-          .filter(Boolean)
+        printers
+          .filter((printer) =>
+            /Offline|Error|PaperOut|PaperJam|NotAvailable|DoorOpen|UserIntervention/i.test(
+              printer.status || ''
+            )
+          )
+          .map((printer) => printer.name)
       );
     }
     const output = await run('lpstat', ['-p']);
@@ -484,18 +556,13 @@ async function unavailablePrinterNames() {
 async function networkPrinterEndpoints() {
   try {
     if (process.platform === 'win32') {
-      const output = await run('powershell.exe', [
-        '-NoProfile',
-        '-Command',
-        '$ports=@{}; Get-PrinterPort | ForEach-Object { $ports[$_.Name]=$_ }; @(Get-Printer | ForEach-Object { $port=$ports[$_.PortName]; if($port -and $port.PrinterHostAddress){ [PSCustomObject]@{ Name=$_.Name; Host=[string]$port.PrinterHostAddress; Port=[int]$port.PortNumber } } }) | ConvertTo-Json -Compress',
-      ]);
-      const parsed = JSON.parse(output || '[]');
+      const printers = await windowsPrinterSnapshot();
       return new Map(
-        (Array.isArray(parsed) ? parsed : [parsed])
-          .filter((entry) => entry?.Name && entry?.Host)
-          .map((entry) => [
-            String(entry.Name),
-            { host: String(entry.Host), port: Number(entry.Port) || 9100 },
+        printers
+          .filter((printer) => printer.host)
+          .map((printer) => [
+            printer.name,
+            { host: printer.host, port: printer.port, protocol: printer.protocol },
           ])
       );
     }
@@ -521,7 +588,20 @@ async function networkPrinterEndpoints() {
   }
 }
 
-async function tcpEndpointReachable(host, port, timeout = 900) {
+function tcpEndpointReachable(host, port, timeout = 1500) {
+  // The same physical printer may expose separate Bill and KOT queues. Share
+  // its probe instead of opening simultaneous connections to a small receipt
+  // printer's single network accept slot.
+  const key = `${String(host).toLowerCase()}:${Number(port) || 9100}`;
+  if (networkProbePromises.has(key)) return networkProbePromises.get(key);
+  const probe = probeTcpEndpoint(host, port, timeout).finally(() =>
+    networkProbePromises.delete(key)
+  );
+  networkProbePromises.set(key, probe);
+  return probe;
+}
+
+async function probeTcpEndpoint(host, port, timeout) {
   // Some Windows printer drivers expose a working Standard TCP/IP port while
   // Node's socket probe is blocked or times out. Use the Windows networking
   // stack directly so the first probe does not interfere with the printer's
@@ -543,15 +623,15 @@ async function tcpEndpointReachable(host, port, timeout = 900) {
             '-Command',
             `$hostName='${safeHost}'; $port=${safePort}; $timeout=${safeTimeout}; $client=[System.Net.Sockets.TcpClient]::new(); try { $task=$client.ConnectAsync($hostName,$port); if($task.Wait($timeout) -and $client.Connected){"reachable"}else{"unreachable"} } catch { "unreachable" } finally { $client.Dispose() }`,
           ],
-          safeTimeout + 2500
+          safeTimeout + 10000
         );
         reachable = output.trim() === 'reachable';
       } catch (_) {}
     }
-    networkReachability.set(cacheKey, { reachable, checkedAt: Date.now() });
     // RAW printer ports can briefly refuse a health connection after a job or
     // another probe. A recent successful connection remains authoritative.
     if (!reachable && cached?.reachable && Date.now() - cached.checkedAt < 300000) return true;
+    networkReachability.set(cacheKey, { reachable, checkedAt: Date.now() });
     return reachable;
   }
 
@@ -625,12 +705,15 @@ function workstationIdentity() {
   return workstationIdentityPromise;
 }
 
-function printerMatchesWorkstation(printer, identity, installedNames) {
+function printerMatchesWorkstation(printer, identity, installedNames, printers = []) {
   const assigned = String(printer?.workstationId || '').trim();
   if (assigned) return assigned === identity.id;
   // Existing installations did not have a workstation ID. Adopt a legacy
   // queue only when the identically named OS printer exists on this computer.
-  return installedNames.has(String(printer?.deviceName || '').trim());
+  return (
+    installedNames.has(String(printer?.deviceName || '').trim()) ||
+    !!resolveSystemPrinter(printer?.deviceName, printers)
+  );
 }
 
 async function assertRequestedWorkstation(payload) {
@@ -644,11 +727,39 @@ async function assertRequestedWorkstation(payload) {
   }
 }
 
-async function printText(printerName, text, settings = {}) {
+async function resolvePrintQueue(printerName) {
+  if (!printerName) throw new Error('Assign an installed system printer before printing.');
+  const printers = await installedPrinters();
+  const queue = resolveSystemPrinter(printerName, printers);
+  if (!queue) {
+    const error = new Error(
+      `${printerName} is not installed on this computer. Choose its Windows printer queue in Operations.`
+    );
+    error.code = 'PRINTER_NOT_INSTALLED';
+    throw error;
+  }
+  return queue.name;
+}
+
+function printText(printerName, text, settings = {}) {
+  // Many receipt drivers cannot accept overlapping GDI jobs reliably. Keep one
+  // physical dispatch at a time per queue while independent kitchens run in parallel.
+  const previous = physicalPrintQueues.get(printerName) || Promise.resolve();
+  const next = previous.catch(() => {}).then(() => dispatchPrintText(printerName, text, settings));
+  physicalPrintQueues.set(printerName, next);
+  return next.finally(() => {
+    if (physicalPrintQueues.get(printerName) === next) physicalPrintQueues.delete(printerName);
+  });
+}
+
+async function dispatchPrintText(printerName, text, settings = {}) {
   // The background monitor repairs the spooler. Do not hold a print request
   // behind printer enumeration or a PowerShell health check.
-  if (process.platform === 'win32' && Date.now() - windowsSpoolerCheck.checkedAt >= 30000)
-    void ensureWindowsSpoolerRunning();
+  if (process.platform === 'win32') {
+    if (!windowsSpoolerCheck.result.running) await ensureWindowsSpoolerRunning({ force: true });
+    else if (Date.now() - windowsSpoolerCheck.checkedAt >= 30000)
+      void ensureWindowsSpoolerRunning();
+  }
   const file = path.join(os.tmpdir(), `red-lantern-kot-${crypto.randomUUID()}.txt`);
   await fs.writeFile(file, text, 'utf8');
   try {
@@ -992,7 +1103,10 @@ function billText(payload) {
     (sum, item) => sum + itemPrice(item) * Number(item.quantity || 0),
     0
   );
-  const total = order.total != null && Number.isFinite(Number(order.total)) && Number(order.total) >= 0 ? Number(order.total) : subtotal;
+  const total =
+    order.total != null && Number.isFinite(Number(order.total)) && Number(order.total) >= 0
+      ? Number(order.total)
+      : subtotal;
   const walletDiscount = Math.max(0, Math.floor(Number(order.loyalty_points_redeemed || 0)));
   const itemRows = items.flatMap((item, index) => {
     const label = `${settings.showItemSerial ? `${index + 1}. ` : ''}${item.name || 'Item'}${item.portion ? ` (${item.portion})` : ''}`;
@@ -1050,7 +1164,9 @@ function billText(payload) {
   const totals = [
     `__SUMMARY__Total Qty: ${quantity}|Sub Total: ${money(subtotal)}`,
     walletDiscount ? `__SUMMARY__Points discount|-${money(walletDiscount)}` : '',
-    Number(order.discount_amount) > 0 ? `__SUMMARY__Staff discount|-${money(Number(order.discount_amount))}` : '',
+    Number(order.discount_amount) > 0
+      ? `__SUMMARY__Staff discount|-${money(Number(order.discount_amount))}`
+      : '',
   ];
   const defaultHeader =
     'Colva Goa\n9922853605 / 9049558369\n[Follow] Insta ID:\nred_lantern_restaurant';
@@ -1114,7 +1230,15 @@ function readBody(req) {
 function reply(res, status, body, origin = '') {
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
-    ...(origin ? { 'Access-Control-Allow-Origin': origin, Vary: 'Origin' } : {}),
+    ...(origin
+      ? {
+          'Access-Control-Allow-Origin': origin,
+          // Secure Orders PWAs call this loopback service from a public origin.
+          // The origin has already passed the restaurant-only allowlist above.
+          'Access-Control-Allow-Private-Network': 'true',
+          Vary: 'Origin',
+        }
+      : {}),
     'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
     'Cache-Control': 'no-store',
@@ -1127,7 +1251,9 @@ const server = http.createServer(async (req, res) => {
   if (req.headers.origin && !origin)
     return reply(res, 403, { error: 'This website is not allowed to access the Print Bridge.' });
   if (req.method === 'OPTIONS') return reply(res, 204, {}, origin);
-  if (req.method === 'GET' && req.url === '/health') {
+  // A browser cache-busting query must not turn a valid endpoint into a 404.
+  const pathname = new URL(req.url, `http://127.0.0.1:${PORT}`).pathname;
+  if (req.method === 'GET' && pathname === '/health') {
     try {
       localLedger().prepare('SELECT 1 AS ok').get();
       const workstation = await workstationIdentity();
@@ -1140,7 +1266,10 @@ const server = http.createServer(async (req, res) => {
         {
           ok: true,
           service: 'Red Lantern Print Bridge',
+          pid: process.pid,
           version: BRIDGE_VERSION,
+          protocolVersion: 1,
+          capabilities: BRIDGE_CAPABILITIES,
           platform: process.platform,
           node: process.version,
           ledger: 'ready',
@@ -1164,23 +1293,25 @@ const server = http.createServer(async (req, res) => {
       );
     }
   }
-  if (req.method === 'GET' && req.url === '/v1/setup-status') {
+  if (req.method === 'GET' && pathname === '/v1/setup-status') {
     try {
       localLedger().prepare('SELECT 1 AS ok').get();
       // These checks do not depend on one another while the spooler is already
       // healthy (the normal case). Running them together avoids stacking four
       // separate PowerShell startup costs on every visit to Operations.
-      const [automaticRecovery, workstation, printers, config, unavailableNames, networkEndpoints] = await Promise.all([
-        ensureWindowsSpoolerRunning(),
-        workstationIdentity(),
-        installedPrinters(),
-        readJson(configFile, { printers: [], routes: [] }),
-        unavailablePrinterNames(),
-        networkPrinterEndpoints(),
-      ]);
+      const [automaticRecovery, workstation, printers, config, unavailableNames, networkEndpoints] =
+        await Promise.all([
+          ensureWindowsSpoolerRunning(),
+          workstationIdentity(),
+          installedPrinters(),
+          readJson(configFile, { printers: [], routes: [] }),
+          unavailablePrinterNames(),
+          networkPrinterEndpoints(),
+        ]);
       const savedPrinters = Array.isArray(config.printers) ? config.printers : [];
       const savedRoutes = Array.isArray(config.routes) ? config.routes : [];
       const installedNames = new Set(printers.map((printer) => String(printer.name).trim()));
+      const binding = (printer) => resolveSystemPrinter(printer.deviceName, printers);
       // A saved queue with no active Bill or KOT capability is not part of the
       // restaurant's print path and must not make the entire workspace appear
       // offline. This also prevents old, unassigned queues from surviving as a
@@ -1188,14 +1319,12 @@ const server = http.createServer(async (req, res) => {
       const assignedPrinters = savedPrinters.filter(
         (printer) =>
           String(printer.deviceName || '').trim() &&
-          printerMatchesWorkstation(printer, workstation, installedNames) &&
+          printerMatchesWorkstation(printer, workstation, installedNames, printers) &&
           (printerSupports(printer, 'bill') || printerSupports(printer, 'kot'))
       );
-      const configuredPrinters = assignedPrinters.filter((printer) =>
-        installedNames.has(String(printer.deviceName || '').trim())
-      );
+      const configuredPrinters = assignedPrinters.filter((printer) => !!binding(printer));
       const missingConfiguredPrinters = assignedPrinters
-        .filter((printer) => !installedNames.has(String(printer.deviceName || '').trim()))
+        .filter((printer) => !binding(printer))
         .map((printer) => ({
           id: String(printer.id || ''),
           name: String(printer.name || ''),
@@ -1204,7 +1333,7 @@ const server = http.createServer(async (req, res) => {
       const networkChecks = await Promise.all(
         configuredPrinters.map(async (printer) => {
           const deviceName = String(printer.deviceName || '').trim();
-          const endpoint = networkEndpoints.get(deviceName);
+          const endpoint = networkEndpoints.get(binding(printer)?.name || deviceName);
           if (!endpoint) return null;
           return {
             id: String(printer.id || ''),
@@ -1225,7 +1354,16 @@ const server = http.createServer(async (req, res) => {
       const unavailableConfiguredPrinters = configuredPrinters
         .filter((printer) => {
           const deviceName = String(printer.deviceName || '').trim();
-          return unavailableNames.has(deviceName) && !networkPrinterNames.has(deviceName);
+          const queue = binding(printer);
+          const hardFailure = /Error|PaperOut|PaperJam|DoorOpen|UserIntervention/i.test(
+            queue?.status || ''
+          );
+          // A live network port overrides a driver's stale Offline flag, but
+          // cannot override a real paper jam, empty paper roll or queue error.
+          return (
+            unavailableNames.has(queue?.name || deviceName) &&
+            (hardFailure || !networkPrinterNames.has(deviceName))
+          );
         })
         .map((printer) => ({
           id: String(printer.id || ''),
@@ -1256,6 +1394,8 @@ const server = http.createServer(async (req, res) => {
                 ? 'macOS'
                 : process.platform,
           version: BRIDGE_VERSION,
+          protocolVersion: 1,
+          capabilities: BRIDGE_CAPABILITIES,
           node: process.version,
           ledger: 'ready',
           automaticRecovery,
@@ -1266,6 +1406,11 @@ const server = http.createServer(async (req, res) => {
           printers,
           configuredPrinterCount: configuredPrinters.length,
           configuredPrinterIds: configuredPrinters.map((printer) => String(printer.id || '')),
+          printerBindings: configuredPrinters.map((printer) => ({
+            id: String(printer.id || ''),
+            deviceName: String(printer.deviceName || ''),
+            queueName: binding(printer).name,
+          })),
           configuredBillPrinterCount: configuredPrinters.filter((printer) =>
             printerSupports(printer, 'bill')
           ).length,
@@ -1300,7 +1445,7 @@ const server = http.createServer(async (req, res) => {
       );
     }
   }
-  if (req.method === 'POST' && req.url === '/v1/restart') {
+  if (req.method === 'POST' && pathname === '/v1/restart') {
     reply(res, 202, { ok: true, message: 'Print Bridge is restarting.' }, origin);
     setTimeout(() => {
       // The installed supervisor immediately replaces this child. Do not create
@@ -1321,7 +1466,7 @@ const server = http.createServer(async (req, res) => {
     }, 250).unref();
     return;
   }
-  if (req.method === 'GET' && req.url === '/v1/printers') {
+  if (req.method === 'GET' && pathname === '/v1/printers') {
     try {
       return reply(
         res,
@@ -1338,7 +1483,7 @@ const server = http.createServer(async (req, res) => {
       );
     }
   }
-  if (req.method === 'GET' && req.url === '/v1/config') {
+  if (req.method === 'GET' && pathname === '/v1/config') {
     try {
       return reply(
         res,
@@ -1355,14 +1500,16 @@ const server = http.createServer(async (req, res) => {
       );
     }
   }
-  if (req.method === 'PUT' && req.url === '/v1/config') {
+  if (req.method === 'PUT' && pathname === '/v1/config') {
     try {
       const config = (await readBody(req)).config || {};
       const [identity, installed] = await Promise.all([workstationIdentity(), installedPrinters()]);
       const installedNames = new Set(installed.map((printer) => String(printer.name).trim()));
       const printers = (Array.isArray(config.printers) ? config.printers : [])
         .slice(0, 250)
-        .filter((printer) => printerMatchesWorkstation(printer, identity, installedNames))
+        .filter((printer) =>
+          printerMatchesWorkstation(printer, identity, installedNames, installed)
+        )
         .map((printer) => {
           const capabilities = printerCapabilities(printer);
           return {
@@ -1373,7 +1520,10 @@ const server = http.createServer(async (req, res) => {
             capabilities,
             type: capabilities[0] || (printer.type === 'bill' ? 'bill' : 'kot'),
             deviceId: String(printer.deviceId || '').slice(0, 160),
-            deviceName: String(printer.deviceName || '').slice(0, 120),
+            deviceName: (
+              resolveSystemPrinter(printer.deviceName, installed)?.name ||
+              String(printer.deviceName || '')
+            ).slice(0, 160),
             workstationId: identity.id,
             workstationName: identity.name,
           };
@@ -1440,7 +1590,7 @@ const server = http.createServer(async (req, res) => {
       );
     }
   }
-  if (req.method === 'POST' && req.url === '/v1/print-jobs/acknowledge') {
+  if (req.method === 'POST' && pathname === '/v1/print-jobs/acknowledge') {
     try {
       const body = await readBody(req);
       return reply(res, 200, { ok: true, acknowledged: acknowledgePrintJobs(body.ids) }, origin);
@@ -1453,7 +1603,7 @@ const server = http.createServer(async (req, res) => {
       );
     }
   }
-  if (req.method === 'POST' && req.url === '/v1/ledger/actions') {
+  if (req.method === 'POST' && pathname === '/v1/ledger/actions') {
     try {
       return reply(res, 201, { ok: true, action: queueLedgerAction(await readBody(req)) }, origin);
     } catch (error) {
@@ -1491,7 +1641,7 @@ const server = http.createServer(async (req, res) => {
       );
     }
   }
-  if (req.method === 'GET' && req.url === '/v1/kot-queue') {
+  if (req.method === 'GET' && pathname === '/v1/kot-queue') {
     try {
       return reply(res, 200, { jobs: await readJson(queueFile, []) }, origin);
     } catch (error) {
@@ -1503,7 +1653,7 @@ const server = http.createServer(async (req, res) => {
       );
     }
   }
-  if (req.method === 'POST' && req.url === '/v1/kot-queue') {
+  if (req.method === 'POST' && pathname === '/v1/kot-queue') {
     try {
       const payload = await readBody(req);
       await assertRequestedWorkstation(payload);
@@ -1527,16 +1677,18 @@ const server = http.createServer(async (req, res) => {
       return reply(res, 400, { error: error.message || 'Unable to queue KOT.' }, origin);
     }
   }
-  if (req.method === 'POST' && req.url === '/v1/test-print') {
+  if (req.method === 'POST' && pathname === '/v1/test-print') {
     try {
       const payload = await readBody(req);
       await assertRequestedWorkstation(payload);
-      const printerName = String(payload.printerName || '').trim().slice(0, 160);
-      if (!printerName) throw new Error('Assign an installed system printer before testing.');
-      const printers = await installedPrinters();
-      if (!printers.some((printer) => printer.name === printerName))
-        throw new Error(`${printerName} is not installed on this computer.`);
-      const label = String(payload.label || printerName).trim().slice(0, 80);
+      const requestedPrinter = String(payload.printerName || '')
+        .trim()
+        .slice(0, 160);
+      if (!requestedPrinter) throw new Error('Assign an installed system printer before testing.');
+      const printerName = await resolvePrintQueue(requestedPrinter);
+      const label = String(payload.label || printerName)
+        .trim()
+        .slice(0, 80);
       const role = payload.type === 'bill' ? 'BILL PRINTER' : 'KOT PRINTER';
       const timestamp = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
       const testText = [
@@ -1565,15 +1717,16 @@ const server = http.createServer(async (req, res) => {
       );
     }
   }
-  if (req.method === 'POST' && req.url === '/v1/print-kot') {
+  if (req.method === 'POST' && pathname === '/v1/print-kot') {
     let printJobId = '';
     try {
       const payload = await readBody(req);
       await assertRequestedWorkstation(payload);
       printJobId = String(payload.printJobId || '');
-      const printerName = String(payload.printerName || '')
+      const requestedPrinter = String(payload.printerName || '')
         .trim()
         .slice(0, 160);
+      const printerName = await resolvePrintQueue(requestedPrinter);
       const items = Array.isArray(payload.items) ? payload.items.slice(0, 100) : [];
       if (!printerName || !items.length)
         throw new Error('A printer and at least one KOT item are required.');
@@ -1587,6 +1740,7 @@ const server = http.createServer(async (req, res) => {
           {
             ok: !!claim.duplicate || !!claim.pending,
             duplicate: !!claim.duplicate,
+            contentChanged: !!claim.contentChanged,
             pending: !!claim.pending,
             uncertain: !!claim.uncertain,
             printerName,
@@ -1599,7 +1753,9 @@ const server = http.createServer(async (req, res) => {
           },
           origin
         );
-      await printText(printerName, ticketText, payload.settings || {});
+      await withPrintJobLease(payload.printJobId, () =>
+        printText(printerName, ticketText, payload.settings || {})
+      );
       finishPrintJob(payload.printJobId, 'printed');
       return reply(res, 201, { ok: true, printerName, itemCount: items.length }, origin);
     } catch (error) {
@@ -1612,15 +1768,16 @@ const server = http.createServer(async (req, res) => {
       return reply(res, 400, { error: error.message || 'Unable to print KOT.' }, origin);
     }
   }
-  if (req.method === 'POST' && req.url === '/v1/print-bill') {
+  if (req.method === 'POST' && pathname === '/v1/print-bill') {
     let printJobId = '';
     try {
       const payload = await readBody(req);
       await assertRequestedWorkstation(payload);
       printJobId = String(payload.printJobId || '');
-      const printerName = String(payload.printerName || '')
+      const requestedPrinter = String(payload.printerName || '')
         .trim()
         .slice(0, 160);
+      const printerName = await resolvePrintQueue(requestedPrinter);
       if (!printerName || !payload.order?.id)
         throw new Error('A bill printer and order are required.');
       const claim = claimPrintJob(payload.printJobId, 'bill', printerName);
@@ -1631,6 +1788,7 @@ const server = http.createServer(async (req, res) => {
           {
             ok: !!claim.duplicate || !!claim.pending,
             duplicate: !!claim.duplicate,
+            contentChanged: !!claim.contentChanged,
             pending: !!claim.pending,
             uncertain: !!claim.uncertain,
             printerName,
@@ -1643,7 +1801,9 @@ const server = http.createServer(async (req, res) => {
           },
           origin
         );
-      await printText(printerName, billText(payload), payload.settings || {});
+      await withPrintJobLease(payload.printJobId, () =>
+        printText(printerName, billText(payload), payload.settings || {})
+      );
       finishPrintJob(payload.printJobId, 'printed');
       return reply(res, 201, { ok: true, printerName }, origin);
     } catch (error) {
@@ -1680,4 +1840,15 @@ if (require.main === module) {
   });
 }
 
-module.exports = { kotText, billText, run };
+module.exports = {
+  kotText,
+  billText,
+  run,
+  server,
+  closeLedger,
+  installedPrinters,
+  networkPrinterEndpoints,
+  windowsPrinterSnapshot,
+  ensureWindowsSpoolerRunning,
+  resolvePrintQueue,
+};

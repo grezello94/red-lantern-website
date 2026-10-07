@@ -1,10 +1,14 @@
-const CACHE = 'red-lantern-orders-v32';
+const CACHE = 'red-lantern-orders-v33';
 const ORDER_SHELL = [
   '/orders',
-  '/printer-domain.js?v=1',
+  '/client-config.js',
+  '/staff-domain.js?v=2',
+  '/staff-access.js?v=1',
+  '/src/orders/browser-bridge.js',
+  '/printer-domain.js?v=2',
   '/addons-domain.js?v=1',
   '/order-request.js?v=1',
-  '/orders.js?v=55',
+  '/orders.js?v=56',
   '/orders.css?v=7',
   '/orders-logo.css?v=7',
   '/orders-fixes.css?v=23',
@@ -65,6 +69,7 @@ self.addEventListener('fetch', (event) => {
   const isOrdersShell =
     url.pathname === '/orders' ||
     url.pathname === '/orders.html' ||
+    ['/client-config.js', '/staff-domain.js', '/staff-access.js', '/src/orders/browser-bridge.js', '/printer-domain.js', '/order-request.js'].includes(url.pathname) ||
     /\/orders(?:-fixes|-logo)?\.css$|\/orders\.js$|\/orders\.webmanifest$|\/addons-domain\.js$/.test(
       url.pathname
     );
@@ -87,7 +92,7 @@ self.addEventListener('fetch', (event) => {
       const cached =
         (await cache.match(request, { ignoreSearch: isOrdersShell })) ||
         (url.pathname === '/api/orders' ? await cache.match('/api/orders') : undefined) ||
-        (isOrdersShell ? await cache.match('/orders') : undefined);
+        (isOrdersShell && request.mode === 'navigate' ? await cache.match('/orders') : undefined);
       if (cached) return cached;
       if (request.mode === 'navigate')
         return new Response(

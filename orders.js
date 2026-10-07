@@ -155,6 +155,134 @@ let counterSyncInProgress = false;
 let bridgeLedgerPending = 0;
 const printBridgeOrigin = (typeof window !== 'undefined' && window.RED_LANTERN_CONFIG && window.RED_LANTERN_CONFIG.printBridgeOrigin) || 'http://127.0.0.1:9124';
 
+// All local requests share the same origin and a deadline. A stalled Windows
+// queue must not leave a button spinning or prevent the next recovery attempt.
+async function fetchPrintBridge(path, options = {}, timeoutMs = 20000) {
+  const controller = new AbortController();
+  const relayAbort = () => controller.abort();
+  options.signal?.addEventListener('abort', relayAbort, { once: true });
+  if (options.signal?.aborted) controller.abort();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(`${printBridgeOrigin}${path}`, { ...options, signal: controller.signal });
+    const body = await response.arrayBuffer();
+    return new Response([204, 205, 304].includes(response.status) ? null : body, { status: response.status, statusText: response.statusText, headers: response.headers });
+  } catch (error) {
+    const failure = new Error(controller.signal.aborted
+      ? 'The printer service did not respond in time. Saved tickets will be retried automatically.'
+      : 'The printer service is reconnecting. Saved tickets will be retried automatically.');
+    failure.cause = error;
+    throw failure;
+  } finally {
+    clearTimeout(timeout);
+    options.signal?.removeEventListener('abort', relayAbort);
+  }
+}
+async function fetchOrdersService(path, options = {}, timeoutMs = 20000) {
+  const controller = new AbortController();
+  const relay = () => controller.abort();
+  options.signal?.addEventListener('abort', relay, { once: true });
+  if (options.signal?.aborted) controller.abort();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(path, { ...options, signal: controller.signal });
+    const body = await response.arrayBuffer();
+    return new Response([204, 205, 304].includes(response.status) ? null : body, { status: response.status, statusText: response.statusText, headers: response.headers });
+  }
+  catch (error) {
+    const failure = new Error('The Orders server is reconnecting. Saved work will be retried automatically.');
+    failure.status = 503; failure.cause = error; throw failure;
+  } finally { clearTimeout(timeout); options.signal?.removeEventListener('abort', relay); }
+}
+let bridgeHealthRequest = null;
+let bridgeHealthSnapshot = null;
+let bridgeHealthCheckedAt = 0;
+async function readPrintBridgeHealth(force = false) {
+  if (!force && bridgeHealthSnapshot && Date.now() - bridgeHealthCheckedAt < 3000)
+    return bridgeHealthSnapshot;
+  if (bridgeHealthRequest) return bridgeHealthRequest;
+  bridgeHealthRequest = (async () => {
+    const response = await fetchPrintBridge('/health', { cache: 'no-store' }, 4000);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.ok) throw new Error(data.detail || data.error || 'The printer service is starting.');
+    bridgeHealthSnapshot = data;
+    bridgeHealthCheckedAt = Date.now();
+    return data;
+  })();
+  try { return await bridgeHealthRequest; }
+  finally { bridgeHealthRequest = null; }
+}
+function findWorkstationBillPrinter(printers, workstationId) {
+  const domain = window.RedLanternPrinterDomain;
+  return domain
+    ? domain.configuredPrintersFor({ printers }, 'bill', workstationId || '')[0]
+    : printers.find(printer => printer.type === 'bill' && printer.deviceName && (!printer.workstationId || !workstationId || printer.workstationId === workstationId));
+}
+function printerSettingsFor(printer, kind) {
+  return window.RedLanternPrinterDomain?.printerFormat(printer, kind) || printer || {};
+}
+const reviewedPrintJobsKey = 'red-lantern-reviewed-prints-v1';
+function readReviewedPrintJobs() {
+  try { return JSON.parse(localStorage.getItem(reviewedPrintJobsKey) || '{}'); } catch { return {}; }
+}
+const pendingPrintsKey = 'red-lantern-pending-prints-v1';
+function readPendingPrints() {
+  try { return JSON.parse(localStorage.getItem(pendingPrintsKey) || '{}'); }
+  catch { return {}; }
+}
+function rememberPrintResult(order, result) {
+  const pending = readPendingPrints();
+  if (result.ok) delete pending[order.id];
+  else pending[order.id] = { mode: order.mode, status: order.status, reason: result.reason, savedAt: Date.now() };
+  try { localStorage.setItem(pendingPrintsKey, JSON.stringify(pending)); } catch {}
+  renderPrintingStatus();
+}
+const printingStatus = document.createElement('p');
+printingStatus.id = 'orders-printing-status';
+printingStatus.setAttribute('role', 'status');
+printingStatus.setAttribute('aria-live', 'polite');
+printingStatus.style.cssText = 'margin:8px 20px;padding:12px 16px;border:1px solid #d8e2ee;border-radius:10px;background:#fff8e8;color:#704816;font:600 14px/1.5 system-ui';
+printingStatus.hidden = true;
+document.querySelector('header')?.after(printingStatus);
+function renderPrintingStatus() {
+  const pending = Object.values(readPendingPrints());
+  printingStatus.hidden = pending.length === 0;
+  printingStatus.textContent = pending.length
+    ? `${pending.length} saved order${pending.length === 1 ? '' : 's'} waiting for printing. ${pending[0].reason || 'Reconnecting to printers.'} Open Operations → Print & offline setup for details.`
+    : '';
+}
+renderPrintingStatus();
+async function sendPrinterTest(printer) {
+  const health = await readPrintBridgeHealth(true);
+  let response;
+  if (health.capabilities?.testPrint !== false) {
+    response = await fetchPrintBridge('/v1/test-print', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ printerName: printer.deviceName, label: printer.name,
+        type: printer.type, workstationId: printer.workstationId || health.workstation?.id || '', settings: printer }),
+    });
+  }
+  // Older installed bridges already support KOT printing but predate the test
+  // endpoint. This is an explicit test slip, never a real order or receipt.
+  if (!response || response.status === 404) {
+    response = await fetchPrintBridge('/v1/print-kot', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ printJobId: `printer-test:${printer.id}:${crypto.randomUUID()}`,
+        printerName: printer.deviceName, printerLabel: `${printer.name} · TEST PRINT`, settings: printer,
+        workstationId: printer.workstationId || health.workstation?.id || '',
+        items: [{ name: 'PRINTER CONNECTION TEST — NOT A FOOD ORDER', quantity: 1 }],
+        order: { customer: 'Printer setup test', fulfillment: 'TEST ONLY',
+          createdAt: new Date().toISOString(), note: 'No preparation required. This slip confirms that the system accepted a test print.' } }),
+    });
+  }
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data.uncertain) throw new Error(data.detail ||
+    (response.status === 404 ? 'This printer service needs an update. Install the latest Windows setup shown below.' : data.error) ||
+    'The printer did not accept the test. Check its queue, power and connection.');
+  return data;
+}
+
+
 // Bridge support for extracted browser bridge
 const bridgeSupport = typeof window !== 'undefined' && window.RedLanternOrders ? window.RedLanternOrders : null;
 const bridgeDispatch = bridgeSupport && bridgeSupport.sync ? bridgeSupport.sync.dispatchBridgeAction : null;
@@ -189,7 +317,7 @@ function saveQueuedCounterOrders(orders) {
   localStorage.setItem(offlineCounterOrdersKey, JSON.stringify(orders));
 }
 async function saveToBridgeLedger(payload) {
-  const response = await fetch(`${printBridgeOrigin}/v1/ledger/actions`, {
+  const response = await fetchPrintBridge(`/v1/ledger/actions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id: payload.clientRequestId, type: 'counter-order', payload }),
@@ -202,7 +330,7 @@ async function saveToBridgeLedger(payload) {
 }
 async function saveBridgeAction(type, payload) {
   const id = offlineActionId(type);
-  const response = await fetch(`${printBridgeOrigin}/v1/ledger/actions`, {
+  const response = await fetchPrintBridge(`/v1/ledger/actions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id, type, payload }),
@@ -308,7 +436,7 @@ async function updateBridgeLedger(id, status, error = '') {
 }
 async function flushBridgeLedger() {
   if (!navigator.onLine) return;
-  const response = await fetch(`${printBridgeOrigin}/v1/ledger/actions?status=queued`, {
+  const response = await fetchPrintBridge(`/v1/ledger/actions?status=queued`, {
     cache: 'no-store',
   });
   const body = await response.json().catch(() => ({}));
@@ -400,7 +528,7 @@ function updateConnectivity(message) {
         : '');
 }
 async function sendCounterOrder(payload) {
-  const response = await fetch('/api/orders/counter', {
+  const response = await fetchOrdersService('/api/orders/counter', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Counter-Order-Id': payload.clientRequestId },
     body: JSON.stringify(payload),
@@ -476,6 +604,7 @@ async function refreshAfterReconnect() {
 }
 window.addEventListener('online', () => {
   updateConnectivity('Internet restored — syncing queued orders…');
+  void checkPrintBridgeSetup();
   refreshAfterReconnect();
   flushQueuedCounterOrders();
 });
@@ -1472,7 +1601,7 @@ const toPushKey = (value) => {
   return Uint8Array.from(raw, (character) => character.charCodeAt(0));
 };
 
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('/orders-sw.js?v=15');
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/orders-sw.js?v=16', { updateViaCache: 'none' }).then(registration => registration.update()).catch(() => {});
 document.getElementById('enable-notifications')?.addEventListener('click', async () => {
   closeOpenPanels();
   const button = document.getElementById('enable-notifications');
@@ -1600,7 +1729,7 @@ async function loadOrders() {
     // This billing computer owns print dispatch. Retry all accepted live orders
     // after an outage or restart; stable bridge job IDs prevent duplicate tickets.
     if (orderView === 'current')
-      rows.filter((order) => order.status === 'accepted').forEach(autoPrintOrder);
+      rows.filter((order) => ['accepted', 'preparing', 'ready'].includes(order.status)).forEach(order => { void autoPrintOrder(order); });
     if (!tableViewPanel.hidden) renderTableView();
     const clearButton = document.getElementById('clear-order-search');
     const searchStatus = document.getElementById('order-search-status');
@@ -1844,17 +1973,14 @@ function splitReceiptParts(receipt, split) {
     .filter((part) => Number(part.total) > 0);
 }
 
-async function printOrder(id, split = null) {
+async function printOrder(id, split = null, { requireBridge = false } = {}) {
   try {
-    const bridgeResponse = await fetch('http://127.0.0.1:9124/v1/printers', { cache: 'no-store' });
-    if (!bridgeResponse.ok) throw new Error('Print Bridge is not available on this computer.');
+    const health = await readPrintBridgeHealth();
     const operationsResponse = await fetch('/api/orders/operations', { cache: 'no-store' });
     const operations = await operationsResponse.json();
     if (!operationsResponse.ok)
       throw new Error(operations.error || 'Printer configuration could not load.');
-    const billPrinter = (operations.config?.printers || []).find(
-      (printer) => printer.type === 'bill' && printer.deviceName
-    );
+    const billPrinter = findWorkstationBillPrinter(operations.config?.printers || [], health.workstation?.id);
     if (!billPrinter) throw new Error('No Bill printer is configured.');
     const receiptResponse = await fetch(`/api/orders/${encodeURIComponent(id)}/print`, {
       cache: 'no-store',
@@ -1863,15 +1989,16 @@ async function printOrder(id, split = null) {
     if (!receiptResponse.ok) throw new Error(receipt.error || 'Unable to prepare the receipt.');
     const receipts = splitReceiptParts(receipt, split);
     if (!receipts.length) throw new Error('Assign at least one item to every split bill.');
-    for (const part of receipts) {
-      const printed = await fetch('http://127.0.0.1:9124/v1/print-bill', {
+    const manualBillRequestId = crypto.randomUUID();
+    for (const [partIndex, part] of receipts.entries()) {
+      const printed = await fetchPrintBridge('/v1/print-bill', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          printJobId: `manual-bill:${id}:${Date.now()}:${part.label || 'full'}`,
+          printJobId: `manual-bill:${id}:${manualBillRequestId}:${partIndex}`,
           printerName: billPrinter.deviceName,
           order: part,
-          settings: billPrinter,
+          settings: printerSettingsFor(billPrinter, 'bill'),
         }),
       });
       if (!printed.ok)
@@ -1886,7 +2013,7 @@ async function printOrder(id, split = null) {
       message: `Direct bill reprint failed: ${error.message}`,
       source: 'manual bill printing',
     });
-    if (split) throw error;
+    if (split || requireBridge) throw error;
   }
   const popup = window.open('', 'red-lantern-receipt', 'popup=yes,width=420,height=720');
   if (!popup) {
@@ -2626,7 +2753,11 @@ function renderOperations() {
       printBridgeSetupStatus?.ok &&
       Number(printBridgeSetupStatus.configuredBillPrinterCount) > 0 &&
       Number(printBridgeSetupStatus.configuredKotRouteCount) > 0 &&
-      Number(printBridgeSetupStatus.ledgerSummary?.printJobs?.unresolvedFailed || 0) === 0;
+      Number(printBridgeSetupStatus.ledgerSummary?.printJobs?.unresolvedIssues ?? printBridgeSetupStatus.ledgerSummary?.printJobs?.unresolvedFailed ?? 0) === 0 &&
+      printBridgeSetupStatus.cloud !== false &&
+      !Number(printBridgeSetupStatus.missingConfiguredPrinterCount || 0) &&
+      !Number(printBridgeSetupStatus.unavailableConfiguredPrinterCount || 0) &&
+      !Number(printBridgeSetupStatus.unreachableConfiguredPrinterCount || 0);
     const bridgeSummary = bridgeConfigured
       ? `${printBridgeSetupStatus.platformLabel} · local ledger and KOT routing ready`
       : printBridgeSetupStatus?.ok
@@ -2843,7 +2974,7 @@ function printBridgeSetupCommand(platform = detectedDesktopPlatform()) {
 function waitForBridgeRetry(delay) {
   return new Promise((resolve) => setTimeout(resolve, delay));
 }
-async function fetchPrintBridgeSetupStatus(onProgress = () => {}) {
+async function fetchPrintBridgeSetupStatus(onProgress = () => {}, config = operationsConfig) {
   const retryDelays = [0, 700, 1400, 2400];
   let lastError = null;
   for (const [attempt, delay] of retryDelays.entries()) {
@@ -2858,13 +2989,16 @@ async function fetchPrintBridgeSetupStatus(onProgress = () => {}) {
     // immediately starting the same expensive discovery again.
     const timeout = setTimeout(() => controller.abort(), 20000);
     try {
-      const healthResponse = await fetch(`${printBridgeOrigin}/health`, {
+      const healthResponse = await fetchPrintBridge(`/health`, {
         cache: 'no-store',
         signal: controller.signal,
       });
       if (!healthResponse.ok) throw new Error('Print Bridge is not ready yet.');
+      printBridgeState = 'available';
+      if (config && !await syncOperationsToPrintBridge(config))
+        throw new Error('Printer routing is saved in the cloud and is waiting to sync to this computer.');
       onProgress('printers', attempt + 1);
-      const response = await fetch(`${printBridgeOrigin}/v1/setup-status`, {
+      const response = await fetchPrintBridge(`/v1/setup-status`, {
         cache: 'no-store',
         signal: controller.signal,
       });
@@ -2892,7 +3026,7 @@ async function fetchPrintBridgeSetupStatus(onProgress = () => {}) {
 }
 function renderPrintBridgeSetup() {
   const content = document.getElementById('operations-content');
-  if (!content) return;
+  if (!content || operationsPanel.hidden || operationsTab !== 'setup') return;
   const status = printBridgeSetupStatus;
   const bridgePlatform = status?.ok ? status.platformLabel : null;
   const platform = ['macOS', 'Windows'].includes(bridgePlatform)
@@ -2906,7 +3040,7 @@ function renderPrintBridgeSetup() {
     .filter((item) => !platform || item.platform === platform)
     .map(
       (item) =>
-        `<a class="operations-save bridge-download" href="${item.url}" download>Download latest ${item.platform} setup</a>`
+        `<a class="operations-save bridge-download" href="${item.url}?v=2026.10.08.1" download>Download latest ${item.platform} setup</a>`
     )
     .join('');
   const configured =
@@ -2916,7 +3050,7 @@ function renderPrintBridgeSetup() {
     Number(status?.missingConfiguredPrinterCount || 0) +
     Number(status?.unavailableConfiguredPrinterCount || 0) +
     Number(status?.unreachableConfiguredPrinterCount || 0);
-  const failedJobs = Number(status?.ledgerSummary?.printJobs?.unresolvedFailed || 0),
+  const failedJobs = Number(status?.ledgerSummary?.printJobs?.unresolvedIssues ?? status?.ledgerSummary?.printJobs?.unresolvedFailed ?? 0),
     failedIds = (Array.isArray(status?.recentPrintFailures) ? status.recentPrintFailures : [])
       .map((job) => job.id)
       .filter(Boolean),
@@ -2935,8 +3069,10 @@ function renderPrintBridgeSetup() {
     : '';
   const card = status?.checking
     ? `<span class="printing-status-icon is-checking" aria-hidden="true"><i></i></span><div><h3>${activeCheck[0]}</h3><p>${activeCheck[1]}</p>${liveSteps}</div>`
+    : status?.ok && status.cloud === false
+      ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Saved printing is available · website reconnecting</h3><p>The local printer service is running. New kitchen tickets need the Orders server to finish connecting. Saved orders are retained; the app will check again automatically.</p><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
     : status?.ok && failedJobs
-      ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Printing needs review</h3><p>${failedJobs} local print job${failedJobs === 1 ? '' : 's'} failed${failureDetail ? ` (${esc(failureDetail)})` : ''}. Check paper, power, cable/network and the Windows printer queue, then reprint the affected KOT or Bill from Operations.</p><button type="button" class="quiet-button" data-acknowledge-print-failures="${esc(JSON.stringify(failedIds))}">Mark reviewed</button><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
+      ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Printing needs review</h3><p>${failedJobs} local print job${failedJobs === 1 ? '' : 's'} need review${failureDetail ? ` (${esc(failureDetail)})` : ''}. Check paper, power, cable/network and the Windows printer queue, then reprint the affected KOT or Bill from Operations.</p><button type="button" class="quiet-button" data-acknowledge-print-failures="${esc(JSON.stringify(failedIds))}">Mark reviewed</button><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
       : status?.ok && printerProblems
         ? `<span class="printing-status-icon is-warning" aria-hidden="true">!</span><div><h3>Printer needs attention</h3><p>${printerProblems} configured printer${printerProblems === 1 ? '' : 's'} cannot be reached right now. Check printer power, cable/network and the system print queue, then check again.</p><button type="button" class="quiet-button" data-operations-tab="printers">View printers</button><button type="button" class="quiet-button" data-run-bridge-check>Check again</button></div>`
       : status?.ok && configured
@@ -2956,7 +3092,14 @@ function renderPrintBridgeSetup() {
     : '<div class="bridge-setup-actions"><button type="button" class="quiet-button" data-run-bridge-check>I’ve installed it — check now</button></div>';
   content.innerHTML = `<section class="simple-printing-setup"><button type="button" class="assignment-back" data-operations-tab="home">‹ Back</button><span class="eyebrow">Printing</span><div class="simple-printing-card">${card}</div>${installGuide}<p class="bridge-setup-download">${setupDownloads}<span>The setup restarts Print Bridge automatically. Keep this page open and check again when setup finishes.</span></p>${controls}</section>`;
 }
+let printBridgeSetupRequest = null;
 async function checkPrintBridgeSetup() {
+  if (printBridgeSetupRequest) return printBridgeSetupRequest;
+  printBridgeSetupRequest = performPrintBridgeSetupCheck();
+  try { return await printBridgeSetupRequest; }
+  finally { printBridgeSetupRequest = null; }
+}
+async function performPrintBridgeSetupCheck() {
   const checkId = ++printBridgeSetupCheckId;
   const showProgress = (phase, attempt = 1) => {
     if (checkId !== printBridgeSetupCheckId) return;
@@ -2965,13 +3108,20 @@ async function checkPrintBridgeSetup() {
   };
   printBridgeSetupStatus = { checking: true, phase: 'cloud', attempt: 1 };
   renderPrintBridgeSetup();
+  let configToSync = operationsConfig;
   const cloudCheck = (async () => {
     const controller = new AbortController(),
-      timeout = setTimeout(() => controller.abort(), 4000);
+      timeout = setTimeout(() => controller.abort(), 15000);
     try {
-      return (
-        await fetch('/api/orders/operations', { cache: 'no-store', signal: controller.signal })
-      ).ok;
+      const readiness = await fetch('/api/orders/readiness', { cache: 'no-store', signal: controller.signal });
+      if (!readiness.ok) return false;
+      const response = await fetch('/api/orders/operations?configOnly=1', { cache: 'no-store', signal: controller.signal });
+      const body = await response.json().catch(() => ({}));
+      if (response.ok && body.config) {
+        configToSync = body.config;
+        cacheOperationsConfig(configToSync);
+      }
+      return response.ok;
     } catch (_) {
       return false;
     } finally {
@@ -2980,7 +3130,7 @@ async function checkPrintBridgeSetup() {
   })();
   try {
     const cloud = await cloudCheck;
-    const data = await fetchPrintBridgeSetupStatus(showProgress);
+    const data = await fetchPrintBridgeSetupStatus(showProgress, configToSync);
     if (checkId !== printBridgeSetupCheckId) return;
     printBridgeSetupStatus = { ...data, cloud };
     if (Array.isArray(data.printers)) installedSystemPrinters = data.printers;
@@ -2989,7 +3139,8 @@ async function checkPrintBridgeSetup() {
       clearInterval(printBridgeInstallMonitor);
       printBridgeInstallMonitor = null;
     }
-    void syncOperationsToPrintBridge(operationsConfig);
+    bridgeHealthSnapshot = null;
+    renderPrintingStatus();
   } catch (error) {
     if (checkId !== printBridgeSetupCheckId) return;
     printBridgeSetupStatus = {
@@ -3000,6 +3151,7 @@ async function checkPrintBridgeSetup() {
     printBridgeState = 'offline';
   }
   renderPrintBridgeSetup();
+  if (!operationsPanel.hidden && ['home', 'printers'].includes(operationsTab)) renderOperations();
 }
 function monitorPrintBridgeInstallation() {
   if (printBridgeInstallMonitor) clearInterval(printBridgeInstallMonitor);
@@ -3069,8 +3221,8 @@ async function discoverSystemPrinters() {
   printBridgeState = 'checking';
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 2200);
-    const response = await fetch('http://127.0.0.1:9124/v1/printers', {
+    const timer = setTimeout(() => controller.abort(), 20000);
+    const response = await fetchPrintBridge('/v1/printers', {
       cache: 'no-store',
       signal: controller.signal,
     });
@@ -3096,15 +3248,9 @@ async function syncOperationsToPrintBridge(config) {
     return false;
   }
   try {
-    const controller = new AbortController(),
-      timeout = setTimeout(() => controller.abort(), 2800);
-    const response = await fetch('http://127.0.0.1:9124/v1/config', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ config }),
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
+    const response = await fetchPrintBridge('/v1/config', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ config }),
+    }, 5000);
     if (!response.ok) throw new Error('Bridge sync failed.');
     printBridgeConfigState = 'synced';
     return true;
@@ -3301,11 +3447,13 @@ async function dispatchKot(orderId, printerId) {
     );
   await Promise.all(
     data.tickets.map(async (ticket) => {
-      const response = await fetch('http://127.0.0.1:9124/v1/print-kot', {
+      const response = await fetchPrintBridge('/v1/print-kot', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          printJobId: `manual-kot:${orderId}:${data.kotNumber}:${ticket.printerName}:${Date.now()}`,
+          printJobId: data.reprint
+            ? `manual-kot:${orderId}:${data.kotNumber}:${ticket.printerName}:${crypto.randomUUID()}`
+            : `auto-kot:${orderId}:${data.kotNumber}:${ticket.printerName}`,
           printerName: ticket.printerName,
           printerLabel: ticket.printerLabel,
           settings:
@@ -3333,164 +3481,122 @@ async function dispatchKot(orderId, printerId) {
   );
 }
 
-const autoPrintInFlight = new Set();
+const autoPrintInFlight = new Map();
+const automaticPrintSignatures = new Map();
+const acknowledgedPrintJobs = new Set();
+async function printAutomaticKot(order, savedKot, printers) {
+  const kotNumber = savedKot.kotNumber || savedKot.kot_number;
+  if (!kotNumber) throw new Error('The kitchen ticket has no saved KOT number.');
+  const failures = await Promise.allSettled((savedKot.tickets || []).map(async ticket => {
+    const jobId = `auto-kot:${order.id}:${kotNumber}:${ticket.printerName}`;
+    if (acknowledgedPrintJobs.has(jobId) || readReviewedPrintJobs()[jobId]) return;
+    const settings = printerSettingsFor(printers.find(printer => printer.deviceName === ticket.printerName), 'kot');
+    if (settings.workstationId && bridgeHealthSnapshot?.workstation?.id && settings.workstationId !== bridgeHealthSnapshot.workstation.id) return;
+    const source = savedKot.order || order;
+    const response = await fetchPrintBridge('/v1/print-kot', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ printJobId: jobId, printerName: ticket.printerName,
+        printerLabel: ticket.printerLabel, settings, workstationId: settings.workstationId || '', items: ticket.items,
+        order: { number: source.daily_order_number, kotNumber, waiterName: ticket.waiterName,
+          servicePriority: source.service_priority, customer: source.customer_name,
+          phone: source.customer_phone, fulfillment: fulfillmentLabel(source),
+          createdAt: source.created_at, note: source.special_request } }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.uncertain) throw new Error(data.detail || data.error || 'The kitchen printer did not accept the ticket.');
+    // A 202 means a different request still owns the print lease. Wait for its
+    // final result on the next pass rather than declaring physical completion.
+    if (data.pending) throw new Error('A kitchen ticket is still being processed by the printer service.');
+    acknowledgedPrintJobs.add(jobId);
+  }));
+  const failed = failures.find(result => result.status === 'rejected');
+  if (failed) throw failed.reason;
+}
 async function autoPrintOrder(order) {
-  const canReleaseToKitchen = order?.mode === 'counter' || order?.status === 'accepted';
-  if (
-    !order?.id ||
-    !canReleaseToKitchen ||
-    autoPrintInFlight.has(order.id) ||
-    ['completed', 'rejected', 'cancelled'].includes(order.status)
-  )
+  if (!order?.id || !['accepted', 'preparing', 'ready'].includes(order.status))
     return { ok: false, reason: 'This order is not ready to print yet.' };
-  autoPrintInFlight.add(order.id);
-  try {
-    const bridge = await fetch('http://127.0.0.1:9124/health', { cache: 'no-store' });
-    if (!bridge.ok) {
-      const reason = 'Print Bridge is not available on this counter computer.';
-      reportOrdersDiagnostic({
-        level: 'warning',
-        message: `Automatic printing skipped: ${reason}`,
-        source: 'automatic order printing',
-      });
-      return { ok: false, reason };
-    }
-    const operationsPromise = fetch('/api/orders/operations', { cache: 'no-store' }).then(
-      async (response) => {
-        const operations = await response.json();
-        if (!response.ok)
-          throw new Error(operations.error || 'Printer configuration could not load.');
-        return Array.isArray(operations.config?.printers) ? operations.config.printers : [];
-      }
-    );
-    const kotPromise = (async () => {
-      try {
-        const created = await fetch(`/api/orders/${encodeURIComponent(order.id)}/kots`, {
-          method: 'POST',
-        });
-        const kot = await created.json().catch(() => ({}));
-        const savedKot =
-          !created.ok && created.status === 409 && kot.latestKot
-            ? {
-                kotNumber: kot.latestKot.kot_number,
-                tickets: kot.latestKot.tickets,
-                order: kot.order,
-              }
-            : kot;
-        if (created.ok || savedKot.kotNumber) {
-          const printers = await operationsPromise;
-          await Promise.all(
-            (savedKot.tickets || []).map(async (ticket) => {
-              const settings =
-                printers.find((printer) => printer.deviceName === ticket.printerName) || {};
-              const response = await fetch('http://127.0.0.1:9124/v1/print-kot', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  printJobId: `auto-kot:${order.id}:${savedKot.kotNumber}:${ticket.printerName}`,
-                  printerName: ticket.printerName,
-                  printerLabel: ticket.printerLabel,
-                  settings,
-                  items: ticket.items,
-                  order: {
-                    number: savedKot.order?.daily_order_number,
-                    kotNumber: savedKot.kotNumber,
-                    waiterName: ticket.waiterName,
-                    servicePriority: savedKot.order?.service_priority,
-                    customer: savedKot.order?.customer_name,
-                    phone: savedKot.order?.customer_phone,
-                    fulfillment: fulfillmentLabel(savedKot.order),
-                    createdAt: savedKot.order?.created_at,
-                    note: savedKot.order?.special_request,
-                  },
-                }),
-              });
-              if (!response.ok)
-                throw new Error(
-                  (await response.json().catch(() => ({}))).error ||
-                    'KOT printer did not accept the job.'
-                );
-            })
-          );
+  if (autoPrintInFlight.has(order.id)) return autoPrintInFlight.get(order.id);
+  const signature = JSON.stringify([order.updated_at, order.status, order.items]);
+  if (automaticPrintSignatures.get(order.id) === signature) return { ok: true };
+  const run = (async () => {
+    try {
+      const health = await readPrintBridgeHealth();
+      const response = await fetchOrdersService('/api/orders/operations?configOnly=1', { cache: 'no-store' });
+      const operations = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(operations.error || 'Printer configuration could not load.');
+      const printers = Array.isArray(operations.config?.printers) ? operations.config.printers : [];
+      const kotPromise = (async () => {
+        let latest = null;
+        if (order.status === 'accepted') {
+          const created = await fetchOrdersService(`/api/orders/${encodeURIComponent(order.id)}/kots`, { method: 'POST' });
+          const kot = await created.json().catch(() => ({}));
+          if (!created.ok && created.status !== 409) throw new Error(kot.error || 'The saved order is waiting for its kitchen ticket.');
+          latest = created.ok ? kot : kot.latestKot ? { ...kot.latestKot, order: kot.order } : null;
         }
-        if (!created.ok && created.status !== 409)
-          throw new Error(kot.error || 'Unable to create the automatic KOT.');
+        // Read every saved round. Recovering only latestKot loses an earlier
+        // round when the bridge was down while two rounds were punched.
+        const historyResponse = await fetchOrdersService(`/api/orders/${encodeURIComponent(order.id)}/kots`, { cache: 'no-store' });
+        const history = await historyResponse.json().catch(() => null);
+        if (!historyResponse.ok || !Array.isArray(history)) throw new Error(history?.error || 'Saved kitchen tickets could not be loaded.');
+        const rounds = new Map(history.map(kot => [String(kot.kot_number || kot.kotNumber), kot]));
+        if (latest?.kotNumber || latest?.kot_number) rounds.set(String(latest.kotNumber || latest.kot_number), latest);
+        if (!rounds.size) throw new Error('No kitchen ticket is saved yet. Check the order and category routing.');
+        const roundErrors = [];
+        const chronologicalRounds = [...rounds.values()].sort((a, b) => Number(a.kot_number || a.kotNumber) - Number(b.kot_number || b.kotNumber));
+        for (const kot of chronologicalRounds) {
+          try { await printAutomaticKot(order, kot, printers); }
+          catch (error) { roundErrors.push(error.message); }
+        }
+        if (roundErrors.length) throw new Error([...new Set(roundErrors)].join(' '));
         return { ok: true };
-      } catch (error) {
-        const reason = error.message || 'Automatic KOT printing failed.';
-        reportOrdersDiagnostic({
-          level: 'warning',
-          message: `Automatic KOT printing failed: ${reason}`,
-          source: 'automatic KOT printing',
-        });
-        return { ok: false, reason };
-      }
-    })();
-    if (order.mode === 'table') {
-      const kotResult = await kotPromise;
-      return kotResult.ok ? { ok: true, kotOnly: true } : kotResult;
+      })().catch(error => ({ ok: false, reason: error.message || 'Kitchen printing is waiting.' }));
+      const billPromise = order.mode === 'table' ? Promise.resolve({ ok: true }) : (async () => {
+        if (readReviewedPrintJobs()[`auto-bill:${order.id}`]) return { ok: true };
+        const billPrinter = findWorkstationBillPrinter(printers, health.workstation?.id);
+        if (!billPrinter) throw new Error('No Bill printer is assigned in Operations.');
+        const claimResponse = await fetchOrdersService(`/api/orders/${encodeURIComponent(order.id)}/bill-print/claim`, { method: 'POST' });
+        const claim = await claimResponse.json().catch(() => ({}));
+        if (!claimResponse.ok) throw new Error(claim.error || 'The saved bill could not be prepared for printing.');
+        if (!claim.claimed) {
+          if (claim.status === 'printed') return { ok: true };
+          throw new Error('The bill is queued or another counter is processing it. It will be checked again automatically.');
+        }
+        try {
+          const receiptResponse = await fetchOrdersService(`/api/orders/${encodeURIComponent(order.id)}/print`, { cache: 'no-store' });
+          const receipt = await receiptResponse.json().catch(() => ({}));
+          if (!receiptResponse.ok) throw new Error(receipt.error || 'Unable to prepare the receipt.');
+          const printed = await fetchPrintBridge('/v1/print-bill', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ printJobId: `auto-bill:${order.id}`, printerName: billPrinter.deviceName,
+              order: receipt, settings: printerSettingsFor(billPrinter, 'bill'), workstationId: billPrinter.workstationId || '' }),
+          });
+          const body = await printed.json().catch(() => ({}));
+          if (!printed.ok || body.pending || body.uncertain) throw new Error(body.detail || body.error || 'The bill printer is still processing this receipt.');
+          const completed = await fetchOrdersService(`/api/orders/${encodeURIComponent(order.id)}/bill-print/complete`, { method: 'POST' });
+          if (!completed.ok) throw new Error('The printed receipt is waiting for its server acknowledgement.');
+          return { ok: true };
+        } catch (error) {
+          await fetchOrdersService(`/api/orders/${encodeURIComponent(order.id)}/bill-print/failed`, { method: 'POST' }).catch(() => {});
+          throw error;
+        }
+      })().catch(error => ({ ok: false, reason: error.message || 'Bill printing is waiting.' }));
+      const results = await Promise.all([kotPromise, billPromise]);
+      const failed = results.filter(result => !result.ok);
+      const result = failed.length ? { ok: false, reason: failed.map(item => item.reason).join(' ') } : { ok: true, kotOnly: order.mode === 'table' };
+      if (result.ok) automaticPrintSignatures.set(order.id, signature);
+      rememberPrintResult(order, result);
+      if (!result.ok) reportOrdersDiagnostic({ level: 'warning', message: `Printing pending for saved order ${order.id}: ${result.reason}`, source: 'automatic order printing' });
+      return result;
+    } catch (error) {
+      const result = { ok: false, reason: error.message || 'The printer service is reconnecting.' };
+      rememberPrintResult(order, result);
+      reportOrdersDiagnostic({ level: 'warning', message: `Printing pending for saved order ${order.id}: ${result.reason}`, source: 'automatic order printing' });
+      return result;
     }
-    // The bill starts at the same time as the KOT. Neither printer can delay the other.
-    const billPromise = operationsPromise.then(async (printers) => {
-      const billPrinter = printers.find((printer) => printer.type === 'bill' && printer.deviceName);
-      if (!billPrinter) {
-        const reason = 'No Bill printer is assigned in Operations.';
-        reportOrdersDiagnostic({
-          level: 'warning',
-          message: `Automatic bill printing skipped: ${reason}`,
-          source: 'automatic bill printing',
-        });
-        return { ok: false, reason };
-      }
-      const claimResponse = await fetch(
-        `/api/orders/${encodeURIComponent(order.id)}/bill-print/claim`,
-        { method: 'POST' }
-      );
-      const claim = await claimResponse.json().catch(() => ({}));
-      if (!claimResponse.ok || !claim.claimed) return { ok: true };
-      try {
-        const receiptResponse = await fetch(`/api/orders/${encodeURIComponent(order.id)}/print`, {
-          cache: 'no-store',
-        });
-        const receipt = await receiptResponse.json();
-        if (!receiptResponse.ok) throw new Error(receipt.error || 'Unable to prepare the receipt.');
-        const printed = await fetch('http://127.0.0.1:9124/v1/print-bill', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            printJobId: `auto-bill:${order.id}`,
-            printerName: billPrinter.deviceName,
-            order: receipt,
-            settings: billPrinter,
-          }),
-        });
-        if (!printed.ok)
-          throw new Error(
-            (await printed.json().catch(() => ({}))).error || 'Bill printer did not accept the job.'
-          );
-        await fetch(`/api/orders/${encodeURIComponent(order.id)}/bill-print/complete`, {
-          method: 'POST',
-        });
-        return { ok: true };
-      } catch (error) {
-        await fetch(`/api/orders/${encodeURIComponent(order.id)}/bill-print/failed`, {
-          method: 'POST',
-        }).catch(() => {});
-        throw error;
-      }
-    });
-    const [, billResult] = await Promise.all([kotPromise, billPromise]);
-    return billResult;
-  } catch (error) {
-    const reason = error.message || 'Automatic printing failed.';
-    reportOrdersDiagnostic({
-      message: `Automatic printing failed: ${reason}`,
-      source: 'automatic order printing',
-    });
-    return { ok: false, reason };
-  } finally {
-    autoPrintInFlight.delete(order.id);
-  }
+  })();
+  autoPrintInFlight.set(order.id, run);
+  try { return await run; }
+  finally { autoPrintInFlight.delete(order.id); }
 }
 const offlineMenuSnapshotKey = 'red-lantern-counter-menu-snapshot';
 function saveOfflineMenuSnapshot(menu, availability) {
@@ -3782,7 +3888,7 @@ document.getElementById('table-view-content')?.addEventListener('click', async (
     printBill.disabled = true;
     printBill.textContent = '…';
     try {
-      await printOrder(order.id);
+      await printOrder(order.id, null, { requireBridge: true });
       const marked = await fetch(`/api/orders/${encodeURIComponent(order.id)}/bill-printed`, {
         method: 'POST',
       });
@@ -4068,6 +4174,7 @@ async function submitDineInAction(action) {
   };
   const tableLabel = `${counterTable.area} · Table ${String(counterTable.number).padStart(2, '0')}`;
   let savedInBridgeLedger = false;
+  let savedOrderResult = null;
   try {
     status.textContent =
       action === 'hold'
@@ -4095,6 +4202,7 @@ async function submitDineInAction(action) {
       throw new TypeError('Offline');
     }
     const result = await sendCounterOrder(payload);
+    savedOrderResult = result;
     if (savedInBridgeLedger) {
       await updateBridgeLedger(payload.clientRequestId, 'synced');
       bridgeLedgerPending = Math.max(0, bridgeLedgerPending - 1);
@@ -4102,11 +4210,11 @@ async function submitDineInAction(action) {
     }
     if (action === 'kot-print') {
       const printing = await autoPrintOrder({ id: result.id, mode: 'table', status: 'accepted' });
-      if (!printing.ok)
-        throw new Error(printing.reason || 'KOTs could not be sent to the kitchen.');
-      status.textContent = `${tableLabel}: KOTs sent to the kitchen.`;
+      status.textContent = printing.ok
+        ? `${tableLabel}: KOTs sent to the kitchen.`
+        : `${tableLabel}: order saved. Printing is waiting and will retry automatically. ${printing.reason || ''}`;
     } else if (action === 'print') {
-      await printOrder(result.id, counterBillSplit);
+      await printOrder(result.id, counterBillSplit, { requireBridge: true });
       const marked = await fetch(`/api/orders/${encodeURIComponent(result.id)}/bill-printed`, {
         method: 'POST',
       });
@@ -4125,7 +4233,11 @@ async function submitDineInAction(action) {
     await loadOrders();
     await showTableView();
   } catch (error) {
-    if (
+    if (savedOrderResult) {
+      counterBillSplit = null; counterCart = []; renderCounterOrder();
+      status.textContent = `${tableLabel}: order saved. ${error.message || 'Printing needs attention.'} Use the saved order to retry printing.`;
+      await loadOrders();
+    } else if (
       (!navigator.onLine || !error.status || error.status >= 500) &&
       ['save', 'hold'].includes(action)
     ) {
@@ -4193,6 +4305,7 @@ document.getElementById('counter-place-order')?.addEventListener('click', async 
     ? `Saving ${orderLabel} order…`
     : 'Internet is unavailable — saving this order safely on this device…';
   let savedInBridgeLedger = false;
+  let confirmedCounterOrder = null;
   try {
     let result;
     try {
@@ -4207,6 +4320,7 @@ document.getElementById('counter-place-order')?.addEventListener('click', async 
     }
     if (!navigator.onLine) throw new TypeError('Offline');
     result = await sendCounterOrder(payload);
+    confirmedCounterOrder = result;
     if (savedInBridgeLedger) {
       await updateBridgeLedger(payload.clientRequestId, 'synced');
       bridgeLedgerPending = Math.max(0, bridgeLedgerPending - 1);
@@ -4234,7 +4348,15 @@ document.getElementById('counter-place-order')?.addEventListener('click', async 
     loadOrders();
     refreshCounterLiveStatus();
   } catch (error) {
-    if (!navigator.onLine || !error.status || error.status >= 500) {
+    if (confirmedCounterOrder) {
+      counterCart = []; counterLoyaltyPoints = 0;
+      for (const id of ['counter-customer-name', 'counter-customer-phone', 'counter-special-request']) document.getElementById(id).value = '';
+      document.getElementById('counter-wallet-redeem').value = '0'; counterWallet.hidden = true;
+      renderCounterOrder();
+      status.textContent = `${orderLabel} order accepted. Local sync or printing is waiting and will retry automatically.`;
+      void autoPrintOrder({ id: confirmedCounterOrder.id, mode: counterTable ? 'table' : 'counter', status: confirmedCounterOrder.status || 'accepted' });
+      void loadOrders();
+    } else if (!navigator.onLine || !error.status || error.status >= 500) {
       if (!savedInBridgeLedger) {
         const queued = queuedCounterOrders();
         queued.push(payload);
@@ -4365,14 +4487,18 @@ document.getElementById('operations-content')?.addEventListener('click', async (
       return;
     acknowledgeFailures.disabled = true;
     try {
-      const response = await fetch(`${printBridgeOrigin}/v1/print-jobs/acknowledge`, {
+      const response = await fetchPrintBridge(`/v1/print-jobs/acknowledge`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ ids }),
         }),
         data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || 'Unable to mark the print jobs reviewed.');
+      const reviewed = readReviewedPrintJobs();
+      for (const id of ids) reviewed[id] = Date.now();
+      localStorage.setItem(reviewedPrintJobsKey, JSON.stringify(reviewed));
       await checkPrintBridgeSetup();
+      await recoverPendingPrinting();
     } catch (error) {
       alert(error.message || 'Unable to mark the print jobs reviewed.');
       acknowledgeFailures.disabled = false;
@@ -4564,7 +4690,7 @@ document.getElementById('operations-content')?.addEventListener('click', async (
     restartBridge.disabled = true;
     restartBridge.textContent = 'Restarting…';
     try {
-      const response = await fetch(`${printBridgeOrigin}/v1/restart`, { method: 'POST' });
+      const response = await fetchPrintBridge(`/v1/restart`, { method: 'POST' });
       if (!response.ok) throw new Error('Print Bridge could not restart.');
       await checkPrintBridgeSetup();
       alert(
@@ -4618,20 +4744,7 @@ document.getElementById('operations-content')?.addEventListener('click', async (
     testPrinter.disabled = true;
     testPrinter.textContent = 'Printing…';
     try {
-      const response = await fetch(`${printBridgeOrigin}/v1/test-print`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          printerName: printer.deviceName,
-          label: printer.name,
-          type: printer.type,
-          workstationId: printer.workstationId || printBridgeSetupStatus?.workstation?.id || '',
-          settings: printer,
-        }),
-      });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok)
-        throw new Error(result.detail || result.error || 'The printer rejected the test page.');
+      await sendPrinterTest(printer);
       testPrinter.classList.add('is-success');
       testPrinter.textContent = 'Test sent ✓';
       setTimeout(() => {
@@ -5082,3 +5195,33 @@ setInterval(() => {
 setInterval(() => {
   if (!counterPanel.hidden) refreshCounterLiveStatus();
 }, 1000);
+
+let printingRecoveryRequest = null;
+async function recoverPendingPrinting() {
+  if (printingRecoveryRequest || !navigator.onLine || document.hidden) return printingRecoveryRequest;
+  printingRecoveryRequest = (async () => {
+    try {
+      await readPrintBridgeHealth(true);
+      if (printBridgeState !== 'available' || printBridgeConfigState !== 'synced' || printBridgeSetupStatus?.cloud === false) await checkPrintBridgeSetup();
+      const response = await fetchOrdersService('/api/orders?history=0', { cache: 'no-store' });
+      const orders = await response.json().catch(() => null);
+      if (!response.ok || !Array.isArray(orders)) return;
+      const pending = readPendingPrints();
+      for (const order of orders) if (['completed', 'cancelled', 'rejected'].includes(order.status)) delete pending[order.id];
+      try { localStorage.setItem(pendingPrintsKey, JSON.stringify(pending)); } catch {}
+      renderPrintingStatus();
+      const active = orders.filter(order => ['accepted', 'preparing', 'ready'].includes(order.status));
+      await Promise.allSettled(active.map(autoPrintOrder));
+    } catch (_) {
+      printBridgeState = 'offline';
+      bridgeHealthSnapshot = null;
+      renderPrintingStatus();
+    }
+  })();
+  try { await printingRecoveryRequest; }
+  finally { printingRecoveryRequest = null; }
+}
+window.addEventListener('online', () => { void recoverPendingPrinting(); });
+window.addEventListener('focus', () => { void recoverPendingPrinting(); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) void recoverPendingPrinting(); });
+setInterval(() => { void recoverPendingPrinting(); }, 15000);

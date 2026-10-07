@@ -105,7 +105,7 @@
     if (/\/kitchen-status\//.test(path)) return 'updateKitchen';
     if (['/api/orders/kitchen-statuses','/api/orders/kot-history'].includes(path)) return 'viewKots';
     if (path === '/api/register/summary') return 'readHistory';
-    if (['/api/orders','/api/orders/menu','/api/orders/availability','/api/orders/live-summary','/api/orders/push-key','/api/orders/push-subscriptions'].includes(path)) return 'read';
+    if (['/api/orders','/api/orders/menu','/api/orders/availability','/api/orders/live-summary','/api/orders/readiness','/api/orders/push-key','/api/orders/push-subscriptions'].includes(path)) return 'read';
     return null;
   }
   function discountAmount(policy = {}, input = {}, subtotal) {

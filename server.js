@@ -338,7 +338,10 @@ async function ensureDiagnosticsTable() {
           details JSONB NOT NULL DEFAULT '{}'::jsonb
         );
       `;
-    })();
+    })().catch((error) => {
+      diagnosticsTablePromise = null;
+      throw error;
+    });
   }
   await diagnosticsTablePromise;
   return true;
@@ -901,7 +904,7 @@ async function authorizeEmployeeOrderRequest(req, res) {
   } else if (right === 'releaseKots' && Staff.can(employee, 'captainApp') && !Staff.captainSettings(employee.captainSettings).printKot) return deny('Captain KOT printing is disabled.');
   else if (!Staff.can(employee, right)) return deny(`${Staff.labels[right] || 'This action'} is not enabled for your account.`);
   const orderMatch = req.path.match(/^\/api\/orders\/([^/]+)(?:\/(?:items|table|service|kots|print|bill-printed|bill-print\/[^/]+|settle|discount|priority|assignment|delivery-assignment|delivery-progress|kitchen-status\/[^/]+))?$/);
-  if (orderMatch && !['menu','operations','availability','counter','live-summary','push-key','push-subscriptions','kot-history','kitchen-statuses','smart-kds'].includes(orderMatch[1])) {
+  if (orderMatch && !['menu','operations','availability','counter','live-summary','readiness','push-key','push-subscriptions','kot-history','kitchen-statuses','smart-kds'].includes(orderMatch[1])) {
     await Promise.all([ensureDirectOrdersTable(), ensureOrderEventsTable()]);
     const rows = await sql`SELECT o.*,
       COALESCE((SELECT e.details->>'captainId' FROM order_events e WHERE e.order_id=o.id AND e.event_type='created' ORDER BY e.created_at ASC LIMIT 1),'') AS captain_id
@@ -1002,6 +1005,8 @@ app.get('/api/healthz', (req, res) => {
   res.json({
     ok: true,
     service: 'red-lantern-website',
+    release: '2026.10.08.1',
+    ordersSchemaReady: app.locals.ordersSchemaReady === true,
     uptimeSeconds: Math.floor(process.uptime()),
   });
 });
@@ -1309,7 +1314,10 @@ async function ensureOrderEventsTable() {
       await sql`CREATE TABLE IF NOT EXISTS order_events (event_id BIGSERIAL PRIMARY KEY, order_id TEXT NOT NULL, event_type TEXT NOT NULL, details JSONB NOT NULL DEFAULT '{}'::jsonb, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;
       await sql`CREATE INDEX IF NOT EXISTS order_events_order_created_index ON order_events (order_id, created_at DESC)`;
       await sql`CREATE INDEX IF NOT EXISTS order_events_created_index ON order_events (created_at DESC)`;
-    })();
+    })().catch((error) => {
+      orderEventsTableReady = null;
+      throw error;
+    });
   return orderEventsTableReady;
 }
 async function recordOrderEvent(orderId, eventType, details = {}) {
@@ -1363,7 +1371,10 @@ async function ensureKotStationStatusTable() {
       )
         return;
       await sql`CREATE TABLE IF NOT EXISTS order_kot_station_status (order_id TEXT NOT NULL, printer_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'accepted', updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (order_id, printer_id))`;
-    })();
+    })().catch((error) => {
+      kotStationStatusTableReady = null;
+      throw error;
+    });
   return kotStationStatusTableReady;
 }
 async function ensureKotRoundStatusTable() {
@@ -1378,7 +1389,10 @@ async function ensureKotRoundStatusTable() {
       )
         return;
       await sql`CREATE TABLE IF NOT EXISTS order_kot_round_status (order_id TEXT NOT NULL, kot_number INTEGER NOT NULL, printer_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'accepted', updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (order_id, kot_number, printer_id))`;
-    })();
+    })().catch((error) => {
+      kotRoundStatusTableReady = null;
+      throw error;
+    });
   return kotRoundStatusTableReady;
 }
 async function ensureKotTicketStatuses(
@@ -1414,7 +1428,10 @@ async function ensureOrderPrintJobsTable() {
       )
         return;
       await sql`CREATE TABLE IF NOT EXISTS order_print_jobs (order_id TEXT NOT NULL, job_type TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'queued', lease_expires_at TIMESTAMPTZ, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (order_id, job_type))`;
-    })();
+    })().catch((error) => {
+      orderPrintJobsTableReady = null;
+      throw error;
+    });
   return orderPrintJobsTableReady;
 }
 async function ensureOperationsConfigTable() {
@@ -1428,7 +1445,10 @@ async function ensureOperationsConfigTable() {
       )
         return;
       await sql`CREATE TABLE IF NOT EXISTS order_operations_config (config_key TEXT PRIMARY KEY, config JSONB NOT NULL DEFAULT '{"printers":[],"routes":[]}'::jsonb, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;
-    })();
+    })().catch((error) => {
+      operationsConfigTableReady = null;
+      throw error;
+    });
   return operationsConfigTableReady;
 }
 async function ensureSmartKdsTables() {
@@ -1501,7 +1521,10 @@ async function ensureSmartKdsTables() {
       await sql`CREATE INDEX IF NOT EXISTS kitchen_service_events_served_index ON kitchen_service_events (served_at DESC)`;
       await sql`CREATE INDEX IF NOT EXISTS kitchen_scheduler_decisions_calculated_index ON kitchen_scheduler_decisions (calculated_at DESC)`;
       await sql`CREATE INDEX IF NOT EXISTS kitchen_realtime_events_created_index ON kitchen_realtime_events (event_id DESC)`;
-    })();
+    })().catch((error) => {
+      smartKdsTablesReady = null;
+      throw error;
+    });
   return smartKdsTablesReady;
 }
 async function recordSmartKdsRealtimeEvent(eventType, details = {}) {
@@ -2580,38 +2603,41 @@ async function ensureMenuAvailabilityTable() {
       )
         return;
       await sql`CREATE TABLE IF NOT EXISTS menu_availability (item_key TEXT PRIMARY KEY, unavailable_until TIMESTAMPTZ NOT NULL)`;
-    })();
+    })().catch((error) => {
+      menuAvailabilityTableReady = null;
+      throw error;
+    });
   return menuAvailabilityTableReady;
+}
+async function probeDirectOrdersSchema() {
+  await sql`
+    SELECT orders.id,orders.status,orders.mode,orders.customer_name,
+      orders.customer_phone,orders.special_request,orders.items,orders.total,
+      orders.created_at,orders.updated_at,orders.order_day,
+      orders.daily_order_number,orders.bill_year,orders.bill_number,
+      orders.tracking_token,orders.cancellation_reason,orders.cancelled_at,
+      orders.loyalty_points_redeemed,orders.loyalty_points_earned,
+      orders.loyalty_awarded_at,orders.fulfillment_type,orders.course_mode,
+      orders.service_priority,orders.client_request_id,orders.table_area,
+      orders.table_number,orders.bill_printed_at,orders.settled_at,
+      orders.settlement_type,orders.settlement_amount,orders.payment_received,
+      orders.change_due,orders.tip_amount,orders.settlement_request_id,
+      orders.service_state,orders.employee_assigned_id,orders.delivery_employee_id,
+      orders.delivery_status,orders.discount_amount,orders.discount_reason,
+      orders.service_requested_at,order_counters.next_number,
+      bill_counters.next_number,captain_requests.request_id
+    FROM direct_orders orders
+    CROSS JOIN direct_order_counters order_counters
+    CROSS JOIN direct_order_bill_counters bill_counters
+    CROSS JOIN captain_order_requests captain_requests
+    LIMIT 0
+  `;
 }
 async function ensureDirectOrdersTable() {
   if (!sql) throw new Error('Orders database is not configured.');
   if (!directOrdersTableReady)
     directOrdersTableReady = (async () => {
-      if (
-        await schemaProbe(
-          () => sql`
-            SELECT orders.order_day,orders.daily_order_number,orders.bill_year,
-              orders.bill_number,orders.tracking_token,orders.cancellation_reason,
-              orders.cancelled_at,orders.loyalty_points_redeemed,
-              orders.loyalty_points_earned,orders.loyalty_awarded_at,
-              orders.fulfillment_type,orders.course_mode,orders.client_request_id,
-              orders.table_area,orders.table_number,orders.bill_printed_at,
-              orders.settled_at,orders.settlement_type,orders.settlement_amount,
-              orders.payment_received,orders.change_due,orders.tip_amount,
-              orders.settlement_request_id,orders.service_state,
-              orders.employee_assigned_id,orders.delivery_employee_id,orders.delivery_status,
-              orders.discount_amount,orders.discount_reason,
-              orders.service_requested_at,order_counters.next_number,
-              bill_counters.next_number,captain_requests.request_id
-            FROM direct_orders orders
-            CROSS JOIN direct_order_counters order_counters
-            CROSS JOIN direct_order_bill_counters bill_counters
-            CROSS JOIN captain_order_requests captain_requests
-            LIMIT 0
-          `
-        )
-      )
-        return;
+      if (await schemaProbe(probeDirectOrdersSchema)) return;
       await sql`CREATE TABLE IF NOT EXISTS direct_orders (id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'new', mode TEXT NOT NULL, customer_name TEXT, customer_phone TEXT NOT NULL, special_request TEXT, items JSONB NOT NULL, total NUMERIC NOT NULL DEFAULT 0, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;
       await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS order_day DATE`;
       await sql`ALTER TABLE direct_orders ADD COLUMN IF NOT EXISTS daily_order_number INTEGER`;
@@ -2659,7 +2685,13 @@ async function ensureDirectOrdersTable() {
       await sql`CREATE TABLE IF NOT EXISTS direct_order_bill_counters (bill_year INTEGER PRIMARY KEY, next_number INTEGER NOT NULL)`;
       await sql`CREATE TABLE IF NOT EXISTS captain_order_requests (request_id TEXT PRIMARY KEY, captain_id TEXT NOT NULL, order_id TEXT NOT NULL, payload_hash TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;
       await sql`CREATE INDEX IF NOT EXISTS captain_order_requests_created_index ON captain_order_requests (created_at DESC)`;
-    })();
+      // Do not mark the database ready until the same query contract used by
+      // the order and KOT endpoints is valid after the migration.
+      await probeDirectOrdersSchema();
+    })().catch((error) => {
+      directOrdersTableReady = null;
+      throw error;
+    });
   return directOrdersTableReady;
 }
 async function ensureOrderPaymentsTable() {
@@ -2698,7 +2730,10 @@ async function ensureOrderPaymentsTable() {
       await sql`CREATE UNIQUE INDEX IF NOT EXISTS order_payments_order_index_unique ON order_payments (order_id,payment_index)`;
       await sql`CREATE INDEX IF NOT EXISTS order_payments_created_index ON order_payments (created_at DESC)`;
       await sql`CREATE INDEX IF NOT EXISTS order_payments_type_created_index ON order_payments (payment_type,created_at DESC)`;
-    })();
+    })().catch((error) => {
+      orderPaymentsTableReady = null;
+      throw error;
+    });
   return orderPaymentsTableReady;
 }
 async function ensureKotsTable() {
@@ -2721,7 +2756,10 @@ async function ensureKotsTable() {
       await sql`CREATE UNIQUE INDEX IF NOT EXISTS order_kots_day_number_unique ON order_kots (kot_day, daily_kot_number) WHERE daily_kot_number IS NOT NULL`;
       await sql`CREATE UNIQUE INDEX IF NOT EXISTS order_kots_fingerprint_unique ON order_kots (order_id, item_fingerprint) WHERE item_fingerprint IS NOT NULL`;
       await sql`CREATE TABLE IF NOT EXISTS order_kot_counters (kot_day DATE PRIMARY KEY, next_number INTEGER NOT NULL)`;
-    })();
+    })().catch((error) => {
+      kotsTableReady = null;
+      throw error;
+    });
   return kotsTableReady;
 }
 async function ensureLoyaltyTable() {
@@ -2739,7 +2777,10 @@ async function ensureLoyaltyTable() {
       await sql`ALTER TABLE loyalty_accounts ADD COLUMN IF NOT EXISTS total_earned INTEGER NOT NULL DEFAULT 0`;
       await sql`ALTER TABLE loyalty_accounts ADD COLUMN IF NOT EXISTS total_redeemed INTEGER NOT NULL DEFAULT 0`;
       await sql`ALTER TABLE loyalty_accounts ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`;
-    })();
+    })().catch((error) => {
+      loyaltyTableReady = null;
+      throw error;
+    });
   return loyaltyTableReady;
 }
 async function ensureTrustedContactsTable() {
@@ -2757,7 +2798,10 @@ async function ensureTrustedContactsTable() {
       await sql`CREATE TABLE IF NOT EXISTS trusted_contacts (customer_phone TEXT PRIMARY KEY, customer_name TEXT NOT NULL DEFAULT '', blocked BOOLEAN NOT NULL DEFAULT FALSE, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;
       await sql`CREATE INDEX IF NOT EXISTS trusted_contacts_active_index ON trusted_contacts (blocked, updated_at DESC)`;
       await sql`INSERT INTO trusted_contacts (customer_phone,customer_name) SELECT DISTINCT ON (customer_phone) customer_phone,COALESCE(customer_name,'') FROM direct_orders WHERE status='completed' ORDER BY customer_phone,created_at DESC ON CONFLICT (customer_phone) DO NOTHING`;
-    })();
+    })().catch((error) => {
+      trustedContactsTableReady = null;
+      throw error;
+    });
   return trustedContactsTableReady;
 }
 async function ensureCreditTable() {
@@ -2771,7 +2815,10 @@ async function ensureCreditTable() {
       )
         return;
       await sql`CREATE TABLE IF NOT EXISTS customer_credit (customer_phone TEXT PRIMARY KEY, balance NUMERIC NOT NULL DEFAULT 0 CHECK (balance >= 0), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;
-    })();
+    })().catch((error) => {
+      creditTableReady = null;
+      throw error;
+    });
   return creditTableReady;
 }
 function kolkataOrderDay(date = new Date()) {
@@ -2819,7 +2866,10 @@ async function ensurePushSubscriptionsTable() {
       )
         return;
       await sql`CREATE TABLE IF NOT EXISTS order_push_subscriptions (endpoint TEXT PRIMARY KEY, subscription JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;
-    })();
+    })().catch((error) => {
+      pushSubscriptionsTableReady = null;
+      throw error;
+    });
   return pushSubscriptionsTableReady;
 }
 let pushEnabled = false;
@@ -2943,7 +2993,10 @@ async function ensureContentRevisionsTable() {
         return;
       await sql`CREATE TABLE IF NOT EXISTS website_content_revisions (revision_id BIGSERIAL PRIMARY KEY, section TEXT NOT NULL, data JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;
       await sql`CREATE INDEX IF NOT EXISTS website_content_revisions_section_created_index ON website_content_revisions (section, created_at DESC)`;
-    })();
+    })().catch((error) => {
+      contentRevisionsTableReady = null;
+      throw error;
+    });
   return contentRevisionsTableReady;
 }
 
@@ -5909,7 +5962,16 @@ app.post('/api/orders/:id/bill-print/claim', async (req, res) => {
     await sql`INSERT INTO order_print_jobs (order_id,job_type,status) VALUES (${req.params.id},'bill','queued') ON CONFLICT (order_id,job_type) DO NOTHING`;
     const claimed =
       await sql`UPDATE order_print_jobs SET status='printing',lease_expires_at=NOW()+INTERVAL '45 seconds',updated_at=NOW() WHERE order_id=${req.params.id} AND job_type='bill' AND (status IN ('queued','failed') OR (status='printing' AND lease_expires_at<NOW())) RETURNING order_id`;
-    res.json({ claimed: !!claimed.length });
+    const job = claimed.length ? null : (
+      await sql`SELECT status,lease_expires_at FROM order_print_jobs WHERE order_id=${req.params.id} AND job_type='bill' LIMIT 1`
+    )[0];
+    // A lease held by another workstation is pending work. Only an actual
+    // printed status can tell a reconnecting client to suppress its retry.
+    res.json({
+      claimed: !!claimed.length,
+      status: claimed.length ? 'printing' : job?.status || 'queued',
+      ...(job?.lease_expires_at ? { leaseExpiresAt: job.lease_expires_at } : {}),
+    });
   } catch (error) {
     res.status(500).json({ error: 'Unable to claim bill print job.' });
   }
@@ -6327,6 +6389,44 @@ app.get('/api/orders/menu', async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+const ordersSchemaVersion = '2026-10-08-printing';
+async function prepareOrdersDatabase() {
+  await Promise.all([
+    ensureDirectOrdersTable(),
+    ensureKotsTable(),
+    ensureOrderEventsTable(),
+    ensureKotStationStatusTable(),
+    ensureKotRoundStatusTable(),
+    ensureOrderPrintJobsTable(),
+    ensureOperationsConfigTable(),
+    ensureOrderPaymentsTable(),
+    ensureSmartKdsTables(),
+  ]);
+  app.locals.ordersSchemaReady = true;
+  return { schemaReady: true, schemaVersion: ordersSchemaVersion };
+}
+// The PWA checks the actual order/KOT schema before declaring the workstation
+// ready. This runs on serverless cold starts too, where app.listen is not used.
+app.get('/api/orders/readiness', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  try {
+    res.json({ ok: true, ...(await prepareOrdersDatabase()) });
+  } catch (error) {
+    console.error('Orders database readiness failed:', error.message);
+    logDiagnostic({
+      level: 'error', category: 'orders',
+      message: `Orders database readiness failed: ${error.message}`,
+      method: req.method, path: req.path, statusCode: 503,
+      details: { code: error.code || '', stack: error.stack },
+    });
+    res.set('Retry-After', '2');
+    res.status(503).json({
+      ok: false, schemaReady: false, code: 'orders_database_not_ready',
+      error: 'Orders service is reconnecting. Printing will retry when it is ready.',
+    });
+  }
+});
+
 app.get('/api/orders/operations', async (req, res) => {
   try {
     await ensureOperationsConfigTable();
@@ -6531,7 +6631,18 @@ app.post('/api/orders/:id/kots', async (req, res) => {
     });
     res.status(201).json({ kotNumber: created[0].kot_number, order: orderRows[0], tickets });
   } catch (error) {
-    res.status(500).json({ error: error.message || 'Unable to create KOT.' });
+    console.error('KOT preparation failed:', error.message);
+    logDiagnostic({
+      level: 'error', category: 'orders',
+      message: `KOT preparation failed for ${req.params.id}: ${error.message}`,
+      method: req.method, path: req.path, statusCode: 503,
+      details: { orderId: req.params.id, code: error.code || '', stack: error.stack },
+    });
+    res.set('Retry-After', '2');
+    res.status(503).json({
+      error: 'Kitchen ticket preparation is temporarily unavailable. The saved order has not been changed.',
+      code: 'kot_preparation_unavailable', orderId: req.params.id, retryable: true,
+    });
   }
 });
 app.get('/api/orders/:id/kots', async (req, res) => {
@@ -10130,7 +10241,19 @@ app.use((error, req, res, next) => {
   res.status(status).send(message);
 });
 
-if (require.main === module) {
+app.locals.prepareOrdersDatabase = prepareOrdersDatabase;
+async function prepareDatabase() {
+  if (!sql) throw new Error('NEON_DATABASE_URL is missing or invalid.');
+  await sql`CREATE TABLE IF NOT EXISTS website_content (id VARCHAR(255) PRIMARY KEY, data JSONB NOT NULL)`;
+  await Promise.all([ensureDiagnosticsTable(), prepareOrdersDatabase()]);
+  return { schemaReady: true, schemaVersion: ordersSchemaVersion };
+}
+app.locals.prepareDatabase = prepareDatabase;
+
+async function startServer() {
+  // An unhealthy schema must fail startup before staff can submit an order.
+  // Container supervisors can restart after a transient connection failure.
+  if (sql) await prepareOrdersDatabase();
   const server = app.listen(port, host, () => {
     console.log(`Red Lantern backend running on ${host}:${port}`);
   });
@@ -10141,4 +10264,13 @@ if (require.main === module) {
   });
 }
 
+if (require.main === module) {
+  startServer().catch((error) => {
+    console.error('Orders database preparation failed at startup:', error.message);
+    process.exit(1);
+  });
+}
+
 module.exports = app;
+module.exports.prepareDatabase = prepareDatabase;
+module.exports.prepareOrdersDatabase = prepareOrdersDatabase;

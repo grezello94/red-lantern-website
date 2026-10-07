@@ -16,9 +16,7 @@
   function printerCapabilities(printer) {
     if (!printer || typeof printer !== 'object') return [];
     if (Array.isArray(printer.capabilities))
-      return [
-        ...new Set(printer.capabilities.map(normalizeCapability).filter(Boolean)),
-      ];
+      return [...new Set(printer.capabilities.map(normalizeCapability).filter(Boolean))];
     const legacy = normalizeCapability(printer.type);
     return legacy ? [legacy] : [];
   }
@@ -45,9 +43,10 @@
   function printerFormat(printer, capability) {
     if (!printer || typeof printer !== 'object') return {};
     const normalized = normalizeCapability(capability);
-    const saved = normalized && printer.formats && typeof printer.formats === 'object'
-      ? printer.formats[normalized]
-      : null;
+    const saved =
+      normalized && printer.formats && typeof printer.formats === 'object'
+        ? printer.formats[normalized]
+        : null;
     return saved && typeof saved === 'object' && !Array.isArray(saved)
       ? { ...printer, ...saved }
       : { ...printer };
@@ -60,7 +59,8 @@
       printer.formats && typeof printer.formats === 'object' && !Array.isArray(printer.formats)
         ? printer.formats
         : {};
-    const next = settings && typeof settings === 'object' && !Array.isArray(settings) ? settings : {};
+    const next =
+      settings && typeof settings === 'object' && !Array.isArray(settings) ? settings : {};
     printer.formats = { ...current, [normalized]: { ...(current[normalized] || {}), ...next } };
     return printer;
   }
@@ -92,6 +92,30 @@
     return CAPABILITY_LABELS[normalizeCapability(capability)] || String(capability || 'Printer');
   }
 
+  function resolveSystemPrinter(requestedName, printers) {
+    const requested = String(requestedName || '').trim();
+    const queues = Array.isArray(printers) ? printers : [];
+    // Names are case-insensitive on Windows. Do not strip punctuation or infer
+    // a printer's role: two different physical queues can have similar names.
+    const exact = queues.find((printer) => String(printer.name || '').trim() === requested);
+    if (exact) return exact;
+    const caseMatches = queues.filter(
+      (printer) =>
+        String(printer.name || '')
+          .trim()
+          .toLowerCase() === requested.toLowerCase()
+    );
+    if (caseMatches.length === 1) return caseMatches[0];
+    // Older configurations sometimes stored a TCP/IP address or port name.
+    // Adopt it only when the OS exposes exactly one queue for that endpoint.
+    const aliasMatches = queues.filter((printer) =>
+      [printer.host, printer.portName]
+        .filter(Boolean)
+        .some((alias) => String(alias).trim().toLowerCase() === requested.toLowerCase())
+    );
+    return aliasMatches.length === 1 ? aliasMatches[0] : null;
+  }
+
   return {
     CAPABILITIES,
     capabilityLabel,
@@ -100,6 +124,7 @@
     printerBelongsToWorkstation,
     printerCapabilities,
     printerSupports,
+    resolveSystemPrinter,
     setPrinterCapability,
     setPrinterFormat,
   };

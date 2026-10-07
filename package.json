@@ -9,11 +9,12 @@
   "scripts": {
     "minify:css": "cleancss -o style.min.css style.css",
     "check": "node --check server.js && node --check admin-cms.js && node --check air-menu.js && node --check captain.js && node --check captain-sw.js && node --check orders.js && node --check print-bridge.js && node --check orders-sw.js && node --check staff-domain.js && node --check employee-admin.js && node --check captain-tools.js && node --check register.js && node --check register-theme.js",
-    "bundle:print-bridge": "bash scripts/build-print-bridge-bundles.sh",
+    "bundle:print-bridge": "node scripts/build-print-bridge-bundles.js",
     "package:bridge:macos": "bash scripts/package-print-bridge-macos.sh",
     "package:bridge:windows": "powershell -ExecutionPolicy Bypass -File scripts/package-print-bridge-windows.ps1",
     "build": "npm run check && npm run minify:css && npm run bundle:print-bridge",
     "start": "node --env-file-if-exists=.env server.js",
+    "db:prepare": "node --env-file-if-exists=.env init-db.js",
     "dev": "node --env-file-if-exists=.env server.js",
     "print-bridge": "node print-bridge.js",
     "test": "npm run test:unit && npm run build && node scripts/test-print-bridge.js",
