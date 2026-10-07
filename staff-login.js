@@ -23,10 +23,10 @@ const authConfig =
         endpoint: '/api/orders/session',
         next: '/register',
         kicker: 'Staff access',
-        intro: 'Sign in to open Orders, Register and Kitchen displays.',
+        intro: 'Enter your employee username and password or PIN. Your assigned workspace will open.',
         title: 'Staff Sign In · Red Lantern',
         brandTitle: 'Service starts with a secure sign-in.',
-        brandCopy: 'Access Orders, Register and Kitchen displays from one protected staff workspace.',
+        brandCopy: 'Your role gives you access to your assigned orders, tables, billing or deliveries.',
         usernamePlaceholder: 'Enter staff username',
       };
 const requestedNext = params.get('next') || authConfig.next;
@@ -37,6 +37,10 @@ document.getElementById('staff-login-intro').textContent = authConfig.intro;
 document.getElementById('staff-login-brand-title').textContent = authConfig.brandTitle;
 document.getElementById('staff-login-brand-copy').textContent = authConfig.brandCopy;
 username.placeholder = authConfig.usernamePlaceholder;
+if (scope !== 'admin') {
+  document.querySelector('label[for="staff-password"]').textContent = 'Password or staff PIN';
+  password.placeholder = 'Enter your password or assigned PIN';
+}
 
 function showError(message) {
   errorMessage.textContent = message;

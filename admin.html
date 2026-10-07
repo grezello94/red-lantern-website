@@ -6625,8 +6625,8 @@ Watch competitors ranking for Colva Beach, seafood, Goan food, Chinese food, fam
       <div id="tab-captain-app" class="tab-content">
         <div class="header">
           <div>
-            <h1>Captain App</h1>
-            <p>Manage waiter access, PINs, assigned areas, and Captain order-taking settings.</p>
+            <h1>Captain App &amp; Employees</h1>
+            <p>Manage employee accounts, role permissions, assigned work and sign-in access.</p>
           </div>
         </div>
         <div class="card">
@@ -6676,9 +6676,9 @@ Watch competitors ranking for Colva Beach, seafood, Goan food, Chinese food, fam
           </div>
         </div>
         <div class="card">
-          <h2>Captain accounts</h2>
+          <h2>Employee accounts</h2>
           <p class="help-text">
-            Create staff access, set a PIN, and assign the dining areas each Captain may operate.
+            Manage employee roles, sign-in credentials, workspaces, assigned areas and action permissions.
           </p>
           <div class="form-grid">
             <div class="form-group">
@@ -6691,13 +6691,13 @@ Watch competitors ranking for Colva Beach, seafood, Goan food, Chinese food, fam
             </div>
           </div>
           <div id="captain-admin-status" class="help-text captain-save-status">
-            Loading Captain accounts…
+            Loading employee accounts…
           </div>
           <div id="captain-admin-list" class="captain-account-list"></div>
           <div class="captain-action-bar">
-            <span class="help-text">Add every waiter who should access the Captain app.</span>
+            <span class="help-text">Add employees and give each person only the access they need.</span>
             <div>
-              <button type="button" id="captain-add" class="btn-save">Add Captain</button
+              <button type="button" id="captain-add" class="btn-save">Add employee</button
               ><button type="button" id="captain-save" class="btn-save">Save all changes</button>
             </div>
           </div>
@@ -6705,6 +6705,8 @@ Watch competitors ranking for Colva Beach, seafood, Goan food, Chinese food, fam
       </div>
     </main>
 
+    <script src="/staff-domain.js?v=1"></script>
+    <script src="/employee-admin.js?v=1"></script>
     <!-- Simple JS to handle tab switching -->
     <script>
       const navItems = document.querySelectorAll('.nav-item');
@@ -6751,6 +6753,8 @@ Watch competitors ranking for Colva Beach, seafood, Goan food, Chinese food, fam
         captainAreas = [],
         captainActivity = [],
         captainSettings = { idleMinutes: 15 };
+      const captainRolePresets = Object.fromEntries(Object.keys(RedLanternStaff.roles).map((role) => [role, RedLanternStaff.permissions({ role })]));
+      const captainPermissionLabels = RedLanternStaff.labels;
       const captainEsc = (value) =>
         String(value ?? '').replace(
           /[&<>"']/g,
@@ -6810,18 +6814,7 @@ Watch competitors ranking for Colva Beach, seafood, Goan food, Chinese food, fam
       );
       const renderCaptains = () => {
         const list = document.getElementById('captain-admin-list');
-        if (!list) return;
-        list.innerHTML =
-          captainAccounts
-            .map((captain, index) => {
-              const isActive = captain.active !== false,
-                configured = !!captain.pinConfigured;
-              const areas = captain.areas || [];
-              const areaSummary = areas.length ? areas.join(' · ') : 'All dining areas';
-              return `<article class="captain-account-card" data-captain-card="${index}"><header class="captain-account-head"><div><b>${captainEsc(captain.name || `New Captain ${index + 1}`)}</b><small>${captainEsc(areaSummary)}</small></div><span class="${isActive ? '' : 'is-off'}">${isActive ? '● Active' : '● Disabled'}</span></header><div class="captain-account-body"><div class="form-grid"><div class="form-group"><label>Name</label><input type="text" data-captain-name="${index}" value="${captainEsc(captain.name || '')}" placeholder="Captain name" autocomplete="name"></div><div class="form-group"><label>${configured ? 'Captain PIN' : 'Set PIN'}</label><div class="captain-pin-control"><input type="password" data-captain-pin="${index}" inputmode="numeric" maxlength="6" placeholder="${configured ? '•••••• — PIN saved securely' : 'Set a 4–6 digit PIN'}" autocomplete="new-password"><button type="button" class="captain-pin-toggle" data-captain-pin-toggle="${index}" aria-label="${configured ? 'Show saved PIN' : 'Show PIN'}">${configured ? 'Show PIN' : 'Show'}</button></div><div class="captain-current-pin" data-captain-current-pin="${index}" hidden>Current PIN: <b></b></div><div class="captain-pin-actions"><button type="button" data-captain-pin-generate="${index}">Generate new PIN</button><button type="button" data-captain-pin-copy="${index}" disabled>Copy new PIN</button></div><small class="captain-pin-help ${configured ? '' : 'is-missing'}">${configured ? captain.pinViewable ? '✓ PIN saved. Select Show PIN to view it when helping this Captain.' : 'This PIN was saved before viewing was enabled. Set a new PIN once to enable Show PIN.' : 'A 4–6 digit PIN is required before this Captain can sign in.'}</small></div><div class="form-group"><label>Access</label><label><input data-captain-active="${index}" type="checkbox" ${isActive ? 'checked' : ''}> Captain can sign in</label></div></div><div class="form-group"><label>Assigned dining areas</label><p class="help-text">Leave every area unselected to allow this Captain everywhere.</p>${captainAreas.length ? `<div class="captain-area-options">${captainAreas.map((area) => `<label><input data-captain-area="${index}" value="${captainEsc(area)}" type="checkbox" ${areas.includes(area) ? 'checked' : ''}> ${captainEsc(area)}</label>`).join('')}</div>` : '<p class="help-text">Set up table areas first in Orders → Operations → Table allocation.</p>'}</div><button type="button" data-captain-remove="${index}" class="btn-delete">Remove Captain</button></div></article>`;
-            })
-            .join('') ||
-          '<div class="captain-empty-state">No Captain accounts yet. Add a waiter, assign a PIN, then save the account.</div>';
+        if (list) list.innerHTML = window.renderEmployeeCards(captainAccounts, captainAreas);
       };
       const loadCaptains = async (message = '') => {
         try {
@@ -6927,10 +6920,21 @@ Watch competitors ranking for Colva Beach, seafood, Goan food, Chinese food, fam
           name: '',
           areas: [],
           active: true,
+          role: 'captain', tableScope: 'own', permissions: { ...captainRolePresets.captain },
           pin: '',
         });
         renderCaptains();
         document.querySelector(`[data-captain-name="${captainAccounts.length - 1}"]`)?.focus();
+      });
+      document.getElementById('captain-admin-list')?.addEventListener('change', (event) => {
+        const roleSelect = event.target.closest('[data-captain-role]');
+        if (!roleSelect) return;
+        const index = Number(roleSelect.dataset.captainRole);
+        captainAccounts[index].role = roleSelect.value;
+        captainAccounts[index].permissions = { ...captainRolePresets[roleSelect.value] };
+        roleSelect.closest('[data-captain-card]').querySelectorAll('[data-captain-permission]').forEach((input) => {
+          input.checked = !!captainAccounts[index].permissions[input.value];
+        });
       });
       document.getElementById('captain-admin-list')?.addEventListener('click', async (event) => {
         const generate = event.target.closest('[data-captain-pin-generate]');
@@ -7027,7 +7031,7 @@ Watch competitors ranking for Colva Beach, seafood, Goan food, Chinese food, fam
         if (!captain) return;
         if (
           !confirm(
-            `Remove ${captain.name || 'this Captain'}? They will immediately lose Captain app access.`
+            `Remove ${captain.name || 'this employee'}? They will immediately lose all employee access.`
           )
         )
           return;
@@ -7122,6 +7126,16 @@ Watch competitors ranking for Colva Beach, seafood, Goan food, Chinese food, fam
             (input) => input.value
           ),
           active: !!document.querySelector(`[data-captain-active="${index}"]`)?.checked,
+          username: document.querySelector(`[data-employee-username="${index}"]`)?.value.trim(),
+          userCode: document.querySelector(`[data-employee-code="${index}"]`)?.value.trim(),
+          phone: document.querySelector(`[data-employee-phone="${index}"]`)?.value.trim(),
+          password: document.querySelector(`[data-employee-password="${index}"]`)?.value || '',
+          requireEditReason: !!document.querySelector(`[data-employee-reason="${index}"]`)?.checked,
+          discountLimit: { type: document.querySelector(`[data-employee-discount-type="${index}"]`)?.value || 'fixed', value: Number(document.querySelector(`[data-employee-discount-value="${index}"]`)?.value || 0) },
+          role: document.querySelector(`[data-captain-role="${index}"]`)?.value || 'captain',
+          tableScope: document.querySelector(`[data-captain-scope="${index}"]`)?.value || 'own',
+          permissions: Object.fromEntries(Object.keys(captainPermissionLabels).map((key) =>
+            [key, !!document.querySelector(`[data-captain-permission="${index}"][value="${key}"]`)?.checked])),
         }));
         captainSettings = {
           idleMinutes: Number(document.getElementById('captain-idle-minutes')?.value) || 15,
@@ -7136,9 +7150,9 @@ Watch competitors ranking for Colva Beach, seafood, Goan food, Chinese food, fam
             body: JSON.stringify({ captains: captainAccounts, settings: captainSettings }),
           });
           const data = await response.json();
-          if (!response.ok) throw new Error(data.error || 'Unable to save Captain accounts.');
+          if (!response.ok) throw new Error(data.error || 'Unable to save employee accounts.');
           await loadCaptains(
-            `${data.captains?.length || 0} Captain account${data.captains?.length === 1 ? '' : 's'} saved.${changedPins ? ` ${changedPins} new PIN${changedPins === 1 ? '' : 's'} assigned; share the PINs you copied before saving.` : ''}`
+            `${data.captains?.length || 0} employee account${data.captains?.length === 1 ? '' : 's'} saved.${changedPins ? ` ${changedPins} new PIN${changedPins === 1 ? '' : 's'} assigned; share the PINs you copied before saving.` : ''}`
           );
         } catch (error) {
           captainStatus(error.message || 'Unable to save Captain accounts.', true);

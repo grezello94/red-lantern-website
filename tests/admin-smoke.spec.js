@@ -232,6 +232,38 @@ test('admin can show and hide the currently saved Captain PIN', async ({ page })
   await expect(page.locator('[data-captain-current-pin="0"]')).toBeHidden();
 });
 
+test('admin assigns Captain role, table scope and action rights without losing the PIN draft', async ({ page }) => {
+  await mockAdmin(page);
+  let saved;
+  await page.route('**/api/admin/captains', async (route) => {
+    if (route.request().method() === 'PUT') saved = route.request().postDataJSON().captains[0];
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        captains: [{ id: 'cap_lalit', name: 'Lalit', areas: [], active: true, pinConfigured: true }],
+        areas: ['AC', 'NON AC'],
+        settings: { idleMinutes: 15 },
+      }),
+    });
+  });
+  await page.goto('/admin.html#tab-captain-app');
+  await page.locator('[data-captain-pin="0"]').fill('482916');
+  await page.locator('[data-captain-role="0"]').selectOption('waiter');
+  await expect(page.locator('[data-captain-pin="0"]')).toHaveValue('482916');
+  await page.locator('[data-captain-card="0"] [data-employee-tab="permissions"]').click();
+  await page.locator('[data-captain-scope="0"]').selectOption('assigned_areas');
+  await page.locator('[data-captain-area="0"][value="NON AC"]').check();
+  await page.locator('[data-captain-permission="0"][value="requestBills"]').check();
+  await page.locator('#captain-save').click();
+  await expect.poll(() => saved?.role).toBe('waiter');
+  expect(saved.tableScope).toBe('assigned_areas');
+  expect(saved.areas).toEqual(['NON AC']);
+  expect(saved.permissions.requestBills).toBe(true);
+  expect(saved.permissions.moveTables).toBe(false);
+  expect(saved.pin).toBe('482916');
+});
+
 test('sales dashboard presents operational controls and fits a phone', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockAdmin(page);

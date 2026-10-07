@@ -13,6 +13,7 @@
     <link rel="stylesheet" href="/captain.css?v=2" />
     <link rel="stylesheet" href="/captain-ux.css?v=53" />
     <link rel="stylesheet" href="/captain-modern.css?v=2" />
+    <link rel="stylesheet" href="/captain-native.css?v=1" />
   </head>
   <body>
     <header class="captain-header">
@@ -73,62 +74,66 @@
           <div id="captain-nav-ready-list"></div>
         </div>
         <div class="captain-nav-active">
-          <div><b>My active tables</b><small>Orders created by your Captain account</small></div>
+          <a href="/staff">Employee workspace · payments &amp; assigned work</a>
+          <div><b>My active tables</b><small>Active orders in your assigned access</small></div>
           <div id="captain-nav-active-list"></div>
         </div>
         <button id="captain-nav-signout" class="captain-nav-signout" type="button">Sign out</button>
       </section>
     </aside>
-    <section id="captain-login" class="captain-login" aria-labelledby="captain-login-title" aria-live="polite">
+    <section
+      id="captain-login"
+      class="captain-login"
+      aria-labelledby="captain-login-title"
+      aria-live="polite"
+    >
       <div class="captain-auth-card">
-        <section class="captain-auth-brand" aria-label="Red Lantern Captain">
+        <aside class="captain-auth-brand">
           <img src="/images/red-lantern-logo-600.webp" alt="Red Lantern Restaurant" />
           <div>
-            <span>Restaurant operations</span>
-            <h1>Fast table service, without the paperwork.</h1>
-            <p>Take orders, follow kitchen progress and keep every table moving from one screen.</p>
+            <span>Red Lantern Restaurant</span>
+            <h1>Confident service starts here.</h1>
+            <p>Securely access your assigned tables, live kitchen progress and order history.</p>
           </div>
-          <small><i aria-hidden="true"></i> Secure staff workspace</small>
-        </section>
+          <small><i aria-hidden="true"></i> Protected Captain workspace</small>
+        </aside>
         <div class="captain-auth-panel">
           <div class="captain-auth-content">
-            <span class="eyebrow">STAFF ACCESS</span>
+            <span class="eyebrow">CAPTAIN ACCESS</span>
             <h1 id="captain-login-title">Who is taking this order?</h1>
-            <p>
-              Choose your name, then enter your personal PIN. Your table access and order trail are
-              recorded automatically.
-            </p>
+            <p>Choose your name, then enter your personal PIN.</p>
             <div id="captain-account-list" class="captain-account-list" aria-live="polite"></div>
             <form id="captain-pin-form" hidden>
               <button id="captain-change-account" class="back-button" type="button">
                 ← Change Captain
               </button>
               <p id="captain-selected-name" class="captain-selected-name"></p>
-              <label>Personal PIN</label>
+              <label for="captain-pin">Personal PIN</label>
               <div class="captain-pin-control">
                 <input
-                    id="captain-pin"
-                    type="password"
-                    inputmode="numeric"
-                    autocomplete="current-password"
-                    pattern="[0-9]*"
-                    minlength="4"
-                    maxlength="6"
-                    required
-                    placeholder="••••"
+                  id="captain-pin"
+                  type="password"
+                  inputmode="numeric"
+                  autocomplete="current-password"
+                  pattern="[0-9]*"
+                  minlength="4"
+                  maxlength="6"
+                  required
+                  placeholder="••••"
                 />
                 <button id="captain-pin-toggle" type="button" aria-label="Show PIN">Show</button>
               </div>
-              <label class="captain-stay-logged-in">
+              <label class="captain-stay-logged-in" for="captain-stay-logged-in">
                 <input id="captain-stay-logged-in" type="checkbox" />
                 <span aria-hidden="true"><i></i></span>
-                <b>Keep me signed in</b>
-                <small>Use only on your assigned staff device.</small>
+                <b>Stay logged in</b>
+                <small>Keep this trusted device signed in for 30 days.</small>
               </label>
               <p id="captain-login-status" class="captain-login-status" aria-live="polite"></p>
               <button id="captain-login-submit" class="send-button" type="submit">
-                Start taking orders
+                Start taking orders <span aria-hidden="true">→</span>
               </button>
+              <p class="captain-shared-device">Leave “Stay logged in” unchecked on a shared device.</p>
             </form>
           </div>
         </div>
@@ -178,7 +183,7 @@
               ><span class="captain-action-copy"
                 ><b>Take Away</b><small>No table required</small></span
               ></button
-            ><button type="button" data-new-table-help>
+            ><button type="button" data-start-delivery><span class="captain-action-copy"><b>Delivery</b><small>Create a delivery order</small></span></button><button type="button" data-new-table-help>
               <span class="captain-action-icon" aria-hidden="true"></span
               ><span class="captain-action-copy"
                 ><b>New Table</b><small>Choose an available table</small></span
@@ -294,12 +299,12 @@
                 autocomplete="tel"
                 placeholder="Mobile number" /></label
             ><label
-              >Serving preference<select id="course-mode"
-                ><option value="normal_coursing">Serve course by course</option
-                ><option value="serve_together">Serve everything together</option
-                ><option value="as_ready">Serve items as ready</option
-                ><option value="manual_fire">Manual fire</option></select
-              ></label
+              >Serving preference<select id="course-mode">
+                <option value="normal_coursing">Serve course by course</option>
+                <option value="serve_together">Serve everything together</option>
+                <option value="as_ready">Serve items as ready</option>
+                <option value="manual_fire">Manual fire</option>
+              </select></label
             ><label class="wide"
               >Kitchen note<textarea
                 id="special-request"
@@ -355,9 +360,14 @@
           <small>+₹10</small></label
         >
       </fieldset>
+      <div id="captain-addon-groups" class="captain-addon-groups"></div>
+      <p id="captain-addon-error" class="captain-addon-error" aria-live="polite"></p>
       <label class="item-note"
         >Kitchen note
         <input id="choice-note" maxlength="80" placeholder="e.g. less spicy, no onion" /></label
+      ><label class="item-note"
+        >Kitchen course
+        <select id="choice-course"></select></label
       ><button type="button" id="choice-add" class="send-button">Add item</button>
     </dialog>
     <dialog id="line-note-sheet" class="line-note-sheet" aria-labelledby="line-note-title">
@@ -410,17 +420,32 @@
       </div>
       <div id="category-picker-list" class="category-picker-list"></div>
     </dialog>
-    <dialog id="captain-table-actions" class="captain-table-actions">
+    <dialog id="captain-table-actions" class="captain-table-actions" aria-labelledby="captain-table-actions-title">
       <button type="button" data-captain-table-actions-close aria-label="Close">×</button>
       <h2 id="captain-table-actions-title">Table</h2>
+      <p id="captain-table-actions-status" role="status" aria-live="polite"></p>
       <div>
         <button type="button" data-captain-table-action="view">▤ <span>View KOT(s)</span></button
         ><button type="button" data-captain-table-action="move">↔ <span>Move Table</span></button
         ><button type="button" data-captain-table-action="bill">▣ <span>Print Bill</span></button>
+        <button type="button" data-captain-table-action="manage">Manage order / payment</button>
       </div>
     </dialog>
+    <dialog id="captain-move-sheet" class="captain-move-sheet" aria-labelledby="captain-move-title">
+      <form id="captain-move-form">
+        <div class="sheet-head"><div><span class="eyebrow">MOVE TABLE</span><h2 id="captain-move-title">Choose destination</h2></div><button type="button" data-close-move class="icon-button" aria-label="Close move table">×</button></div>
+        <p>Only available tables in your assigned dining areas are shown.</p>
+        <label>Dining area<select id="captain-move-area" required></select></label>
+        <label>Available table<select id="captain-move-number" required></select></label>
+        <p id="captain-move-error" role="status" aria-live="polite"></p>
+        <div class="captain-move-footer"><button type="button" data-close-move>Cancel</button><button type="submit" id="captain-move-confirm" class="send-button">Move table</button></div>
+      </form>
+    </dialog>
     <script src="/client-config.js"></script>
-    <script src="/captain.js?v=55"></script>
+    <script src="/addons-domain.js?v=1"></script>
+    <script src="/order-request.js?v=1"></script>
+    <script src="/staff-domain.js?v=1"></script>
+    <script src="/captain.js?v=63"></script>
     <script>
       if ('serviceWorker' in navigator) {
         let reloadedForCaptainWorker = false;
@@ -431,7 +456,7 @@
           }
         });
         navigator.serviceWorker
-          .register('/captain-sw.js?v=21')
+          .register('/captain-sw.js?v=24')
           .then((registration) => {
             registration.update().catch(() => {});
             if (registration.waiting) registration.waiting.postMessage({ type: 'SKIP_WAITING' });

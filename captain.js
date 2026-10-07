@@ -13,6 +13,19 @@ const esc = (value) =>
       ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[character]
   );
 const money = (value) => `₹${Number(value || 0).toFixed(0)}`;
+const captainAllowed = (permission) => window.RedLanternStaff.can(state.captain, permission);
+function applyCaptainPermissionsUI() {
+  const create = captainAllowed('createOrders');
+  $('#captain-order-action-toggle').hidden = !['createOrders','pickupOrders','deliveryOrders','addTables'].some(captainAllowed);
+  document.querySelector('[data-start-takeaway]').hidden = !captainAllowed('pickupOrders');
+  document.querySelector('[data-start-delivery]').hidden = !captainAllowed('deliveryOrders');
+  document.querySelector('[data-new-table-help]').hidden = !create && !captainAllowed('addTables');
+  document.querySelectorAll('[data-table-service]').forEach((button) => {
+    button.hidden = !captainAllowed(button.dataset.tableService === 'bill_requested' ? 'requestBills' : 'requestService');
+  });
+  const service = $('#captain-table-service');
+  if (service && ![...service.querySelectorAll('button')].some((button) => !button.hidden)) service.hidden = true;
+}
 const readyAlertKey = (alert) => `${alert?.id || ''}:${alert?.kot_number || ''}`;
 const readJSON = (key, fallback) => {
   try {
@@ -237,9 +250,17 @@ function saveOfflineSnapshot() {
 function restoreOfflineSnapshot() {
   const snapshot = readLocalJSON(snapshotKey(), null);
   if (!snapshot || !Array.isArray(snapshot.menu) || !Array.isArray(snapshot.areas)) return false;
-  state.areas = snapshot.areas;
+  state.areas = snapshot.areas.filter((area) => !state.captain.areas?.length || state.captain.areas.includes(area.name));
   state.menu = snapshot.menu;
-  state.orders = Array.isArray(snapshot.orders) ? snapshot.orders : [];
+  state.orders = (Array.isArray(snapshot.orders) ? snapshot.orders : [])
+    .filter((order) => order.mode === 'table'
+      ? state.areas.some((area) => area.name === order.table_area)
+      : window.RedLanternStaff.orderAccessible(state.captain, order))
+    .map((order) => {
+      const accessible = window.RedLanternStaff.orderAccessible(state.captain, order);
+      return { ...order, captain_accessible: accessible,
+        ...(!accessible ? { items: [], customer_name: '', total: 0, discount_amount: 0, discount_reason: null } : {}) };
+    });
   state.salesOrders = Array.isArray(snapshot.salesOrders) ? snapshot.salesOrders : [];
   const when = new Date(Number(snapshot.savedAt) || Date.now()).toLocaleTimeString('en-IN', {
     hour: '2-digit',
@@ -685,7 +706,7 @@ function renderReadyAlerts() {
   if (state.areas.length) renderTables();
 }
 async function loadReadyAlerts() {
-  if (!state.captain) return;
+  if (!state.captain || !captainAllowed('markServed')) return;
   try {
     const response = await fetch('/api/captain/ready-alerts', {
         cache: 'no-store',
@@ -797,7 +818,7 @@ function orderAge(order) {
 async function loadKotProgress(orderId) {
   const root = $('#active-kot-progress');
   root.hidden = true;
-  if (!orderId) return;
+  if (!orderId || !captainAllowed('viewKots')) return;
   try {
     const response = await fetch(
         `/api/captain/orders/${encodeURIComponent(orderId)}/kot-progress`,
@@ -882,7 +903,7 @@ function renderCaptainNav() {
       (order) =>
         order.mode === 'table' &&
         !['completed', 'rejected', 'cancelled'].includes(order.status) &&
-        String(order.captain_id || '') === String(state.captain.id)
+        order.captain_accessible !== false && window.RedLanternStaff.orderAccessible(state.captain, order)
     ),
     ready = state.readyAlerts.filter((alert) => !state.readySeen[readyAlertKey(alert)]),
     reviews = state.pending
@@ -934,6 +955,7 @@ function setCaptainUI() {
   app.hidden = !state.captain;
   document.body.classList.toggle('is-captain-logged-out', !state.captain);
   if (state.captain) {
+    applyCaptainPermissionsUI();
     profile.textContent = `● ${state.captain.name}`;
     profile.title = 'Tap to sign out';
     login.hidden = true;
@@ -1036,6 +1058,40 @@ function renderTableLoadFailure(message) {
   $('#table-board').innerHTML =
     `<section class="captain-load-failure"><span aria-hidden="true">⌁</span><div><b>Table board needs a connection</b><p>${esc(message)}</p><button type="button" data-retry-captain-load>Try again</button></div></section>`;
 }
+async function refreshCaptainProfile() {
+  const accountId = state.captain?.id;
+  if (!accountId || !navigator.onLine) return false;
+  const response = await fetchWithTimeout('/api/staff/session', { headers: captainHeaders(), cache: 'no-store' });
+  if (state.captain?.id !== accountId) return false;
+  if (response.status === 401) { signOut('Your employee access was revoked or expired. Sign in again.'); return false; }
+  if (response.ok) {
+    const profile = await response.json();
+    if (state.captain?.id !== accountId) return false;
+    if (profile.employee) {
+      if (!profile.employee.permissions?.captainApp) { signOut('Captain app access was revoked.'); return false; }
+      const previousAccess = JSON.stringify([state.captain.permissions, state.captain.areas, state.captain.tableScope]);
+      state.captain = { ...state.captain, ...profile.employee };
+      sessionStorage.setItem(sessionKey, JSON.stringify(state.captain));
+      if (state.captain.remembered) localStorage.setItem(sessionKey, JSON.stringify(state.captain));
+      applyCaptainPermissionsUI();
+      if (previousAccess !== JSON.stringify([state.captain.permissions, state.captain.areas, state.captain.tableScope])) {
+        document.querySelectorAll('dialog[open]').forEach((dialog) => dialog.close());
+        saveDraft();
+        try { localStorage.removeItem(snapshotKey()); } catch {}
+        state.orders = [];
+        state.areas = state.areas.filter((area) => !state.captain.areas?.length || state.captain.areas.includes(area.name));
+        renderTables();
+        if (state.screen !== 'tables') {
+          state.table = null;
+          state.cart = [];
+          setScreen('tables');
+          showCaptainToast('Your access changed. Choose a permitted table to continue.', 'info');
+        }
+      }
+    }
+  }
+  return true;
+}
 async function load() {
   if (!state.captain) {
     setCaptainUI();
@@ -1052,6 +1108,7 @@ async function load() {
   }
   try {
     $('#captain-connection').textContent = 'Loading live table status…';
+    if (!(await refreshCaptainProfile())) return;
     const options = { cache: 'no-store', headers: captainHeaders() },
       criticalUrls = ['/api/orders/operations', '/api/orders/menu', '/api/orders?history=0'],
       fetchCritical = async (url) => {
@@ -1107,6 +1164,7 @@ async function load() {
       unavailable: unavailable.has(item.key),
     }));
     state.orders = Array.isArray(orderData) ? orderData : [];
+    applyCaptainPermissionsUI();
     state.salesOrders = (Array.isArray(insightData.items) ? insightData.items : []).map((item) => ({
       items: [item],
     }));
@@ -1209,9 +1267,9 @@ function renderTables() {
               : service === 'assistance_requested'
                 ? 'Help requested'
                 : `${String(active.status || 'Active').replace(/^./, (letter) => letter.toUpperCase())} · ${orderAge(active)}`,
-      action = !active ? 'Start order' : ready ? 'Serve now' : 'Open · hold for actions',
+      action = !active ? (captainAllowed('createOrders') ? 'Start order' : 'No order access') : active.captain_accessible === false ? 'Occupied · no access' : ready ? 'Serve now' : 'Open order',
       stateClass = ready ? ' is-ready' : service ? ' is-service' : '';
-    return `<button type="button" class="table-tile${active ? ' is-active' : ''}${selected ? ' is-selected' : ''}${stateClass}" data-table-area="${esc(area)}" data-table-number="${number}" aria-label="${esc(`${area} table ${number}: ${status}. ${action}`)}"><span>${esc(area)}</span><b>Table ${String(number).padStart(2, '0')}</b><small>${status}</small><em>${action} <i>→</i></em></button>`;
+    return `<button type="button" class="table-tile${active ? ' is-active' : ''}${selected ? ' is-selected' : ''}${stateClass}" data-table-area="${esc(area)}" data-table-number="${number}" ${(!active && !captainAllowed('createOrders')) || active?.captain_accessible === false ? 'disabled' : ''} aria-label="${esc(`${area} table ${number}: ${status}. ${action}`)}"><span>${esc(area)}</span><b>Table ${String(number).padStart(2, '0')}</b><small>${status}</small><em>${action} <i>→</i></em></button>`;
   };
   const groups = areas
     .map((area) => {
@@ -1376,6 +1434,7 @@ function renderCart() {
   saveDraft();
 }
 function openChoice(item) {
+  if (state.table?.orderId && !captainAllowed('addRounds')) { showCaptainToast('Adding items is not enabled for your account.', 'error'); return; }
   const options = priceOptions(item);
   if (!options.length) return;
   state.choice = { item, option: options[0] };
@@ -1468,6 +1527,7 @@ function addChoice() {
   renderMenu();
 }
 function addSimpleItem(item) {
+  if (state.table?.orderId && !captainAllowed('addRounds')) { showCaptainToast('Adding items is not enabled for your account.', 'error'); return; }
   const [portion, price] = priceOptions(item)[0] || [];
   if (!portion || !price) return;
   clearSavedKotRelease();
@@ -1492,6 +1552,8 @@ function addSimpleItem(item) {
   renderMenu();
 }
 function signOut(message = 'Signed out.') {
+  document.querySelectorAll('dialog[open]').forEach((dialog) => dialog.close());
+  if (navigator.onLine) void fetch('/api/staff/session', { method: 'DELETE' }).catch(() => {});
   clearTimeout(captainIdleTimer);
   state.captain = null;
   state.loginAccount = null;
@@ -1732,9 +1794,11 @@ $('#captain-order-action-list').addEventListener('click', (event) => {
     toggle.classList.remove('is-open');
     toggle.setAttribute('aria-expanded', 'false');
   };
-  if (event.target.closest('[data-start-takeaway]')) {
+  if (event.target.closest('[data-start-takeaway], [data-start-delivery]')) {
+    const delivery = !!event.target.closest('[data-start-delivery]');
+    if (!captainAllowed(delivery ? 'deliveryOrders' : 'pickupOrders')) return;
     state.kotRetry = null;
-    state.table = { area: '', number: 0, orderId: '', mode: 'takeaway' };
+    state.table = { area: '', number: 0, orderId: '', mode: 'takeaway', fulfillmentType: delivery ? 'delivery' : 'takeaway' };
     state.cart = [];
     $('#captain-table-service').hidden = true;
     closeActions();
@@ -1743,6 +1807,7 @@ $('#captain-order-action-list').addEventListener('click', (event) => {
     return;
   }
   if (event.target.closest('[data-new-table-help]')) {
+    if (captainAllowed('addTables')) { location.href = '/staff?newTable=1'; return; }
     closeActions();
     $('#captain-connection').textContent = 'Choose an available table to start a dine-in order.';
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -1752,6 +1817,8 @@ $('#table-board').addEventListener('click', (event) => {
   const button = event.target.closest('[data-table-area]');
   if (!button) return;
   const active = activeTable(button.dataset.tableArea, Number(button.dataset.tableNumber));
+  if (active?.captain_accessible === false) return;
+  if (!active && !captainAllowed('createOrders')) return;
   state.kotRetry = null;
   state.table = {
     area: button.dataset.tableArea,
@@ -1759,6 +1826,7 @@ $('#table-board').addEventListener('click', (event) => {
     orderId: active?.id || '',
   };
   $('#captain-table-service').hidden = !active;
+  applyCaptainPermissionsUI();
   state.cart = [];
   restoreDraft();
   if (state.cart.length) clearSavedKotRelease();
@@ -2042,6 +2110,7 @@ $('#place-order').addEventListener('click', async () => {
       clientRequestId: requestId(),
       source: 'captain',
       mode: state.table.mode || 'table',
+      fulfillmentType: state.table.fulfillmentType || '',
       action: sendKot ? 'submit' : 'save',
       sendKot,
       tableArea: state.table.area,
@@ -2302,9 +2371,11 @@ history.pushState({ captain: true, screen: 'tables' }, '', location.href);
 const captainTableActionSheet = $('#captain-table-actions');
 let captainHeldTable = null,
   captainHoldTimer = null,
-  captainSuppressTableClick = false;
+  captainPress = null,
+  captainSuppressedTile = null,
+  captainSuppressUntil = 0;
 const captainTableActionStyles = document.createElement('style');
-captainTableActionStyles.textContent = `.table-tile{background:#f3f4f6}.table-tile.is-ongoing{background:#fff0b8!important;border-color:#e4b82f}.table-tile.is-settlement{background:#daf7de!important;border-color:#79d58a}.table-tile mark{position:absolute;top:10px;right:10px;padding:3px 6px;border:0;border-radius:999px;color:#13713d;background:#a9f3b6;font-size:9px;font-weight:900}.table-tile.is-ongoing mark{color:#765800;background:#ffe568}.captain-table-actions{position:fixed;right:0;bottom:0;left:0;width:min(520px,100%);margin:0 auto;padding:20px;border:0;border-radius:22px 22px 0 0;box-shadow:0 -12px 36px #17243a42}.captain-table-actions::backdrop{background:#17243a88}.captain-table-actions>button{position:absolute;top:10px;right:14px;background:transparent;font-size:22px}.captain-table-actions h2{margin:0 0 16px;text-align:center;font-size:16px}.captain-table-actions>div{display:grid;grid-template-columns:1fr 1fr;gap:8px}.captain-table-actions [data-captain-table-action]{display:flex;gap:9px;align-items:center;justify-content:center;min-height:48px;border-radius:10px;color:#1d2d48;background:#f4f6fa;font-weight:800}.captain-table-actions [data-captain-table-action=bill]{grid-column:1/-1;justify-content:flex-start;padding-left:17px}`;
+captainTableActionStyles.textContent = `.table-tile{background:#f3f4f6}.table-tile.is-ongoing{background:#fff0b8!important;border-color:#e4b82f}.table-tile.is-settlement{background:#daf7de!important;border-color:#79d58a}.table-tile mark{position:absolute;top:10px;right:10px;padding:3px 6px;border:0;border-radius:999px;color:#13713d;background:#a9f3b6;font-size:9px;font-weight:900}.table-tile.is-ongoing mark{color:#765800;background:#ffe568}.captain-table-actions{position:fixed;right:0;bottom:0;left:0;width:min(520px,100%);margin:0 auto;padding:20px;border:0;border-radius:22px 22px 0 0;box-shadow:0 -12px 36px #17243a42}.captain-table-actions::backdrop{background:#17243a88}.captain-table-actions>button{position:absolute;top:10px;right:14px;background:transparent;font-size:22px}.captain-table-actions h2{margin:0 0 16px;text-align:center;font-size:16px}.captain-table-actions>div{display:grid;grid-template-columns:1fr 1fr;gap:8px}.captain-table-actions [data-captain-table-action]{display:flex;gap:9px;align-items:center;justify-content:center;min-height:48px;border-radius:10px;color:#1d2d48;background:#f4f6fa;font-weight:800}.captain-table-actions [data-captain-table-action=bill]{grid-column:1/-1;justify-content:flex-start;padding-left:17px}.captain-table-actions [data-captain-table-action][hidden],.captain-order-actions [hidden],.captain-table-service button[hidden]{display:none!important}`;
 document.head.appendChild(captainTableActionStyles);
 const baseCaptainRenderTables = renderTables;
 renderTables = function () {
@@ -2318,40 +2389,87 @@ renderTables = function () {
       age.textContent = `◷ ${orderAge(order)}`;
       tile.prepend(age);
     }
+    const cell = document.createElement('div');
+    cell.className = 'table-cell';
+    tile.replaceWith(cell);
+    cell.append(tile);
+    if (order && order.captain_accessible !== false && ['viewKots','moveTables','requestBills','editOrders','cancelOrders','takePayments','applyDiscounts','assignTables'].some(captainAllowed)) {
+      cell.classList.add('has-actions');
+      const actions = document.createElement('button');
+      actions.type = 'button';
+      actions.className = 'table-actions-trigger';
+      actions.dataset.tableActions = '';
+      actions.textContent = '••• Actions';
+      actions.setAttribute('aria-label', `${tile.dataset.tableArea} table ${tile.dataset.tableNumber} actions`);
+      actions.setAttribute('aria-haspopup', 'dialog');
+      cell.append(actions);
+    }
   });
 };
 function openCaptainTableActions(tile) {
   const order = activeTable(tile.dataset.tableArea, Number(tile.dataset.tableNumber));
-  if (!order) return;
+  if (!order || order.captain_accessible === false) return;
   captainHeldTable = {
     area: tile.dataset.tableArea,
     number: Number(tile.dataset.tableNumber),
     order,
   };
   $('#captain-table-actions-title').textContent = `Table No: ${captainHeldTable.number}`;
-  captainTableActionSheet.showModal();
+  $('#captain-table-actions-status').textContent = '';
+  captainTableActionSheet.querySelector('[data-captain-table-action="view"]').hidden = !captainAllowed('viewKots');
+  captainTableActionSheet.querySelector('[data-captain-table-action="move"]').hidden = !captainAllowed('moveTables');
+  captainTableActionSheet.querySelector('[data-captain-table-action="bill"]').hidden = !captainAllowed('requestBills');
+  captainTableActionSheet.querySelector('[data-captain-table-action="manage"]').hidden = !['editOrders','cancelOrders','takePayments','applyDiscounts','assignTables'].some(captainAllowed);
+  if (![...captainTableActionSheet.querySelectorAll('[data-captain-table-action]')].some((button) => !button.hidden)) return;
+  if (!captainTableActionSheet.open) captainTableActionSheet.showModal();
+  return true;
+}
+function cancelCaptainHold() {
+  clearTimeout(captainHoldTimer);
+  captainPress?.tile.classList.remove('is-pressing');
+  captainPress = null;
 }
 $('#table-board').addEventListener(
   'pointerdown',
   (event) => {
+    cancelCaptainHold();
     const tile = event.target.closest('.table-tile.is-active');
-    if (!tile) return;
+    if (!tile || tile.disabled || event.isPrimary === false || event.button !== 0) return;
+    captainSuppressedTile = null;
+    captainPress = { tile, id: event.pointerId, x: event.clientX, y: event.clientY };
+    tile.classList.add('is-pressing');
     captainHoldTimer = setTimeout(() => {
-      captainSuppressTableClick = true;
-      openCaptainTableActions(tile);
-      navigator.vibrate?.(25);
-    }, 550);
+      if (!captainPress || !tile.isConnected) return cancelCaptainHold();
+      if (openCaptainTableActions(tile)) {
+        captainSuppressedTile = tile;
+        captainSuppressUntil = performance.now() + 1000;
+        navigator.vibrate?.(20);
+      }
+      cancelCaptainHold();
+    }, 480);
   },
   { passive: true }
 );
-['pointerup', 'pointercancel', 'pointermove'].forEach((name) =>
-  $('#table-board').addEventListener(name, () => clearTimeout(captainHoldTimer), { passive: true })
+document.addEventListener('pointermove', (event) => {
+  if (captainPress && event.pointerId === captainPress.id && Math.hypot(event.clientX - captainPress.x, event.clientY - captainPress.y) > 12) cancelCaptainHold();
+}, { passive: true });
+['pointerup', 'pointercancel'].forEach((name) =>
+  document.addEventListener(name, cancelCaptainHold, { passive: true })
 );
+window.addEventListener('blur', cancelCaptainHold);
+document.addEventListener('scroll', cancelCaptainHold, { capture: true, passive: true });
 $('#table-board').addEventListener(
   'click',
   (event) => {
-    if (captainSuppressTableClick) {
-      captainSuppressTableClick = false;
+    const trigger = event.target.closest('[data-table-actions]');
+    if (trigger) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      openCaptainTableActions(trigger.closest('.table-cell').querySelector('.table-tile'));
+      return;
+    }
+    if (event.target.closest('.table-tile') === captainSuppressedTile && performance.now() < captainSuppressUntil) {
+      captainSuppressedTile = null;
       event.preventDefault();
       event.stopImmediatePropagation();
     }
@@ -2362,7 +2480,11 @@ $('#table-board').addEventListener('contextmenu', (event) => {
   const tile = event.target.closest('.table-tile.is-active');
   if (!tile) return;
   event.preventDefault();
-  openCaptainTableActions(tile);
+  cancelCaptainHold();
+  if (openCaptainTableActions(tile)) {
+    captainSuppressedTile = tile;
+    captainSuppressUntil = performance.now() + 1000;
+  }
 });
 $('#table-board').addEventListener('keydown', (event) => {
   const tile = event.target.closest('.table-tile.is-active');
@@ -2375,6 +2497,7 @@ captainTableActionSheet.addEventListener('click', async (event) => {
     return captainTableActionSheet.close();
   const action = event.target.closest('[data-captain-table-action]')?.dataset.captainTableAction;
   if (!action || !captainHeldTable) return;
+  if (action === 'manage') { location.href = `/staff?order=${encodeURIComponent(captainHeldTable.order.id)}`; return; }
   if (action === 'view') {
     const { area, number, order } = captainHeldTable;
     captainTableActionSheet.close();
@@ -2387,12 +2510,15 @@ captainTableActionSheet.addEventListener('click', async (event) => {
     return;
   }
   if (action === 'bill') {
+    const held = captainHeldTable;
+    if (!captainAllowed('requestBills')) return;
     const button = event.target.closest('[data-captain-table-action]');
     button.disabled = true;
+    $('#captain-table-actions-status').textContent = 'Requesting bill…';
     try {
       const proximity = await captainPrintLocation();
       const response = await fetch(
-          `/api/captain/orders/${encodeURIComponent(captainHeldTable.order.id)}/service`,
+          `/api/captain/orders/${encodeURIComponent(held.order.id)}/service`,
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...captainHeaders() },
@@ -2404,6 +2530,7 @@ captainTableActionSheet.addEventListener('click', async (event) => {
       captainTableActionSheet.close();
       showCaptainToast('Bill request sent to the counter for printing.', 'success');
     } catch (error) {
+      $('#captain-table-actions-status').textContent = error.message || 'Unable to request the bill.';
       showCaptainToast(error.message || 'Unable to request the bill.', 'error');
     } finally {
       button.disabled = false;
@@ -2411,60 +2538,101 @@ captainTableActionSheet.addEventListener('click', async (event) => {
     return;
   }
   if (action === 'move') {
-    const areaNames = state.areas.map((area) => area.name),
-      requestedArea = prompt(
-        `Move Table ${captainHeldTable.number} to which area?\n${areaNames.join(', ')}`,
-        captainHeldTable.area
-      );
-    if (requestedArea === null) return;
-    const destinationArea = state.areas.find(
-      (area) => String(area.name).toLowerCase() === requestedArea.trim().toLowerCase()
-    );
-    if (!destinationArea) {
-      showCaptainToast('Choose one of your assigned table areas.', 'error');
-      return;
-    }
-    const requestedNumber = prompt(
-      `Choose a table number from ${destinationArea.from} to ${destinationArea.to}.`,
-      String(destinationArea.from)
-    );
-    if (requestedNumber === null) return;
-    const tableNumber = Number.parseInt(requestedNumber, 10);
-    if (
-      !Number.isInteger(tableNumber) ||
-      tableNumber < Number(destinationArea.from) ||
-      tableNumber > Number(destinationArea.to)
-    ) {
-      showCaptainToast('Choose an allocated table number.', 'error');
-      return;
-    }
-    const button = event.target.closest('[data-captain-table-action]');
-    button.disabled = true;
-    try {
-      const response = await fetch(
-          `/api/captain/orders/${encodeURIComponent(captainHeldTable.order.id)}/move`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...captainHeaders() },
-            body: JSON.stringify({ tableArea: destinationArea.name, tableNumber }),
-          }
-        ),
-        data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Unable to move this table.');
-      captainTableActionSheet.close();
-      await load();
-      showCaptainToast(
-        `Moved to ${destinationArea.name} Table ${String(tableNumber).padStart(2, '0')}.`,
-        'success'
-      );
-    } catch (error) {
-      showCaptainToast(error.message || 'Unable to move this table.', 'error');
-    } finally {
-      button.disabled = false;
-    }
+    if (!captainAllowed('moveTables')) return;
+    captainTableActionSheet.close();
+    const areaSelect = $('#captain-move-area');
+    areaSelect.innerHTML = state.areas.map((area) => `<option value="${esc(area.name)}">${esc(area.name)}</option>`).join('');
+    areaSelect.value = captainHeldTable.area;
+    $('#captain-move-title').textContent = `Move ${captainHeldTable.area} Table ${captainHeldTable.number}`;
+    $('#captain-move-error').textContent = '';
+    renderCaptainMoveDestinations();
+    $('#captain-move-sheet').showModal();
   }
 });
+function renderCaptainMoveDestinations() {
+  const area = state.areas.find((entry) => entry.name === $('#captain-move-area').value);
+  const numbers = [];
+  if (area) for (let number = Number(area.from); number <= Number(area.to); number++) {
+    if (!activeTable(area.name, number)) numbers.push(number);
+  }
+  $('#captain-move-number').innerHTML = numbers.length
+    ? numbers.map((number) => `<option value="${number}">Table ${String(number).padStart(2, '0')}</option>`).join('')
+    : '<option value="">No available tables</option>';
+  $('#captain-move-confirm').disabled = !numbers.length;
+}
+$('#captain-move-area').addEventListener('change', renderCaptainMoveDestinations);
+document.querySelectorAll('[data-close-move]').forEach((button) => button.addEventListener('click', () => $('#captain-move-sheet').close()));
+$('#captain-move-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const held = captainHeldTable, button = $('#captain-move-confirm');
+  if (!held || button.disabled || !captainAllowed('moveTables')) return;
+  const tableArea = $('#captain-move-area').value, tableNumber = Number($('#captain-move-number').value);
+  const area = state.areas.find((entry) => entry.name === tableArea);
+  if (!area || !Number.isInteger(tableNumber) || tableNumber < area.from || tableNumber > area.to || activeTable(tableArea, tableNumber)) {
+    $('#captain-move-error').textContent = 'Choose an available table in your assigned area.';
+    return;
+  }
+  button.disabled = true;
+  button.textContent = 'Moving…';
+  try {
+    const response = await fetchWithTimeout(`/api/captain/orders/${encodeURIComponent(held.order.id)}/move`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ...captainHeaders() },
+      body: JSON.stringify({ tableArea, tableNumber }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Unable to move this table.');
+    $('#captain-move-sheet').close();
+    await load();
+    showCaptainToast(`Moved to ${tableArea} Table ${String(tableNumber).padStart(2, '0')}.`, 'success');
+  } catch (error) {
+    $('#captain-move-error').textContent = error.message || 'Unable to move this table.';
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Move table';
+  }
+});
+// Dismiss sheets without moving the underlying board; native dialog keeps focus trapped.
+document.querySelectorAll('dialog').forEach((dialog) => {
+  let backdropPressed = false;
+  const outside = (event) => {
+    const rect = dialog.getBoundingClientRect();
+    return event.target === dialog && (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom);
+  };
+  dialog.addEventListener('pointerdown', (event) => { backdropPressed = outside(event); });
+  dialog.addEventListener('pointercancel', () => { backdropPressed = false; });
+  dialog.addEventListener('close', () => { backdropPressed = false; });
+  dialog.addEventListener('click', (event) => {
+    if (backdropPressed && outside(event)) dialog.close();
+    backdropPressed = false;
+  });
+});
+function updateCaptainVisibleViewport() {
+  const viewport = window.visualViewport;
+  if (!viewport) return;
+  document.documentElement.style.setProperty('--captain-visible-height', `${viewport.height}px`);
+  // The visual viewport shrinks when the on-screen keyboard covers a bottom sheet.
+  const keyboardInset = Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop);
+  document.documentElement.style.setProperty('--captain-keyboard-inset', `${keyboardInset > 100 ? keyboardInset : 0}px`);
+}
+window.visualViewport?.addEventListener('resize', updateCaptainVisibleViewport);
+window.visualViewport?.addEventListener('scroll', updateCaptainVisibleViewport);
+window.addEventListener('resize', updateCaptainVisibleViewport);
+updateCaptainVisibleViewport();
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) cancelCaptainHold();
+  else if (navigator.onLine && state.captain) void refreshCaptainProfile().catch(() => {});
+});
+setInterval(() => {
+  if (!document.hidden && navigator.onLine && state.captain && state.screen !== 'tables')
+    void refreshCaptainProfile().catch(() => {});
+}, 30000);
 window.addEventListener('popstate', () => {
+  const openSheet = document.querySelector('dialog[open]');
+  if (openSheet) {
+    openSheet.close();
+    history.pushState({ captain: true, screen: state.screen }, '', location.href);
+    return;
+  }
   if (!state.captain) {
     history.pushState({ captain: true, screen: 'tables' }, '', location.href);
     return;
@@ -2487,7 +2655,9 @@ window.addEventListener('popstate', () => {
 });
 clock();
 setInterval(clock, 30000);
-if (state.captain && captainIdleExpired()) {
+const captainStartupLocked = !!state.captain && captainIdleExpired();
+if (captainStartupLocked) {
+  if (navigator.onLine) void fetch('/api/staff/session', { method: 'DELETE' }).catch(() => {});
   try {
     sessionStorage.removeItem(sessionKey);
     sessionStorage.removeItem(activityKey);
@@ -2504,7 +2674,21 @@ if (state.captain) {
     await load();
     await flushPending();
   })();
-} else loadAccounts();
+} else {
+  void (async () => {
+    try {
+      if (captainStartupLocked) { void loadAccounts(); return; }
+      const response = await fetchWithTimeout('/api/staff/session', { cache: 'no-store' });
+      const session = response.ok ? await response.json() : {};
+      if (session.employee?.permissions?.captainApp && session.token) {
+        state.captain = { ...session.employee, token: session.token, remembered: session.remembered === true };
+        sessionStorage.setItem(sessionKey, JSON.stringify(state.captain));
+        persistCaptainActivity(); setCaptainUI(); loadPending(); resetCaptainIdleLock(); await load(); return;
+      }
+    } catch (_) {}
+    void loadAccounts();
+  })();
+}
 setInterval(() => {
   if (navigator.onLine && state.captain) {
     if (state.screen === 'tables') void load();

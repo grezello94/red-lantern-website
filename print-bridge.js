@@ -990,7 +990,7 @@ function billText(payload) {
     (sum, item) => sum + itemPrice(item) * Number(item.quantity || 0),
     0
   );
-  const total = Number(order.total) > 0 ? Number(order.total) : subtotal;
+  const total = order.total != null && Number.isFinite(Number(order.total)) && Number(order.total) >= 0 ? Number(order.total) : subtotal;
   const walletDiscount = Math.max(0, Math.floor(Number(order.loyalty_points_redeemed || 0)));
   const itemRows = items.flatMap((item, index) => {
     const label = `${settings.showItemSerial ? `${index + 1}. ` : ''}${item.name || 'Item'}${item.portion ? ` (${item.portion})` : ''}`;
@@ -1048,6 +1048,7 @@ function billText(payload) {
   const totals = [
     `__SUMMARY__Total Qty: ${quantity}|Sub Total: ${money(subtotal)}`,
     walletDiscount ? `__SUMMARY__Points discount|-${money(walletDiscount)}` : '',
+    Number(order.discount_amount) > 0 ? `__SUMMARY__Staff discount|-${money(Number(order.discount_amount))}` : '',
   ];
   const defaultHeader =
     'Colva Goa\n9922853605 / 9049558369\n[Follow] Insta ID:\nred_lantern_restaurant';

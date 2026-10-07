@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#8e1935"><title>Employee Workspace · Red Lantern</title><link rel="stylesheet" href="/staff.css?v=1"></head>
+  <body>
+    <header><a href="/staff" class="brand">Red Lantern <small>Employee workspace</small></a><button id="staff-logout" type="button">Sign out</button></header>
+    <main><section class="welcome"><p id="staff-role">Employee access</p><h1 id="staff-name">Loading your workspace…</h1><p id="staff-scope"></p><nav id="staff-workspaces"></nav></section>
+      <p id="staff-status" role="status" aria-live="polite"></p>
+      <section id="staff-store-controls" class="panel" hidden><h2>Online ordering</h2><label><input id="staff-store-open" type="checkbox"> Restaurant open for online orders</label></section>
+      <section id="staff-table-controls" class="panel" hidden><h2>Table allocation</h2><label>Assigned area<select id="staff-new-table-area"></select></label><button id="staff-add-table" type="button">Add next table</button></section>
+      <section id="staff-item-controls" class="panel" hidden><h2>Menu availability</h2><input id="staff-item-search" type="search" placeholder="Find a menu item" aria-label="Search menu availability"><div id="staff-items" class="item-grid"></div></section>
+      <section><div class="section-heading"><h2 id="staff-orders-title">Your orders</h2><button id="staff-refresh" type="button">Refresh</button></div><div id="staff-order-list" class="order-grid" aria-live="polite"></div></section>
+    </main>
+    <dialog id="staff-action-dialog"><form id="staff-action-form"><div class="dialog-heading"><h2 id="staff-action-title"></h2><button type="button" id="staff-action-close" aria-label="Close">×</button></div><div id="staff-action-fields"></div><p id="staff-action-error" role="alert"></p><button type="submit" id="staff-action-save">Save</button></form></dialog>
+    <script src="/staff-domain.js?v=1"></script><script src="/staff-workspace.js?v=1"></script>
+  </body>
+</html>

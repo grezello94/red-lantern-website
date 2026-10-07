@@ -8,6 +8,15 @@ const modifiers = [
   },
 ];
 
+test('a fully discounted bill preserves its authoritative zero total and shows the discount', () => {
+  const output = billText({ order: {
+    id: 'discounted-order', total: 0, discount_amount: 100,
+    items: [{ name: 'Soup', quantity: 1, price: 100 }],
+  } });
+  expect(output).toContain('__SUMMARY__Staff discount|-₹100');
+  expect(output).toContain('__TOTAL__GRAND TOTAL|₹0');
+});
+
 test('KOT output identifies duplicate copies and prints saved add-on choices', () => {
   const output = kotText({
     order: {

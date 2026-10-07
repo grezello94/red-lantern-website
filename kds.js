@@ -65,7 +65,7 @@ function render() {
           saved = kot?.tickets?.find(
             (t) => t.printerId === ticket.printer.id || t.printerLabel === ticket.printer.name
           ),
-          items = saved?.items?.length ? saved.items : ticket.items,
+          items = ticket.items,
           kotNo = kot?.kot_number || '',
           key = `${ticket.order.id}::${kotNo}::${ticket.printer.id}`,
           status =

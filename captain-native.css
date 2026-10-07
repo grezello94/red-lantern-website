@@ -1,0 +1,60 @@
+/* Final Captain-only touch layer. Editable fields retain selection/copy. */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+.captain-app button, .captain-header button, dialog button,
+.table-cell, .table-tile, .category-strip, .basket-bar {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+input, select, textarea { font-size: 16px !important; max-width: 100%; min-width: 0; }
+button, a { touch-action: manipulation; }
+.table-cell { position: relative; min-width: 0; display: flex; }
+.table-cell > .table-tile { width: 100%; height: 100%; }
+.table-cell.has-actions .table-tile { padding-bottom: 55px; }
+.table-actions-trigger {
+  position: absolute; bottom: 8px; right: 8px; z-index: 1;
+  min-height: 44px; min-width: 44px; padding: 8px 11px;
+  border: 1px solid #1f2d4420; border-radius: 12px;
+  background: #ffffffc9; color: #1f2d44; font: 750 12px system-ui;
+}
+.table-tile.is-pressing { outline: 2px solid #247cf0; outline-offset: -3px; }
+.table-cell.has-actions .table-tile em { padding-right: 0; }
+.table-cell.has-actions .table-tile em i { display: none; }
+.table-tile:active, .table-actions-trigger:active { filter: brightness(.96); }
+dialog { max-width: calc(100vw - 24px); max-height: calc(100dvh - 24px); overflow: auto; overscroll-behavior: contain; }
+dialog { max-height: calc(var(--captain-visible-height, 100dvh) - 24px); }
+@media (max-width: 620px) { .choice-sheet, .line-note-sheet { bottom: var(--captain-keyboard-inset, 0px) !important; } }
+body:has(dialog[open]) { overflow: hidden !important; }
+.captain-table-actions { padding-bottom: max(20px, env(safe-area-inset-bottom)) !important; }
+.captain-table-actions::before { content: ''; display: block; width: 36px; height: 4px; border-radius: 4px; background: #ccd5df; margin: -8px auto 16px; }
+.captain-table-actions[open], .captain-move-sheet[open] { animation: captain-sheet-in .16s ease-out; }
+.captain-move-sheet { width: min(480px, calc(100% - 24px)); border: 0; border-radius: 22px; padding: 22px; background: #fff; color: var(--cap-ink); box-shadow: 0 12px 50px #17243a40; }
+.captain-move-sheet::backdrop { background: #17243a88; }
+.captain-move-sheet p { color: var(--cap-muted); font-size: 14px; line-height: 1.5; }
+.captain-move-sheet label { display: grid; gap: 8px; margin: 16px 0; font-weight: 700; }
+.captain-move-sheet select { width: 100%; min-height: 48px; padding: 12px; border: 1px solid var(--cap-line); border-radius: 12px; background: #f8fafd; color: inherit; }
+.captain-move-footer { display: flex; gap: 12px; margin-top: 18px; }
+.captain-move-footer button { flex: 1; min-height: 48px; border-radius: 12px; }
+#captain-move-error { color: #ac263b; }
+#captain-table-actions-status { color: #ac263b; line-height: 1.4; font-size: 14px; }
+#captain-table-actions-status:empty { display: none; }
+@keyframes captain-sheet-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+@media (pointer: coarse) {
+  .icon-button, .quantity button, .header-tools button { min-width: 44px; min-height: 44px; }
+  .table-tile:hover:not(.is-active) { transform: none; }
+}
+@media (min-width: 621px) and (max-width: 1100px) {
+  .table-area-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+}
+@media (max-width: 620px) {
+  .captain-table-actions { width: 100% !important; max-width: 100%; max-height: calc(100dvh - 32px); }
+  .captain-move-sheet { margin: auto auto max(12px, env(safe-area-inset-bottom)); }
+}
+@media (max-width: 420px) {
+  .table-area-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .table-tile { min-height: 155px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; animation: none !important; transition: none !important; }
+}

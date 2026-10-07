@@ -221,13 +221,13 @@ async function dispatchBridgeAction(action) {
     response = await fetch(`/api/orders/${encodeURIComponent(payload.orderId)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: payload.status }),
+      body: JSON.stringify({ status: payload.status, reason: payload.reason || '' }),
     });
   else if (action.type === 'order-items')
     response = await fetch(`/api/orders/${encodeURIComponent(payload.orderId)}/items`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ quantities: payload.quantities }),
+      body: JSON.stringify({ quantities: payload.quantities, reason: payload.reason || '', expectedUpdatedAt: payload.expectedUpdatedAt }),
     });
   else if (action.type === 'order-table')
     response = await fetch(`/api/orders/${encodeURIComponent(payload.orderId)}/table`, {
@@ -1674,7 +1674,9 @@ function renderOrder(order) {
     )
     .join('');
   const canCancel = ['new', 'accepted', 'preparing', 'ready'].includes(order.status);
-  const canModify = age < 10 && ['new', 'accepted', 'preparing'].includes(order.status);
+  const canModify = window.currentEmployee
+    ? window.employeeCan('editOrders') && ['new','saved','held','accepted','preparing','ready'].includes(order.status)
+    : age < 10 && ['new', 'accepted', 'preparing'].includes(order.status);
   const service =
     order.mode === 'table' && order.service_state && order.service_state !== 'active'
       ? `<div class="request">Table service: <b>${esc(String(order.service_state).replace('_', ' '))}</b> <button data-clear-service="${esc(order.id)}">Handled</button></div>`
@@ -1758,7 +1760,7 @@ function openModifyOrder(id) {
         `<label><span>${esc(item.name)}${item.portion ? ` · ${esc(item.portion)}` : ''}</span><input type="number" min="0" max="20" value="${Number(item.quantity || 0)}" data-modify-quantity="${index}"></label>`
     )
     .join('');
-  dialog.innerHTML = `<button class="modify-close" aria-label="Close">×</button><span class="eyebrow">Staff only · first 10 minutes</span><h2>Modify order #${esc(String(order.daily_order_number || '').padStart(2, '0'))}</h2><p>Update quantities or set an item to 0 to remove it. Prices stay controlled by Admin.</p><div class="modify-items">${rows}</div><button class="modify-save">Save changes</button>`;
+  dialog.innerHTML = `<button class="modify-close" aria-label="Close">×</button><span class="eyebrow">${window.currentEmployee ? 'Employee permission required' : 'Staff only · first 10 minutes'}</span><h2>Modify order #${esc(String(order.daily_order_number || '').padStart(2, '0'))}</h2><p>Update quantities or set an item to 0 to remove it. Prices stay controlled by Admin.</p><div class="modify-items">${rows}</div>${window.currentEmployee?.requireEditReason !== false && window.currentEmployee ? '<label>Reason for the change<textarea id="employee-item-edit-reason" maxlength="240"></textarea></label>' : ''}<button class="modify-save">Save changes</button>`;
   dialog.showModal();
   dialog.querySelector('.modify-close').addEventListener('click', () => dialog.close());
   dialog.querySelector('.modify-save').addEventListener('click', async () => {
@@ -1768,8 +1770,10 @@ function openModifyOrder(id) {
       const quantities = [...dialog.querySelectorAll('[data-modify-quantity]')].map((input) =>
         Number(input.value || 0)
       );
+      const reason = dialog.querySelector('#employee-item-edit-reason')?.value.trim() || '';
+      if (window.currentEmployee?.requireEditReason !== false && window.currentEmployee && reason.length < 3) throw new Error('Enter a reason for editing or deleting KOT items.');
       if (
-        await queueWhenOffline('order-items', { orderId: id, quantities }, () => {
+        await queueWhenOffline('order-items', { orderId: id, quantities, reason, expectedUpdatedAt: order.updated_at }, () => {
           const order = orderRecords.get(id);
           if (order)
             order.items = (order.items || [])
@@ -1784,7 +1788,7 @@ function openModifyOrder(id) {
       const response = await fetch(`/api/orders/${encodeURIComponent(id)}/items`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ quantities }),
+        body: JSON.stringify({ quantities, reason, expectedUpdatedAt: order.updated_at }),
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || 'Unable to modify this order.');
@@ -1904,7 +1908,7 @@ async function printOrder(id, split = null) {
       (total, item) => total + Number(item.quantity || 0) * itemPrice(item),
       0
     );
-    const grandTotal = Number(order.total) > 0 ? Number(order.total) : calculatedTotal;
+    const grandTotal = order.total != null && Number.isFinite(Number(order.total)) && Number(order.total) >= 0 ? Number(order.total) : calculatedTotal;
     const walletDiscount = Math.max(0, Math.floor(Number(order.loyalty_points_redeemed || 0)));
     const dailyNumber = Number(order.daily_order_number);
     const token =
@@ -1935,7 +1939,7 @@ async function printOrder(id, split = null) {
       .join('');
     popup.document.open();
     popup.document.write(
-      `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Red Lantern · Token ${esc(token)}</title><style>@page{size:80mm auto;margin:4mm}*{box-sizing:border-box}body{width:72mm;margin:0;color:#111;font:12px Arial,sans-serif}.center{text-align:center}.restaurant{font-size:18px;font-weight:800;letter-spacing:.2px}.sub{margin:3px 0;color:#333}.rule{border:0;border-top:1px dashed #222;margin:10px 0}.wallet{padding:7px 0;font-weight:700}.details{line-height:1.55}.details b{display:inline-block;min-width:68px}table{width:100%;border-collapse:collapse;margin-top:8px;font-size:11px}th{padding:5px 0;border-bottom:1px solid #222;text-align:right;font-size:10px}th:first-child{text-align:left}td{padding:5px 0;vertical-align:top;text-align:right;border-bottom:1px dotted #bbb}.item-name{text-align:left;padding-right:5px}.totals{display:flex;justify-content:space-between;font-size:13px;font-weight:700}.grand{display:flex;justify-content:space-between;margin-top:6px;font-size:16px;font-weight:800}.note{margin-top:8px;font-size:10px;line-height:1.4}.footer{margin-top:14px;font-size:10px;text-align:center;color:#333}@media print{body{width:72mm}}</style></head><body><div class="center"><div class="restaurant">RED LANTERN RESTAURANT</div><div class="sub">Restaurant Mobile Number: 9922853605</div><div class="sub">Direct Order Receipt</div></div><hr class="rule"><div class="wallet">Wallet Points: ${Number(order.loyalty_points || 0)}</div><div class="details"><div><b>Name:</b> ${esc(order.customer_name || 'Not provided')}</div><div><b>Mobile:</b> ${esc(order.customer_phone || '—')}</div><div><b>Type:</b> ${esc(orderType)}</div><div><b>Token No:</b> ${esc(token)}</div><div><b>Placed:</b> ${esc(placedAt)}</div></div>${order.special_request ? `<div class="note"><b>Special request:</b> ${esc(order.special_request)}</div>` : ''}<hr class="rule"><table><thead><tr><th>Item</th><th>Qty</th><th>Price</th><th>Amount</th></tr></thead><tbody>${itemRows}</tbody></table><hr class="rule"><div class="totals"><span>Total Qty: ${quantity}</span><span>Items: ${items.length}</span></div><div class="totals"><span>Subtotal</span><span>${money(calculatedTotal)}</span></div>${walletDiscount ? `<div class="totals"><span>Wallet points discount</span><span>−${money(walletDiscount)}</span></div>` : ''}<div class="grand"><span>GRAND TOTAL</span><span>${money(grandTotal)}</span></div><hr class="rule"><div class="footer">Thank you for ordering with us!<br>Red Lantern Restaurant</div><script>window.onload=()=>setTimeout(()=>window.print(),150);window.onafterprint=()=>window.close();<\/script></body></html>`
+      `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Red Lantern · Token ${esc(token)}</title><style>@page{size:80mm auto;margin:4mm}*{box-sizing:border-box}body{width:72mm;margin:0;color:#111;font:12px Arial,sans-serif}.center{text-align:center}.restaurant{font-size:18px;font-weight:800;letter-spacing:.2px}.sub{margin:3px 0;color:#333}.rule{border:0;border-top:1px dashed #222;margin:10px 0}.wallet{padding:7px 0;font-weight:700}.details{line-height:1.55}.details b{display:inline-block;min-width:68px}table{width:100%;border-collapse:collapse;margin-top:8px;font-size:11px}th{padding:5px 0;border-bottom:1px solid #222;text-align:right;font-size:10px}th:first-child{text-align:left}td{padding:5px 0;vertical-align:top;text-align:right;border-bottom:1px dotted #bbb}.item-name{text-align:left;padding-right:5px}.totals{display:flex;justify-content:space-between;font-size:13px;font-weight:700}.grand{display:flex;justify-content:space-between;margin-top:6px;font-size:16px;font-weight:800}.note{margin-top:8px;font-size:10px;line-height:1.4}.footer{margin-top:14px;font-size:10px;text-align:center;color:#333}@media print{body{width:72mm}}</style></head><body><div class="center"><div class="restaurant">RED LANTERN RESTAURANT</div><div class="sub">Restaurant Mobile Number: 9922853605</div><div class="sub">Direct Order Receipt</div></div><hr class="rule"><div class="wallet">Wallet Points: ${Number(order.loyalty_points || 0)}</div><div class="details"><div><b>Name:</b> ${esc(order.customer_name || 'Not provided')}</div><div><b>Mobile:</b> ${esc(order.customer_phone || '—')}</div><div><b>Type:</b> ${esc(orderType)}</div><div><b>Token No:</b> ${esc(token)}</div><div><b>Placed:</b> ${esc(placedAt)}</div></div>${order.special_request ? `<div class="note"><b>Special request:</b> ${esc(order.special_request)}</div>` : ''}<hr class="rule"><table><thead><tr><th>Item</th><th>Qty</th><th>Price</th><th>Amount</th></tr></thead><tbody>${itemRows}</tbody></table><hr class="rule"><div class="totals"><span>Total Qty: ${quantity}</span><span>Items: ${items.length}</span></div><div class="totals"><span>Subtotal</span><span>${money(calculatedTotal)}</span></div>${Number(order.discount_amount) > 0 ? `<div class="totals"><span>Staff discount</span><span>−${money(Number(order.discount_amount))}</span></div>` : ''}${walletDiscount ? `<div class="totals"><span>Wallet points discount</span><span>−${money(walletDiscount)}</span></div>` : ''}<div class="grand"><span>GRAND TOTAL</span><span>${money(grandTotal)}</span></div><hr class="rule"><div class="footer">Thank you for ordering with us!<br>Red Lantern Restaurant</div><script>window.onload=()=>setTimeout(()=>window.print(),150);window.onafterprint=()=>window.close();<\/script></body></html>`
     );
     popup.document.close();
   } catch (error) {
@@ -3701,13 +3705,17 @@ viewKotDialog.addEventListener('click', async (event) => {
       return;
     }
   } else if (!confirm('Delete this item from the active table bill?')) return;
+  const reason = window.currentEmployee && window.currentEmployee.requireEditReason !== false
+    ? prompt('Reason for editing or deleting this KOT item:') : '';
+  if (reason === null) return;
+  if (window.currentEmployee && window.currentEmployee.requireEditReason !== false && reason.trim().length < 3) { alert('Enter a brief reason for this change.'); return; }
   const quantities = (order.items || []).map((item, itemIndex) =>
     itemIndex === index ? quantity : Number(item.quantity || 0)
   );
   button.disabled = true;
   try {
     if (
-      await queueWhenOffline('order-items', { orderId, quantities }, () => {
+      await queueWhenOffline('order-items', { orderId, quantities, reason, expectedUpdatedAt: order.updated_at }, () => {
         order.items = order.items
           .map((item, itemIndex) => ({ ...item, quantity: quantities[itemIndex] }))
           .filter((item) => item.quantity > 0);
@@ -3721,7 +3729,7 @@ viewKotDialog.addEventListener('click', async (event) => {
     const response = await fetch(`/api/orders/${encodeURIComponent(orderId)}/items`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ quantities }),
+      body: JSON.stringify({ quantities, reason, expectedUpdatedAt: order.updated_at }),
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok)
