@@ -2058,6 +2058,52 @@ main {
   cursor: pointer;
 }
 
+/* Larger order-line text remains readable without clipping long dish names. */
+#counter-order-panel .counter-cart-line {
+  min-height: 84px;
+  height: auto;
+  gap: 12px;
+  padding: 14px 0;
+  line-height: 1.35;
+}
+#counter-order-panel .counter-cart-line > div:first-child {
+  min-width: 0;
+}
+#counter-order-panel .counter-cart-line > div:first-child > b {
+  font-size: 20px;
+  overflow-wrap: anywhere;
+}
+#counter-order-panel .counter-cart-line small {
+  font-size: 15px;
+}
+#counter-order-panel .counter-cart-line strong,
+#counter-order-panel .counter-quantity b {
+  font-size: 20px;
+  white-space: nowrap;
+}
+#counter-order-panel .counter-quantity button {
+  width: 40px;
+  height: 40px;
+  font-size: 24px;
+}
+#counter-order-panel .counter-cart-items {
+  container-type: inline-size;
+}
+@container (max-width: 380px) {
+  #counter-order-panel .counter-cart-line {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  #counter-order-panel .counter-cart-line > div:first-child {
+    grid-column: 1 / -1;
+  }
+  #counter-order-panel .counter-quantity {
+    justify-self: start;
+  }
+  #counter-order-panel .counter-cart-line > strong {
+    justify-self: end;
+  }
+}
+
 /* Phone and compact tablet ordering keeps the basket reachable while staff browse a long menu. */
 #mobile-cart-toggle,
 #mobile-cart-close,
