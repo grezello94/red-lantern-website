@@ -83,12 +83,22 @@ async function main() {
       !health.version ||
       !health.workstation?.id ||
       !health.capabilities?.durablePrintJobs ||
+      !health.capabilities?.durablePairing ||
       !health.capabilities?.testPrint
     )
       throw new Error(`Bridge health check failed. ${output}`);
     const printerDiscovery = await request(port, '/v1/printers');
     if (printerDiscovery.workstation?.id !== health.workstation.id)
       throw new Error('Bridge workstation identity was not stable across endpoints.');
+    const rememberedPairing = await request(port, '/v1/config', {
+      method: 'PUT', body: { revision: '9007199254740993', config: {
+        printers: [{ id: 'smoke-kitchen', name: 'Smoke kitchen', type: 'kot', deviceName: 'Smoke queue',
+          workstationId: health.workstation.id }],
+        routes: [{ id: 'smoke-route', printerId: 'smoke-kitchen', category: '*' }],
+      } },
+    });
+    if (rememberedPairing.config?.printers?.length !== 1)
+      throw new Error('Bridge did not retain the paired queue.');
     const queued = await request(port, '/v1/ledger/actions', {
       method: 'POST',
       body: {
@@ -109,6 +119,8 @@ async function main() {
     // the child exactly as a Windows process failure would, then prove both the
     // durable workstation identity and queued order survive automatic recovery.
     const originalPid = health.pid;
+    await fs.writeFile(path.join(dataDir, 'workstation.json'), '{interrupted settings write');
+    await fs.writeFile(path.join(dataDir, 'printer-config.json'), '{interrupted settings write');
     process.kill(originalPid, 'SIGTERM');
     let restarted;
     for (let attempt = 0; attempt < 60; attempt += 1) {
@@ -127,6 +139,14 @@ async function main() {
       restarted.ledgerSummary?.pendingActions !== 1
     )
       throw new Error(`Supervisor did not recover Bridge and its durable ledger. ${output}`);
+    const restoredPairing = await request(port, '/v1/config');
+    if (JSON.stringify(restoredPairing.config) !== JSON.stringify(rememberedPairing.config))
+      throw new Error('Supervisor recovery lost saved printer pairing.');
+    const staleSync = await request(port, '/v1/config', { method: 'PUT', body: {
+      background: true, revision: '9007199254740992', config: { printers: [], routes: [] },
+    } });
+    if (!staleSync.preserved || staleSync.config.printers.length !== 1 || staleSync.config.routes.length !== 1)
+      throw new Error('Background recovery replaced a saved printer connection.');
     try {
       await request(port, '/v1/test-print?check=compatibility', { method: 'POST', body: {} });
       throw new Error('Bridge accepted an empty test-print request.');

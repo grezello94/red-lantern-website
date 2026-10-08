@@ -401,3 +401,189 @@ test('a stalled cloud request expires and leaves printing recovery available', a
   expect(outcome.recoveryActive).toBe(false);
   expect(outcome.activePrints).toBe(0);
 });
+
+test('an established printer pairing survives a service interruption and app reopen, then resumes saved tickets silently', async ({ page }) => {
+  let bridgeAvailable = true;
+  let savedOrderAvailable = false;
+  const savedOrder = order();
+  const jobs = [];
+  const physicalJobIds = new Set();
+  const popups = [];
+  page.on('popup', (popup) => popups.push(popup));
+  const { dialogs } = await mockPrintingApp(page, {
+    cloud: async (route, path, method) => {
+      if (path === '/api/orders') {
+        await route.fulfill({ contentType: 'application/json', body: JSON.stringify(savedOrderAvailable ? [savedOrder] : []) });
+        return true;
+      }
+      if (path.endsWith('/kots')) {
+        const savedKot = { kot_number: 1, tickets: [{ printerName: 'Kitchen queue', items: savedOrder.items }] };
+        await route.fulfill({ contentType: 'application/json', body: JSON.stringify(method === 'POST'
+          ? { kotNumber: 1, tickets: savedKot.tickets, order: savedOrder }
+          : [savedKot]) });
+        return true;
+      }
+    },
+    bridge: async (route, path) => {
+      if (!bridgeAvailable) {
+        await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ ok: false, error: 'Printer service is starting.' }) });
+        return true;
+      }
+      if (path === '/v1/print-kot') {
+        const job = route.request().postDataJSON();
+        jobs.push(job);
+        const duplicate = physicalJobIds.has(job.printJobId);
+        physicalJobIds.add(job.printJobId);
+        await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, duplicate }) });
+        return true;
+      }
+    },
+  });
+  await page.evaluate(() => checkPrintBridgeSetup());
+  expect(await page.evaluate(() => installedSystemPrinters)).toHaveLength(2);
+
+  bridgeAvailable = false;
+  savedOrderAvailable = true;
+  const pendingResult = await page.evaluate(async (saved) => {
+    bridgeHealthSnapshot = null;
+    return autoPrintOrder(saved);
+  }, savedOrder);
+  expect(pendingResult.ok).toBe(false);
+  expect(await page.evaluate(() => readPendingPrints())).toHaveProperty(savedOrder.id);
+  await expect(page.locator('#orders-printing-status')).toBeHidden();
+  expect(jobs).toEqual([]);
+
+  await page.reload();
+  await page.waitForFunction(() => typeof autoPrintOrder === 'function' && !ordersRefreshInFlight);
+  await page.evaluate(() => checkPrintBridgeSetup());
+  await expect(page.locator('#orders-printing-status')).toBeHidden();
+  expect(await page.evaluate(() => installedSystemPrinters)).toEqual(setupStatus().printers);
+  expect(await page.evaluate(() => readCachedOperationsConfig())).toMatchObject(printerConfig);
+  expect(await page.evaluate(() => readPendingPrints())).toHaveProperty(savedOrder.id);
+  await page.evaluate(() => {
+    operationsPanel.hidden = false;
+    operationsTab = 'printers';
+    renderOperations();
+  });
+  await expect(page.locator('.printer-card-list .printer-card')).toHaveCount(2);
+  await expect(page.locator('.bridge-status')).not.toContainText(/not detected|reconnect|starting|install/i);
+  await page.evaluate(() => { operationsPanel.hidden = true; });
+
+  bridgeAvailable = true;
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event('focus'));
+    window.dispatchEvent(new Event('online'));
+  });
+  await expect.poll(() => jobs.length).toBe(1);
+  await expect.poll(() => page.evaluate(() => Object.keys(readPendingPrints()).length)).toBe(0);
+  await expect(page.locator('#orders-printing-status')).toBeHidden();
+  await page.evaluate(() => recoverPendingPrinting());
+  expect(physicalJobIds.size).toBe(1);
+  expect(jobs[0].printJobId).toBe(`auto-kot:${savedOrder.id}:1:Kitchen queue`);
+  expect(dialogs).toEqual([]);
+  expect(popups).toEqual([]);
+});
+
+test('failed system-printer discovery retains paired queues and routing across app reopen', async ({ page }) => {
+  let discoveryAvailable = true;
+  await mockPrintingApp(page, {
+    bridge: async (route, path) => {
+      if (discoveryAvailable || !['/v1/printers', '/v1/setup-status'].includes(path)) return;
+      await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ ok: false, error: 'Windows printer discovery is temporarily unavailable.' }) });
+      return true;
+    },
+  });
+  await page.evaluate(async () => {
+    await checkPrintBridgeSetup();
+    await discoverSystemPrinters();
+  });
+  const savedPrinters = await page.evaluate(() => installedSystemPrinters);
+  discoveryAvailable = false;
+  await page.evaluate(() => discoverSystemPrinters());
+  expect(await page.evaluate(() => installedSystemPrinters)).toEqual(savedPrinters);
+  expect(await page.evaluate(() => readCachedOperationsConfig())).toMatchObject(printerConfig);
+
+  await page.reload();
+  await page.waitForFunction(() => typeof discoverSystemPrinters === 'function' && !ordersRefreshInFlight);
+  await page.evaluate(() => checkPrintBridgeSetup());
+  expect(await page.evaluate(() => installedSystemPrinters)).toEqual(savedPrinters);
+  expect(await page.evaluate(() => readCachedOperationsConfig())).toMatchObject(printerConfig);
+});
+
+test('background connection checks preserve the active printer-settings draft and focus', async ({ page }) => {
+  const { dialogs } = await mockPrintingApp(page);
+  await page.evaluate(async (config) => {
+    await checkPrintBridgeSetup();
+    operationsConfig = config;
+    operationsPanel.hidden = false;
+    operationsTab = 'printers';
+    assignmentPrinterId = 'kitchen';
+    assignmentMode = 'edit';
+    renderOperations();
+  }, printerConfig);
+  await page.locator('#printer-edit-name').fill('Kitchen printer — unsaved draft');
+  await page.locator('#printer-edit-kotItemFontSize').fill('19');
+  await page.locator('#printer-edit-name').focus();
+  await page.evaluate(() => {
+    window.printingDraftNode = document.getElementById('printer-edit-name');
+    printingDraftNode.setSelectionRange(4, 11);
+    printBridgeConfigState = 'waiting-for-bridge';
+  });
+  await page.evaluate(() => recoverPendingPrinting());
+  await expect(page.locator('#printer-edit-name')).toHaveValue('Kitchen printer — unsaved draft');
+  await expect(page.locator('#printer-edit-kotItemFontSize')).toHaveValue('19');
+  await expect(page.locator('#printer-edit-name')).toBeFocused();
+  expect(await page.evaluate(() => ({
+    sameNode: printingDraftNode === document.getElementById('printer-edit-name'),
+    selectionStart: printingDraftNode.selectionStart,
+    selectionEnd: printingDraftNode.selectionEnd,
+  }))).toEqual({ sameNode: true, selectionStart: 4, selectionEnd: 11 });
+  expect(dialogs).toEqual([]);
+});
+
+test('the local Bridge restores remembered printer assignments after browser storage is cleared while the website is unavailable', async ({ page }) => {
+  let websiteAvailable = true;
+  let durableConfig = { ...printerConfig, workstation: { id: 'counter-1' }, savedAt: new Date().toISOString() };
+  const overwrittenConfigs = [];
+  const { dialogs } = await mockPrintingApp(page, {
+    cloud: async (route, path) => {
+      if (websiteAvailable || !['/api/orders/readiness', '/api/orders/operations'].includes(path)) return;
+      await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'The website is temporarily unavailable.' }) });
+      return true;
+    },
+    bridge: async (route, path, method) => {
+      if (path === '/health') {
+        await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+          ok: true, version: '2026.10.08.1', workstation: { id: 'counter-1' }, ledger: 'ready',
+          capabilities: { durablePairing: true, backgroundConfigSync: true },
+        }) });
+        return true;
+      }
+      if (path !== '/v1/config') return;
+      if (method === 'PUT') {
+        const body = route.request().postDataJSON();
+        overwrittenConfigs.push(body.config || body);
+        durableConfig = { ...(body.config || body), workstation: { id: 'counter-1' }, savedAt: new Date().toISOString() };
+      }
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ config: durableConfig }) });
+      return true;
+    },
+  });
+  await page.evaluate(() => checkPrintBridgeSetup());
+  expect(durableConfig).toMatchObject(printerConfig);
+  websiteAvailable = false;
+  overwrittenConfigs.length = 0;
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();
+  await page.waitForFunction(() => typeof checkPrintBridgeSetup === 'function' && !ordersRefreshInFlight);
+  await page.evaluate(() => checkPrintBridgeSetup());
+  expect(await page.evaluate(() => readCachedOperationsConfig())).toMatchObject(printerConfig);
+  expect(await page.evaluate(() => installedSystemPrinters)).toEqual(setupStatus().printers);
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('red-lantern-printer-pairing-v1')))).toMatchObject({
+    origin: 'http://127.0.0.1:9124', workstation: { id: 'counter-1' }, config: printerConfig,
+  });
+  expect(overwrittenConfigs.every(config => config.printers.length === 2 && config.routes.length === 1)).toBe(true);
+  expect(durableConfig).toMatchObject(printerConfig);
+  await expect(page.locator('#orders-printing-status')).toBeHidden();
+  expect(dialogs).toEqual([]);
+});

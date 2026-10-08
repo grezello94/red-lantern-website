@@ -15,6 +15,8 @@ The bridge tries CIM, PowerShell PrinterManagement, and WMIC discovery, in that 
 
 After setup, the Bridge starts silently when the counter user signs in after a reboot. No Command Prompt or PowerShell window is needed during daily operation. Keep the Orders console open on that computer for automatic KOT and bill dispatch. An interrupted print is held for review rather than blindly reprinted; physical printer and network speed still determine when paper comes out.
 
+The established workstation and printer pairing is retained across app closes, service restarts, temporary connection failures, and failed printer discovery. Orders reconnects in the background and preserves the last confirmed queues and routing during recovery. If browser storage is cleared, the local Bridge restores the saved assignments. Routine reconnection does not require reinstalling the Bridge, repeating setup, or dismissing alerts. Keep using the same Windows account; removing saved Bridge data or formatting the computer removes that remembered setup.
+
 The Orders readiness check also blocks a green “Printing is ready” state when Windows or CUPS reports a configured queue as Offline/Error, when a saved queue is missing, when a configured LAN endpoint does not accept a TCP connection, or when a live menu item has no KOT route.
 
 ## macOS

@@ -15,6 +15,7 @@ let maximumActivePrints;
 let commands;
 let execFile;
 let tandoorStatus;
+let discoveryAvailable;
 
 function request(pathname, method = 'GET', body) {
   return new Promise((resolve, reject) => {
@@ -57,6 +58,8 @@ async function startBridge() {
         done(null, 'printed');
       }, 20);
     }
+    if (script.includes('$ports=@{}') && !discoveryAvailable)
+      return done(new Error('The Windows spooler is temporarily unavailable.'));
     if (script.includes('$ports=@{}'))
       return done(
         null,
@@ -88,6 +91,7 @@ beforeEach(async () => {
   nativePrints = activePrints = maximumActivePrints = 0;
   commands = [];
   tandoorStatus = 'Offline';
+  discoveryAvailable = true;
   await startBridge();
 });
 afterEach(async () => {
@@ -187,4 +191,99 @@ test('reachable LAN port cannot conceal a real paper jam', async () => {
   const setup = await request('/v1/setup-status');
   expect(setup.body.unreachableConfiguredPrinterCount).toBe(0);
   expect(setup.body.unavailableConfiguredPrinterCount).toBe(1);
+});
+
+async function pairCounter(revision = '1000') {
+  const health = await request('/health');
+  const result = await request('/v1/config', 'PUT', { revision, config: {
+    printers: [{ id: 'tandoor', name: 'Tandoor', capabilities: ['kot', 'bill'],
+      deviceName: 'Tandoor Queue', deviceId: 'Tandoor Queue', workstationId: health.body.workstation.id,
+      formats: { kot: { fontSize: 12, receiptFooter: 'Counter footer' } } }],
+    routes: [{ id: 'soups', printerId: 'tandoor', category: 'Soup' }],
+    tableAreas: [{ name: 'AC', from: 1, to: 4 }],
+  } });
+  expect(result.status).toBe(200);
+  expect(result.body.config.printers).toHaveLength(1);
+  return { workstation: health.body.workstation, config: result.body.config };
+}
+
+async function restartBridge() {
+  await new Promise(resolve => bridge.server.close(resolve));
+  bridge.closeLedger();
+  await startBridge();
+}
+
+test('paired workstation and queue bindings survive a restart with independent durable copies', async () => {
+  const saved = await pairCounter();
+  const primary = JSON.parse(await fs.readFile(path.join(directory, 'printer-config.json'), 'utf8'));
+  const backup = JSON.parse(await fs.readFile(path.join(directory, 'printer-config.json.bak'), 'utf8'));
+  expect(backup).toEqual(primary);
+  await restartBridge();
+  expect((await request('/health')).body.workstation.id).toBe(saved.workstation.id);
+  const restored = (await request('/v1/config')).body.config;
+  expect(restored).toEqual(saved.config);
+  expect(restored.printers[0].formats.kot.receiptFooter).toBe('Counter footer');
+  expect(restored.tableAreas).toEqual([{ name: 'AC', from: 1, to: 4 }]);
+});
+
+test.each(['primary', 'both'])('damaged %s JSON settings recover the established pairing without a new identity', async (copies) => {
+  const saved = await pairCounter();
+  await new Promise(resolve => bridge.server.close(resolve));
+  bridge.closeLedger();
+  for (const name of ['workstation.json', 'printer-config.json']) {
+    await fs.writeFile(path.join(directory, name), '{interrupted write');
+    if (copies === 'both') await fs.writeFile(path.join(directory, `${name}.bak`), '');
+  }
+  await startBridge();
+  expect((await request('/health')).body.workstation.id).toBe(saved.workstation.id);
+  expect((await request('/v1/config')).body.config).toEqual(saved.config);
+  for (const name of ['workstation.json', 'workstation.json.bak'])
+    expect(JSON.parse(await fs.readFile(path.join(directory, name), 'utf8')).id).toBe(saved.workstation.id);
+  expect(JSON.parse(await fs.readFile(path.join(directory, 'printer-config.json'), 'utf8'))).toEqual(saved.config);
+});
+
+test('a changed workstation file cannot replace the identity remembered in the local ledger', async () => {
+  const saved = await pairCounter();
+  await fs.writeFile(path.join(directory, 'workstation.json'), JSON.stringify({ id: 'ws_accidental_replacement' }));
+  await restartBridge();
+  expect((await request('/health')).body.workstation.id).toBe(saved.workstation.id);
+  expect((await request('/v1/config')).body.config.printers[0].workstationId).toBe(saved.workstation.id);
+});
+
+test('background sync with no discovery and an empty or stale payload keeps the established pairing', async () => {
+  const saved = await pairCounter('9007199254740993');
+  discoveryAvailable = false;
+  await restartBridge();
+  for (const revision of [undefined, '9007199254740992', '9007199254740993']) {
+    const result = await request('/v1/config', 'PUT', { background: true, revision,
+      config: { printers: [], routes: [] } });
+    expect(result.status).toBe(200);
+    expect(result.body.preserved).toBe(true);
+    expect(result.body.config.printers).toEqual(saved.config.printers);
+    expect(result.body.config.routes).toEqual(saved.config.routes);
+    expect(result.body.config.configRevision).toBe('9007199254740993');
+  }
+  expect((await request('/health')).body.workstation.id).toBe(saved.workstation.id);
+});
+
+test('a newer authoritative revision propagates a deliberate deletion while stale sync cannot restore it', async () => {
+  const saved = await pairCounter('9007199254740993');
+  const deleted = await request('/v1/config', 'PUT', { background: true, revision: '9007199254740994',
+    config: { printers: [], routes: [] } });
+  expect(deleted.status).toBe(200);
+  expect(deleted.body.preserved).toBe(false);
+  expect(deleted.body.config.printers).toEqual([]);
+  const stale = await request('/v1/config', 'PUT', { background: true, revision: '9007199254740993', config: saved.config });
+  expect(stale.body.config.printers).toEqual([]);
+  await restartBridge();
+  expect((await request('/v1/config')).body.config.printers).toEqual([]);
+  expect((await request('/health')).body.workstation.id).toBe(saved.workstation.id);
+});
+
+test('explicit deletion remains available without manufacturing a new workstation', async () => {
+  const saved = await pairCounter();
+  const deleted = await request('/v1/config', 'PUT', { background: false, config: { printers: [], routes: [] } });
+  expect(deleted.status).toBe(200);
+  expect(deleted.body.config.printers).toEqual([]);
+  expect((await request('/health')).body.workstation.id).toBe(saved.workstation.id);
 });

@@ -22,12 +22,14 @@ const { DatabaseSync } = require('node:sqlite');
 const PORT = Number(process.env.PRINT_BRIDGE_PORT || 9124);
 // Keep this in sync with downloads/print-bridge-release.json. Operations uses
 // that signed-off release record to tell staff whether this computer is current.
-const BRIDGE_VERSION = '2026.10.08.1';
+const BRIDGE_VERSION = '2026.10.08.2';
 const BRIDGE_CAPABILITIES = Object.freeze({
   testPrint: true,
   setupStatus: true,
   durablePrintJobs: true,
   queueBindings: true,
+  durablePairing: true,
+  backgroundConfigSync: true,
 });
 const PRINT_JOB_LEASE_MS = Math.max(
   30000,
@@ -56,6 +58,8 @@ const networkProbePromises = new Map();
 let windowsPrinterSnapshotPromise = null;
 let windowsPrinterSnapshotCache = null;
 const physicalPrintQueues = new Map();
+const jsonFileOperations = new Map();
+const savedJsonValues = new Map();
 
 function closeLedger() {
   try {
@@ -79,6 +83,7 @@ function localLedger() {
   if (ledger) return ledger;
   fsSync.mkdirSync(storageDir, { recursive: true });
   ledger = new DatabaseSync(ledgerFile);
+  ledger.exec('PRAGMA synchronous=FULL');
   ledger.exec(`CREATE TABLE IF NOT EXISTS ledger_actions (
     id TEXT PRIMARY KEY,
     type TEXT NOT NULL,
@@ -93,6 +98,10 @@ function localLedger() {
   ledger.exec(
     'CREATE INDEX IF NOT EXISTS ledger_actions_status_created ON ledger_actions(status, created_at)'
   );
+  ledger.exec(`CREATE TABLE IF NOT EXISTS bridge_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  )`);
   ledger.exec(`CREATE TABLE IF NOT EXISTS print_jobs (
     id TEXT PRIMARY KEY,
     kind TEXT NOT NULL,
@@ -656,27 +665,301 @@ function formatPrinters(names) {
     .map((name) => ({ id: name, name }));
 }
 
-async function readJson(file, fallback) {
+function durableJsonKey(file) {
+  if (file === workstationFile) return 'workstation';
+  if (file === configFile) return 'printer-config';
+  return '';
+}
+
+function validStoredJson(file, value) {
+  if (file === workstationFile)
+    return !!value && typeof value.id === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(value.id);
+  if (file === configFile)
+    return !!value && Array.isArray(value.printers) && Array.isArray(value.routes);
+  return true;
+}
+
+function withJsonFileOperation(file, operation) {
+  const previous = jsonFileOperations.get(file) || Promise.resolve();
+  const next = previous.catch(() => {}).then(operation);
+  jsonFileOperations.set(file, next);
+  return next.finally(() => {
+    if (jsonFileOperations.get(file) === next) jsonFileOperations.delete(file);
+  });
+}
+
+async function atomicJsonCopy(file, value) {
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  const temporary = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`;
+  let handle;
   try {
-    return JSON.parse(await fs.readFile(file, 'utf8'));
-  } catch (error) {
-    if (error.code === 'ENOENT') return fallback;
-    throw error;
+    handle = await fs.open(temporary, 'wx', 0o600);
+    await handle.writeFile(JSON.stringify(value, null, 2), 'utf8');
+    await handle.sync();
+    await handle.close();
+    handle = null;
+    // Antivirus and Windows spooler activity may briefly lock a state file.
+    // Retry the atomic replacement without deleting the known-good copy.
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        await fs.rename(temporary, file);
+        break;
+      } catch (error) {
+        if (attempt >= 4 || !['EBUSY', 'EPERM', 'EACCES'].includes(error.code)) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 40 * 2 ** attempt));
+      }
+    }
+    // POSIX requires the directory entry to be flushed as well. Windows does
+    // not expose a directory fsync through Node, but the file itself is flushed.
+    if (process.platform !== 'win32') {
+      let directory;
+      try {
+        directory = await fs.open(path.dirname(file), 'r');
+        await directory.sync();
+      } finally {
+        await directory?.close();
+      }
+    }
+  } finally {
+    await handle?.close();
+    await fs.unlink(temporary).catch(() => {});
   }
 }
 
-async function writeJson(file, value) {
-  await fs.mkdir(storageDir, { recursive: true });
-  const temporary = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`;
-  await fs.writeFile(temporary, JSON.stringify(value, null, 2), 'utf8');
-  await fs.rename(temporary, file);
+async function readJsonUnlocked(file, fallback) {
+  const key = durableJsonKey(file);
+  if (!key) {
+    try {
+      return JSON.parse(await fs.readFile(file, 'utf8'));
+    } catch (error) {
+      if (error.code === 'ENOENT') return fallback;
+      throw error;
+    }
+  }
+  const copies = [];
+  const failures = [];
+  for (const copyFile of [file, `${file}.bak`]) {
+    try {
+      const value = JSON.parse(await fs.readFile(copyFile, 'utf8'));
+      if (!validStoredJson(file, value)) throw new Error('Saved printer state is incomplete.');
+      copies.push({ source: copyFile, value });
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  let metadata;
+  try {
+    const row = localLedger().prepare('SELECT value FROM bridge_settings WHERE key=?').get(key);
+    if (row) {
+      const value = JSON.parse(row.value);
+      if (!validStoredJson(file, value))
+        throw new Error('Saved printer ledger state is incomplete.');
+      metadata = value;
+      copies.push({ source: 'ledger', value });
+    }
+  } catch (error) {
+    failures.push(error);
+  }
+  // The SQLite identity is a third durable copy. It must win if an accidental
+  // edit introduces another valid-looking workstation ID into a JSON file.
+  let value = file === workstationFile && metadata ? metadata : copies[0]?.value;
+  if (file === configFile && copies.length)
+    value = copies.reduce(
+      (latest, copy) =>
+        String(copy.value.savedAt || '') > String(latest.savedAt || '') ? copy.value : latest,
+      copies[0].value
+    );
+  if (!value) value = savedJsonValues.get(file);
+  if (!value) {
+    const failure = failures.find((error) => error.code !== 'ENOENT');
+    if (failure) throw failure;
+    return fallback;
+  }
+  savedJsonValues.set(file, value);
+  const encoded = JSON.stringify(value);
+  // Heal a missing/truncated copy in the background path. A temporary disk
+  // lock never changes this machine's ID or erases an established pairing.
+  for (const copyFile of [file, `${file}.bak`]) {
+    const copy = copies.find((candidate) => candidate.source === copyFile);
+    if (!copy || JSON.stringify(copy.value) !== encoded)
+      await atomicJsonCopy(copyFile, value).catch(() => {});
+  }
+  if (!metadata || JSON.stringify(metadata) !== encoded) {
+    try {
+      localLedger()
+        .prepare(
+          'INSERT INTO bridge_settings(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value'
+        )
+        .run(key, encoded);
+    } catch (_) {}
+  }
+  return value;
+}
+
+function readJson(file, fallback) {
+  return withJsonFileOperation(file, () => readJsonUnlocked(file, fallback));
+}
+
+async function writeJsonUnlocked(file, value) {
+  const key = durableJsonKey(file);
+  let persisted = false;
+  let failure;
+  if (key) {
+    try {
+      localLedger()
+        .prepare(
+          'INSERT INTO bridge_settings(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value'
+        )
+        .run(key, JSON.stringify(value));
+      persisted = true;
+    } catch (error) {
+      failure = error;
+    }
+  }
+  for (const copyFile of key ? [file, `${file}.bak`] : [file]) {
+    try {
+      await atomicJsonCopy(copyFile, value);
+      persisted = true;
+    } catch (error) {
+      failure = error;
+    }
+  }
+  if (!persisted)
+    throw failure || new Error('Unable to retain printer configuration on this computer.');
+  if (key) savedJsonValues.set(file, value);
+}
+
+function writeJson(file, value) {
+  return withJsonFileOperation(file, () => writeJsonUnlocked(file, value));
+}
+
+function configRevision(value) {
+  const revision = String(value || '').trim();
+  return /^\d{1,30}$/.test(revision) ? revision : '';
+}
+
+async function saveLocalPrinterConfig(payload) {
+  const config = payload?.config;
+  const background = payload?.background === true;
+  if (!config || !Array.isArray(config.printers) || (background && !Array.isArray(config.routes)))
+    throw new Error('A complete printer configuration is required before updating saved pairing.');
+  const identity = await workstationIdentity();
+  // A driver/spooler outage cannot delete remembered bindings. Already-paired
+  // devices are assigned by durable workstation ID, independent of discovery.
+  const installed = await installedPrinters().catch(() => []);
+  return withJsonFileOperation(configFile, async () => {
+    const saved = await readJsonUnlocked(configFile, { printers: [], routes: [] });
+    const installedNames = new Set(installed.map((printer) => String(printer.name).trim()));
+    const incomingRevision = configRevision(payload.revision || config.configRevision);
+    const savedRevision = configRevision(saved.sourceRevision || saved.configRevision);
+    const hasNewerRevision =
+      !!incomingRevision && BigInt(incomingRevision) > BigInt(savedRevision || '0');
+    const hasEstablishedConfig = !!saved.savedAt || !!savedRevision || saved.printers.length > 0 || saved.routes.length > 0;
+    const preserveSaved = background && hasEstablishedConfig && !hasNewerRevision;
+    const savedPrinters = new Map(saved.printers.map((printer) => [String(printer.id), printer]));
+    const incomingPrinters = config.printers.filter(
+      (printer) => printer && typeof printer === 'object'
+    );
+    const candidates = preserveSaved ? saved.printers : incomingPrinters;
+    const printers = candidates
+      .slice(0, 250)
+      .map((printer) => {
+        const remembered = savedPrinters.get(String(printer.id));
+        if (
+          !background ||
+          !remembered ||
+          (printer.workstationId && printer.workstationId !== identity.id)
+        )
+          return printer;
+        return {
+          ...printer,
+          deviceId: printer.deviceId || remembered.deviceId,
+          deviceName: printer.deviceName || remembered.deviceName,
+          workstationId: printer.workstationId || remembered.workstationId,
+          workstationName: printer.workstationName || remembered.workstationName,
+        };
+      })
+      .filter((printer) => printerMatchesWorkstation(printer, identity, installedNames, installed))
+      .map((printer) => {
+        const capabilities = printerCapabilities(printer);
+        return {
+          ...printer,
+          id: String(printer.id || '').slice(0, 60),
+          name: String(printer.name || '')
+            .trim()
+            .slice(0, 60),
+          capabilities,
+          type: capabilities[0] || (printer.type === 'bill' ? 'bill' : 'kot'),
+          deviceId: String(printer.deviceId || '').slice(0, 160),
+          deviceName: (
+            resolveSystemPrinter(printer.deviceName, installed)?.name ||
+            String(printer.deviceName || '')
+          ).slice(0, 160),
+          workstationId: identity.id,
+          workstationName: identity.name,
+        };
+      })
+      .filter((printer) => printer.id && printer.name);
+    const printerIds = new Set(printers.map((printer) => printer.id));
+    const incomingRoutes = (Array.isArray(config.routes) ? config.routes : []).filter(
+      (route) => route && typeof route === 'object'
+    );
+    const routeCandidates = preserveSaved ? saved.routes : incomingRoutes;
+    const routes = routeCandidates
+      .slice(0, 2000)
+      .map((route) => ({
+        id: String(route.id || '').slice(0, 60),
+        printerId: String(route.printerId || '').slice(0, 60),
+        category: String(route.category || '')
+          .trim()
+          .slice(0, 100),
+        itemName: String(route.itemName || '')
+          .trim()
+          .slice(0, 160),
+        portion: String(route.portion || '')
+          .trim()
+          .slice(0, 40),
+      }))
+      .filter((route) => route.id && printerIds.has(route.printerId) && route.category);
+    const revision = hasNewerRevision ? incomingRevision : savedRevision || incomingRevision;
+    const safeConfig = {
+      printers,
+      routes,
+      ...(Array.isArray(config.tableAreas) ? { tableAreas: config.tableAreas } :
+        Array.isArray(saved.tableAreas) ? { tableAreas: saved.tableAreas } : {}),
+      workstation: identity,
+      savedAt: new Date(
+        Math.max(Date.now(), (Date.parse(saved.savedAt || '') || 0) + 1)
+      ).toISOString(),
+      ...(revision ? { configRevision: revision, sourceRevision: revision } : {}),
+    };
+    await writeJsonUnlocked(configFile, safeConfig);
+    return {
+      ok: true,
+      savedAt: safeConfig.savedAt,
+      configRevision: revision,
+      preserved: preserveSaved,
+      config: safeConfig,
+    };
+  });
 }
 
 function workstationIdentity() {
   if (workstationIdentityPromise) return workstationIdentityPromise;
   workstationIdentityPromise = (async () => {
-    const saved = await readJson(workstationFile, null);
+    let saved = await readJson(workstationFile, null).catch(async (error) => {
+      const config = await readJson(configFile, null);
+      if (validStoredJson(workstationFile, config?.workstation)) return config.workstation;
+      throw error;
+    });
+    if (!saved) {
+      const config = await readJson(configFile, null);
+      if (validStoredJson(workstationFile, config?.workstation)) saved = config.workstation;
+    }
     if (saved?.id) {
+      // Seed identity backup/ledger for installations upgrading from a single
+      // JSON file; setup updates never manufacture a replacement identity.
+      await writeJson(workstationFile, saved);
       return {
         id: String(saved.id)
           .replace(/[^a-zA-Z0-9_-]/g, '')
@@ -1502,58 +1785,9 @@ const server = http.createServer(async (req, res) => {
   }
   if (req.method === 'PUT' && pathname === '/v1/config') {
     try {
-      const config = (await readBody(req)).config || {};
-      const [identity, installed] = await Promise.all([workstationIdentity(), installedPrinters()]);
-      const installedNames = new Set(installed.map((printer) => String(printer.name).trim()));
-      const printers = (Array.isArray(config.printers) ? config.printers : [])
-        .slice(0, 250)
-        .filter((printer) =>
-          printerMatchesWorkstation(printer, identity, installedNames, installed)
-        )
-        .map((printer) => {
-          const capabilities = printerCapabilities(printer);
-          return {
-            id: String(printer.id || '').slice(0, 60),
-            name: String(printer.name || '')
-              .trim()
-              .slice(0, 60),
-            capabilities,
-            type: capabilities[0] || (printer.type === 'bill' ? 'bill' : 'kot'),
-            deviceId: String(printer.deviceId || '').slice(0, 160),
-            deviceName: (
-              resolveSystemPrinter(printer.deviceName, installed)?.name ||
-              String(printer.deviceName || '')
-            ).slice(0, 160),
-            workstationId: identity.id,
-            workstationName: identity.name,
-          };
-        })
-        .filter((printer) => printer.id && printer.name);
-      const printerIds = new Set(printers.map((printer) => printer.id));
-      const routes = (Array.isArray(config.routes) ? config.routes : [])
-        .slice(0, 2000)
-        .map((route) => ({
-          id: String(route.id || '').slice(0, 60),
-          printerId: String(route.printerId || '').slice(0, 60),
-          category: String(route.category || '')
-            .trim()
-            .slice(0, 100),
-          itemName: String(route.itemName || '')
-            .trim()
-            .slice(0, 160),
-          portion: String(route.portion || '')
-            .trim()
-            .slice(0, 40),
-        }))
-        .filter((route) => route.id && printerIds.has(route.printerId) && route.category);
-      const safeConfig = {
-        printers,
-        routes,
-        workstation: identity,
-        savedAt: new Date().toISOString(),
-      };
-      await writeJson(configFile, safeConfig);
-      return reply(res, 200, { ok: true, savedAt: safeConfig.savedAt }, origin);
+      const payload = await readBody(req);
+      const result = await saveLocalPrinterConfig(payload);
+      return reply(res, 200, result, origin);
     } catch (error) {
       return reply(
         res,

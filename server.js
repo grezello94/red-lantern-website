@@ -1005,7 +1005,7 @@ app.get('/api/healthz', (req, res) => {
   res.json({
     ok: true,
     service: 'red-lantern-website',
-    release: '2026.10.08.1',
+    release: '2026.10.08.2',
     ordersSchemaReady: app.locals.ordersSchemaReady === true,
     uptimeSeconds: Math.floor(process.uptime()),
   });
@@ -6431,17 +6431,20 @@ app.get('/api/orders/operations', async (req, res) => {
   try {
     await ensureOperationsConfigTable();
     const rows =
-      await sql`SELECT config FROM order_operations_config WHERE config_key='default' LIMIT 1`;
+      await sql`SELECT config,(EXTRACT(EPOCH FROM updated_at)*1000000)::BIGINT::TEXT AS config_revision FROM order_operations_config WHERE config_key='default' LIMIT 1`;
     const config =
       rows[0]?.config && typeof rows[0].config === 'object'
         ? rows[0].config
         : { printers: [], routes: [] };
+    const configRevision = String(rows[0]?.config_revision || '0');
     res.set('Cache-Control', 'no-store');
     // Printing and Captain screens only need the small routing payload. Avoid
     // loading and serialising the complete Air Menu on their critical path.
     if (req.captain || req.query.configOnly === '1' || (req.employee && !['requestBills','releaseKots','operationsManage','kitchenDisplay'].some((right) => Staff.can(req.employee, right))))
       return res.json({
+        configRevision,
         config: {
+          configRevision,
           ...(req.captain || (req.employee && !['requestBills','releaseKots','operationsManage','kitchenDisplay'].some((right) => Staff.can(req.employee, right)))
             ? {}
             : {
@@ -6463,7 +6466,9 @@ app.get('/api/orders/operations', async (req, res) => {
         }))
         .filter((item) => item.name);
     res.json({
+      configRevision,
       config: {
+        configRevision,
         printers: Array.isArray(config.printers) ? config.printers : [],
         routes: Array.isArray(config.routes) ? config.routes : [],
         tableAreas: Array.isArray(config.tableAreas) ? config.tableAreas : [],
@@ -7058,6 +7063,9 @@ app.put('/api/orders/operations/table-areas', async (req, res) => {
   try {
     await ensureOperationsConfigTable();
     const source = req.body || {};
+    const expectedConfigRevision = operationsExpectedRevision(source.expectedConfigRevision ?? source.configRevision);
+    if (expectedConfigRevision === false)
+      return res.status(400).json({ error: 'Printer configuration revision is invalid.' });
     const tableAreas = (Array.isArray(source.tableAreas) ? source.tableAreas : [])
       .slice(0, 60)
       .map((area) => ({
@@ -7080,19 +7088,27 @@ app.put('/api/orders/operations/table-areas', async (req, res) => {
           area.to >= area.from &&
           area.to <= 9999
       );
-    const rows =
-      await sql`SELECT config FROM order_operations_config WHERE config_key='default' LIMIT 1`;
-    const existing =
-      rows[0]?.config && typeof rows[0].config === 'object'
-        ? rows[0].config
-        : { printers: [], routes: [] };
-    const config = { ...existing, tableAreas };
-    await sql`INSERT INTO order_operations_config (config_key, config, updated_at) VALUES ('default', ${JSON.stringify(config)}, NOW()) ON CONFLICT (config_key) DO UPDATE SET config=EXCLUDED.config, updated_at=NOW()`;
-    res.json({ ok: true, tableAreas });
+    // Changing table allocation must never replace printer pairing saved by a
+    // different workstation while this request was in flight.
+    const changed = await sql`INSERT INTO order_operations_config (config_key,config,updated_at) VALUES ('default',${JSON.stringify({ printers: [], routes: [], tableAreas })},clock_timestamp()) ON CONFLICT (config_key) DO UPDATE SET config=jsonb_set(order_operations_config.config,'{tableAreas}',EXCLUDED.config->'tableAreas'),updated_at=GREATEST(clock_timestamp(),order_operations_config.updated_at+INTERVAL '1 microsecond') WHERE ${expectedConfigRevision === null} OR (EXTRACT(EPOCH FROM order_operations_config.updated_at)*1000000)::BIGINT::TEXT=${expectedConfigRevision || '0'} RETURNING config,(EXTRACT(EPOCH FROM updated_at)*1000000)::BIGINT::TEXT AS config_revision`;
+    if (!changed.length) return operationsConfigConflict(res);
+    const configRevision = String(changed[0].config_revision);
+    res.json({ ok: true, tableAreas, configRevision, config: { ...changed[0].config, configRevision } });
   } catch (error) {
     res.status(500).json({ error: 'Unable to save table allocation.' });
   }
 });
+function operationsExpectedRevision(value) {
+  if (value === undefined || value === null) return null;
+  const revision = String(value);
+  return /^\d{1,20}$/.test(revision) ? revision : false;
+}
+function operationsConfigConflict(res) {
+  return res.status(409).json({
+    code: 'operations_config_conflict',
+    error: 'Printer configuration changed on another screen. Saved connections are retained; refresh before saving these changes.',
+  });
+}
 function sanitizePrinterFormat(source = {}) {
   const layout = (value, min, max, fallback) => {
     const parsed = Number(value);
@@ -7168,9 +7184,18 @@ app.put('/api/orders/operations', async (req, res) => {
   try {
     await ensureOperationsConfigTable();
     const source = req.body?.config || {};
+    if (!Array.isArray(source.printers) || !Array.isArray(source.routes))
+      return res.status(400).json({ error: 'A complete printer configuration is required. Saved connections were retained.' });
+    const expectedConfigRevision = operationsExpectedRevision(req.body?.expectedConfigRevision ?? source.configRevision);
+    if (expectedConfigRevision === false)
+      return res.status(400).json({ error: 'Printer configuration revision is invalid.' });
+    const currentRows = await sql`SELECT config FROM order_operations_config WHERE config_key='default' LIMIT 1`;
+    const currentConfig = currentRows[0]?.config || {};
+    const currentPrinters = new Map((Array.isArray(currentConfig.printers) ? currentConfig.printers : []).map((printer) => [String(printer.id), printer]));
     const printers = (Array.isArray(source.printers) ? source.printers : [])
       .slice(0, 250)
       .map((printer) => {
+        const previous = currentPrinters.get(String(printer.id)) || {};
         const port = Number.parseInt(printer.port, 10);
         const capabilities = printerCapabilities(printer);
         const formats =
@@ -7191,16 +7216,16 @@ app.put('/api/orders/operations', async (req, res) => {
             .trim()
             .slice(0, 253),
           port: Number.isInteger(port) && port > 0 && port <= 65535 ? port : 9100,
-          deviceId: String(printer.deviceId || '')
+          deviceId: String(printer.deviceId ?? previous.deviceId ?? '')
             .trim()
             .slice(0, 160),
-          deviceName: String(printer.deviceName || '')
+          deviceName: String(printer.deviceName ?? previous.deviceName ?? '')
             .trim()
             .slice(0, 120),
-          workstationId: String(printer.workstationId || '')
+          workstationId: String(printer.workstationId ?? previous.workstationId ?? '')
             .replace(/[^a-zA-Z0-9_-]/g, '')
             .slice(0, 80),
-          workstationName: String(printer.workstationName || '')
+          workstationName: String(printer.workstationName ?? previous.workstationName ?? '')
             .trim()
             .slice(0, 120),
           ...sanitizePrinterFormat(printer),
@@ -7280,7 +7305,7 @@ app.put('/api/orders/operations', async (req, res) => {
         });
       assignedTargets.add(target);
     }
-    const tableAreas = (Array.isArray(source.tableAreas) ? source.tableAreas : [])
+    const tableAreas = (Array.isArray(source.tableAreas) ? source.tableAreas : Array.isArray(currentConfig.tableAreas) ? currentConfig.tableAreas : [])
       .slice(0, 60)
       .map((area) => ({
         id: String(area.id || crypto.randomUUID())
@@ -7303,9 +7328,11 @@ app.put('/api/orders/operations', async (req, res) => {
           area.to <= 9999
       );
     const config = { printers, routes, tableAreas };
-    await sql`INSERT INTO order_operations_config (config_key, config, updated_at) VALUES ('default', ${JSON.stringify(config)}, NOW()) ON CONFLICT (config_key) DO UPDATE SET config=EXCLUDED.config, updated_at=NOW()`;
+    const changed = await sql`INSERT INTO order_operations_config (config_key,config,updated_at) VALUES ('default',${JSON.stringify(config)},clock_timestamp()) ON CONFLICT (config_key) DO UPDATE SET config=EXCLUDED.config,updated_at=GREATEST(clock_timestamp(),order_operations_config.updated_at+INTERVAL '1 microsecond') WHERE ${expectedConfigRevision === null} OR (EXTRACT(EPOCH FROM order_operations_config.updated_at)*1000000)::BIGINT::TEXT=${expectedConfigRevision || '0'} RETURNING config,(EXTRACT(EPOCH FROM updated_at)*1000000)::BIGINT::TEXT AS config_revision`;
+    if (!changed.length) return operationsConfigConflict(res);
+    const configRevision = String(changed[0].config_revision);
     clearSmartKdsReadCaches();
-    res.json({ ok: true, config });
+    res.json({ ok: true, configRevision, config: { ...config, configRevision } });
   } catch (error) {
     res.status(500).json({ error: 'Unable to save Operations configuration.' });
   }
@@ -9024,9 +9051,9 @@ app.post('/api/orders/operations/add-table', async (req, res) => {
     if (!area || (req.employee?.areas?.length && !req.employee.areas.includes(areaName))) return res.status(403).json({ error: 'Choose an assigned dining area.' });
     if (Number(area.to) >= 9999) return res.status(400).json({ error: 'This area has reached its table limit.' });
     area.to = Number(area.to) + 1;
-    const changed = await sql`UPDATE order_operations_config SET config=${JSON.stringify(config)},updated_at=NOW() WHERE config_key='default' AND updated_at=${rows[0].updated_at} RETURNING config_key`;
+    const changed = await sql`UPDATE order_operations_config SET config=${JSON.stringify(config)},updated_at=GREATEST(clock_timestamp(),updated_at+INTERVAL '1 microsecond') WHERE config_key='default' AND updated_at=${rows[0].updated_at} RETURNING config_key,(EXTRACT(EPOCH FROM updated_at)*1000000)::BIGINT::TEXT AS config_revision`;
     if (!changed.length) return res.status(409).json({ error: 'Table allocation changed. Refresh and try again.' });
-    res.json({ ok: true, tableNumber: area.to });
+    res.json({ ok: true, tableNumber: area.to, configRevision: String(changed[0].config_revision) });
   } catch (error) { res.status(503).json({ error: 'Unable to add a table.' }); }
 });
 app.put('/api/admin/captains', async (req, res) => {
@@ -9318,9 +9345,9 @@ app.patch('/api/captain/printers/:id', async (req, res) => {
     const printer = config?.printers?.find((entry) => entry.id === req.params.id && printerSupports(entry, 'kot'));
     if (!printer) return res.status(404).json({ error: 'Kitchen printer not found.' });
     printer.formats = { ...printer.formats, kot: { ...printer.formats?.kot, paperWidth:Number(req.body.paperWidth),showItemSerial:req.body.showItemSerial } };
-    const changed = await sql`UPDATE order_operations_config SET config=${JSON.stringify(config)},updated_at=NOW() WHERE config_key='default' AND updated_at=${rows[0].updated_at} RETURNING config_key`;
+    const changed = await sql`UPDATE order_operations_config SET config=${JSON.stringify(config)},updated_at=GREATEST(clock_timestamp(),updated_at+INTERVAL '1 microsecond') WHERE config_key='default' AND updated_at=${rows[0].updated_at} RETURNING config_key,(EXTRACT(EPOCH FROM updated_at)*1000000)::BIGINT::TEXT AS config_revision`;
     if (!changed.length) return res.status(409).json({ error: 'Printer configuration changed. Refresh before saving.' });
-    res.json({ ok:true });
+    res.json({ ok:true, configRevision: String(changed[0].config_revision) });
   } catch (error) { res.status(503).json({ error: 'Unable to update this printer.' }); }
 });
 app.get('/api/captain/ready-alerts', async (req, res) => {
