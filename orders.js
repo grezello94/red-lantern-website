@@ -318,7 +318,7 @@ const printingStatus = document.createElement('p');
 printingStatus.id = 'orders-printing-status';
 printingStatus.setAttribute('role', 'status');
 printingStatus.setAttribute('aria-live', 'polite');
-printingStatus.style.cssText = 'margin:8px 20px;padding:12px 16px;border:1px solid #d8e2ee;border-radius:10px;background:#fff8e8;color:#704816;font:600 14px/1.5 system-ui';
+printingStatus.className = 'orders-service-status is-printing';
 printingStatus.hidden = true;
 document.querySelector('header')?.after(printingStatus);
 function renderPrintingStatus() {
@@ -712,7 +712,17 @@ document.querySelectorAll('[data-fulfillment-filter]').forEach((button) => {
       item.classList.toggle('is-active', isActive);
       item.setAttribute('aria-pressed', String(isActive));
     });
+    closeOpenPanels('live');
+    liveOrdersPanel.hidden = false;
+    liveOrdersToggle.classList.add('is-open');
+    liveOrdersToggle.setAttribute('aria-expanded', 'true');
+    orderView = 'current';
+    historyAll = false;
+    document.querySelectorAll('[data-order-view]').forEach(tab => tab.classList.toggle('is-active', tab.dataset.orderView === 'current'));
+    const dateWrap = document.getElementById('history-date-wrap');
+    if (dateWrap) dateWrap.hidden = true;
     loadOrders();
+    liveOrdersPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
 });
 const liveOrdersPanel = document.createElement('section');
@@ -749,6 +759,9 @@ const actionIcon = (name) => {
     cutlery: '<path d="M4 3v8M7 3v8M4 7h3M5.5 11v10M14 3v8M14 3c3 1 4.5 3.8 4.5 8H14M14 11v10"/>',
     bell: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/>',
     refresh: '<path d="M20 11a8 8 0 0 0-14.9-4M4 4v4h4M4 13a8 8 0 0 0 14.9 4M20 20v-4h-4"/>',
+    tables: '<rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/>',
+    takeaway: '<path d="M5 8h14l1 13H4L5 8Z"/><path d="M8 8V6a4 4 0 0 1 8 0v2"/>',
+    delivery: '<path d="M3 5h11v12H3V5Z"/><path d="M14 9h4l3 4v4h-7M7 17a2 2 0 1 0 0 4 2 2 0 0 0 0-4ZM18 17a2 2 0 1 0 0 4 2 2 0 0 0 0-4Z"/>',
   };
   return `<svg class="header-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || ''}</svg>`;
 };
@@ -758,7 +771,7 @@ liveOrdersToggle.id = 'live-orders-toggle';
 liveOrdersToggle.className = 'live-orders-toggle';
 liveOrdersToggle.setAttribute('aria-expanded', 'false');
 liveOrdersToggle.innerHTML = `${actionIcon('receipt')}<span>Live orders</span><b id="live-orders-count">0</b>`;
-document.querySelector('.header-actions')?.prepend(liveOrdersToggle);
+document.querySelector('.header-primary-actions')?.prepend(liveOrdersToggle);
 const operationsPanel = document.createElement('section');
 operationsPanel.id = 'operations-panel';
 operationsPanel.hidden = true;
@@ -874,14 +887,22 @@ splitBillDialog.innerHTML =
 document.body.appendChild(splitBillDialog);
 const tableViewPanel = document.createElement('section');
 tableViewPanel.id = 'table-view-panel';
-tableViewPanel.innerHTML =
-  '<div class="table-view-head"><div><span class="eyebrow">Dine-in</span><h2>Table view</h2><p>Select an available table to start a dine-in order.</p></div></div><div id="table-view-content" class="table-view-content"><div class="table-view-empty">Loading allocated tables…</div></div>';
+tableViewPanel.innerHTML = `
+  <div class="table-view-head"><div class="table-view-heading-main"><span class="table-view-icon" aria-hidden="true">${actionIcon('tables')}</span><div class="table-view-heading-copy"><span class="eyebrow">Dining control center</span><h2>Table view</h2><p>Open a table to start an order, review a bill, or finish payment.</p></div></div><div id="table-view-stats" class="table-view-stats" aria-live="polite"></div></div>
+  <div class="table-view-controls">
+    <div class="table-view-toolbar"><label class="table-search"><span aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg></span><input id="table-search" type="search" placeholder="Search table, area or guest" aria-label="Search tables" autocomplete="off"></label><label class="table-area-filter"><span>Dining area</span><select id="table-area-filter"><option value="all">All dining areas</option></select></label><button id="table-move-toggle" type="button" class="table-move-toggle" data-toggle-move-kot aria-pressed="false"><i aria-hidden="true"></i>Move table</button></div>
+    <div class="table-view-control-footer"><div id="table-status-filters" aria-label="Filter table status"></div><div class="table-view-legend" aria-label="Table status colors"><span><i class="is-blank" aria-hidden="true"></i>Available</span><span><i class="is-running" aria-hidden="true"></i>Running</span><span><i class="is-kot" aria-hidden="true"></i>KOT sent</span><span><i class="is-printed" aria-hidden="true"></i>Awaiting payment</span></div></div>
+    <p id="table-results-summary" aria-live="polite"></p>
+  </div>
+  <div id="table-view-content" class="table-view-content"><div class="table-view-empty">Loading allocated tables…</div></div>`;
 availability.before(tableViewPanel);
 let moveKotItemsMode = false;
+let tableAreaFilter = 'all';
+let tableStatusFilter = 'all';
 const moveTableDialog = document.createElement('dialog');
 moveTableDialog.id = 'move-table-dialog';
 moveTableDialog.innerHTML =
-  '<button type="button" class="move-table-close" aria-label="Close">×</button><h2 id="move-table-title">Move KOT / Items</h2><p id="move-table-copy"></p><div class="move-tabs"><button type="button" class="is-active" data-move-mode="table">Table Wise</button><button type="button" data-move-mode="kot">KOT Wise</button><button type="button" data-move-mode="item">Item Wise</button></div><div id="move-table-options"></div><div id="move-table-target" class="move-table-target" aria-label="Available tables"></div><p id="move-table-status" aria-live="polite"></p><div><button type="button" class="move-table-cancel">Cancel</button><button type="button" class="move-table-confirm">Move</button></div>';
+  '<button type="button" class="move-table-close" aria-label="Close move table">×</button><span class="eyebrow">Table transfer</span><h2 id="move-table-title">Move table</h2><p id="move-table-copy"></p><div id="move-table-options"></div><div id="move-table-target" class="move-table-target" aria-label="Available tables"></div><p id="move-table-status" aria-live="polite"></p><div><button type="button" class="move-table-cancel">Cancel</button><button type="button" class="move-table-confirm">Move order</button></div>';
 document.body.appendChild(moveTableDialog);
 const settleTableDialog = document.createElement('dialog');
 settleTableDialog.id = 'settle-table-dialog';
@@ -930,7 +951,7 @@ operationsToggle.className = 'operations-toggle';
 operationsToggle.setAttribute('aria-expanded', 'false');
 operationsToggle.innerHTML = `${actionIcon('operations')}<span>Operations</span>`;
 document
-  .querySelector('.header-actions')
+  .querySelector('.header-primary-actions')
   ?.insertBefore(operationsToggle, document.getElementById('availability-toggle'));
 const installButton = document.getElementById('install-shortcut');
 const availabilityButton = document.getElementById('availability-toggle');
@@ -954,6 +975,12 @@ const closeOpenPanels = (except = null) => {
   if (except !== 'counter') counterPanel.hidden = true;
   syncCounterWorkspaceLayout();
   if (except !== 'tables') tableViewPanel.hidden = true;
+  const service = except === 'tables' || (except === 'counter' && counterTable) ? 'tables' : except === 'counter' ? 'pickup' : except === 'live' && fulfillmentFilter === 'delivery' ? 'delivery' : '';
+  document.querySelectorAll('.fulfillment-action').forEach(button => {
+    const selected = (button.id === 'new-order-action' ? 'tables' : button.dataset.fulfillmentFilter) === service;
+    button.classList.toggle('is-active', selected);
+    button.setAttribute('aria-pressed', String(selected));
+  });
   const shortcutDialog = document.getElementById('shortcut-dialog');
   if (except !== 'shortcut' && shortcutDialog?.open) shortcutDialog.close();
 };
@@ -992,11 +1019,11 @@ function openCounterChoice(item) {
   if (typeof dialog.showModal === 'function') dialog.showModal();
 }
 const counterMoney = (value) => `₹${Math.round(Number(value) || 0)}`;
-function updateCounterMarkup(element, markup) {
+function updateWorkspaceMarkup(element, markup) {
   if (element.innerHTML === markup) return;
   const top = element.scrollTop, left = element.scrollLeft;
   const focused = element.contains(document.activeElement) ? document.activeElement : null;
-  const attributes = focused ? ['data-counter-item', 'data-counter-category', 'data-counter-qty', 'data-counter-change'].filter(name => focused.hasAttribute(name)).map(name => [name, focused.getAttribute(name)]) : [];
+  const attributes = focused ? ['data-counter-item', 'data-counter-category', 'data-counter-qty', 'data-counter-change', 'data-table-status', 'data-dine-table-area', 'data-dine-table-number', 'data-print-table-bill', 'data-view-table-order'].filter(name => focused.hasAttribute(name)).map(name => [name, focused.getAttribute(name)]) : [];
   element.innerHTML = markup;
   element.scrollTop = top;
   element.scrollLeft = left;
@@ -1051,7 +1078,7 @@ function renderCounterOrder() {
     barCategories = categoriesFor('bar');
   const categoryButton = (category, label = category) =>
     `<button type="button" class="counter-category ${counterCategory === category ? 'is-active' : ''}" data-counter-category="${esc(category)}" aria-pressed="${counterCategory === category}"><span class="counter-category-label">${esc(label)}</span><b class="counter-category-count">${category === 'all' ? counterMenu.length : counterMenu.filter(item => (item.category || 'Menu') === category).length}</b></button>`;
-  updateCounterMarkup(document.getElementById('counter-categories'),
+  updateWorkspaceMarkup(document.getElementById('counter-categories'),
     `${categoryButton('all', 'All items')}${foodCategories.length ? '<span class="counter-category-group">Food menu</span>' + foodCategories.map((category) => categoryButton(category)).join('') : ''}${barCategories.length ? '<span class="counter-category-group">Alcohol & bar</span>' + barCategories.map((category) => categoryButton(category)).join('') : ''}`);
   const visible = counterMenu.filter(
     (item) =>
@@ -1060,7 +1087,7 @@ function renderCounterOrder() {
   );
   document.getElementById('counter-menu-category').textContent = counterCategory === 'all' ? 'All items' : counterCategory;
   document.getElementById('counter-menu-meta').textContent = `${visible.length} available item${visible.length === 1 ? '' : 's'}${search ? ' matching your search' : ''}`;
-  updateCounterMarkup(document.getElementById('counter-menu-items'),
+  updateWorkspaceMarkup(document.getElementById('counter-menu-items'),
     visible
       .map((item) => {
         const [portion, price] = counterPrice(item);
@@ -1074,7 +1101,7 @@ function renderCounterOrder() {
       return `<div class="counter-cart-line"><div><b>${esc(line.name)}</b><small>${esc(line.portion || 'Regular')}${line.style ? ` · ${esc(line.style)}` : ''} · ${counterMoney(unit)} each</small></div><div class="counter-quantity"><button type="button" data-counter-qty="${index}" data-counter-change="-1" aria-label="Decrease ${esc(line.name)} quantity">−</button><b>${line.quantity}</b><button type="button" data-counter-qty="${index}" data-counter-change="1" aria-label="Increase ${esc(line.name)} quantity">+</button></div><strong>${counterMoney(unit * line.quantity)}</strong></div>`;
     })
     .join('');
-  updateCounterMarkup(document.getElementById('counter-cart-items'),
+  updateWorkspaceMarkup(document.getElementById('counter-cart-items'),
     items || `<p class="counter-empty"><span class="counter-empty-icon" aria-hidden="true">${actionIcon('receipt')}</span><b>Your order starts here</b><span>Choose items from the menu to build this order.</span></p>`);
   const subtotal = counterCart.reduce(
     (sum, line) => sum + (line.price + (line.style ? 10 : 0)) * line.quantity,
@@ -1179,6 +1206,7 @@ async function openCounterOrder(table = null) {
   if (!opening) {
     counterPanel.hidden = true;
     syncCounterWorkspaceLayout();
+    void showTableView();
     return;
   }
   closeOpenPanels('counter');
@@ -1352,17 +1380,6 @@ function renderTableView() {
   const content = document.getElementById('table-view-content');
   if (!content) return;
   const areas = Array.isArray(operationsConfig.tableAreas) ? operationsConfig.tableAreas : [];
-  if (!areas.length) {
-    content.innerHTML = '';
-    return;
-  }
-  const legend = [
-    ['blank', 'Blank table'],
-    ['running', 'Running table'],
-    ['printed', 'Printed Table'],
-    ['paid', 'Paid Table'],
-    ['kot', 'Running KOT Table'],
-  ];
   const tableOrders = [...orderRecords.values()].filter(
     (order) =>
       order.mode === 'table' &&
@@ -1401,43 +1418,63 @@ function renderTableView() {
     }
     return { state: 'running', label: String(order.status || 'Running'), order };
   };
-  content.innerHTML = `<div class="table-view-legend" aria-label="Table status legend"><button type="button" class="table-move-toggle${moveKotItemsMode ? ' is-active' : ''}" data-toggle-move-kot aria-pressed="${moveKotItemsMode}"><i></i>Move KOT / Items</button>${legend.map(([state, label]) => `<span><i class="is-${state}"></i>${label}</span>`).join('')}</div>${areas
-    .map((area) => {
-      const tables = Array.from(
-        { length: Number(area.to) - Number(area.from) + 1 },
-        (_, index) => Number(area.from) + index
-      );
-      return `<section class="table-area"><div class="table-area-head"><h3>${esc(area.name)}</h3><span>${tables.length} table${tables.length === 1 ? '' : 's'}</span></div><div class="table-grid">${tables
-        .map((number) => {
-          const table = tableState(area.name, number),
-            active = table.state !== 'blank' && table.state !== 'paid',
-            movable = active && moveKotItemsMode,
-            settling = table.state === 'printed' && !moveKotItemsMode;
-          return `<button type="button" class="table-tile is-${table.state}${movable ? ' is-move-target' : ''}" data-dine-table-area="${esc(area.name)}" data-dine-table-number="${number}"${movable ? ` data-move-table-order="${esc(table.order.id)}"` : ''}${settling ? ` data-settle-table-order="${esc(table.order.id)}"` : ''} title="${esc(movable ? 'Move KOT / Items' : settling ? 'Settle & Save' : table.label)}"><span>Table</span><b>${String(number).padStart(2, '0')}</b><small>${esc(movable ? 'Select to move' : settling ? 'Settle & Save' : table.label)}</small></button>`;
-        })
-        .join('')}</div></section>`;
-    })
-    .join('')}`;
-  if (!moveKotItemsMode)
-    content.querySelectorAll('.table-tile').forEach((tile) => {
-      const table = tableState(tile.dataset.dineTableArea, Number(tile.dataset.dineTableNumber));
-      if (!table.order || ['blank', 'paid'].includes(table.state)) return;
-      const wrap = document.createElement('div');
-      wrap.className = 'table-tile-wrap';
-      const actions = document.createElement('div');
-      actions.className = 'table-tile-actions';
-      actions.innerHTML = `<button type="button" class="table-tile-action" data-print-table-bill="${esc(table.order.id)}" aria-label="Print bill for table ${esc(String(tile.dataset.dineTableNumber))}" title="Print bill"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9V3h12v6M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2M6 14h12v7H6zM18 12h.01"/></svg></button><button type="button" class="table-tile-action" data-view-table-order="${esc(table.order.id)}" aria-label="View order for table ${esc(String(tile.dataset.dineTableNumber))}" title="View order"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/></svg></button>`;
-      tile.replaceWith(wrap);
-      wrap.append(tile, actions);
-    });
+  const allocated = areas.map(area => ({
+    ...area,
+    tables: Array.from({ length: Math.max(0, Number(area.to) - Number(area.from) + 1) }, (_, index) => {
+      const number = Number(area.from) + index;
+      return { number, ...tableState(area.name, number) };
+    }),
+  }));
+  const tables = allocated.flatMap(area => area.tables);
+  const availableCount = tables.filter(table => table.state === 'blank').length;
+  const activeCount = tables.length - availableCount;
+  const printedCount = tables.filter(table => table.state === 'printed').length;
+  updateWorkspaceMarkup(document.getElementById('table-view-stats'), `<span class="table-view-stat"><b>${tables.length}</b><span>Total tables</span></span><span class="table-view-stat is-available"><b>${availableCount}</b><span>Available</span></span><span class="table-view-stat is-active"><b>${activeCount}</b><span>In service</span></span>`);
+  if (!areas.some(area => area.name === tableAreaFilter)) tableAreaFilter = 'all';
+  const areaSelect = document.getElementById('table-area-filter');
+  const areaOptions = '<option value="all">All dining areas</option>' + allocated.map(area => `<option value="${esc(area.name)}">${esc(area.name)} · ${area.tables.length} tables</option>`).join('');
+  if (areaSelect.innerHTML !== areaOptions) areaSelect.innerHTML = areaOptions;
+  areaSelect.value = tableAreaFilter;
+  updateWorkspaceMarkup(document.getElementById('table-status-filters'), [
+    ['all', 'All tables', tables.length], ['available', 'Available', availableCount], ['active', 'In service', activeCount], ['printed', 'Awaiting payment', printedCount],
+  ].map(([status, label, count]) => `<button type="button" class="table-status-filter${tableStatusFilter === status ? ' is-active' : ''}" data-table-status="${status}" aria-pressed="${tableStatusFilter === status}">${label}<b>${count}</b></button>`).join(''));
+  const moveToggle = document.getElementById('table-move-toggle');
+  moveToggle.classList.toggle('is-active', moveKotItemsMode);
+  moveToggle.setAttribute('aria-pressed', String(moveKotItemsMode));
+  const query = document.getElementById('table-search').value.trim().toLowerCase();
+  const visibleAreas = allocated.filter(area => tableAreaFilter === 'all' || area.name === tableAreaFilter).map(area => ({
+    ...area,
+    visibleTables: area.tables.filter(table =>
+      (tableStatusFilter === 'all' || (tableStatusFilter === 'available' ? table.state === 'blank' : tableStatusFilter === 'printed' ? table.state === 'printed' : table.state !== 'blank')) &&
+      `${area.name} table ${String(table.number).padStart(2, '0')} ${table.number} ${table.order?.customer_name || ''} ${table.order?.customer_phone || ''}`.toLowerCase().includes(query)
+    ),
+  })).filter(area => area.visibleTables.length);
+  const visibleCount = visibleAreas.reduce((sum, area) => sum + area.visibleTables.length, 0);
+  document.getElementById('table-results-summary').textContent = moveKotItemsMode ? 'Move mode: select a table in service, then choose an available destination.' : `Showing ${visibleCount} of ${tables.length} tables${tableAreaFilter !== 'all' ? ` · ${tableAreaFilter}` : ''}`;
+  const renderTile = (area, table) => {
+    const active = table.state !== 'blank';
+    const movable = active && moveKotItemsMode;
+    const settling = table.state === 'printed' && !moveKotItemsMode;
+    const status = !active ? 'Available' : table.state === 'printed' ? 'Awaiting payment' : table.state === 'kot' ? 'KOT sent' : table.order.status === 'saved' ? 'Saved bill' : table.order.status === 'held' ? 'On hold' : table.order.status === 'offline' ? 'Waiting to sync' : table.order.status === 'ready' ? 'Ready' : table.order.status === 'preparing' ? 'Preparing' : 'Running';
+    const name = `${area.name} table ${String(table.number).padStart(2, '0')}`;
+    const instruction = movable ? 'Move this table' : settling ? 'Settle and save payment' : active ? 'Open table order' : 'Start an order';
+    const orderNumber = table.order?.daily_order_number || table.order?.bill_number;
+    const details = active ? `${table.label}${orderNumber ? ` · #${String(orderNumber).padStart(2, '0')}` : ''}` : 'Tap to start';
+    return `<div class="table-tile-wrap is-${table.state}"><button type="button" class="table-tile is-${table.state}${movable ? ' is-move-target' : ''}" data-dine-table-area="${esc(area.name)}" data-dine-table-number="${table.number}"${movable ? ` data-move-table-order="${esc(table.order.id)}"` : ''}${settling ? ` data-settle-table-order="${esc(table.order.id)}"` : ''} title="${esc(instruction)}" aria-label="${esc(`${name}: ${status}. ${instruction}`)}"><span class="table-tile-label">Table</span><b>${String(table.number).padStart(2, '0')}</b><small class="table-tile-status">${esc(movable ? 'Select to move' : status)}</small>${active ? `<strong class="table-tile-total">${counterMoney(table.order.total)}</strong>` : ''}<small class="table-tile-meta">${esc(details)}</small></button>${active && !moveKotItemsMode ? `<div class="table-tile-actions"><button type="button" class="table-tile-action" data-print-table-bill="${esc(table.order.id)}" aria-label="Print bill for ${esc(name)}" title="Print bill"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9V3h12v6M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2M6 14h12v7H6zM18 12h.01"/></svg></button><button type="button" class="table-tile-action" data-view-table-order="${esc(table.order.id)}" aria-label="View order for ${esc(name)}" title="View order"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/></svg><span>View order</span></button></div>` : ''}</div>`;
+  };
+  let markup = visibleAreas.map(area => {
+    const available = area.tables.filter(table => table.state === 'blank').length;
+    return `<section class="table-area"><div class="table-area-head"><div class="table-area-title"><h3>${esc(area.name)}</h3><small>${available} available · ${area.tables.length - available} in service</small></div><span class="table-area-meta">${area.tables.length} tables</span></div><div class="table-grid">${area.visibleTables.map(table => renderTile(area, table)).join('')}</div></section>`;
+  }).join('') || `<div class="table-view-empty"><b>${tables.length ? 'No matching tables' : 'No dining areas configured'}</b><p>${tables.length ? 'Try another search, dining area or status filter.' : 'Add your dining areas and table ranges in Operations.'}</p></div>`;
   const storedBills = [...orderRecords.values()].filter(
-    (order) => order.mode === 'table' && ['saved', 'held'].includes(order.status)
+    (order) => order.mode === 'table' && ['saved', 'held'].includes(order.status) && !order.bill_printed_at &&
+      visibleAreas.some(area => area.name === order.table_area && area.visibleTables.some(table => table.number === Number(order.table_number)))
   );
   if (storedBills.length)
-    content.insertAdjacentHTML(
-      'beforeend',
+    markup +=
       `<section class="saved-bills"><div><span class="eyebrow">Dine-in workspace</span><h3>Saved bills</h3><p>Saved bills have not printed. Held bills remain open for later service.</p></div><div class="saved-bills-list">${storedBills.map((order) => `<button type="button" class="saved-bill-open" data-open-saved-table="${esc(order.table_area || 'Dining')}" data-open-saved-number="${esc(order.table_number)}"><span class="saved-bill-status is-${esc(order.status)}">${esc(order.status)}</span><span><b>${esc(order.table_area || 'Dining')} · Table ${esc(String(order.table_number || '').padStart(2, '0'))}</b><small>Bill #${esc(String(order.bill_number || order.daily_order_number || '').padStart(2, '0'))} · ${counterMoney(order.total)}</small></span><span class="saved-bill-note">Open bill</span></button>`).join('')}</div></section>`
-    );
+    ;
+  updateWorkspaceMarkup(content, markup);
 }
 async function showTableView() {
   closeOpenPanels('tables');
@@ -1492,7 +1529,7 @@ function openMoveTable(orderId) {
   moveTableDialog.dataset.orderId = orderId;
   moveTableDialog.dataset.mode = 'table';
   document.getElementById('move-table-copy').textContent =
-    `Choose what to move from ${order.table_area} · Table ${String(order.table_number).padStart(2, '0')}.`;
+    `Choose an available destination for ${order.table_area} · Table ${String(order.table_number).padStart(2, '0')}.`;
   const targetGroups = targets.reduce((groups, table) => {
     (groups[table.area] ||= []).push(table);
     return groups;
@@ -1517,7 +1554,7 @@ function renderMoveOptions() {
   if (!order || !content) return;
   if (mode === 'table') {
     content.innerHTML =
-      '<p><b>Table Wise:</b> move the complete running order and its KOT history to the selected empty table.</p>';
+      '<p>The complete order and its kitchen ticket history move together. Only available tables can be selected.</p>';
     return;
   }
   if (mode === 'kot') {
@@ -1808,7 +1845,7 @@ const toPushKey = (value) => {
   return Uint8Array.from(raw, (character) => character.charCodeAt(0));
 };
 
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('/orders-sw.js?v=19', { updateViaCache: 'none' }).then(registration => registration.update()).catch(() => {});
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/orders-sw.js?v=20', { updateViaCache: 'none' }).then(registration => registration.update()).catch(() => {});
 document.getElementById('enable-notifications')?.addEventListener('click', async () => {
   closeOpenPanels();
   const button = document.getElementById('enable-notifications');
@@ -4145,12 +4182,22 @@ viewKotDialog.addEventListener('click', async (event) => {
     button.disabled = false;
   }
 });
+document.getElementById('table-search').addEventListener('input', renderTableView);
+document.getElementById('table-area-filter').addEventListener('change', event => {
+  tableAreaFilter = event.target.value;
+  renderTableView();
+});
+document.getElementById('table-status-filters').addEventListener('click', event => {
+  const button = event.target.closest('[data-table-status]');
+  if (!button) return;
+  tableStatusFilter = button.dataset.tableStatus;
+  renderTableView();
+});
+document.getElementById('table-move-toggle').addEventListener('click', () => {
+  moveKotItemsMode = !moveKotItemsMode;
+  renderTableView();
+});
 document.getElementById('table-view-content')?.addEventListener('click', async (event) => {
-  if (event.target.closest('[data-toggle-move-kot]')) {
-    moveKotItemsMode = !moveKotItemsMode;
-    renderTableView();
-    return;
-  }
   const viewOrder = event.target.closest('[data-view-table-order]');
   if (viewOrder) {
     const order = orderRecords.get(viewOrder.dataset.viewTableOrder);
@@ -4282,8 +4329,12 @@ const newOrderAction = document.createElement('button');
 newOrderAction.type = 'button';
 newOrderAction.id = 'new-order-action';
 newOrderAction.className = 'fulfillment-action';
-newOrderAction.textContent = 'New Order';
+newOrderAction.setAttribute('aria-label', 'New order: choose a dining table');
+newOrderAction.setAttribute('aria-pressed', 'false');
+newOrderAction.innerHTML = `<span class="fulfillment-icon" aria-hidden="true">${actionIcon('tables')}</span><span class="fulfillment-label"><span>New Order</span><small>Choose a table</small></span>`;
 document.querySelector('[data-fulfillment-filter="pickup"]')?.before(newOrderAction);
+document.querySelector('[data-fulfillment-filter="pickup"]')?.insertAdjacentHTML('afterbegin', `<span class="fulfillment-icon" aria-hidden="true">${actionIcon('takeaway')}</span>`);
+document.querySelector('[data-fulfillment-filter="delivery"]')?.insertAdjacentHTML('afterbegin', `<span class="fulfillment-icon" aria-hidden="true">${actionIcon('delivery')}</span>`);
 const newOrderActionStyles = document.createElement('style');
 newOrderActionStyles.textContent = '';
 document.head.appendChild(newOrderActionStyles);

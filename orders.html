@@ -11,10 +11,10 @@
     <link rel="manifest" href="/orders.webmanifest?v=7" />
     <link rel="stylesheet" href="orders.css?v=7" />
     <link rel="stylesheet" href="orders-logo.css?v=7" />
-    <link rel="stylesheet" href="orders-fixes.css?v=26" />
+    <link rel="stylesheet" href="orders-fixes.css?v=27" />
   </head>
   <body>
-    <header>
+    <header class="orders-app-header">
       <div class="brand">
         <img src="/images/red-lantern-logo-600.webp" alt="Red Lantern Restaurant" />
         <div>
@@ -23,30 +23,38 @@
         </div>
       </div>
       <div class="header-actions">
-        <button id="install-shortcut" class="install-shortcut">Install shortcut</button
-        ><button id="availability-toggle" class="availability-toggle" aria-expanded="false">
-          <span aria-hidden="true">☷</span> Menu availability</button
-        ><button id="enable-notifications">Enable alerts</button
-        ><button onclick="location.reload()">Refresh</button>
+        <nav class="header-primary-actions" aria-label="Staff workspaces">
+          <button id="availability-toggle" class="availability-toggle" aria-expanded="false">
+            <span aria-hidden="true">☷</span> Menu availability
+          </button>
+        </nav>
+        <div class="header-utility-actions" aria-label="App controls">
+          <button id="install-shortcut" class="install-shortcut">Install shortcut</button>
+          <button id="enable-notifications">Enable alerts</button>
+          <button onclick="location.reload()">Refresh</button>
+        </div>
       </div>
     </header>
-    <section class="fulfillment-actions" aria-label="Filter orders by fulfillment type">
-      <span>Order type</span
-      ><button
+    <section class="fulfillment-actions" aria-label="Choose an order workspace">
+      <div class="fulfillment-heading"><span>Service workspace</span><b>Choose your service</b></div>
+      <div class="fulfillment-action-list"><button
         type="button"
         class="fulfillment-action"
         data-fulfillment-filter="pickup"
         aria-pressed="false"
+        aria-label="Build a takeaway order"
       >
-        Takeaway</button
+        <span class="fulfillment-label"><span>Takeaway</span><small>Build an order</small></span></button
       ><button
         type="button"
         class="fulfillment-action"
         data-fulfillment-filter="delivery"
         aria-pressed="false"
+        aria-label="View delivery orders"
       >
-        Delivery
+        <span class="fulfillment-label"><span>Delivery</span><small>View orders</small></span>
       </button>
+      </div>
     </section>
     <section class="order-search-panel" aria-label="Find an order">
       <div id="order-view-tabs" class="order-view-tabs">
@@ -131,6 +139,6 @@
     <script src="/printer-domain.js?v=2"></script>
     <script src="/staff-domain.js?v=2"></script>
     <script src="/staff-access.js?v=1"></script>
-    <script src="orders.js?v=60"></script>
+    <script src="orders.js?v=61"></script>
   </body>
 </html>
