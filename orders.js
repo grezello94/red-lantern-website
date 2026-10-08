@@ -16,6 +16,11 @@ let hasRenderedOrders = false;
 let menuItems = [];
 let unavailable = new Map();
 let availabilityFilter = 'all';
+let availabilityCategory = 'all';
+let availabilityVisibleStockSignature = '';
+const availabilityChangesInFlight = new Set();
+let availabilityScheduleKey = '';
+let availabilityScheduleSaving = false;
 let menuType = 'food';
 let installPrompt = null;
 let orderSearchTimer = null;
@@ -1679,7 +1684,7 @@ const toPushKey = (value) => {
   return Uint8Array.from(raw, (character) => character.charCodeAt(0));
 };
 
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('/orders-sw.js?v=17', { updateViaCache: 'none' }).then(registration => registration.update()).catch(() => {});
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/orders-sw.js?v=18', { updateViaCache: 'none' }).then(registration => registration.update()).catch(() => {});
 document.getElementById('enable-notifications')?.addEventListener('click', async () => {
   closeOpenPanels();
   const button = document.getElementById('enable-notifications');
@@ -3728,8 +3733,8 @@ function readOfflineMenuSnapshot() {
 async function loadAvailability() {
   try {
     const [menuResponse, availabilityResponse] = await Promise.all([
-      fetch('/api/orders/menu', { cache: 'no-store' }),
-      fetch('/api/orders/availability', { cache: 'no-store' }),
+      fetchOrdersService('/api/orders/menu', { cache: 'no-store' }),
+      fetchOrdersService('/api/orders/availability', { cache: 'no-store' }),
     ]);
     if (!menuResponse.ok || !availabilityResponse.ok)
       throw new Error('Menu availability could not be loaded.');
@@ -3755,10 +3760,19 @@ function renderAvailability() {
   const query = String(menuSearch.value || '')
     .trim()
     .toLowerCase();
-  const typeItems = menuItems.filter((item) => item.menuType === menuType);
+  const typeItems = menuItems.filter((item) => (item.menuType || 'food') === menuType);
+  const categories = [...new Set(typeItems.map(item => item.category || 'Menu'))].sort((a, b) => a.localeCompare(b));
+  if (!categories.includes(availabilityCategory)) availabilityCategory = 'all';
+  const categorySelect = document.getElementById('availability-category');
+  if (categorySelect) {
+    const options = '<option value="all">All categories</option>' + categories.map(category => `<option value="${esc(category)}">${esc(category)}</option>`).join('');
+    if (categorySelect.innerHTML !== options) categorySelect.innerHTML = options;
+    categorySelect.value = availabilityCategory;
+  }
   const activeUnavailable = new Set(
     [...unavailable].filter(([, until]) => new Date(until) > new Date()).map(([key]) => key)
   );
+  availabilityVisibleStockSignature = JSON.stringify([...activeUnavailable].sort());
   const unavailableForType = typeItems.filter((item) => activeUnavailable.has(item.key)).length;
   const inStockCount = typeItems.length - unavailableForType;
   document.getElementById('menu-type-tabs').innerHTML = [
@@ -3767,12 +3781,12 @@ function renderAvailability() {
   ]
     .map(
       ([value, label]) =>
-        `<button class="menu-type-tab ${menuType === value ? 'is-active' : ''}" data-menu-type="${value}" aria-pressed="${menuType === value}">${label}<span>${menuItems.filter((item) => item.menuType === value).length}</span></button>`
+        `<button type="button" class="menu-type-tab ${menuType === value ? 'is-active' : ''}" data-menu-type="${value}" aria-pressed="${menuType === value}">${label}<span>${menuItems.filter((item) => (item.menuType || 'food') === value).length}</span></button>`
     )
     .join('');
   menuSearch.placeholder = `Search ${menuType === 'food' ? 'food' : 'bar'} menu`;
   document.getElementById('availability-counts').innerHTML =
-    `<span class="stock-count in">${inStockCount} in stock</span><span class="stock-count out">${unavailableForType} unavailable</span>`;
+    `<span class="stock-count total"><b>${typeItems.length}</b><span>Menu items</span></span><span class="stock-count in"><b>${inStockCount}</b><span>Available</span></span><span class="stock-count out"><b>${unavailableForType}</b><span>Paused</span></span>`;
   document.getElementById('availability-filters').innerHTML = [
     ['all', 'All items'],
     ['in', 'In stock'],
@@ -3780,7 +3794,7 @@ function renderAvailability() {
   ]
     .map(
       ([value, label]) =>
-        `<button class="filter-button ${availabilityFilter === value ? 'is-active' : ''}" data-availability-filter="${value}" aria-pressed="${availabilityFilter === value}">${label}</button>`
+        `<button type="button" class="filter-button ${availabilityFilter === value ? 'is-active' : ''}" data-availability-filter="${value}" aria-pressed="${availabilityFilter === value}">${label}</button>`
     )
     .join('');
   const visible = typeItems
@@ -3788,34 +3802,57 @@ function renderAvailability() {
       const isOut = activeUnavailable.has(item.key);
       return (
         `${item.name} ${item.category}`.toLowerCase().includes(query) &&
+        (availabilityCategory === 'all' || (item.category || 'Menu') === availabilityCategory) &&
         (availabilityFilter === 'all' || (availabilityFilter === 'out' ? isOut : !isOut))
       );
     })
     .sort((a, b) => `${a.category} ${a.name}`.localeCompare(`${b.category} ${b.name}`));
+  const reset = document.getElementById('availability-reset');
+  if (reset) reset.disabled = !query && availabilityCategory === 'all' && availabilityFilter === 'all';
+  const summary = document.getElementById('availability-results-summary');
+  if (summary) summary.textContent = `${visible.length} of ${typeItems.length} ${menuType === 'food' ? 'food' : 'bar'} items${availabilityCategory !== 'all' ? ` · ${availabilityCategory}` : ''}`;
+  const focusedCard = menuResults.contains(document.activeElement) ? document.activeElement.closest('[data-key]')?.dataset.key : null;
+  const focusedAction = focusedCard ? document.activeElement.dataset.stockAction : null;
   menuResults.innerHTML = visible.length
     ? visible
         .map((item) => {
           const until = activeUnavailable.has(item.key) ? unavailable.get(item.key) : null;
-          const status = until
-            ? `Out until ${new Date(until).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}`
-            : 'In stock';
-          return `<article class="menu-item ${until ? 'is-out' : ''}" data-key="${esc(item.key)}"><div class="menu-item-name"><b>${esc(item.name)}</b><span>${esc(item.category || 'Menu')}</span></div><div class="availability-state"><i aria-hidden="true"></i>${status}</div><div class="availability-controls">${until ? `<button class="stock-in" data-stock-action="restore">Mark in stock</button>` : `<button class="stock-tomorrow" data-stock-action="tomorrow">Out until tomorrow</button><label><span>Custom restock</span><input type="datetime-local" value="${tomorrowLocal()}" data-stock-until></label><button class="stock-date" data-stock-action="date">Mark unavailable</button>`}</div></article>`;
+          const returnTime = until ? new Date(until).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '';
+          const busy = availabilityChangesInFlight.has(item.key);
+          return `<article class="menu-item ${until ? 'is-out' : ''}" data-key="${esc(item.key)}" aria-busy="${busy}"><div class="availability-card-top"><div class="menu-item-name"><span>${esc(item.category || 'Menu')}</span><b>${esc(item.name)}</b></div><div class="availability-state"><i aria-hidden="true"></i>${until ? 'Paused' : 'In stock'}</div></div><div class="availability-return"><span>${until ? 'Automatic return' : 'On customer menu'}</span><strong>${until ? esc(returnTime) : 'Ready to order'}</strong></div><div class="availability-controls"><button type="button" class="availability-switch ${until ? 'is-off' : 'is-on'}" role="switch" aria-checked="${!until}" aria-label="${esc(item.name)} availability" title="${until ? 'Make this item available now' : 'Pause this item until tomorrow at the same time'}" data-stock-action="${until ? 'restore' : 'tomorrow'}" ${busy ? 'disabled' : ''}><span class="availability-switch-track" aria-hidden="true"><span></span></span><span class="availability-switch-label">${until ? 'Paused' : 'Available'}</span></button><button type="button" class="availability-schedule" data-stock-action="schedule" title="Choose when this item returns to the menu" aria-label="Schedule return for ${esc(item.name)}" ${busy ? 'disabled' : ''}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span>${until ? 'Edit time' : 'Schedule'}</span></button></div></article>`;
         })
         .join('')
-    : '<div class="empty-state">No menu items match that search.</div>';
+    : '<div class="empty-state"><b>No matching menu items</b><p>Try another search, category, or stock filter.</p></div>';
+  if (focusedCard) {
+    const card = [...menuResults.querySelectorAll('[data-key]')].find(card => card.dataset.key === focusedCard);
+    const action = focusedAction === 'schedule' ? card?.querySelector('.availability-schedule') : card?.querySelector('.availability-switch');
+    if (action && !action.disabled) action.focus({ preventScroll: true });
+  }
+}
+
+function setAvailabilityFeedback(message, isError = false) {
+  const feedback = document.getElementById('availability-feedback');
+  if (!feedback) return;
+  feedback.textContent = message;
+  feedback.classList.toggle('is-error', isError);
+  feedback.hidden = !message;
+}
+function applyAvailabilityChange(key, unavailableUntil) {
+  if (unavailableUntil) unavailable.set(key, unavailableUntil);
+  else unavailable.delete(key);
+  saveOfflineMenuSnapshot(menuItems, [...unavailable].map(([item_key, unavailable_until]) => ({ item_key, unavailable_until })));
+  renderAvailability();
 }
 
 async function updateAvailability(key, unavailableUntil) {
   const url = `/api/orders/availability/${encodeURIComponent(key)}`;
   if (
     await queueWhenOffline('availability-update', { key, unavailableUntil }, () => {
-      if (unavailableUntil) unavailable.set(key, unavailableUntil);
-      else unavailable.delete(key);
-      renderAvailability();
+      applyAvailabilityChange(key, unavailableUntil);
     })
   )
-    return;
-  const response = await fetch(
+    return { queued: true };
+  const response = await fetchOrdersService(
     url,
     unavailableUntil
       ? {
@@ -3829,7 +3866,30 @@ async function updateAvailability(key, unavailableUntil) {
     const body = await response.json().catch(() => ({}));
     throw new Error(body.error || 'Unable to update availability.');
   }
+  // Persist the confirmed change before refreshing, so a failed menu fetch
+  // cannot make a successful stock update look as though it was lost.
+  applyAvailabilityChange(key, unavailableUntil);
   await loadAvailability();
+}
+
+function localRestockValue(date) {
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+}
+function openAvailabilitySchedule(key) {
+  const item = menuItems.find(item => item.key === key);
+  const dialog = document.getElementById('availability-schedule-dialog');
+  if (!item || !dialog || availabilityChangesInFlight.has(key)) return;
+  availabilityScheduleKey = key;
+  document.getElementById('availability-schedule-item').textContent = item.name;
+  const input = document.getElementById('availability-schedule-until');
+  const saved = unavailable.get(key);
+  input.value = saved && Date.parse(saved) > Date.now() ? localRestockValue(new Date(saved)) : tomorrowLocal();
+  input.min = localRestockValue(new Date(Date.now() + 60000));
+  input.removeAttribute('aria-invalid');
+  document.getElementById('availability-schedule-error').hidden = true;
+  dialog.querySelectorAll('[data-restock-preset]').forEach(button => button.classList.remove('is-active'));
+  dialog.showModal();
+  input.focus();
 }
 
 document.getElementById('availability-toggle')?.addEventListener('click', async () => {
@@ -5172,6 +5232,16 @@ orderStatusFilters.addEventListener('click', (event) => {
   loadOrders();
 });
 menuSearch?.addEventListener('input', renderAvailability);
+document.getElementById('availability-category')?.addEventListener('change', event => {
+  availabilityCategory = event.target.value;
+  renderAvailability();
+});
+document.getElementById('availability-reset')?.addEventListener('click', () => {
+  availabilityCategory = 'all';
+  availabilityFilter = 'all';
+  menuSearch.value = '';
+  renderAvailability();
+});
 document.getElementById('availability-filters')?.addEventListener('click', (event) => {
   const button = event.target.closest('[data-availability-filter]');
   if (!button) return;
@@ -5183,6 +5253,7 @@ document.getElementById('menu-type-tabs')?.addEventListener('click', (event) => 
   if (!button) return;
   menuType = button.dataset.menuType;
   availabilityFilter = 'all';
+  availabilityCategory = 'all';
   menuSearch.value = '';
   renderAvailability();
 });
@@ -5260,26 +5331,96 @@ menuResults?.addEventListener('click', async (event) => {
   if (!button) return;
   const row = button.closest('[data-key]');
   const key = row?.dataset.key;
-  if (!key) return;
-  button.disabled = true;
+  if (!key || availabilityChangesInFlight.has(key)) return;
+  const action = button.dataset.stockAction;
+  if (action === 'schedule') { openAvailabilitySchedule(key); return; }
+  if (!['restore', 'tomorrow'].includes(action)) return;
+  const itemName = menuItems.find(item => item.key === key)?.name || 'Item';
+  const wasFocused = document.activeElement === button;
+  availabilityChangesInFlight.add(key);
+  row.setAttribute('aria-busy', 'true');
+  row.querySelectorAll('button').forEach(button => { button.disabled = true; });
+  setAvailabilityFeedback('');
   try {
-    const action = button.dataset.stockAction;
-    const dateInput = row.querySelector('[data-stock-until]');
-    await updateAvailability(
-      key,
-      action === 'restore'
-        ? null
-        : action === 'tomorrow'
-          ? new Date(Date.now() + 86400000).toISOString()
-          : new Date(dateInput.value).toISOString()
-    );
+    const result = await updateAvailability(key, action === 'restore' ? null : new Date(Date.now() + 86400000).toISOString());
+    setAvailabilityFeedback(result?.queued ? `${itemName}: saved offline. The customer menu will update when the connection returns.` : action === 'restore' ? `${itemName} is available for ordering.` : `${itemName} is paused until tomorrow. Use Edit time to change its return.`);
   } catch (error) {
     reportOrdersDiagnostic({
       message: `Menu availability update failed: ${error.message}`,
       source: 'menu availability',
     });
-    alert(error.message);
-    button.disabled = false;
+    setAvailabilityFeedback(error.message || 'The item could not be updated. Try again.', true);
+  } finally {
+    availabilityChangesInFlight.delete(key);
+    renderAvailability();
+    if (wasFocused && document.activeElement === document.body)
+      [...menuResults.querySelectorAll('[data-key]')].find(card => card.dataset.key === key)?.querySelector('.availability-switch')?.focus({ preventScroll: true });
+  }
+});
+
+const availabilityScheduleDialog = document.getElementById('availability-schedule-dialog');
+availabilityScheduleDialog?.addEventListener('click', event => {
+  if (event.target.closest('[data-availability-schedule-close]') && !availabilityScheduleSaving) {
+    availabilityScheduleDialog.close();
+    return;
+  }
+  const preset = event.target.closest('[data-restock-preset]');
+  if (!preset || availabilityScheduleSaving) return;
+  const input = document.getElementById('availability-schedule-until');
+  input.value = preset.dataset.restockPreset === '1h' ? localRestockValue(new Date(Date.now() + 3600000)) : tomorrowLocal();
+  input.removeAttribute('aria-invalid');
+  document.getElementById('availability-schedule-error').hidden = true;
+  availabilityScheduleDialog.querySelectorAll('[data-restock-preset]').forEach(button => button.classList.toggle('is-active', button === preset));
+});
+availabilityScheduleDialog?.addEventListener('cancel', event => {
+  if (availabilityScheduleSaving) event.preventDefault();
+});
+availabilityScheduleDialog?.addEventListener('close', () => {
+  const key = availabilityScheduleKey;
+  availabilityScheduleKey = '';
+  if (document.activeElement === document.body)
+    [...menuResults.querySelectorAll('[data-key]')].find(card => card.dataset.key === key)?.querySelector('.availability-schedule')?.focus({ preventScroll: true });
+});
+document.getElementById('availability-schedule-until')?.addEventListener('input', event => {
+  event.target.removeAttribute('aria-invalid');
+  document.getElementById('availability-schedule-error').hidden = true;
+  availabilityScheduleDialog.querySelectorAll('[data-restock-preset]').forEach(button => button.classList.remove('is-active'));
+});
+document.getElementById('availability-schedule-form')?.addEventListener('submit', async event => {
+  event.preventDefault();
+  if (availabilityScheduleSaving || !availabilityScheduleKey) return;
+  const input = document.getElementById('availability-schedule-until');
+  const errorText = document.getElementById('availability-schedule-error');
+  const until = new Date(input.value);
+  if (!input.value || !Number.isFinite(until.getTime()) || until.getTime() <= Date.now()) {
+    errorText.textContent = 'Choose a future return date and time.';
+    errorText.hidden = false;
+    input.setAttribute('aria-invalid', 'true');
+    input.focus();
+    return;
+  }
+  const key = availabilityScheduleKey;
+  const itemName = menuItems.find(item => item.key === key)?.name || 'Item';
+  const submit = document.getElementById('availability-schedule-save');
+  availabilityScheduleSaving = true;
+  availabilityChangesInFlight.add(key);
+  errorText.hidden = true;
+  availabilityScheduleDialog.querySelectorAll('input, button').forEach(control => { control.disabled = true; });
+  submit.textContent = 'Saving…';
+  try {
+    const result = await updateAvailability(key, until.toISOString());
+    setAvailabilityFeedback(result?.queued ? `${itemName}: schedule saved offline. The customer menu will update when the connection returns.` : `${itemName} will return on ${until.toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}.`);
+    availabilityScheduleDialog.close();
+  } catch (error) {
+    errorText.textContent = error.message || 'The schedule could not be saved. Try again.';
+    errorText.hidden = false;
+    reportOrdersDiagnostic({ message: `Restock schedule failed: ${error.message}`, source: 'menu availability' });
+  } finally {
+    availabilityChangesInFlight.delete(key);
+    availabilityScheduleSaving = false;
+    availabilityScheduleDialog.querySelectorAll('input, button').forEach(control => { control.disabled = false; });
+    submit.textContent = 'Save schedule';
+    renderAvailability();
   }
 });
 
@@ -5325,6 +5466,13 @@ setInterval(() => {
 setInterval(() => {
   if (!counterPanel.hidden) refreshCounterLiveStatus();
 }, 1000);
+// Expiring restock schedules change the visible status without refreshing the
+// whole workspace or interrupting a scheduling draft.
+setInterval(() => {
+  if (availability.hidden) return;
+  const active = [...unavailable].filter(([, until]) => Date.parse(until) > Date.now()).map(([key]) => key).sort();
+  if (JSON.stringify(active) !== availabilityVisibleStockSignature) renderAvailability();
+}, 30000);
 
 let printingRecoveryRequest = null;
 async function recoverPendingPrinting() {

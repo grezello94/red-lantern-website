@@ -11,7 +11,7 @@
     <link rel="manifest" href="/orders.webmanifest?v=7" />
     <link rel="stylesheet" href="orders.css?v=7" />
     <link rel="stylesheet" href="orders-logo.css?v=7" />
-    <link rel="stylesheet" href="orders-fixes.css?v=24" />
+    <link rel="stylesheet" href="orders-fixes.css?v=25" />
   </head>
   <body>
     <header>
@@ -73,32 +73,47 @@
     </section>
     <section id="availability" hidden>
       <div class="availability-heading">
-        <div>
-          <span class="eyebrow">Staff controls</span>
-          <h2>Menu availability</h2>
-          <p>
-            Update item availability for QR ordering. Menu pricing can only be changed in Admin.
-          </p>
+        <div class="availability-heading-main">
+          <span class="availability-title-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><path d="m15 17 2 2 4-5"/></svg></span>
+          <div>
+            <span class="eyebrow">Menu control center</span>
+            <h2>Menu availability</h2>
+            <p>Switch off to pause an item until tomorrow, or schedule a custom return to your customer menu.</p>
+          </div>
         </div>
         <button id="availability-close" class="quiet-button" aria-label="Close menu availability">
           Close
         </button>
       </div>
-      <div id="menu-type-tabs" class="menu-type-tabs" aria-label="Select menu"></div>
-      <div class="availability-toolbar">
-        <label class="search-field"
-          ><span aria-hidden="true">⌕</span
-          ><input id="menu-search" type="search" autocomplete="off" placeholder="Search food menu"
-        /></label>
-        <div id="availability-counts" class="availability-counts" aria-live="polite"></div>
+      <div class="availability-control-surface">
+        <div class="availability-control-topline">
+          <div id="menu-type-tabs" class="menu-type-tabs" aria-label="Select menu"></div>
+          <div id="availability-counts" class="availability-counts" aria-live="polite"></div>
+        </div>
+        <div class="availability-toolbar">
+          <label class="search-field"><span aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg></span><input id="menu-search" type="search" autocomplete="off" placeholder="Search food menu" aria-label="Search menu items" /></label>
+          <label class="availability-category-field"><span>Category</span><select id="availability-category"><option value="all">All categories</option></select></label>
+          <button id="availability-reset" type="button" disabled>Reset filters</button>
+        </div>
+        <div class="availability-control-footer">
+          <div id="availability-filters" class="availability-filters" aria-label="Filter menu items"></div>
+          <p id="availability-results-summary" aria-live="polite"></p>
+        </div>
       </div>
-      <div
-        id="availability-filters"
-        class="availability-filters"
-        aria-label="Filter menu items"
-      ></div>
+      <p id="availability-feedback" class="availability-feedback" role="status" hidden></p>
       <div id="menu-results"></div>
     </section>
+    <dialog id="availability-schedule-dialog" class="availability-schedule-dialog" aria-labelledby="availability-schedule-title">
+      <button type="button" class="dialog-close" data-availability-schedule-close aria-label="Close restock schedule">×</button>
+      <form id="availability-schedule-form" novalidate>
+        <div class="availability-schedule-heading"><span class="eyebrow">Automatic restock</span><h2 id="availability-schedule-title">Schedule item return</h2><p id="availability-schedule-item"></p></div>
+        <p class="availability-schedule-description">This item will be hidden from your customer menu until the time you choose, then return automatically.</p>
+        <div class="availability-schedule-presets" aria-label="Quick restock times"><button type="button" data-restock-preset="1h">In 1 hour</button><button type="button" data-restock-preset="tomorrow">Tomorrow</button></div>
+        <label for="availability-schedule-until">Return date and time<input id="availability-schedule-until" type="datetime-local" required aria-describedby="availability-schedule-error" /></label>
+        <p id="availability-schedule-error" role="alert" hidden></p>
+        <div class="availability-dialog-actions"><button type="button" data-availability-schedule-close>Cancel</button><button id="availability-schedule-save" type="submit">Save schedule</button></div>
+      </form>
+    </dialog>
     <main id="orders" aria-live="polite" aria-busy="true" aria-label="Orders list">Loading orders…</main>
     <dialog id="shortcut-dialog" class="shortcut-dialog">
       <button class="dialog-close" id="shortcut-close" aria-label="Close">×</button
@@ -116,6 +131,6 @@
     <script src="/printer-domain.js?v=2"></script>
     <script src="/staff-domain.js?v=2"></script>
     <script src="/staff-access.js?v=1"></script>
-    <script src="orders.js?v=58"></script>
+    <script src="orders.js?v=59"></script>
   </body>
 </html>
