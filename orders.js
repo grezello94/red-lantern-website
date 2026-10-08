@@ -768,17 +768,105 @@ availability.before(operationsPanel);
 const counterPanel = document.createElement('section');
 counterPanel.id = 'counter-order-panel';
 counterPanel.hidden = true;
-counterPanel.innerHTML =
-  '<div class="counter-order-head"><div><span class="eyebrow">Counter order</span><h2>Takeaway</h2><p>Build a walk-in or phone order, then send it directly to the kitchen.</p></div><button type="button" id="counter-order-close" class="new-order-button">New Order</button></div><div class="counter-order-layout"><div class="counter-menu"><label class="counter-search"><span aria-hidden="true">⌕</span><input id="counter-menu-search" type="search" placeholder="Search menu items"></label><div id="counter-categories" class="counter-categories"></div><div id="counter-menu-items" class="counter-menu-items"></div></div><aside class="counter-cart"><div class="counter-cart-head"><h3>Current order</h3><div><button type="button" id="view-table-kot" hidden>View KOT</button><button type="button" id="counter-clear" class="counter-clear">Clear</button></div></div><div id="counter-cart-items" class="counter-cart-items"></div><div class="counter-customer"><label>Customer name <input id="counter-customer-name" maxlength="80" placeholder="Walk-in customer"></label><label>Mobile number <input id="counter-customer-phone" inputmode="tel" maxlength="16" placeholder="Optional for walk-ins"></label><label>Kitchen note <textarea id="counter-special-request" maxlength="240" placeholder="e.g. less spicy"></textarea></label></div><div class="counter-total"><span>Total</span><b id="counter-total">₹0</b></div><button type="button" id="counter-place-order" class="counter-place-order">Place takeaway order</button><p id="counter-order-status" class="counter-order-status" aria-live="polite"></p></aside></div><dialog id="counter-choice-dialog" class="counter-choice-dialog"><button type="button" class="dialog-close" data-counter-choice-close aria-label="Close">×</button><div id="counter-choice-content"></div></dialog>';
+counterPanel.innerHTML = `
+  <div class="counter-order-head">
+    <div class="counter-order-heading-main">
+      <span class="counter-order-heading-icon" aria-hidden="true">${actionIcon('cutlery')}</span>
+      <div class="counter-order-heading-copy"><span class="eyebrow">Order workspace</span><h2>Takeaway</h2><p>Choose items, review your order, then send it to the kitchen.</p></div>
+    </div>
+    <span id="counter-workspace-badge" class="counter-workspace-badge">Takeaway</span>
+  </div>
+  <div class="counter-order-layout">
+    <div class="counter-menu">
+      <div class="counter-menu-toolbar">
+        <label class="counter-search"><span aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg></span><input id="counter-menu-search" type="search" placeholder="Search dishes, drinks or categories" aria-label="Search order menu" autocomplete="off"></label>
+        <div class="counter-menu-heading"><div><b id="counter-menu-category">All items</b><small id="counter-menu-meta" aria-live="polite"></small></div><span class="counter-menu-hint">Tap an item to add</span></div>
+      </div>
+      <div id="counter-categories" class="counter-categories" aria-label="Menu categories"></div>
+      <div id="counter-menu-items" class="counter-menu-items" aria-label="Available menu items"></div>
+    </div>
+    <aside class="counter-cart" aria-labelledby="counter-cart-title">
+      <div class="counter-cart-head"><div class="counter-cart-title"><h3 id="counter-cart-title">Current order</h3><span id="counter-cart-count">0 items</span></div><div><button type="button" id="view-table-kot" hidden>View KOT</button><button type="button" id="counter-clear" class="counter-clear">Clear</button><button type="button" id="mobile-cart-close" aria-label="Close current order">×</button></div></div>
+      <div id="counter-cart-items" class="counter-cart-items"></div>
+      <div class="counter-customer-heading"><b>Guest &amp; kitchen details</b><span>Optional for walk-ins</span></div>
+      <div class="counter-customer"><label>Customer name <input id="counter-customer-name" maxlength="80" placeholder="Walk-in customer" autocomplete="name"></label><label>Mobile number <input id="counter-customer-phone" inputmode="tel" maxlength="16" placeholder="Optional for walk-ins" autocomplete="tel"></label><label>Kitchen note <textarea id="counter-special-request" maxlength="240" placeholder="e.g. less spicy, serve starters first"></textarea></label></div>
+      <div class="counter-checkout"><div class="counter-total"><span>Order total</span><b id="counter-total">₹0</b></div><button type="button" id="counter-place-order" class="counter-place-order">Place takeaway order</button><p id="counter-order-status" class="counter-order-status" aria-live="polite"></p></div>
+    </aside>
+  </div>
+  <dialog id="counter-choice-dialog" class="counter-choice-dialog" aria-labelledby="counter-choice-title"><button type="button" class="dialog-close" data-counter-choice-close aria-label="Close item options">×</button><div id="counter-choice-content"></div></dialog>`;
 availability.before(counterPanel);
-const counterPanelCloseButton = document.getElementById('counter-order-close');
-if (counterPanelCloseButton) counterPanelCloseButton.remove();
+const mobileCartToggle = document.createElement('button');
+mobileCartToggle.id = 'mobile-cart-toggle';
+mobileCartToggle.type = 'button';
+mobileCartToggle.hidden = true;
+mobileCartToggle.setAttribute('aria-controls', 'counter-cart-items');
+mobileCartToggle.setAttribute('aria-expanded', 'false');
+mobileCartToggle.innerHTML = '<span>Current order <b id="mobile-cart-count">0</b></span><strong id="mobile-cart-total">₹0</strong>';
+document.body.appendChild(mobileCartToggle);
+const mobileAddStatus = document.createElement('p');
+mobileAddStatus.id = 'mobile-add-status';
+mobileAddStatus.hidden = true;
+mobileAddStatus.setAttribute('role', 'status');
+document.body.appendChild(mobileAddStatus);
+const counterCompactLayout = window.matchMedia('(max-width: 900px)');
+let counterLastItemCount = 0;
+let counterAddedTimer;
+function syncCounterWorkspaceLayout() {
+  const visible = !counterPanel.hidden;
+  const compact = counterCompactLayout.matches;
+  const cartOpen = visible && compact && counterPanel.classList.contains('mobile-cart-open');
+  const cart = counterPanel.querySelector('.counter-cart');
+  mobileCartToggle.hidden = !visible || !compact || cartOpen;
+  mobileCartToggle.setAttribute('aria-expanded', String(cartOpen));
+  cart.inert = compact && !cartOpen;
+  counterPanel.querySelector('.counter-menu').inert = cartOpen;
+  document.body.classList.toggle('is-counter-workspace', visible && compact);
+  document.body.classList.toggle('mobile-order-cart-open', cartOpen);
+  if (cartOpen) {
+    clearTimeout(counterAddedTimer);
+    mobileAddStatus.hidden = true;
+    mobileAddStatus.classList.remove('is-visible');
+    cart.setAttribute('role', 'dialog');
+    cart.setAttribute('aria-modal', 'true');
+  } else {
+    cart.removeAttribute('role');
+    cart.removeAttribute('aria-modal');
+  }
+  if (!visible || !compact) {
+    counterPanel.classList.remove('mobile-cart-open');
+    mobileAddStatus.hidden = true;
+  }
+}
+function setMobileCartOpen(open) {
+  counterPanel.classList.toggle('mobile-cart-open', open);
+  syncCounterWorkspaceLayout();
+  if (open) document.getElementById('mobile-cart-close').focus({ preventScroll: true });
+  else if (!mobileCartToggle.hidden) mobileCartToggle.focus({ preventScroll: true });
+}
+mobileCartToggle.addEventListener('click', () => setMobileCartOpen(true));
+document.getElementById('mobile-cart-close').addEventListener('click', () => setMobileCartOpen(false));
+counterPanel.addEventListener('click', event => {
+  if (event.target === counterPanel && counterPanel.classList.contains('mobile-cart-open')) setMobileCartOpen(false);
+});
+counterCompactLayout.addEventListener('change', syncCounterWorkspaceLayout);
+counterPanel.querySelector('.counter-cart').addEventListener('keydown', event => {
+  if (!counterCompactLayout.matches || !counterPanel.classList.contains('mobile-cart-open')) return;
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    setMobileCartOpen(false);
+  } else if (event.key === 'Tab') {
+    const controls = [...event.currentTarget.querySelectorAll('button, input, textarea')].filter(control => !control.disabled && control.getClientRects().length);
+    const first = controls[0], last = controls.at(-1);
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+  }
+});
 const dineInActions = document.createElement('div');
 dineInActions.id = 'dine-in-actions';
 dineInActions.hidden = true;
 dineInActions.innerHTML =
   '<button type="button" class="dine-in-split" data-dine-action="split">Split</button><button type="button" data-dine-action="save">Save</button><button type="button" data-dine-action="print">Print &amp; eBill</button><button type="button" class="dine-in-kot" data-dine-action="kot-print">Send KOT</button><button type="button" class="dine-in-hold" data-dine-action="hold">Hold</button>';
-counterPanel.querySelector('.counter-cart')?.append(dineInActions);
+counterPanel.querySelector('.counter-checkout')?.append(dineInActions);
 const splitBillDialog = document.createElement('dialog');
 splitBillDialog.id = 'split-bill-dialog';
 splitBillDialog.innerHTML =
@@ -864,6 +952,7 @@ const closeOpenPanels = (except = null) => {
     availabilityButton?.setAttribute('aria-expanded', 'false');
   }
   if (except !== 'counter') counterPanel.hidden = true;
+  syncCounterWorkspaceLayout();
   if (except !== 'tables') tableViewPanel.hidden = true;
   const shortcutDialog = document.getElementById('shortcut-dialog');
   if (except !== 'shortcut' && shortcutDialog?.open) shortcutDialog.close();
@@ -899,10 +988,23 @@ function openCounterChoice(item) {
   const options = counterPortionOptions(item);
   const dialog = document.getElementById('counter-choice-dialog');
   document.getElementById('counter-choice-content').innerHTML =
-    `<span class="eyebrow">Add to parcel</span><h2>${esc(item.name)}</h2><p>${esc(item.category || 'Menu')}</p><div class="counter-choice-options">${options.map(([value, label, price], index) => `<label><input type="radio" name="counter-portion" value="${esc(value)}" data-counter-choice-price="${Number(String(price).replace(/[^0-9.]/g, ''))}" ${index === 0 ? 'checked' : ''}><span>${esc(label)} <b>${counterMoney(String(price).replace(/[^0-9.]/g, ''))}</b></span></label>`).join('')}</div>${item.gravyStyleAvailable ? '<fieldset class="counter-style-options"><legend>Preparation style</legend><label><input type="radio" name="counter-style" value="" checked> Regular</label><label><input type="radio" name="counter-style" value="Gravy"> Gravy <b>+₹10</b></label><label><input type="radio" name="counter-style" value="Semi-gravy"> Semi-gravy <b>+₹10</b></label></fieldset>' : ''}<button type="button" id="counter-choice-add" class="counter-place-order">Add to order</button>`;
+    `<span class="eyebrow">Customize item</span><h2 id="counter-choice-title">${esc(item.name)}</h2><p>${esc(item.category || 'Menu')} · Choose your portion${item.gravyStyleAvailable ? ' and preparation' : ''}</p><div class="counter-choice-options" role="group" aria-label="Portion">${options.map(([value, label, price], index) => `<label><input type="radio" name="counter-portion" value="${esc(value)}" data-counter-choice-price="${Number(String(price).replace(/[^0-9.]/g, ''))}" ${index === 0 ? 'checked' : ''}><span>${esc(label)} <b>${counterMoney(String(price).replace(/[^0-9.]/g, ''))}</b></span></label>`).join('')}</div>${item.gravyStyleAvailable ? '<fieldset class="counter-style-options"><legend>Preparation style</legend><label><input type="radio" name="counter-style" value="" checked> Regular</label><label><input type="radio" name="counter-style" value="Gravy"> Gravy <b>+₹10</b></label><label><input type="radio" name="counter-style" value="Semi-gravy"> Semi-gravy <b>+₹10</b></label></fieldset>' : ''}<button type="button" id="counter-choice-add" class="counter-place-order">Add to order</button>`;
   if (typeof dialog.showModal === 'function') dialog.showModal();
 }
 const counterMoney = (value) => `₹${Math.round(Number(value) || 0)}`;
+function updateCounterMarkup(element, markup) {
+  if (element.innerHTML === markup) return;
+  const top = element.scrollTop, left = element.scrollLeft;
+  const focused = element.contains(document.activeElement) ? document.activeElement : null;
+  const attributes = focused ? ['data-counter-item', 'data-counter-category', 'data-counter-qty', 'data-counter-change'].filter(name => focused.hasAttribute(name)).map(name => [name, focused.getAttribute(name)]) : [];
+  element.innerHTML = markup;
+  element.scrollTop = top;
+  element.scrollLeft = left;
+  if (attributes.length) {
+    const target = [...element.querySelectorAll('button')].find(button => attributes.every(([name, value]) => button.getAttribute(name) === value));
+    target?.focus({ preventScroll: true });
+  }
+}
 function renderCounterOrder() {
   const search = String(document.getElementById('counter-menu-search')?.value || '')
     .trim()
@@ -933,7 +1035,7 @@ function renderCounterOrder() {
     [
       ...new Set(
         counterMenu
-          .filter((item) => item.menuType === menuType)
+          .filter((item) => (item.menuType || 'food') === menuType)
           .map((item) => item.category || 'Menu')
       ),
     ].sort((a, b) => {
@@ -948,29 +1050,32 @@ function renderCounterOrder() {
   const foodCategories = categoriesFor('food'),
     barCategories = categoriesFor('bar');
   const categoryButton = (category, label = category) =>
-    `<button type="button" class="counter-category ${counterCategory === category ? 'is-active' : ''}" data-counter-category="${esc(category)}">${esc(label)}</button>`;
-  document.getElementById('counter-categories').innerHTML =
-    `${categoryButton('all', 'All items')}<span class="counter-category-group">Food menu</span>${foodCategories.map((category) => categoryButton(category)).join('')}<span class="counter-category-group">Alcohol & bar</span>${barCategories.map((category) => categoryButton(category)).join('')}`;
+    `<button type="button" class="counter-category ${counterCategory === category ? 'is-active' : ''}" data-counter-category="${esc(category)}" aria-pressed="${counterCategory === category}"><span class="counter-category-label">${esc(label)}</span><b class="counter-category-count">${category === 'all' ? counterMenu.length : counterMenu.filter(item => (item.category || 'Menu') === category).length}</b></button>`;
+  updateCounterMarkup(document.getElementById('counter-categories'),
+    `${categoryButton('all', 'All items')}${foodCategories.length ? '<span class="counter-category-group">Food menu</span>' + foodCategories.map((category) => categoryButton(category)).join('') : ''}${barCategories.length ? '<span class="counter-category-group">Alcohol & bar</span>' + barCategories.map((category) => categoryButton(category)).join('') : ''}`);
   const visible = counterMenu.filter(
     (item) =>
       (counterCategory === 'all' || (item.category || 'Menu') === counterCategory) &&
       `${item.name} ${item.category}`.toLowerCase().includes(search)
   );
-  document.getElementById('counter-menu-items').innerHTML =
+  document.getElementById('counter-menu-category').textContent = counterCategory === 'all' ? 'All items' : counterCategory;
+  document.getElementById('counter-menu-meta').textContent = `${visible.length} available item${visible.length === 1 ? '' : 's'}${search ? ' matching your search' : ''}`;
+  updateCounterMarkup(document.getElementById('counter-menu-items'),
     visible
       .map((item) => {
         const [portion, price] = counterPrice(item);
-        return `<button type="button" class="counter-menu-item" data-counter-item="${counterMenu.indexOf(item)}"><span>${esc(item.category || 'Menu')}</span><b>${esc(item.name)}</b><small>${portion ? `<em>${esc(portion)}</em>` : ''}<strong>${counterMoney(String(price).replace(/[^0-9.]/g, ''))}</strong></small><i aria-hidden="true">+</i></button>`;
+        const selected = counterCart.filter(line => line.name === item.name && line.category === item.category).reduce((sum, line) => sum + line.quantity, 0);
+        return `<button type="button" class="counter-menu-item${selected ? ' is-selected' : ''}" data-counter-item="${counterMenu.indexOf(item)}" title="${esc(item.name)}" aria-label="Add ${esc(item.name)}${selected ? `, ${selected} in current order` : ''}"><span>${esc(item.category || 'Menu')}</span><b>${esc(item.name)}</b><small>${portion ? `<em>${esc(portion)}</em>` : ''}<strong>${counterMoney(String(price).replace(/[^0-9.]/g, ''))}</strong></small>${selected ? `<em class="counter-item-count" aria-hidden="true">${selected}</em>` : ''}<i aria-hidden="true">+</i></button>`;
       })
-      .join('') || '<p class="counter-empty">No menu items match that search.</p>';
+      .join('') || '<p class="counter-empty"><b>No matching items</b><span>Try another category or search.</span></p>');
   const items = counterCart
     .map((line, index) => {
       const unit = line.price + (line.style ? 10 : 0);
-      return `<div class="counter-cart-line"><div><b>${esc(line.name)}</b><small>${esc(line.portion || 'Regular')}${line.style ? ` · ${esc(line.style)}` : ''} · ${counterMoney(unit)} each</small></div><div class="counter-quantity"><button type="button" data-counter-qty="${index}" data-counter-change="-1">−</button><b>${line.quantity}</b><button type="button" data-counter-qty="${index}" data-counter-change="1">+</button></div><strong>${counterMoney(unit * line.quantity)}</strong></div>`;
+      return `<div class="counter-cart-line"><div><b>${esc(line.name)}</b><small>${esc(line.portion || 'Regular')}${line.style ? ` · ${esc(line.style)}` : ''} · ${counterMoney(unit)} each</small></div><div class="counter-quantity"><button type="button" data-counter-qty="${index}" data-counter-change="-1" aria-label="Decrease ${esc(line.name)} quantity">−</button><b>${line.quantity}</b><button type="button" data-counter-qty="${index}" data-counter-change="1" aria-label="Increase ${esc(line.name)} quantity">+</button></div><strong>${counterMoney(unit * line.quantity)}</strong></div>`;
     })
     .join('');
-  document.getElementById('counter-cart-items').innerHTML =
-    items || '<p class="counter-empty">Choose items from the menu to start an order.</p>';
+  updateCounterMarkup(document.getElementById('counter-cart-items'),
+    items || `<p class="counter-empty"><span class="counter-empty-icon" aria-hidden="true">${actionIcon('receipt')}</span><b>Your order starts here</b><span>Choose items from the menu to build this order.</span></p>`);
   const subtotal = counterCart.reduce(
     (sum, line) => sum + (line.price + (line.style ? 10 : 0)) * line.quantity,
     0
@@ -982,7 +1087,22 @@ function renderCounterOrder() {
     counterLoyaltyPoints >= 100
       ? Math.min(counterLoyaltyPoints, subtotal, Math.max(0, requestedPoints))
       : 0;
-  document.getElementById('counter-total').textContent = counterMoney(subtotal - usablePoints);
+  const total = counterMoney(subtotal - usablePoints);
+  const count = counterCart.reduce((sum, line) => sum + line.quantity, 0);
+  document.getElementById('counter-total').textContent = total;
+  document.getElementById('counter-cart-count').textContent = `${count} item${count === 1 ? '' : 's'}`;
+  document.getElementById('mobile-cart-count').textContent = count;
+  document.getElementById('mobile-cart-total').textContent = total;
+  document.getElementById('counter-clear').disabled = !count;
+  if (count > counterLastItemCount && counterCompactLayout.matches && !counterPanel.classList.contains('mobile-cart-open')) {
+    clearTimeout(counterAddedTimer);
+    mobileAddStatus.textContent = 'Added to current order';
+    mobileAddStatus.hidden = false;
+    mobileAddStatus.classList.add('is-visible');
+    counterAddedTimer = setTimeout(() => { mobileAddStatus.hidden = true; mobileAddStatus.classList.remove('is-visible'); }, 1800);
+  }
+  counterLastItemCount = count;
+  syncCounterWorkspaceLayout();
   const note = document.getElementById('counter-wallet-note');
   if (note) note.textContent = usablePoints ? `₹${usablePoints} wallet discount applied.` : '';
 }
@@ -1032,6 +1152,7 @@ async function loadCounterLoyalty() {
 async function openCounterOrder(table = null) {
   counterTable = table;
   const isDineIn = !!table;
+  document.getElementById('counter-workspace-badge').textContent = isDineIn ? 'Dine-in' : 'Takeaway';
   const title = document.querySelector('#counter-order-panel .counter-order-head h2');
   const subtitle = document.querySelector('#counter-order-panel .counter-order-head p');
   const placeButton = document.getElementById('counter-place-order');
@@ -1057,15 +1178,17 @@ async function openCounterOrder(table = null) {
   const opening = counterPanel.hidden;
   if (!opening) {
     counterPanel.hidden = true;
+    syncCounterWorkspaceLayout();
     return;
   }
   closeOpenPanels('counter');
   counterPanel.hidden = false;
+  syncCounterWorkspaceLayout();
   document.getElementById('counter-menu-items').innerHTML =
     '<p class="counter-empty">Loading menu…</p>';
   try {
     await Promise.all([loadAvailability(), refreshCounterLiveStatus()]);
-    counterMenu = menuItems.filter((item) => !unavailable.has(item.key));
+    counterMenu = menuItems.filter((item) => !(Date.parse(unavailable.get(item.key)) > Date.now()));
     renderCounterOrder();
     counterPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
   } catch (error) {
@@ -1317,6 +1440,7 @@ function renderTableView() {
     );
 }
 async function showTableView() {
+  closeOpenPanels('tables');
   tableViewPanel.hidden = false;
   if (Array.isArray(operationsConfig.tableAreas) && operationsConfig.tableAreas.length)
     renderTableView();
@@ -1684,7 +1808,7 @@ const toPushKey = (value) => {
   return Uint8Array.from(raw, (character) => character.charCodeAt(0));
 };
 
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('/orders-sw.js?v=18', { updateViaCache: 'none' }).then(registration => registration.update()).catch(() => {});
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/orders-sw.js?v=19', { updateViaCache: 'none' }).then(registration => registration.update()).catch(() => {});
 document.getElementById('enable-notifications')?.addEventListener('click', async () => {
   closeOpenPanels();
   const button = document.getElementById('enable-notifications');
