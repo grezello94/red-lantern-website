@@ -54,6 +54,11 @@ const setStatus = (form, message, isError = false) => {
   status.style.color = isError ? '#b91c1c' : '#166534';
 };
 
+function markAirMenuDraft() {
+  const form = document.querySelector('form[action="/api/update-airMenu"]');
+  if (form) document.dispatchEvent(new CustomEvent('admin-content-draft', { detail: { form } }));
+}
+
 let saveToastTimer = null;
 function showSaveToast() {
   let toast = document.getElementById('admin-save-toast');
@@ -231,7 +236,12 @@ function setupBlogDescriptionGenerator() {
   container.addEventListener('click', (event) => {
     const button = event.target.closest('.generate-blog-description-btn');
     if (!button) return;
-    updateBlogGeneratedDescriptions(button.closest('.blog-entry'), true);
+    const entry = button.closest('.blog-entry');
+    const fields = [...entry.querySelectorAll('[name="blogExcerpt[]"], [name="blogSeoDescription[]"]')];
+    const before = fields.map((field) => field.value);
+    updateBlogGeneratedDescriptions(entry, true);
+    if (fields.some((field, index) => field.value !== before[index]))
+      document.dispatchEvent(new CustomEvent('admin-content-draft', { detail: { form: button.closest('form') } }));
   });
 }
 
@@ -851,6 +861,7 @@ addonAssignmentDialog.addEventListener('click', (event) => {
   if (group) group.assignedItemKeys = [...addonAssignmentDraft];
   addonAssignmentDialog.close();
   renderAirAddonGroups();
+  if (group) markAirMenuDraft();
 });
 function addonId() {
   return `addon-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
@@ -946,6 +957,7 @@ document.addEventListener('click', (event) => {
       options: [],
     });
     renderAirAddonGroups();
+    markAirMenuDraft();
     return;
   }
   const card = event.target.closest('[data-addon-group]');
@@ -962,6 +974,7 @@ document.addEventListener('click', (event) => {
       (group) => group.id !== removeGroup.dataset.removeAddonGroup
     );
     renderAirAddonGroups();
+    markAirMenuDraft();
     return;
   }
   if (event.target.closest('[data-add-addon-option]')) {
@@ -974,6 +987,7 @@ document.addEventListener('click', (event) => {
       active: true,
     });
     renderAirAddonGroups();
+    markAirMenuDraft();
     return;
   }
   const removeOption = event.target.closest('[data-remove-addon-option]');
@@ -981,6 +995,7 @@ document.addEventListener('click', (event) => {
     const group = airAddonGroups.find((item) => item.id === card.dataset.addonGroup);
     if (group) group.options.splice(Number(removeOption.dataset.removeAddonOption), 1);
     renderAirAddonGroups();
+    if (group) markAirMenuDraft();
   }
 });
 document.addEventListener('input', (event) => {
@@ -1000,6 +1015,11 @@ document.addEventListener('change', (event) => {
 document
   .querySelector('form[action="/api/update-airMenu"]')
   ?.addEventListener('submit', (event) => {
+    if (event.currentTarget.dataset.adminContentState !== 'ready') {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      return;
+    }
     document.querySelectorAll('[data-addon-group]').forEach(readAirAddonGroup);
     const form = event.currentTarget;
     const menuItemCount = [
@@ -1011,6 +1031,7 @@ document
       );
       if (!confirmed) {
         event.preventDefault();
+        event.stopImmediatePropagation();
         return;
       }
       form.querySelector('[name="airMenuConfirmEmpty"]').value = 'on';
@@ -1199,6 +1220,7 @@ function setupAirMenuEditor() {
       airItemMarkup({}, container.querySelectorAll('.air-item-entry').length)
     );
     container.querySelector('.air-item-entry:last-child [name="airItemName[]"]')?.focus();
+    markAirMenuDraft();
   });
 
   container.addEventListener('click', (event) => {
@@ -1213,6 +1235,7 @@ function setupAirMenuEditor() {
           }))
           .concat(airBarSheetItems())
       );
+    markAirMenuDraft();
   });
 
   container.addEventListener('input', (event) => {
@@ -1385,6 +1408,7 @@ function setupAirMenuEditor() {
     });
 
     renderAirItems(dedupeAirSheetItems(airSheetItems()));
+    markAirMenuDraft();
   });
 
   categoryControls?.addEventListener('change', (event) => {
@@ -1428,6 +1452,7 @@ function setupAirMenuEditor() {
         isBar: airCategoryGroups.get(item) === 'bar',
       }))
     );
+    markAirMenuDraft();
   });
 
   extractButton?.addEventListener('click', async () => {
@@ -1459,6 +1484,7 @@ function setupAirMenuEditor() {
       );
       renderAirItems(dedupeAirSheetItems([...preservedItems, ...importedItems]));
       setField('airSourceFileName', result.fileName || file.name);
+      markAirMenuDraft();
       const method =
         result.extractionMethod === 'ocr'
           ? 'local OCR'
@@ -1499,6 +1525,7 @@ function setupAirBarMenuEditor() {
     );
     container.querySelector('.air-bar-item-entry:last-child [name="airBarItemName[]"]')?.focus();
     refreshCategories();
+    markAirMenuDraft();
   });
 
   container.addEventListener('click', (event) => {
@@ -1506,6 +1533,7 @@ function setupAirBarMenuEditor() {
     event.target.closest('.air-bar-item-entry')?.remove();
     if (!container.querySelector('.air-bar-item-entry')) renderAirBarItems([]);
     refreshCategories();
+    markAirMenuDraft();
   });
   container.addEventListener('input', (event) => {
     if (event.target.matches('[name="airBarItemCategory[]"]')) return;
@@ -1573,6 +1601,7 @@ function setupAirBarMenuEditor() {
       });
     });
     renderAirBarItems(dedupeAirSheetItems(airBarSheetItems()));
+    markAirMenuDraft();
   });
 
   extractButton?.addEventListener('click', async () => {
@@ -1609,6 +1638,7 @@ function setupAirBarMenuEditor() {
       );
       renderAirBarItems(dedupeAirSheetItems([...preservedItems, ...importedItems]));
       setField('airBarSourceFileName', result.fileName || file.name);
+      markAirMenuDraft();
       const method =
         result.extractionMethod === 'ocr'
           ? 'local OCR'
@@ -1726,6 +1756,7 @@ function insertAroundSelection(textarea, before, after = '', fallback = '') {
   const text = selected || fallback;
   const insert = `${before}${text}${after}`;
   textarea.setRangeText(insert, start, end, 'end');
+  textarea.dispatchEvent(new Event('input', { bubbles: true }));
   textarea.focus();
 
   if (!selected && fallback) {
@@ -2961,10 +2992,10 @@ function setupCustomerInsights() {
         .filter((order) => order.mode === 'table')
         .reduce((sum, order) => sum + Number(order.total || 0), 0);
       stats.innerHTML = [
-        ['Direct Place Order sales', money(totalSales)],
+        ['Sales in this view', money(totalSales)],
         ['Business Card QR sales', money(businessSales)],
         ['Table QR sales', money(tableSales)],
-        ['Live orders', sales.length],
+        ['Orders included', sales.length],
         ['Points in wallets', data.summary.points],
         ['Credit outstanding', money(data.summary.credit)],
       ]
@@ -4460,9 +4491,42 @@ function setupSmartKdsMetrics() {
   document.querySelector('[data-target="tab-smart-kds"]')?.addEventListener('click', load);
 }
 
-fetch('/api/admin/content')
-  .then((response) => (response.ok ? response.json() : {}))
-  .then((content) => {
+const adminContentForms = [...document.querySelectorAll('form[action^="/api/update-"]')];
+const adminContentControls = [...document.querySelectorAll('form[action^="/api/update-"] input, form[action^="/api/update-"] textarea, form[action^="/api/update-"] select, form[action^="/api/update-"] button, #air-menu-file, #air-bar-menu-file, #extract-air-menu, #extract-air-bar-menu')];
+const adminContentDisabled = new Map(adminContentControls.map((control) => [control, control.disabled]));
+const adminContentBanner = document.createElement('div');
+adminContentBanner.className = 'admin-content-load-status';
+adminContentBanner.innerHTML = '<div role="status" aria-live="polite"><strong></strong><span></span></div><button type="button" class="admin-content-load-retry" hidden>Retry loading</button>';
+document.getElementById('admin-workspace-bar').after(adminContentBanner);
+const adminContentRetry = adminContentBanner.querySelector('button');
+let adminContentLoading = false;
+let adminContentReady = false;
+function setAdminContentState(state) {
+  adminContentForms.forEach((form) => {
+    form.dataset.adminContentState = state;
+    form.inert = state !== 'ready';
+  });
+  adminContentDisabled.forEach((wasDisabled, control) => {
+    if (control.isConnected) control.disabled = state === 'ready' ? wasDisabled : true;
+  });
+  adminContentBanner.hidden = state === 'ready';
+  adminContentBanner.classList.toggle('is-error', state === 'error');
+  adminContentBanner.querySelector('strong').textContent = state === 'error' ? 'Saved content could not be loaded' : 'Loading your saved content…';
+  adminContentBanner.querySelector('span').textContent = state === 'error' ? 'Check your connection, then retry to continue editing.' : 'The website and menu editors will be ready in a moment.';
+  adminContentRetry.hidden = state !== 'error';
+  document.dispatchEvent(new CustomEvent('admin-content-load-state', { detail: { state } }));
+}
+async function loadAdminContent() {
+  if (adminContentLoading || adminContentReady) return;
+  adminContentLoading = true;
+  setAdminContentState('loading');
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  try {
+    const response = await fetch('/api/admin/content', { cache: 'no-store', signal: controller.signal });
+    if (!response.ok) throw new Error('Unable to load saved content.');
+    const content = await response.json();
+    if (!content || typeof content !== 'object' || Array.isArray(content)) throw new Error('Invalid saved content.');
     fillHome(content.home);
     fillMenu(content.menu);
     fillAirMenu(content.airMenu);
@@ -4472,8 +4536,17 @@ fetch('/api/admin/content')
     fillContact(content.contact);
     fillGlobal(content.global);
     buildGrowthDashboard(content);
-  })
-  .catch(() => {});
+    adminContentReady = true;
+    setAdminContentState('ready');
+  } catch (_) {
+    setAdminContentState('error');
+  } finally {
+    clearTimeout(timeout);
+    adminContentLoading = false;
+  }
+}
+adminContentRetry.addEventListener('click', loadAdminContent);
+loadAdminContent();
 
 setupAiGrowthButton();
 setupGrowthRefreshButton();
@@ -4513,18 +4586,23 @@ document.querySelectorAll('.logout-btn:not([id])').forEach((button) => {
 
 document.querySelectorAll('form[action^="/api/update-"]').forEach((form) => {
   form.addEventListener('submit', async (event) => {
+    if (event.defaultPrevented) return;
     event.preventDefault();
-    setStatus(form, 'Optimizing images...');
-    indexRepeatingFileInputs(form, '.dish-entry', 'dishPhoto');
-    indexRepeatingFileInputs(form, '.blog-entry', 'blogImage');
-    indexRepeatingFileInputs(form, '.blog-entry', 'blogArticleImage');
-    if (form.matches('form[action="/api/update-blogs"]')) {
-      form
-        .querySelectorAll('.blog-entry')
-        .forEach((entry) => updateBlogGeneratedDescriptions(entry));
-    }
-
+    if (!adminContentReady) return;
+    if (form.dataset.adminSaving === 'true') return;
+    form.dataset.adminSaving = 'true';
+    const submitButton = form.querySelector('button[type="submit"]');
+    const wasDisabled = submitButton?.disabled;
+    if (submitButton) submitButton.disabled = true;
+    document.dispatchEvent(new CustomEvent('admin-content-save-start', { detail: { form } }));
     try {
+      setStatus(form, 'Preparing changes...');
+      indexRepeatingFileInputs(form, '.dish-entry', 'dishPhoto');
+      indexRepeatingFileInputs(form, '.blog-entry', 'blogImage');
+      indexRepeatingFileInputs(form, '.blog-entry', 'blogArticleImage');
+      if (form.matches('form[action="/api/update-blogs"]')) {
+        form.querySelectorAll('.blog-entry').forEach((entry) => updateBlogGeneratedDescriptions(entry));
+      }
       const formData = await buildOptimizedFormData(form);
       setStatus(form, 'Saving...');
       const response = await fetch(form.action, {
@@ -4535,8 +4613,14 @@ document.querySelectorAll('form[action^="/api/update-"]').forEach((form) => {
       if (!response.ok) throw new Error(text);
       setStatus(form, '');
       showSaveToast();
+      document.dispatchEvent(new CustomEvent('admin-content-saved', { detail: { form } }));
     } catch (error) {
       setStatus(form, error.message || 'Save failed.', true);
+      document.dispatchEvent(new CustomEvent('admin-content-save-error', { detail: { form } }));
+    } finally {
+      delete form.dataset.adminSaving;
+      if (submitButton) submitButton.disabled = !!wasDisabled;
+      document.dispatchEvent(new CustomEvent('admin-content-save-finished', { detail: { form } }));
     }
   });
 });

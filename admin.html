@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Admin Dashboard - Red Lantern</title>
     <link
-      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="/admin-analytics.css?v=4" />
@@ -4554,11 +4554,14 @@
         }
       }
     </style>
+    <link rel="stylesheet" href="/admin-workspace.css?v=1" />
+    <link rel="stylesheet" href="/admin-air-menu.css?v=1" />
   </head>
-  <body>
+  <body class="admin-workspace">
+    <a class="admin-skip-link" href="#admin-main">Skip to workspace</a>
     <aside class="sidebar" id="admin-sidebar">
       <div class="sidebar-brand">
-        <span>Red Lantern Admin</span>
+        <div class="admin-brand-lockup"><img src="/images/red-lantern-logo-600.webp" alt="" /><div class="admin-brand-copy"><small>RED LANTERN</small><strong>Admin workspace</strong></div></div>
         <button
           type="button"
           class="admin-nav-toggle"
@@ -4595,7 +4598,11 @@
       </nav>
     </aside>
 
-    <main class="main-content">
+    <main class="main-content" id="admin-main">
+      <div id="admin-workspace-bar">
+        <div class="admin-workspace-context"><small id="admin-workspace-group">Website management</small><strong id="admin-workspace-title">Home Page Editor</strong></div>
+        <div class="admin-workspace-tools"><button type="button" id="admin-back-to-top" aria-label="Back to top of workspace"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 12 6-6 6 6M12 6v14" /></svg><span>Top</span></button><a href="/orders" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3h7v7M21 3l-9 9M10 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5" /></svg><span>Open Orders</span></a></div>
+      </div>
       <!-- HOME PAGE TAB -->
       <div id="tab-home" class="tab-content active">
         <header class="header">
@@ -5003,11 +5010,11 @@ Fresh Goan prawns, crispy fried to perfection.</textarea>
         </header>
 
         <div class="air-workflow" aria-label="Air Menu publishing workflow">
-          <span class="air-workflow-step"><b>1</b> Import your files</span>
+          <button type="button" class="air-workflow-step is-active" data-admin-workflow="import" aria-current="step"><b>1</b> Import your files</button>
           <span class="air-workflow-line" aria-hidden="true"></span>
-          <span class="air-workflow-step"><b>2</b> Review menu details</span>
+          <button type="button" class="air-workflow-step" data-admin-workflow="review"><b>2</b> Review menu details</button>
           <span class="air-workflow-line" aria-hidden="true"></span>
-          <span class="air-workflow-step"><b>3</b> Publish QR menu</span>
+          <button type="button" class="air-workflow-step" data-admin-workflow="publish"><b>3</b> Publish QR menu</button>
         </div>
 
         <div class="air-export-row">
@@ -5080,11 +5087,11 @@ Fresh Goan prawns, crispy fried to perfection.</textarea>
                 <h2>Air Menu Settings</h2>
                 <p>Control the menu experience for Table QR and Business Card QR guests.</p>
               </div>
-              <span class="air-control-badge">Live configuration</span>
+              <span class="air-control-badge">Publish to apply</span>
             </div>
             <input type="hidden" name="airSourceFileName" />
             <input type="hidden" name="airBarSourceFileName" />
-            <div class="form-grid">
+            <div class="form-grid admin-air-display-fields">
               <div class="form-group">
                 <label>Page Title</label><input type="text" name="airMenuTitle" value="Our Menu" />
               </div>
@@ -5108,7 +5115,9 @@ Availability may vary. Please ask our team about today’s specials.</textarea>
             <input type="hidden" name="airCategoryOrder" value="[]" />
             <input type="hidden" name="airTableQrDisabled" value="{}" />
             <datalist id="air-category-options"></datalist>
-            <div class="form-grid">
+            <fieldset class="admin-air-menu-visibility">
+              <legend>Menu visibility &amp; pricing</legend>
+            <div class="form-grid admin-air-menu-controls">
               <div class="switch-row menu-control menu-table-live">
                 <div>
                   <i class="channel-icon" aria-hidden="true">⌗</i><strong>Table menu live</strong
@@ -5148,6 +5157,7 @@ Availability may vary. Please ask our team about today’s specials.</textarea>
                 <input type="checkbox" name="airShowCardPrices" />
               </div>
             </div>
+            </fieldset>
             <section class="card loyalty-settings-card" style="margin:22px 0 0;background:#f5faff;border:1px solid #d5e6f5;"><div class="air-settings-heading"><div><span class="hours-kicker">QR proximity</span><h2>Location limits</h2><p>Set the restaurant pin once, then choose a different ordering radius for Table and Business Card QR codes. Enter 0 to leave a QR type unrestricted.</p><label class="proximity-lock-control"><input type="checkbox" name="airProximityLocked"><span>🔒 Lock restaurant coordinates</span></label></div></div><div class="form-grid"><div class="form-group"><label>Restaurant latitude</label><input class="proximity-coordinate" type="number" name="airProximityLatitude" min="-90" max="90" step="any"></div><div class="form-group"><label>Restaurant longitude</label><input class="proximity-coordinate" type="number" name="airProximityLongitude" min="-180" max="180" step="any"></div><div class="form-group"><label>Table QR radius (metres)</label><input type="number" name="airTableProximityRadius" min="0" max="100000" value="0"></div><div class="form-group"><label>Business Card QR radius (metres)</label><input type="number" name="airCardProximityRadius" min="0" max="100000" value="0"></div></div></section>
             <section
               class="card loyalty-settings-card"
@@ -5675,6 +5685,7 @@ Availability may vary. Please ask our team about today’s specials.</textarea>
           <div class="insight-stat"><span>Loading order information…</span></div>
         </div>
         <div class="card insight-card">
+          <h2>Order history</h2>
           <div class="insight-toolbar">
             <label class="form-group"
               ><span>Order date</span><input id="insight-date" type="date" /><small
@@ -5690,7 +5701,8 @@ Availability may vary. Please ask our team about today’s specials.</textarea>
             ></label>
           </div>
           <div id="customer-insight-status" class="growth-ai-status"></div>
-          <div class="insight-table-wrap">
+          <p class="insight-table-hint">Swipe sideways to see every column.</p>
+          <div class="insight-table-wrap" tabindex="0" aria-label="Order history, scroll to see more orders and columns">
             <table class="insight-table">
               <thead>
                 <tr>
@@ -6752,7 +6764,13 @@ Watch competitors ranking for Colva Beach, seafood, Goan food, Chinese food, fam
       let captainAccounts = [],
         captainAreas = [],
         captainActivity = [],
-        captainSettings = { idleMinutes: 15 };
+        captainSettings = { idleMinutes: 15 },
+        captainDraftRevision = 0,
+        captainDirty = false,
+        captainLoaded = false,
+        captainLoadPromise = null,
+        captainSaving = false;
+      const captainSettingDrafts = new Map();
       const captainRolePresets = Object.fromEntries(Object.keys(RedLanternStaff.roles).map((role) => [role, RedLanternStaff.permissions({ role })]));
       const captainPermissionLabels = RedLanternStaff.labels;
       const captainEsc = (value) =>
@@ -6766,6 +6784,31 @@ Watch competitors ranking for Colva Beach, seafood, Goan food, Chinese food, fam
         status.textContent = message;
         status.hidden = !message;
         status.classList.toggle('is-error', isError);
+      };
+      const markCaptainDirty = () => {
+        captainDraftRevision += 1;
+        captainDirty = true;
+        captainStatus(captainSaving
+          ? 'Saving submitted changes. New edits will remain available to save next.'
+          : 'Unsaved employee or Captain App changes. Select Save all changes to apply them.');
+      };
+      const trackCaptainEdits = (event) => {
+        const input = event.target.closest('input, select, textarea');
+        if (!input || (!input.closest('#captain-admin-list') &&
+          !input.matches('[data-captain-setting], #captain-idle-minutes'))) return;
+        if (input.matches('[data-captain-setting], #captain-idle-minutes')) {
+          captainSettingDrafts.set(input, input.type === 'checkbox' ? input.checked : input.value);
+        }
+        markCaptainDirty();
+      };
+      document.getElementById('tab-captain-app')?.addEventListener('input', trackCaptainEdits);
+      document.getElementById('tab-captain-app')?.addEventListener('change', trackCaptainEdits);
+      const setCaptainSaving = (saving) => {
+        captainSaving = saving;
+        document.querySelectorAll('#captain-save, #captain-add, [data-captain-remove]')
+          .forEach((button) => { button.disabled = saving; });
+        const saveButton = document.getElementById('captain-save');
+        if (saveButton) saveButton.textContent = saving ? 'Saving…' : 'Save all changes';
       };
       const applyCaptainPinStates = () => {
         document
@@ -6834,22 +6877,85 @@ Watch competitors ranking for Colva Beach, seafood, Goan food, Chinese food, fam
       const renderCaptains = () => {
         const list = document.getElementById('captain-admin-list');
         if (list) list.innerHTML = window.renderEmployeeCards(captainAccounts, captainAreas);
+        if (captainSaving) setCaptainSaving(true);
       };
-      const loadCaptains = async (message = '') => {
-        try {
-          const response = await fetch('/api/admin/captains');
-          const data = await response.json();
-          if (!response.ok) throw new Error(data.error);
-          captainAccounts = data.captains || [];
-          captainAreas = data.areas || [];
-          captainSettings = data.settings || captainSettings;
+      const loadCaptains = (message = '') => {
+        if (captainLoaded && (captainDirty || captainSaving)) return Promise.resolve(false);
+        if (captainLoadPromise) return captainLoadPromise;
+        const revision = captainDraftRevision;
+        const request = (async () => {
+          try {
+            const response = await fetch('/api/admin/captains', { cache: 'no-store' });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error);
+            const editedDuringLoad = revision !== captainDraftRevision || captainDirty || captainSaving;
+            if (editedDuringLoad && captainLoaded) return false;
+            const drafts = editedDuringLoad ? collectCaptainEdits() : [];
+            const draftIds = new Set(drafts.map((captain) => captain.id));
+            captainAccounts = [...(data.captains || []).filter((captain) => !draftIds.has(captain.id)), ...drafts];
+            captainAreas = data.areas || [];
+            captainSettings = data.settings || captainSettings;
+            window.renderCaptainSettings?.(captainSettings);
+            document.getElementById('captain-idle-minutes').value = captainSettings.idleMinutes || 15;
+            if (editedDuringLoad) captainSettingDrafts.forEach((value, input) => {
+              if (input.type === 'checkbox') input.checked = value;
+              else input.value = value;
+            });
+            captainLoaded = true;
+            renderCaptains();
+            if (!editedDuringLoad) captainStatus(message);
+            return true;
+          } catch (error) {
+            if (revision === captainDraftRevision)
+              captainStatus(error.message || 'Unable to load Captain accounts.', true);
+            return false;
+          } finally {
+            captainLoadPromise = null;
+          }
+        })();
+        captainLoadPromise = request;
+        return request;
+      };
+      const applyCaptainSave = (data, submitted, revision, message) => {
+        captainLoaded = true;
+        if (revision === captainDraftRevision) {
+          captainAccounts = data.captains || submitted.captains;
+          captainSettings = data.settings || submitted.settings;
+          captainDirty = false;
+          captainSettingDrafts.clear();
           window.renderCaptainSettings?.(captainSettings);
           document.getElementById('captain-idle-minutes').value = captainSettings.idleMinutes || 15;
           renderCaptains();
           captainStatus(message);
-        } catch (error) {
-          captainStatus(error.message || 'Unable to load Captain accounts.', true);
+          return;
         }
+        const saved = new Map((data.captains || []).map((captain) => [captain.id, captain]));
+        const sent = new Map(submitted.captains.map((captain) => [captain.id, captain]));
+        captainAccounts = collectCaptainEdits().map((captain, index) => {
+          const persisted = saved.get(captain.id);
+          if (!persisted) return captain;
+          const updated = { ...captain, pinConfigured: persisted.pinConfigured ?? captain.pinConfigured,
+            pinViewable: persisted.pinViewable ?? captain.pinViewable,
+            passwordConfigured: persisted.passwordConfigured ?? captain.passwordConfigured };
+          // A credential already saved must not be sent again when saving newer unrelated edits.
+          for (const [key, attribute] of [['pin', 'data-captain-pin'], ['password', 'data-employee-password']]) {
+            if (!sent.get(captain.id)?.[key] || captain[key] !== sent.get(captain.id)[key]) continue;
+            const input = document.querySelector(`[${attribute}="${index}"]`);
+            if (input) input.value = '';
+            updated[key] = '';
+            if (key === 'pin') {
+              if (input) input.type = 'password';
+              const copy = input?.closest('.form-group')?.querySelector('[data-captain-pin-copy]');
+              if (copy) copy.disabled = true;
+              const help = input?.closest('.form-group')?.querySelector('.captain-pin-help');
+              if (help) help.textContent = 'PIN saved. Use Show PIN when helping this employee.';
+            }
+          }
+          return updated;
+        });
+        applyCaptainPinStates();
+        captainDirty = true;
+        captainStatus(`${message} Newer edits remain unsaved; select Save all changes to apply them.`);
       };
       const renderCaptainActivity = () => {
         const captainFilter = document.getElementById('captain-activity-captain').value,
@@ -6935,6 +7041,7 @@ Watch competitors ranking for Colva Beach, seafood, Goan food, Chinese food, fam
         }
       };
       document.getElementById('captain-add')?.addEventListener('click', () => {
+        if (captainSaving) return;
         captainAccounts = collectCaptainEdits();
         captainAccounts.push({
           id: `cap_${Date.now()}`,
@@ -6944,6 +7051,7 @@ Watch competitors ranking for Colva Beach, seafood, Goan food, Chinese food, fam
           role: 'captain', tableScope: 'own', permissions: { ...captainRolePresets.captain },
           pin: '',
         });
+        markCaptainDirty();
         renderCaptains();
         document.querySelector(`[data-captain-name="${captainAccounts.length - 1}"]`)?.focus();
       });
@@ -7046,9 +7154,13 @@ Watch competitors ranking for Colva Beach, seafood, Goan food, Chinese food, fam
           return;
         }
         const button = event.target.closest('[data-captain-remove]');
-        if (!button) return;
-        const index = Number(button.dataset.captainRemove),
-          captain = captainAccounts[index];
+        if (!button || captainSaving) return;
+        const captainId = captainAccounts[Number(button.dataset.captainRemove)]?.id;
+        if (!captainLoaded) await loadCaptains();
+        if (!captainLoaded || captainSaving) return;
+        const drafts = collectCaptainEdits();
+        const index = drafts.findIndex((captain) => captain.id === captainId),
+          captain = drafts[index];
         if (!captain) return;
         if (
           !confirm(
@@ -7056,28 +7168,36 @@ Watch competitors ranking for Colva Beach, seafood, Goan food, Chinese food, fam
           )
         )
           return;
-        captainAccounts = collectCaptainEdits();
-        const before = structuredClone(captainAccounts);
+        captainAccounts = drafts;
+        const removed = structuredClone(captain);
         captainAccounts.splice(index, 1);
         captainSettings = {
           ...captainSettings, ...window.collectCaptainSettings?.(),
           idleMinutes: Number(document.getElementById('captain-idle-minutes')?.value) || 15,
         };
-        button.disabled = true;
+        markCaptainDirty();
+        const revision = captainDraftRevision;
+        const submitted = structuredClone({ captains: captainAccounts, settings: captainSettings });
+        setCaptainSaving(true);
+        renderCaptains();
         captainStatus(`Removing ${captain.name || 'Captain'}…`);
         try {
           const response = await fetch('/api/admin/captains', {
               method: 'PUT',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ captains: captainAccounts, settings: captainSettings }),
+              body: JSON.stringify(submitted),
             }),
             data = await response.json();
           if (!response.ok) throw new Error(data.error || 'Unable to remove Captain.');
-          await loadCaptains(`${captain.name || 'Captain'} removed and access revoked.`);
+          applyCaptainSave(data, submitted, revision, `${captain.name || 'Captain'} removed and access revoked.`);
         } catch (error) {
-          captainAccounts = before;
+          captainAccounts = collectCaptainEdits();
+          captainAccounts.splice(Math.min(index, captainAccounts.length), 0, removed);
+          captainDirty = true;
           renderCaptains();
           captainStatus(error.message || 'Unable to remove Captain.', true);
+        } finally {
+          setCaptainSaving(false);
         }
       });
       document.getElementById('captain-admin-list')?.addEventListener('input', (event) => {
@@ -7131,7 +7251,12 @@ Watch competitors ranking for Colva Beach, seafood, Goan food, Chinese food, fam
         }
       });
       document.getElementById('captain-save')?.addEventListener('click', async () => {
-        const saveButton = document.getElementById('captain-save');
+        if (captainSaving) return;
+        if (!captainLoaded) await loadCaptains();
+        if (!captainLoaded || captainSaving) {
+          if (!captainLoaded) captainStatus('Employee accounts could not be loaded. Return to this section and try again before saving.', true);
+          return;
+        }
         const invalid = [...document.querySelectorAll('#captain-admin-list input, #captain-admin-list select, #captain-idle-minutes')].find((input) => !input.disabled && !input.checkValidity());
         if (invalid) {
           const panel = invalid.closest('[data-employee-panel]');
@@ -7148,24 +7273,24 @@ Watch competitors ranking for Colva Beach, seafood, Goan food, Chinese food, fam
           idleMinutes: Number(document.getElementById('captain-idle-minutes')?.value) || 15,
         };
         const changedPins = captainAccounts.filter((captain) => captain.pin).length;
+        const revision = captainDraftRevision;
+        const submitted = structuredClone({ captains: captainAccounts, settings: captainSettings });
         try {
-          saveButton.disabled = true;
-          saveButton.textContent = 'Saving…';
+          setCaptainSaving(true);
           const response = await fetch('/api/admin/captains', {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ captains: captainAccounts, settings: captainSettings }),
+            body: JSON.stringify(submitted),
           });
           const data = await response.json();
           if (!response.ok) throw new Error(data.error || 'Unable to save employee accounts.');
-          await loadCaptains(
+          applyCaptainSave(data, submitted, revision,
             `${data.captains?.length || 0} employee account${data.captains?.length === 1 ? '' : 's'} saved.${changedPins ? ` ${changedPins} new PIN${changedPins === 1 ? '' : 's'} assigned; share the PINs you copied before saving.` : ''}`
           );
         } catch (error) {
           captainStatus(error.message || 'Unable to save Captain accounts.', true);
         } finally {
-          saveButton.disabled = false;
-          saveButton.textContent = 'Save all changes';
+          setCaptainSaving(false);
         }
       });
       document.addEventListener('admin-tab-change', (event) => {
@@ -7394,6 +7519,7 @@ Watch competitors ranking for Colva Beach, seafood, Goan food, Chinese food, fam
     </script>
     <script src="/addons-domain.js?v=1" defer></script>
     <script src="/admin-analytics.js?v=5" defer></script>
-    <script src="admin-cms.js?v=20260915-37" defer></script>
+    <script src="admin-cms.js?v=20261009-38" defer></script>
+    <script src="/admin-workspace.js?v=1" defer></script>
   </body>
 </html>
