@@ -879,6 +879,63 @@ test('Captain permission drafts survive navigation and save to the original acco
   expect(saved.captains[0].discountLimit.value).toBe(250);
 });
 
+test('Captain workspaces preserve employee drafts and save app settings from the shared dock', async ({
+  page,
+}) => {
+  const requests = await mockAdmin(page);
+  await page.goto('/admin.html#tab-captain-app');
+  const nav = page.getByRole('navigation', { name: 'Captain and employee workspaces' });
+  await expect(nav.getByRole('link')).toHaveCount(4);
+  await expect(page.locator('[data-captain-name="0"]')).toHaveValue('Lalit');
+  await page.locator('[data-captain-name="0"]').fill('Lalit Terrace Captain');
+  await nav.getByRole('link', { name: 'App settings' }).click();
+  await expect(page.locator('[data-captain-name="0"]')).toBeHidden();
+  await expect(page.locator('.captain-settings-card')).toBeVisible();
+  await page.locator('[data-captain-setting="homeDelivery"]').uncheck();
+  await expect(page.locator('#captain-add')).toBeHidden();
+  await expect(page.locator('#captain-save')).toBeVisible();
+  await page.locator('#captain-save').click();
+  await expect(page.locator('#captain-admin-status')).toContainText('saved');
+  const saved = requests
+    .find(
+      (request) =>
+        new URL(request.url()).pathname === '/api/admin/captains' && request.method() === 'PUT'
+    )
+    .postDataJSON();
+  expect(saved.captains[0].name).toBe('Lalit Terrace Captain');
+  expect(saved.settings.homeDelivery).toBe(false);
+  await nav.getByRole('link', { name: 'Live activity' }).click();
+  await expect(page.locator('#captain-activity-list')).toBeVisible();
+  await expect(page.locator('.captain-settings-card')).toBeHidden();
+  await nav.getByRole('link', { name: 'Access log' }).click();
+  await expect(page.locator('#employee-audit-list')).toBeVisible();
+  await nav.getByRole('link', { name: 'Employees', exact: false }).click();
+  await expect(page.locator('[data-captain-name="0"]')).toHaveValue('Lalit Terrace Captain');
+  await expect(page.locator('#captain-add')).toBeVisible();
+  await expect(page).toHaveURL(/#tab-captain-app$/);
+});
+
+test('saving from app settings reveals and focuses an invalid employee permission', async ({
+  page,
+}) => {
+  const requests = await mockAdmin(page);
+  await page.goto('/admin.html#tab-captain-app');
+  const card = page.locator('[data-captain-card="0"]');
+  await card.getByRole('tab', { name: 'Permissions' }).click();
+  await card.locator('[data-captain-scope]').selectOption('assigned_areas');
+  await card.locator('[data-captain-area][value="AC"]').uncheck();
+  await card.getByRole('tab', { name: 'Basic details' }).click();
+  await page
+    .getByRole('navigation', { name: 'Captain and employee workspaces' })
+    .getByRole('link', { name: 'App settings' })
+    .click();
+  await page.locator('#captain-save').click();
+  await expect(card.locator('[data-captain-scope]')).toBeVisible();
+  await expect(card.locator('[data-captain-scope]')).toBeFocused();
+  await expect(page.locator('#captain-admin-status')).toContainText('Review the highlighted');
+  expect(requests.filter((request) => request.method() === 'PUT')).toHaveLength(0);
+});
+
 test('a late employee refresh cannot replace a name edited while it is loading', async ({
   page,
 }) => {
@@ -1245,6 +1302,23 @@ for (const viewport of [
       path: `/tmp/red-lantern-admin-captain-permissions-${viewport.width}.png`,
       animations: 'disabled',
     });
+    const captainWorkspaces = page.getByRole('navigation', {
+      name: 'Captain and employee workspaces',
+    });
+    for (const [name, selector, image] of [
+      ['App settings', '.captain-settings-card', 'settings'],
+      ['Live activity', '#captain-activity-list', 'activity'],
+      ['Access log', '#employee-audit-list', 'access'],
+    ]) {
+      await captainWorkspaces.getByRole('link', { name }).click();
+      await expect(page.locator(selector)).toBeVisible();
+      await expect(page.locator('#captain-save')).toBeVisible();
+      await expectNoOverflow(page, `Captain ${name}`);
+      await page.screenshot({
+        path: `/tmp/red-lantern-admin-captain-${image}-${viewport.width}.png`,
+        animations: 'disabled',
+      });
+    }
     await page.goto('/admin.html#tab-sales-dashboard');
     await expect(page.locator('#analytics-kpis')).toContainText('₹12,500');
     await expectNoOverflow(page, 'analytics');

@@ -43,7 +43,7 @@ body.admin-workspace #tab-air-menu .air-workflow-step {
   border-radius: 15px;
   color: #465c77;
   background: rgba(255, 255, 255, 0.86);
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 800;
   text-align: left;
   line-height: 1.5;
@@ -107,7 +107,7 @@ body.admin-workspace #tab-air-menu .air-export-row .help-text {
   max-width: 760px;
   margin: 6px 0 0;
   color: var(--air-muted);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.65;
 }
 
@@ -123,7 +123,7 @@ body.admin-workspace #tab-air-menu .air-export-button {
   border-radius: 12px;
   color: #285187;
   background: #fff;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 850;
   box-shadow: 0 3px 9px #23486b05;
 }
@@ -188,7 +188,7 @@ body.admin-workspace #tab-air-menu .air-import-kicker {
   border-radius: 8px;
   color: #aa2c4b;
   background: #fff4f7;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 850;
   letter-spacing: 0.09em;
 }
@@ -215,7 +215,7 @@ body.admin-workspace #tab-air-menu .air-import-card > .help-text {
   min-height: 44px;
   margin: 0 0 17px;
   color: var(--air-muted);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.6;
 }
 
@@ -232,7 +232,7 @@ body.admin-workspace #tab-air-menu .air-import-formats span {
   border-radius: 6px;
   color: #5e728a;
   background: #f8fafc;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 800;
 }
 
@@ -253,7 +253,7 @@ body.admin-workspace #tab-air-menu .air-upload-field input[type='file'] {
   border-radius: 8px;
   background: transparent;
   color: #60738b;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 body.admin-workspace #tab-air-menu .air-upload-field input::file-selector-button {
@@ -264,7 +264,7 @@ body.admin-workspace #tab-air-menu .air-upload-field input::file-selector-button
   border-radius: 9px;
   background: #fff;
   color: #2f4b71;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 850;
 }
 
@@ -287,7 +287,7 @@ body.admin-workspace #tab-air-menu .air-import-card .growth-ai-button:hover:not(
 }
 
 body.admin-workspace #tab-air-menu .growth-ai-status {
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.5;
 }
 
@@ -334,7 +334,7 @@ body.admin-workspace #tab-air-menu :is(.air-settings-heading, .hours-heading) p 
   max-width: 820px;
   margin: 5px 0 0;
   color: var(--air-muted);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.65;
 }
 
@@ -345,7 +345,7 @@ body.admin-workspace #tab-air-menu :is(.air-control-badge, .hours-timezone) {
   border-radius: 9px;
   color: #486686;
   background: #f4f8ff;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.5;
   font-weight: 800;
 }
@@ -373,11 +373,38 @@ body.admin-workspace #tab-air-menu .air-settings-card > .form-grid::before {
   content: none;
 }
 
+body.admin-workspace #tab-air-menu .admin-air-menu-visibility {
+  min-width: 0;
+  max-width: 100%;
+  margin: 24px 0 0;
+  padding: 18px;
+  border: 1px solid #d9e4f3;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #f3f7fe, #fff);
+}
+
+body.admin-workspace #tab-air-menu .admin-air-menu-visibility > legend {
+  max-width: 100%;
+  padding: 6px 10px;
+  border: 1px solid #d9e4f3;
+  border-radius: 8px;
+  color: #345480;
+  background: #fff;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+}
+
+body.admin-workspace #tab-air-menu .admin-air-menu-visibility > .form-grid {
+  margin: 0;
+}
+
 body.admin-workspace #tab-air-menu .form-group label {
   display: block;
   margin: 0 0 8px;
   color: #50647e;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 850;
   letter-spacing: 0.03em;
 }
@@ -402,7 +429,7 @@ body.admin-workspace
   color: var(--air-ink);
   background: #fff;
   font:
-    650 15px / 1.5 Manrope,
+    650 16px / 1.5 Manrope,
     Arial,
     sans-serif;
   transition:
@@ -458,7 +485,7 @@ body.admin-workspace #tab-air-menu .switch-row > :is(div, span) {
 
 body.admin-workspace #tab-air-menu .switch-row strong {
   color: var(--air-ink);
-  font-size: 14px;
+  font-size: 16px;
   line-height: 1.5;
 }
 
@@ -466,7 +493,7 @@ body.admin-workspace #tab-air-menu .switch-row :is(.help-text, small) {
   display: block;
   margin: 5px 0 0 !important;
   color: var(--air-muted);
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 550;
   line-height: 1.6;
 }
@@ -522,7 +549,16 @@ body.admin-workspace #tab-air-menu .loyalty-settings-card .air-settings-heading 
 }
 
 body.admin-workspace #tab-air-menu .loyalty-settings-card .air-settings-heading h2 {
-  font-size: 19px;
+  font-size: 21px;
+}
+
+body.admin-workspace #tab-air-menu .loyalty-settings-card .form-group {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 body.admin-workspace #tab-air-menu .loyalty-title-icon {
@@ -541,7 +577,7 @@ body.admin-workspace #tab-air-menu .proximity-lock-control {
   border-radius: 9px;
   color: #466284;
   background: #fff;
-  font-size: 12px;
+  font-size: 14px;
   cursor: pointer;
 }
 
@@ -611,7 +647,7 @@ body.admin-workspace #tab-air-menu .channel-window-times {
 body.admin-workspace #tab-air-menu .channel-window-times label {
   min-width: 0;
   color: #586c85;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 body.admin-workspace #tab-air-menu .service-sessions {
@@ -646,7 +682,7 @@ body.admin-workspace #tab-air-menu .service-session-title strong {
 }
 
 body.admin-workspace #tab-air-menu .service-session-title small {
-  font-size: 12px;
+  font-size: 14px;
 }
 
 body.admin-workspace #tab-air-menu .closure-panel {
@@ -668,7 +704,7 @@ body.admin-workspace #tab-air-menu .closure-panel h3 {
 
 body.admin-workspace #tab-air-menu .closure-panel p {
   color: #826475;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.6;
 }
 
@@ -738,7 +774,7 @@ body.admin-workspace #tab-air-menu .table-qr-preview button {
   border-color: #cddced;
   border-radius: 10px;
   color: #355b8b;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 body.admin-workspace #tab-air-menu .table-qr-actions {
@@ -750,7 +786,7 @@ body.admin-workspace #tab-air-menu .table-qr-toggle {
   display: inline-flex;
   align-items: center;
   min-height: 44px;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 body.admin-workspace #tab-air-menu .table-qr-toggle input {
@@ -813,7 +849,7 @@ body.admin-workspace #tab-air-menu .air-sheet-collapse summary h2 {
 body.admin-workspace #tab-air-menu .air-sheet-collapse summary h2 small {
   margin-top: 5px;
   color: var(--air-muted);
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.5;
 }
 
@@ -843,7 +879,7 @@ body.admin-workspace #tab-air-menu .air-sheet-summary-end b {
   border-radius: 8px;
   color: #4a6383;
   background: #fff;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 body.admin-workspace #tab-air-menu .air-sheet-collapse .air-sheet-summary-end i {
@@ -863,7 +899,7 @@ body.admin-workspace #tab-air-menu .air-sheet-collapse > :not(summary) {
 body.admin-workspace #tab-air-menu .air-sheet-collapse > .help-text {
   display: block;
   color: var(--air-muted);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.6;
 }
 
@@ -889,7 +925,7 @@ body.admin-workspace #tab-air-menu .air-sheet th {
   border-color: #d8e3f0;
   color: #49637f;
   background: #eef4fc;
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.5;
 }
 
@@ -912,7 +948,7 @@ body.admin-workspace
   min-height: 48px;
   padding: 12px 10px;
   color: #29415f;
-  font-size: 14px;
+  font-size: 16px;
 }
 
 body.admin-workspace #tab-air-menu .air-sheet :is(input, select):focus-visible {
@@ -955,7 +991,7 @@ body.admin-workspace #tab-air-menu :is(.add-menu-item-btn, .addon-add-option) {
   border-radius: 11px;
   color: #365982;
   background: #f4f8ff;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 850;
 }
 
@@ -983,13 +1019,13 @@ body.admin-workspace #tab-air-menu .category-control-row {
 body.admin-workspace #tab-air-menu .category-control-row strong {
   min-width: 0;
   color: #2a4262;
-  font-size: 13px;
+  font-size: 15px;
   overflow-wrap: anywhere;
 }
 
 body.admin-workspace #tab-air-menu .category-control-row label {
   min-height: 44px;
-  font-size: 12px;
+  font-size: 14px;
   cursor: pointer;
 }
 
@@ -1002,7 +1038,7 @@ body.admin-workspace #tab-air-menu .category-control-row input {
 body.admin-workspace #tab-air-menu .category-order-group > b {
   margin: 10px 0 2px;
   color: #5f7898;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 body.admin-workspace #tab-air-menu .category-control-row[data-category-order] {
@@ -1051,7 +1087,7 @@ body.admin-workspace #tab-air-menu #air-addon-management .addon-group-head b {
 
 body.admin-workspace #tab-air-menu #air-addon-management .addon-group-head small {
   color: var(--air-muted);
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.6;
 }
 
@@ -1163,7 +1199,7 @@ body.admin-workspace #tab-air-menu .qr-target {
   border-radius: 8px;
   background: #fff;
   color: #576f8c;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
@@ -1179,7 +1215,7 @@ body.admin-workspace #tab-air-menu .qr-download {
   border-radius: 11px;
   color: #355b8b;
   background: #fff;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 850;
 }
 
@@ -1216,7 +1252,7 @@ body.admin-workspace .addon-assignment-head h2 {
 }
 
 body.admin-workspace .addon-assignment-head p {
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.6;
 }
 
@@ -1245,6 +1281,7 @@ body.admin-workspace .addon-assignment-list label {
   padding: 14px 24px;
   align-items: center;
   cursor: pointer;
+  font-size: 16px;
 }
 
 body.admin-workspace .addon-assignment-list label:has(input:checked) {
@@ -1294,7 +1331,7 @@ body.admin-workspace .addon-assignment-save {
     min-height: 104px;
     padding: 13px;
     border-radius: 13px;
-    font-size: 12px;
+    font-size: 14px;
   }
 
   body.admin-workspace #tab-air-menu .air-export-row {
@@ -1353,7 +1390,7 @@ body.admin-workspace .addon-assignment-save {
   }
 
   body.admin-workspace #tab-air-menu .air-sheet-collapse summary h2 {
-    font-size: 18px;
+    font-size: 20px;
   }
 
   body.admin-workspace #tab-air-menu .air-sheet-collapse > :not(summary) {
@@ -1377,7 +1414,7 @@ body.admin-workspace .addon-assignment-save {
 
   body.admin-workspace #tab-air-menu .category-control-row label {
     align-items: center;
-    font-size: 11px;
+    font-size: 14px;
   }
 
   body.admin-workspace #tab-air-menu #air-addon-management {
@@ -1424,7 +1461,7 @@ body.admin-workspace .addon-assignment-save {
 
   body.admin-workspace #tab-air-menu .air-workflow-step {
     padding: 11px 9px;
-    font-size: 11px;
+    font-size: 13px;
     line-height: 1.5;
     min-width: 0;
     white-space: normal;
@@ -1451,7 +1488,7 @@ body.admin-workspace .addon-assignment-save {
   }
 
   body.admin-workspace #tab-air-menu .switch-row strong {
-    font-size: 13px;
+    font-size: 15px;
   }
 
   body.admin-workspace

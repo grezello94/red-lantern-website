@@ -128,7 +128,7 @@
   };
   panels.forEach((panel) => {
     // Smart KDS already has navigation that controls its five independent subworkspaces.
-    if (panel.id === 'tab-smart-kds') return;
+    if (panel.id === 'tab-smart-kds' || panel.id === 'tab-captain-app') return;
     const sections = new Map();
     panel
       .querySelectorAll(
@@ -165,6 +165,120 @@
     });
     panel.querySelector(':scope > .header').after(nav);
   });
+
+  // Each Captain workspace keeps its existing controls mounted so switching views preserves drafts.
+  const captainPanel = document.getElementById('tab-captain-app');
+  const captainViews = [
+    {
+      key: 'employees',
+      label: 'Employees',
+      card: document.getElementById('captain-admin-list')?.closest('.card'),
+    },
+    {
+      key: 'settings',
+      label: 'App settings',
+      card: captainPanel?.querySelector('.captain-settings-card'),
+    },
+    {
+      key: 'activity',
+      label: 'Live activity',
+      card: document.getElementById('captain-activity-list')?.closest('.card'),
+    },
+    {
+      key: 'access',
+      label: 'Access log',
+      card: document.getElementById('employee-audit-list')?.closest('.card'),
+    },
+  ].filter((view) => view.card);
+  let captainView = 'employees';
+  try {
+    const stored = sessionStorage.getItem('admin-captain-view');
+    if (captainViews.some((view) => view.key === stored)) captainView = stored;
+  } catch (_) {
+    /* Views remain usable when browser storage is unavailable. */
+  }
+  const captainNav = document.createElement('nav');
+  captainNav.className = 'admin-section-nav admin-captain-workspaces';
+  captainNav.setAttribute('aria-label', 'Captain and employee workspaces');
+  const selectCaptainView = (key, { scroll = true } = {}) => {
+    if (!captainViews.some((view) => view.key === key)) return;
+    captainView = key;
+    captainViews.forEach((view) => {
+      const active = view.key === key;
+      view.card.hidden = !active;
+      view.link.classList.toggle('is-active', active);
+      if (active) view.link.setAttribute('aria-current', 'page');
+      else view.link.removeAttribute('aria-current');
+    });
+    const add = document.getElementById('captain-add');
+    if (add) add.hidden = key !== 'employees';
+    try {
+      sessionStorage.setItem('admin-captain-view', key);
+    } catch (_) {}
+    measureToolbar();
+    if (scroll) window.scrollTo({ top: 0, behavior: 'instant' });
+  };
+  captainViews.forEach((view, index) => {
+    view.card.id ||= `admin-captain-${view.key}`;
+    view.card.classList.add('admin-captain-panel');
+    const link = document.createElement('a');
+    link.href = `#${view.card.id}`;
+    link.dataset.captainWorkspace = view.key;
+    link.setAttribute('aria-controls', view.card.id);
+    link.innerHTML = `<span class="admin-section-number">${String(index + 1).padStart(2, '0')}</span>`;
+    link.append(document.createTextNode(view.label));
+    link.addEventListener('click', (event) => {
+      event.preventDefault();
+      selectCaptainView(view.key);
+    });
+    view.link = link;
+    captainNav.append(link);
+  });
+  if (captainViews.length) {
+    captainPanel.querySelector(':scope > .header').after(captainNav);
+    const actions = captainPanel.querySelector('.captain-action-bar');
+    const status = document.getElementById('captain-admin-status');
+    if (actions && status) {
+      const dock = document.createElement('div');
+      dock.id = 'admin-captain-save-area';
+      status.setAttribute('role', 'status');
+      dock.append(status, actions);
+      captainPanel.append(dock);
+    }
+    document.addEventListener('admin-captain-workspace', (event) => {
+      selectCaptainView(event.detail?.target || 'employees');
+    });
+  }
+
+  // Measure the real bars instead of letting fixed offsets hide a field on tablets or zoomed screens.
+  const workspaceBar = document.getElementById('admin-workspace-bar');
+  const sidebarBrand = sidebar.querySelector('.sidebar-brand');
+  const measureToolbar = () => {
+    const mobile = window.matchMedia('(max-width: 900px)').matches;
+    const sidebarHeight = mobile ? sidebarBrand.getBoundingClientRect().height : 0;
+    const barHeight = workspaceBar.getBoundingClientRect().height;
+    const toolbarBottom = Math.ceil(sidebarHeight + barHeight);
+    const activeNav = document.querySelector(
+      '.tab-content.active .admin-section-nav, .tab-content.active .smart-kds-admin-nav'
+    );
+    const navHeight = activeNav?.getBoundingClientRect().height || 0;
+    document.body.style.setProperty('--admin-sidebar-height', `${Math.ceil(sidebarHeight)}px`);
+    document.body.style.setProperty('--admin-toolbar-bottom', `${toolbarBottom + 10}px`);
+    document.body.style.setProperty(
+      '--admin-content-offset',
+      `${Math.ceil(toolbarBottom + navHeight + 30)}px`
+    );
+  };
+  const toolbarObserver = new ResizeObserver(measureToolbar);
+  [
+    workspaceBar,
+    sidebarBrand,
+    ...document.querySelectorAll('.admin-section-nav, .smart-kds-admin-nav'),
+  ].forEach((element) => {
+    if (element) toolbarObserver.observe(element);
+  });
+  window.addEventListener('resize', measureToolbar, { passive: true });
+  selectCaptainView(captainView, { scroll: false });
   const syncWorkspace = () => {
     const panel = panels.find((entry) => entry.classList.contains('active'));
     if (!panel) return;
@@ -177,11 +291,17 @@
       if (item.dataset.target === panel.id) item.setAttribute('aria-current', 'page');
       else item.removeAttribute('aria-current');
     });
+    measureToolbar();
   };
   const syncSection = () => {
-    const links = [...document.querySelectorAll('.tab-content.active .admin-section-nav a')];
+    const links = [
+      ...document.querySelectorAll(
+        '.tab-content.active .admin-section-nav:not(.admin-captain-workspaces) a'
+      ),
+    ];
     let current = links[0];
-    const offset = window.innerWidth <= 900 ? 240 : 180;
+    const offset =
+      parseFloat(document.body.style.getPropertyValue('--admin-content-offset')) || 180;
     links.forEach((link) => {
       if (
         document.getElementById(link.dataset.adminSectionLink).getBoundingClientRect().top <= offset

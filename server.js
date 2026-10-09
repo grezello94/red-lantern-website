@@ -438,30 +438,33 @@ function secureCompare(a = '', b = '') {
   return crypto.timingSafeEqual(aHash, bHash);
 }
 
+function normalizedAdminPath(value) {
+  let requestPath = String(value || '/');
+  // Express routes ignore case and a trailing slash; static file serving also
+  // decodes the pathname. Apply the same rules before deciding who may enter.
+  try {
+    requestPath = decodeURIComponent(requestPath);
+  } catch (_) {}
+  return path.posix.normalize(requestPath.replace(/\\/g, '/')).toLowerCase().replace(/\/+$/, '') || '/';
+}
+
+function canonicalAdminPage(value) {
+  const requestPath = normalizedAdminPath(value);
+  if (requestPath === '/admin' || requestPath === '/admin.html') return '/admin';
+  if (requestPath === '/dashboard' || requestPath === '/dashboard.html') return '/dashboard';
+  return '';
+}
+
 function isProtectedAdminPath(req) {
-  if (req.path === '/api/admin/session') return false;
+  const requestPath = normalizedAdminPath(req.path);
+  if (requestPath === '/api/admin/session') return false;
   return (
-    req.path === '/admin' ||
-    req.path === '/admin.html' ||
-    req.path === '/dashboard' ||
-    req.path === '/dashboard.html' ||
-    req.path === '/admin-cms.js' ||
-    req.path.startsWith('/api/admin/') ||
-    req.path === '/api/admin/content' ||
-    req.path === '/api/admin/logs' ||
-    req.path === '/api/admin/orders-errors' ||
-    req.path === '/api/admin/qr-scans' ||
-    req.path === '/api/admin/health' ||
-    req.path.startsWith('/api/admin/customer-insights') ||
-    req.path.startsWith('/api/admin/smart-kds') ||
-    req.path === '/api/admin/trusted-contacts' ||
-    req.path.startsWith('/api/admin/trusted-contacts/') ||
-    req.path === '/api/admin/table-qr-codes' ||
-    req.path.startsWith('/api/admin/table-qr-codes/') ||
-    req.path.startsWith('/api/admin/qr/') ||
-    req.path.startsWith('/api/admin/air-menu/') ||
-    req.path.startsWith('/api/update-') ||
-    req.path === '/api/growth-ai'
+    !!canonicalAdminPage(req.path) ||
+    requestPath === '/admin-cms.js' ||
+    requestPath === '/api/admin' ||
+    requestPath.startsWith('/api/admin/') ||
+    requestPath.startsWith('/api/update-') ||
+    requestPath === '/api/growth-ai'
   );
 }
 
@@ -572,8 +575,9 @@ function authCookieOptions(req) {
 function safeAdminDestination(value) {
   try {
     const target = new URL(String(value || '/admin'), 'https://red-lantern.local');
-    return ['/admin', '/admin.html', '/dashboard', '/dashboard.html'].includes(target.pathname)
-      ? `${target.pathname}${target.search}${target.hash}`
+    const canonicalPage = canonicalAdminPage(target.pathname);
+    return canonicalPage
+      ? `${canonicalPage}${target.search}${target.hash}`
       : '/admin';
   } catch (_) {
     return '/admin';
@@ -582,6 +586,8 @@ function safeAdminDestination(value) {
 
 function requireAdmin(req, res, next) {
   if (!isProtectedAdminPath(req)) return next();
+  const requestPath = normalizedAdminPath(req.path);
+  res.set('Cache-Control', 'private, no-store, max-age=0');
 
   const expectedUser = process.env.ADMIN_USERNAME;
   const expectedPass = process.env.ADMIN_PASSWORD;
@@ -623,7 +629,7 @@ function requireAdmin(req, res, next) {
     scheme === 'Basic' && encoded ? Buffer.from(encoded, 'base64').toString('utf8').split(':') : [];
   const password = passwordParts.join(':');
   if (
-    req.path.startsWith('/api/') &&
+    requestPath.startsWith('/api/') &&
     secureCompare(username || '', expectedUser) &&
     secureCompare(password, expectedPass)
   ) {
@@ -649,10 +655,10 @@ function requireAdmin(req, res, next) {
   const loginUrl = `/staff-login?scope=admin&next=${encodeURIComponent(destination)}`;
   if (
     (req.method === 'GET' || req.method === 'HEAD') &&
-    ['/admin', '/admin.html', '/dashboard', '/dashboard.html'].includes(req.path)
+    canonicalAdminPage(req.path)
   )
     return res.redirect(302, loginUrl);
-  if (req.path.startsWith('/api/'))
+  if (requestPath.startsWith('/api/'))
     return res.status(401).json({
       error: 'Administrator sign-in is required.',
       code: 'admin_auth_required',
@@ -1028,6 +1034,17 @@ app.use(requireAdmin);
 app.use(requireOrdersConsole);
 app.use(blockSensitiveFiles);
 
+app.use((req, res, next) => {
+  const canonicalPage = canonicalAdminPage(req.path);
+  if (!canonicalPage) return next();
+  res.set('Cache-Control', 'private, no-store, max-age=0');
+  // Authentication runs first. One page URL also keeps refreshes and relative
+  // assets consistent, including links saved with .html, case, or a final slash.
+  if ((req.method === 'GET' || req.method === 'HEAD') && req.path !== canonicalPage)
+    return res.redirect(302, safeAdminDestination(req.originalUrl));
+  return next();
+});
+
 const cleanPageRoutes = new Map([
   ['/home', 'index.html'],
   ['/menu', 'menu.html'],
@@ -1074,6 +1091,14 @@ app.use(
     maxAge: '1h',
     setHeaders: (res, filePath) => {
       const publicPath = String(filePath).replace(/\\/g, '/');
+      if (/\/(?:admin|dashboard)\.html$/i.test(publicPath)) {
+        res.set('Cache-Control', 'private, no-store, max-age=0');
+        return;
+      }
+      if (/\/(?:admin(?:-[\w-]+)?|employee-admin)\.(?:js|css)$/i.test(publicPath)) {
+        res.set('Cache-Control', 'private, no-cache, max-age=0, must-revalidate');
+        return;
+      }
       if (
         /\/(?:orders|register|captain|track-order)(?:\.html|\.js|\.css|-fixes\.css|-logo\.css|-sw\.js|\.webmanifest)$/i.test(
           publicPath

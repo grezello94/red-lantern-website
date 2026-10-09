@@ -18,7 +18,7 @@ body.admin-workspace {
     radial-gradient(ellipse at 40% 38rem, rgba(252, 226, 232, 0.3), transparent 42rem),
     var(--admin-canvas);
   font:
-    500 15px/1.5 Manrope,
+    500 16px/1.55 Manrope,
     Arial,
     sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -53,6 +53,8 @@ body.admin-workspace .admin-skip-link:focus {
 }
 body.admin-workspace :is(button, input, select, textarea) {
   font-family: inherit;
+  scroll-margin-top: var(--admin-content-offset, 164px);
+  scroll-margin-bottom: 104px;
 }
 body.admin-workspace button {
   min-height: 44px;
@@ -168,7 +170,7 @@ body.admin-workspace #admin-sidebar-search {
   color: #fff;
   background: transparent;
   font:
-    600 12px Manrope,
+    600 14px Manrope,
     sans-serif;
 }
 body.admin-workspace #admin-sidebar-search::placeholder {
@@ -245,7 +247,7 @@ body.admin-workspace .sidebar .nav-item {
   color: #c0cce0;
   background: transparent;
   box-shadow: none;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 700;
   line-height: 1.4;
   transition:
@@ -346,7 +348,7 @@ body.admin-workspace .admin-workspace-context :is(small, span) {
 body.admin-workspace .admin-workspace-context :is(b, strong) {
   display: block;
   color: #33455f;
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 800;
   letter-spacing: -0.025em;
 }
@@ -367,7 +369,7 @@ body.admin-workspace .admin-workspace-tools :is(a, button) {
   border-radius: 11px;
   color: #3d506d;
   background: rgba(255, 255, 255, 0.88);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 800;
   text-decoration: none;
   white-space: nowrap;
@@ -458,9 +460,9 @@ body.admin-workspace .tab-content > .header {
   align-items: center;
   justify-content: space-between;
   gap: 24px;
-  min-height: 148px;
+  min-height: 136px;
   margin-bottom: 22px;
-  padding: 30px 32px;
+  padding: 28px 30px;
   border: 1px solid #e0e7f1;
   border-radius: 23px;
   background:
@@ -497,7 +499,7 @@ body.admin-workspace #tab-smart-kds > .header p {
   max-width: 760px;
   margin-top: 9px;
   color: #63748b;
-  font-size: 14px;
+  font-size: 15px;
   line-height: 1.7;
 }
 body.admin-workspace .admin-header-eyebrow {
@@ -535,7 +537,7 @@ body.admin-workspace
   background: #fff;
   box-shadow: 0 3px 8px rgba(36, 52, 78, 0.025);
   font:
-    800 12px/1.4 Manrope,
+    800 13px/1.4 Manrope,
     sans-serif;
 }
 body.admin-workspace :is(.logout-btn, .btn-refresh, .log-copy-btn):hover {
@@ -546,13 +548,13 @@ body.admin-workspace :is(.logout-btn, .btn-refresh, .log-copy-btn):hover {
 body.admin-workspace .admin-section-nav {
   position: sticky;
   z-index: 24;
-  top: 84px;
+  top: var(--admin-toolbar-bottom, 74px);
   display: flex;
   align-items: center;
   gap: 6px;
   width: 100%;
   max-width: 1640px;
-  min-height: 60px;
+  min-height: 62px;
   margin: 0 auto 22px;
   padding: 7px;
   overflow-x: auto;
@@ -579,7 +581,7 @@ body.admin-workspace .admin-section-nav :is(button, a) {
   color: #566982;
   background: transparent;
   font:
-    700 12px/1.3 Manrope,
+    800 13px/1.3 Manrope,
     sans-serif;
   text-decoration: none;
   white-space: nowrap;
@@ -608,7 +610,7 @@ body.admin-workspace .admin-section-nav :is(b, i, .admin-section-number) {
   font-weight: 800;
 }
 body.admin-workspace .admin-section-anchor {
-  scroll-margin-top: 160px;
+  scroll-margin-top: var(--admin-content-offset, 152px);
 }
 body.admin-workspace :is(.card, .analytics-panel, .analytics-period-card, .analytics-definitions) {
   min-width: 0;
@@ -647,8 +649,8 @@ body.admin-workspace .card > .help-text {
   margin: -1px 0 20px;
 }
 body.admin-workspace .help-text {
-  color: #67788f;
-  font-size: 13px;
+  color: #5f7189;
+  font-size: 14px;
   line-height: 1.65;
 }
 body.admin-workspace .form-grid {
@@ -662,18 +664,18 @@ body.admin-workspace .form-grid.full {
 body.admin-workspace .form-group {
   min-width: 0;
 }
-body.admin-workspace .form-group > label {
+body.admin-workspace .form-group > :is(label, span) {
   margin-bottom: 8px;
   color: #52637a;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 800;
-  letter-spacing: 0.045em;
+  letter-spacing: 0.025em;
   line-height: 1.45;
   text-transform: uppercase;
 }
 body.admin-workspace .form-group > .help-text {
-  margin: -2px 0 9px;
-  font-size: 12px;
+  margin: 8px 0 0;
+  font-size: 13px;
 }
 body.admin-workspace
   .form-group
@@ -692,7 +694,7 @@ body.admin-workspace
   color: #263b59;
   background: #f9fbfe;
   font:
-    600 14px/1.5 Manrope,
+    600 16px/1.5 Manrope,
     sans-serif;
   transition:
     border-color 0.16s ease,
@@ -720,7 +722,7 @@ body.admin-workspace .form-group :is(input, textarea, select):disabled {
 body.admin-workspace :is(input[type='checkbox'], input[type='radio']) {
   accent-color: #b72b45;
 }
-body.admin-workspace .form-group input[type='file'] {
+body.admin-workspace :is(.form-group, .trusted-contact-method) input[type='file'] {
   min-height: 58px;
   margin: 0;
   padding: 9px;
@@ -728,10 +730,12 @@ body.admin-workspace .form-group input[type='file'] {
   border-radius: 12px;
   background: #f8fbff;
   color: #62748d;
-  font-size: 12px;
+  font-size: 14px;
 }
-body.admin-workspace .form-group input[type='file']::file-selector-button {
-  min-height: 40px;
+body.admin-workspace
+  :is(.form-group, .trusted-contact-method)
+  input[type='file']::file-selector-button {
+  min-height: 44px;
   margin-right: 12px;
   padding: 9px 13px;
   border: 1px solid #ead4dc;
@@ -739,7 +743,7 @@ body.admin-workspace .form-group input[type='file']::file-selector-button {
   color: #9f2840;
   background: #fff0f4;
   font:
-    800 12px Manrope,
+    800 13px Manrope,
     sans-serif;
   cursor: pointer;
 }
@@ -766,7 +770,7 @@ body.admin-workspace :is(.btn-save, .growth-ai-button) {
   background: linear-gradient(120deg, #c4334e, #a92640);
   box-shadow: 0 7px 16px rgba(178, 39, 65, 0.15);
   font:
-    800 13px/1.4 Manrope,
+    800 14px/1.4 Manrope,
     sans-serif;
   transition:
     background 0.16s ease,
@@ -814,7 +818,7 @@ body.admin-workspace .admin-save-copy small {
   display: block;
   margin-top: 3px;
   color: #74869f;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.5;
 }
 body.admin-workspace .admin-save-bar .btn-save {
@@ -884,7 +888,7 @@ body.admin-workspace .rich-text-editor textarea {
 body.admin-workspace :is(.review-entry, .dish-entry, .blog-entry) {
   min-width: 0;
   margin-bottom: 18px;
-  padding: 20px;
+  padding: 18px 20px;
   border: 1px solid #dfe7f1;
   border-radius: 15px;
   background: #f9fbfe;
@@ -924,7 +928,7 @@ body.admin-workspace
   :is(.insight-stat, .scan-stat, .database-metric, .captain-stat, .analytics-kpi) {
   position: relative;
   min-width: 0;
-  padding: 20px;
+  padding: 18px 20px;
   border: 1px solid #dfe7f1;
   border-radius: 17px;
   background: linear-gradient(140deg, #fff, #fbfdff);
@@ -942,7 +946,7 @@ body.admin-workspace
 }
 body.admin-workspace :is(.insight-stat, .scan-stat, .database-metric, .captain-stat) span {
   color: #697e98;
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.5;
 }
 body.admin-workspace .insight-toolbar {
@@ -983,16 +987,16 @@ body.admin-workspace .insight-toolbar .form-group {
 }
 body.admin-workspace .insight-toolbar .form-group > span {
   color: #58708f;
-  font-size: 11px;
+  font-size: 13px;
 }
 body.admin-workspace .insight-toolbar input {
   min-height: 48px;
   border-radius: 11px;
   background: #fff;
-  font-size: 14px;
+  font-size: 16px;
 }
 body.admin-workspace .insight-toolbar .form-group small {
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.6;
 }
 body.admin-workspace
@@ -1013,7 +1017,7 @@ body.admin-workspace :is(.insight-table, .analytics-table) th {
   padding: 13px 15px;
   color: #60748f;
   background: #f3f7fc;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 800;
   letter-spacing: 0.06em;
   line-height: 1.5;
@@ -1099,8 +1103,36 @@ body.admin-workspace .trusted-contact-method h3 {
 }
 body.admin-workspace .trusted-contact-method p {
   color: #687c96;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.7;
+}
+body.admin-workspace .trusted-contact-method textarea {
+  min-height: 140px;
+  padding: 14px;
+  border-color: #d7e1ee;
+  border-radius: 12px;
+  color: #2c405d;
+  background: #fff;
+  font:
+    500 16px/1.65 Manrope,
+    sans-serif;
+}
+body.admin-workspace .trusted-contact-method a {
+  color: #365e92;
+  text-underline-offset: 3px;
+}
+body.admin-workspace .trusted-contact-step {
+  align-items: center;
+  padding: 17px;
+}
+body.admin-workspace .trusted-contact-step strong {
+  font-size: 14px;
+  line-height: 1.45;
+}
+body.admin-workspace .trusted-contact-step span {
+  color: #687b94;
+  font-size: 13px;
+  line-height: 1.6;
 }
 body.admin-workspace .trusted-contact-method .btn-save {
   position: static;
@@ -1121,24 +1153,33 @@ body.admin-workspace .trusted-contact-search {
   min-height: 48px;
   border-color: #d7e1ee;
   border-radius: 11px;
-  font-size: 14px;
+  font-size: 16px;
   background: #f9fbfe;
 }
 body.admin-workspace .trusted-contact-search-button {
   min-height: 48px;
   border-radius: 11px;
-  font-size: 12px;
+  font-size: 13px;
 }
 body.admin-workspace .trusted-contact-list {
   max-width: 100%;
+  max-height: min(65vh, 720px);
+  overflow: auto;
   border-color: #dfe7f1;
   border-radius: 14px;
+  overscroll-behavior-y: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #b6c9e1 #f5f8fc;
 }
 body.admin-workspace .trusted-contact-list-head {
-  padding: 13px 16px;
-  background: #f3f7fc;
-  color: #687d97;
-  font-size: 10px;
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  padding: 14px 17px;
+  background: #eef4fc;
+  color: #58708f;
+  font-size: 12px;
+  box-shadow: inset 0 -1px #d8e3f1;
 }
 body.admin-workspace .trusted-contact-strip {
   min-width: 0;
@@ -1154,13 +1195,13 @@ body.admin-workspace .trusted-contact-name {
   border-radius: 10px;
   border-color: #dce5ef;
   color: #314966;
-  font-size: 14px;
+  font-size: 16px;
 }
 body.admin-workspace .trusted-contact-actions button {
   min-height: 44px;
   padding: 9px 12px;
   border-radius: 9px;
-  font-size: 12px;
+  font-size: 13px;
 }
 body.admin-workspace .trusted-contact-history {
   max-width: 100%;
@@ -1171,7 +1212,31 @@ body.admin-workspace .trusted-contact-history {
 }
 body.admin-workspace .trusted-contact-status {
   padding: 6px 9px;
-  font-size: 10px;
+  font-size: 12px;
+}
+body.admin-workspace .trusted-contact-directory-toolbar h3 {
+  color: #2c405d;
+  font-size: 17px;
+}
+body.admin-workspace #trusted-contact-count {
+  font-size: 13px;
+  line-height: 1.6;
+}
+body.admin-workspace
+  :is(.trusted-contact-phone, .trusted-contact-date, .trusted-contact-history-label) {
+  font-size: 12px;
+  line-height: 1.5;
+}
+body.admin-workspace .trusted-contact-pagination {
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+body.admin-workspace .trusted-contact-pagination button {
+  min-height: 44px;
+  padding: 10px 14px;
+  border-color: #d7e1ee;
+  border-radius: 10px;
+  font-size: 13px;
 }
 body.admin-workspace .captain-account-card {
   border-color: #dce6f1 !important;
@@ -1185,18 +1250,34 @@ body.admin-workspace .captain-account-head {
 }
 body.admin-workspace .captain-account-head b {
   color: #2e4260;
-  font-size: 17px;
+  font-size: 18px;
 }
 body.admin-workspace .captain-account-head small {
   color: #6b809b;
-  font-size: 12px;
+  font-size: 13px;
 }
 body.admin-workspace .captain-account-head span {
   padding: 6px 9px;
-  font-size: 10px;
+  font-size: 12px;
 }
 body.admin-workspace .captain-account-body {
   padding: 22px;
+}
+body.admin-workspace #captain-idle-minutes {
+  min-height: 48px;
+  padding: 11px 13px;
+  border-color: #d7e1ee;
+  border-radius: 11px;
+  color: #263b59;
+  background: #f9fbfe;
+  font:
+    600 16px/1.5 Manrope,
+    sans-serif;
+}
+body.admin-workspace #captain-idle-minutes:focus {
+  border-color: #7e9dd2;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(105, 142, 204, 0.12);
 }
 body.admin-workspace .captain-account-card .form-grid {
   gap: 20px;
@@ -1265,14 +1346,15 @@ body.admin-workspace .employee-permission-group h3 {
   font-size: 16px;
 }
 body.admin-workspace .employee-permission-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
 }
 body.admin-workspace .employee-permission-grid label {
-  padding: 12px;
-  min-height: 52px;
+  align-items: center;
+  padding: 14px;
+  min-height: 56px;
   color: #415771;
-  font-size: 13px;
+  font-size: 15px;
   line-height: 1.55;
 }
 body.admin-workspace .employee-permission-option {
@@ -1291,9 +1373,22 @@ body.admin-workspace .employee-permission-help {
   color: #7c8da4;
 }
 body.admin-workspace .captain-settings-card .employee-permission-grid .captain-setting-toggle {
+  min-height: 64px;
+  padding: 14px 16px;
+  gap: 18px;
   border-color: #e1e9f3;
   border-radius: 12px;
   background: #f9fbfe;
+}
+body.admin-workspace .captain-settings-card .employee-permission-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+body.admin-workspace .captain-settings-card .employee-permission-group {
+  padding: 18px;
+  margin: 18px 0;
+}
+body.admin-workspace .captain-settings-card .captain-setting-toggle input[role='switch'] {
+  right: 16px;
 }
 body.admin-workspace .captain-settings-card .captain-setting-toggle:has(input:checked) {
   border-color: #f0d1da;
@@ -1312,7 +1407,7 @@ body.admin-workspace .captain-area-options label {
   color: #506784;
   border-color: #dae4f0;
   background: #fff;
-  font-size: 12px;
+  font-size: 14px;
 }
 body.admin-workspace .captain-area-options label:has(input:checked) {
   border-color: #ebc2ce;
@@ -1333,8 +1428,54 @@ body.admin-workspace .captain-action-bar {
   backdrop-filter: blur(12px);
 }
 body.admin-workspace .captain-action-bar .btn-save {
-  min-width: 210px;
+  min-width: 200px;
   margin: 0;
+}
+body.admin-workspace .captain-action-bar > div {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+body.admin-workspace #captain-add {
+  min-width: 156px;
+  border-color: #ccdaed;
+  color: #405f84;
+  background: #f5f8fd;
+  box-shadow: none;
+}
+body.admin-workspace #captain-add:hover {
+  border-color: #b9cce3;
+  background: #edf4ff;
+}
+body.admin-workspace #admin-captain-save-area {
+  position: sticky;
+  z-index: 16;
+  bottom: 16px;
+  margin-top: 22px;
+  border: 1px solid #d5e1f0;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 8px 30px rgba(30, 46, 76, 0.1);
+  backdrop-filter: blur(14px);
+}
+body.admin-workspace #admin-captain-save-area .captain-action-bar {
+  position: static;
+  margin: 0;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+body.admin-workspace #admin-captain-save-area #captain-admin-status {
+  margin: 0;
+  padding: 13px 18px 0;
+  font-size: 13px;
+  line-height: 1.6;
+}
+body.admin-workspace #admin-captain-save-area #captain-admin-status:empty {
+  display: none;
 }
 body.admin-workspace .employee-audit-row {
   gap: 16px;
@@ -1366,12 +1507,17 @@ body.admin-workspace .captain-activity-filters {
   background: #f8fbff;
 }
 body.admin-workspace .captain-activity-filters select {
-  min-height: 44px;
+  min-height: 48px;
   padding: 9px 12px;
   border-color: #d8e3ef;
   border-radius: 10px;
   color: #405b7d;
   background: #fff;
+  font-size: 16px;
+}
+body.admin-workspace .captain-activity-filters label {
+  min-width: min(200px, 100%);
+  flex: 1;
   font-size: 13px;
 }
 body.admin-workspace .captain-activity-row {
@@ -1397,7 +1543,7 @@ body.admin-workspace .log-filter {
   border-radius: 10px;
   background: #fff;
   color: #526c8d;
-  font-size: 13px;
+  font-size: 16px;
 }
 body.admin-workspace .log-status {
   color: #6b7f99;
@@ -1627,16 +1773,25 @@ body.admin-workspace .add-menu-item-btn:hover {
   background: #edf4ff;
 }
 body.admin-workspace .smart-kds-admin-nav {
-  top: 152px;
+  top: var(--admin-toolbar-bottom, 74px);
+  z-index: 24;
+  min-height: 62px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #dce3ef transparent;
   border-radius: 14px;
   box-shadow: 0 5px 16px rgba(32, 50, 81, 0.045);
 }
 body.admin-workspace .smart-kds-admin-nav :is(a, button) {
+  flex: 0 0 auto;
   min-height: 44px;
-  font-size: 12px;
+  font-size: 13px;
+  white-space: nowrap;
 }
 body.admin-workspace .smart-kds-admin-section {
-  scroll-margin-top: 210px;
+  scroll-margin-top: var(--admin-content-offset, 152px);
 }
 body.admin-workspace #tab-smart-kds .card.insight-card {
   border-color: #dfe7f1;
@@ -1644,11 +1799,33 @@ body.admin-workspace #tab-smart-kds .card.insight-card {
   box-shadow: 0 6px 24px rgba(35, 54, 87, 0.04);
 }
 body.admin-workspace .smart-kds-setting-group {
+  min-height: 0;
+  padding: 19px;
   border-radius: 15px;
   background: #f8fbff;
 }
+body.admin-workspace .smart-kds-setting-groups {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+body.admin-workspace .smart-kds-setting-group:last-child {
+  grid-column: 1/-1;
+}
+body.admin-workspace .smart-kds-setting-group:last-child .smart-kds-setting-fields {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+body.admin-workspace .smart-kds-setting-group legend {
+  color: #304862;
+  font-size: 16px;
+  line-height: 1.45;
+}
+body.admin-workspace #smart-kds-config-form > .smart-kds-grid .form-group span {
+  font-size: 13px;
+  line-height: 1.5;
+  letter-spacing: 0.025em;
+}
 body.admin-workspace .smart-kds-setting-group > p {
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.6;
 }
 body.admin-workspace .smart-kds-setting-fields .form-group {
@@ -1656,11 +1833,19 @@ body.admin-workspace .smart-kds-setting-fields .form-group {
   gap: 9px;
 }
 body.admin-workspace .smart-kds-setting-fields .form-group span {
-  font-size: 13px;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1.4;
+  text-transform: none;
+}
+body.admin-workspace .smart-kds-setting-fields .form-group em {
+  color: #6d819b;
+  font-size: 12px;
 }
 body.admin-workspace .smart-kds-setting-fields input {
   min-height: 44px;
-  font-size: 15px;
+  font-size: 16px;
 }
 body.admin-workspace .smart-kds-profile-toolbar {
   flex-wrap: wrap;
@@ -1676,12 +1861,40 @@ body.admin-workspace .smart-kds-profile > summary {
   min-height: 72px;
   font-size: 14px;
 }
-body.admin-workspace .smart-kds-course-value input {
-  min-height: 44px;
-  font-size: 15px;
+body.admin-workspace .smart-kds-course-targets {
+  gap: 12px;
+}
+body.admin-workspace .smart-kds-course-target {
+  padding: 16px;
+}
+body.admin-workspace .smart-kds-course-value {
+  color: #5c718d;
+  font-size: 12px;
+  letter-spacing: 0.025em;
+}
+body.admin-workspace .smart-kds-course-name small {
+  font-size: 12px;
+  line-height: 1.5;
+}
+body.admin-workspace :is(.smart-kds-course-value, .smart-kds-course-sequence) input {
+  min-height: 48px;
+  border: 1px solid #d7e1ee;
+  border-radius: 10px;
+  color: #2e4261;
+  background: #f9fbfe;
+  font:
+    800 16px/1.4 Manrope,
+    sans-serif;
+}
+body.admin-workspace :is(.smart-kds-course-value, .smart-kds-course-sequence) input:focus {
+  border-color: #7e9dd2;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(105, 142, 204, 0.12);
 }
 body.admin-workspace .smart-kds-course-sequence input {
-  min-height: 40px;
+  width: 44px;
+  min-height: 44px;
+  color: #b32641;
 }
 body.admin-workspace .smart-kds-header-actions a {
   min-height: 44px;
@@ -1765,6 +1978,21 @@ body.admin-workspace .bill-total {
   body.admin-workspace {
     --admin-shell-gutter: 64px;
   }
+  body.admin-workspace .employee-permission-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  body.admin-workspace .captain-settings-card .employee-permission-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  body.admin-workspace .smart-kds-setting-groups {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  body.admin-workspace .smart-kds-setting-group:last-child {
+    grid-column: auto;
+  }
+  body.admin-workspace .smart-kds-setting-group:last-child .smart-kds-setting-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 @media (max-width: 1240px) and (min-width: 901px) {
   body.admin-workspace {
@@ -1792,6 +2020,9 @@ body.admin-workspace .bill-total {
   }
   body.admin-workspace .smart-kds-setting-group:last-child {
     grid-column: auto;
+  }
+  body.admin-workspace .smart-kds-setting-group:last-child .smart-kds-setting-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   body.admin-workspace .smart-kds-profile > summary {
     grid-template-columns: minmax(0, 1fr) 100px 110px;
@@ -1943,7 +2174,7 @@ body.admin-workspace .bill-total {
     min-height: 48px;
     margin: 0;
     padding: 11px;
-    font-size: 12px;
+    font-size: 14px;
   }
   body.admin-workspace #admin-nav-empty {
     grid-column: 1/-1;
@@ -1963,7 +2194,7 @@ body.admin-workspace .bill-total {
     padding: 0 var(--admin-shell-gutter) 64px;
   }
   body.admin-workspace #admin-workspace-bar {
-    top: 72px;
+    top: var(--admin-sidebar-height, 72px);
     min-height: 66px;
     margin-bottom: 20px;
     padding-block: 10px;
@@ -1972,18 +2203,18 @@ body.admin-workspace .bill-total {
     font-size: 9px;
   }
   body.admin-workspace .admin-workspace-context :is(b, strong) {
-    font-size: 12px;
+    font-size: 14px;
   }
   body.admin-workspace .admin-workspace-tools :is(a, button) {
     padding: 9px 11px;
-    font-size: 11px;
+    font-size: 12px;
   }
   body.admin-workspace .admin-section-nav {
-    top: 148px;
+    top: var(--admin-toolbar-bottom, 138px);
     margin-bottom: 20px;
   }
   body.admin-workspace .admin-section-anchor {
-    scroll-margin-top: 220px;
+    scroll-margin-top: var(--admin-content-offset, 216px);
   }
   body.admin-workspace .tab-content > .header {
     min-height: 0;
@@ -1995,7 +2226,7 @@ body.admin-workspace .bill-total {
     justify-content: flex-end;
   }
   body.admin-workspace .header p {
-    font-size: 13px;
+    font-size: 14px;
   }
   body.admin-workspace .card {
     padding: 23px;
@@ -2039,10 +2270,10 @@ body.admin-workspace .bill-total {
     width: 100%;
   }
   body.admin-workspace .smart-kds-admin-nav {
-    top: 148px;
+    top: var(--admin-toolbar-bottom, 138px);
   }
   body.admin-workspace .smart-kds-admin-section {
-    scroll-margin-top: 215px;
+    scroll-margin-top: var(--admin-content-offset, 216px);
   }
   body.admin-workspace .smart-kds-profile-fields .form-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2052,6 +2283,9 @@ body.admin-workspace .bill-total {
   }
   body.admin-workspace .smart-kds-setting-group:last-child {
     grid-column: auto;
+  }
+  body.admin-workspace .smart-kds-setting-group:last-child .smart-kds-setting-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   body.admin-workspace .smart-kds-planning-grid {
     grid-template-columns: 1fr;
@@ -2145,7 +2379,7 @@ body.admin-workspace .bill-total {
   }
   body.admin-workspace .admin-workspace-tools :is(a, button) {
     padding: 9px;
-    font-size: 10px;
+    font-size: 12px;
   }
   body.admin-workspace .admin-workspace-tools svg {
     width: 15px;
@@ -2158,7 +2392,7 @@ body.admin-workspace .bill-total {
   }
   body.admin-workspace .admin-section-nav :is(a, button) {
     padding-inline: 11px;
-    font-size: 11px;
+    font-size: 13px;
   }
   body.admin-workspace .tab-content > .header {
     padding: 24px 20px;
@@ -2193,7 +2427,7 @@ body.admin-workspace .bill-total {
     padding: 16px;
   }
   body.admin-workspace .help-text {
-    font-size: 12px;
+    font-size: 13px;
   }
   body.admin-workspace
     .form-group
@@ -2307,6 +2541,9 @@ body.admin-workspace .bill-total {
   body.admin-workspace .employee-permission-grid {
     grid-template-columns: 1fr;
   }
+  body.admin-workspace .captain-settings-card .employee-permission-grid {
+    grid-template-columns: 1fr;
+  }
   body.admin-workspace .employee-permission-group {
     padding: 15px;
   }
@@ -2319,9 +2556,30 @@ body.admin-workspace .bill-total {
     bottom: 10px;
     padding: 13px;
   }
-  body.admin-workspace .captain-action-bar .btn-save {
+  body.admin-workspace .captain-action-bar > .help-text {
+    display: none;
+  }
+  body.admin-workspace .captain-action-bar > div {
     width: 100%;
+    flex-wrap: nowrap;
+    gap: 8px;
+  }
+  body.admin-workspace .captain-action-bar .btn-save {
+    flex: 1;
+    width: auto;
     min-width: 0;
+    padding-inline: 10px;
+    font-size: 13px;
+  }
+  body.admin-workspace #captain-add {
+    min-width: 0;
+  }
+  body.admin-workspace #admin-captain-save-area {
+    bottom: 10px;
+    border-radius: 13px;
+  }
+  body.admin-workspace #admin-captain-save-area #captain-admin-status {
+    padding: 11px 13px 0;
   }
   body.admin-workspace .captain-activity-filters {
     flex-direction: column;
@@ -2331,7 +2589,7 @@ body.admin-workspace .bill-total {
     grid-template-columns: 1fr;
   }
   body.admin-workspace .smart-kds-admin-nav {
-    top: 148px;
+    top: var(--admin-toolbar-bottom, 138px);
     position: sticky;
   }
   body.admin-workspace .smart-kds-profile-fields .form-grid {
@@ -2344,6 +2602,9 @@ body.admin-workspace .bill-total {
     grid-column: auto;
   }
   body.admin-workspace .smart-kds-setting-fields {
+    grid-template-columns: 1fr;
+  }
+  body.admin-workspace .smart-kds-setting-group:last-child .smart-kds-setting-fields {
     grid-template-columns: 1fr;
   }
   body.admin-workspace .smart-kds-setting-fields .form-group {
@@ -2433,6 +2694,14 @@ body.admin-workspace .bill-total {
   }
   body.admin-workspace .captain-action-bar {
     position: static;
+  }
+  body.admin-workspace #admin-captain-save-area {
+    position: static;
+    box-shadow: none;
+  }
+  body.admin-workspace .trusted-contact-list {
+    max-height: none;
+    overflow: visible;
   }
   body.admin-workspace .admin-save-bar {
     position: static;
