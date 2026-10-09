@@ -54,7 +54,7 @@ async function guestMenu(page, overrides = {}) {
 
 const dish = (page, name) => page.locator('#menu-content .dish').filter({ has: page.locator('h3', { hasText: name }) });
 const summaryLine = (page, name) => page.locator('#order-summary-items .summary-item').filter({ hasText: name });
-const price = amount => new RegExp(`₹\\s*${amount}(?:\\.00)?\\b`);
+const price = amount => new RegExp(`₹\\s*${Number(amount).toLocaleString('en-IN')}(?:\\.00)?\\b`);
 
 async function selectCategory(page, name) {
   const option = page.locator('#category-select option').filter({ hasText: new RegExp(`^${name}\\b`, 'i') }).first();
@@ -263,6 +263,63 @@ test('a table QR retains table identity and submits its selected dish once throu
   expect(requests).toHaveLength(1);
   expect(errors).toEqual([]);
 });
+
+for (const viewport of [{ width: 320, height: 700 }, { width: 390, height: 844 }, { width: 810, height: 1080 }]) {
+  test(`ten selected items stay compact and usable at ${viewport.width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize(viewport);
+    const { requests, errors } = await guestMenu(page);
+    // Eight dishes, with both soup and chilli portions, make ten separate selection rows.
+    for (const name of ['Masala French Fries', 'Garlic French Fries', 'Tomato Salad', 'Veg Crispy', 'Red Lantern Signature Tandoori Vegetable Platter']) {
+      await dish(page, name).locator('[data-order-action="plus"]').click();
+    }
+    for (const name of ['Chicken Clear Soup', 'Chicken Chilli']) {
+      const buttons = dish(page, name).locator('[data-order-action="plus"]');
+      for (const button of await buttons.all()) await button.click();
+    }
+    await dish(page, 'Paneer Tikka').locator('[data-order-action="plus"]').click();
+    await page.locator('[data-air-addon-group="paneer-extra"] label').filter({ hasText: 'Cheese' }).click();
+    await page.locator('#air-addon-add').click();
+    await page.locator('#open-order-summary').click();
+    await expect(page.locator('.summary-item')).toHaveCount(10);
+    await expect(page.locator('#order-subtotal')).toContainText(price(1930));
+    const layout = await page.locator('#order-summary').evaluate(dialog => {
+      const box = dialog.getBoundingClientRect();
+      return {
+        width: dialog.clientWidth, scrollWidth: dialog.scrollWidth,
+        top: box.top, bottom: box.bottom, viewportHeight: innerHeight,
+        narrowButtons: [...dialog.querySelectorAll('.summary-quantity button')].filter(button => button.offsetWidth < 44 || button.offsetHeight < 44).length,
+        clippedRows: [...dialog.querySelectorAll('.summary-item')].filter(row => row.scrollWidth > row.clientWidth + 1).length,
+        misplacedQuantities: [...dialog.querySelectorAll('.summary-item')].filter(row => row.querySelector('.summary-quantity').getBoundingClientRect().left < row.firstElementChild.getBoundingClientRect().right - 1).length,
+      };
+    });
+    expect(layout.scrollWidth).toBeLessThanOrEqual(layout.width + 1);
+    expect(layout.top).toBeGreaterThanOrEqual(0);
+    expect(layout.bottom).toBeLessThanOrEqual(layout.viewportHeight + 1);
+    expect(layout.narrowButtons).toBe(0);
+    expect(layout.clippedRows).toBe(0);
+    expect(layout.misplacedQuantities).toBe(0);
+    expect((await summaryLine(page, 'Masala French Fries').boundingBox()).height).toBeLessThan(96);
+    await page.screenshot({ path: testInfo.outputPath(`air-menu-ten-items-${viewport.width}.png`) });
+
+    const halfChilli = summaryLine(page, 'Chicken Chilli').filter({ hasText: 'Half' });
+    await halfChilli.getByRole('radio', { name: /^Gravy/ }).check();
+    await expect(page.locator('#order-subtotal')).toContainText(price(1940));
+    await expect(summaryLine(page, 'Paneer Tikka')).toContainText('Cheese');
+    await summaryLine(page, 'Masala French Fries').locator('[data-order-action="plus"]').click();
+    await expect(page.locator('#order-subtotal')).toContainText(price(2110));
+    await summaryLine(page, 'Masala French Fries').locator('[data-order-action="minus"]').click();
+    await expect(page.locator('#order-subtotal')).toContainText(price(1940));
+    await page.locator('#order-customer-name').fill('Ten item guest');
+    await page.locator('#order-customer-phone').fill('9876543210');
+    await page.screenshot({ path: testInfo.outputPath(`air-menu-ten-items-checkout-${viewport.width}.png`) });
+    await page.locator('#place-direct-order').click();
+    await expect(page.locator('#confirmation-order-number')).toHaveText('#42');
+    expect(requests).toHaveLength(1);
+    expect(requests[0].body.items).toHaveLength(10);
+    expect(requests[0].body.items.find(item => item.name === 'Paneer Tikka').modifiers).toEqual([expect.objectContaining({ options: [expect.objectContaining({ name: 'Cheese' })] })]);
+    expect(errors).toEqual([]);
+  });
+}
 
 for (const viewport of [{ width: 1440, height: 900 }, { width: 810, height: 1080 }, { width: 390, height: 844 }]) {
   test(`guest menu and order summary fit ${viewport.width}×${viewport.height} with touch-size quantities`, async ({ page }, testInfo) => {

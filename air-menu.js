@@ -420,7 +420,7 @@ function renderOrderSummary() {
             ? `<fieldset class="summary-style-options"><legend>Style <em>(optional · Dry by default)</em></legend>${styleChoices}</fieldset>`
             : '';
           const optionName = escapeHtml(`${item.name}${item.portion ? ` (${item.portion})` : ''}`);
-          return `<div class="summary-item"><div><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml([item.category, item.portion, styleLabel(item)].filter(Boolean).join(' · '))}</span>${Addons.modifierText(item.modifiers) ? `<small class="summary-addons">+ ${escapeHtml(Addons.modifierText(item.modifiers))}</small>` : ''}${customisation}</div><div class="summary-quantity"><button type="button" data-order-action="minus" data-order-key="${key}" aria-label="Remove one ${optionName}">−</button><b>${quantity}</b><button type="button" data-order-action="plus" data-order-key="${key}" aria-label="Add one ${optionName}">+</button></div></div>`;
+          return `<div class="summary-item"><div><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml([item.category, item.portion, styleLabel(item)].filter(Boolean).join(' · '))}</span>${Addons.modifierText(item.modifiers) ? `<small class="summary-addons">+ ${escapeHtml(Addons.modifierText(item.modifiers))}</small>` : ''}</div><div class="summary-quantity"><button type="button" data-order-action="minus" data-order-key="${key}" aria-label="Remove one ${optionName}">−</button><b>${quantity}</b><button type="button" data-order-action="plus" data-order-key="${key}" aria-label="Add one ${optionName}">+</button></div>${customisation}</div>`;
         })
         .join('')
     : '<p class="empty">No dishes selected yet.</p>';
