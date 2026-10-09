@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="robots" content="noindex, nofollow, noarchive" />
-    <meta name="theme-color" content="#6f1718" />
+    <meta name="theme-color" content="#192b43" />
     <title>Air Menu | Red Lantern Restaurant</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -12,7 +12,7 @@
       href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=Playfair+Display:wght@700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="air-menu.css?v=20260822-34" />
+    <link rel="stylesheet" href="air-menu.css?v=20261009-35" />
   </head>
   <body>
     <div id="privacy-shield" class="privacy-shield" aria-hidden="true">
@@ -21,16 +21,18 @@
     <div id="session-watermark" class="session-watermark" aria-hidden="true"></div>
     <header class="menu-header">
       <img src="/images/red-lantern-logo-600.webp" alt="Red Lantern Restaurant" class="logo" />
-      <div>
+      <div class="menu-brand-copy">
         <p class="eyebrow" id="menu-kind">Table menu</p>
         <h1 id="menu-title">Red Lantern</h1>
         <p id="menu-subtitle">Fresh ingredients · Exceptional taste</p>
         <p id="table-identity" class="table-identity" hidden></p>
       </div>
+      <div class="menu-header-detail" aria-hidden="true"><span class="menu-orbit">✦</span><span>Discover your<br /><b>next favourite.</b></span></div>
     </header>
 
     <main>
       <div class="menu-tools">
+        <div class="menu-tools-top">
         <label class="search-box">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="m21 21-4.4-4.4m2.4-5.1a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0Z" />
@@ -40,6 +42,7 @@
             type="search"
             placeholder="Search dishes, drinks or categories"
             autocomplete="off"
+            aria-label="Search dishes, drinks or categories"
           />
         </label>
         <nav
@@ -47,7 +50,12 @@
           class="menu-type-nav"
           aria-label="Choose Food Menu or Bar Menu"
         ></nav>
+        </div>
+        <div class="menu-category-tools">
         <nav id="category-nav" class="category-nav" aria-label="Menu categories"></nav>
+        <label class="category-jump"><span>Browse categories</span><select id="category-select" aria-label="Jump to a menu category"></select></label>
+        </div>
+        <p id="menu-results-summary" class="menu-results-summary" role="status"></p>
       </div>
       <div id="order-window-notice" class="order-window-notice" role="status" hidden></div>
       <div id="menu-content" aria-live="polite"><p class="loading">Preparing the menu…</p></div>
@@ -55,7 +63,7 @@
     </main>
 
     <button type="button" id="open-order-summary" class="order-fab" hidden>
-      <span>View selections</span><strong id="order-count">0</strong>
+      <span class="basket-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 8h16l-1 13H5L4 8ZM8 8V6a4 4 0 0 1 8 0v2" /></svg></span><span>View selections</span><strong id="order-count">0</strong><span id="order-fab-total" hidden></span>
     </button>
     <dialog id="order-summary" class="order-dialog">
       <div class="order-dialog-head">
@@ -66,6 +74,7 @@
         <button type="button" id="close-order-summary" aria-label="Close">×</button>
       </div>
       <div id="order-summary-items" class="order-summary-items"></div>
+      <div id="order-subtotal" class="order-subtotal" hidden><div><span>Estimated total</span><small>Confirm the final bill with the restaurant.</small></div><strong id="order-subtotal-amount"></strong></div>
       <div id="order-customer-details" class="order-customer-details" hidden>
         <label for="order-customer-name">Your Name <small>(optional)</small></label>
         <input id="order-customer-name" type="text" autocomplete="name" placeholder="e.g. Rahul" />
@@ -150,6 +159,6 @@
     <script src="/addons-domain.js?v=1" defer></script>
     <script src="/order-request.js?v=1" defer></script>
     <script src="/order-windows.js?v=1" defer></script>
-    <script src="air-menu.js?v=20260913-36" defer></script>
+    <script src="air-menu.js?v=20261009-37" defer></script>
   </body>
 </html>

@@ -1021,17 +1021,35 @@ function openCounterChoice(item) {
 const counterMoney = (value) => `₹${Math.round(Number(value) || 0)}`;
 function updateWorkspaceMarkup(element, markup) {
   if (element.innerHTML === markup) return;
-  const top = element.scrollTop, left = element.scrollLeft;
+  const top = element.scrollTop,
+    left = element.scrollLeft;
   const focused = element.contains(document.activeElement) ? document.activeElement : null;
-  const attributes = focused ? ['data-counter-item', 'data-counter-category', 'data-counter-qty', 'data-counter-change', 'data-table-status', 'data-dine-table-area', 'data-dine-table-number', 'data-print-table-bill', 'data-view-table-order'].filter(name => focused.hasAttribute(name)).map(name => [name, focused.getAttribute(name)]) : [];
+  const attributes = focused
+    ? [
+        'data-counter-item',
+        'data-counter-category',
+        'data-counter-qty',
+        'data-counter-change',
+        'data-table-status',
+        'data-dine-table-area',
+        'data-dine-table-number',
+        'data-print-table-bill',
+        'data-view-table-order',
+      ]
+        .filter((name) => focused.hasAttribute(name))
+        .map((name) => [name, focused.getAttribute(name)])
+    : [];
   element.innerHTML = markup;
   element.scrollTop = top;
   element.scrollLeft = left;
   if (attributes.length) {
-    const target = [...element.querySelectorAll('button')].find(button => attributes.every(([name, value]) => button.getAttribute(name) === value));
+    const target = [...element.querySelectorAll('button')].find((button) =>
+      attributes.every(([name, value]) => button.getAttribute(name) === value),
+    );
     target?.focus({ preventScroll: true });
   }
 }
+
 function renderCounterOrder() {
   const search = String(document.getElementById('counter-menu-search')?.value || '')
     .trim()
@@ -1385,13 +1403,13 @@ function renderTableView() {
       order.mode === 'table' &&
       order.table_area &&
       order.table_number &&
-      !['completed', 'rejected', 'cancelled'].includes(order.status)
+      !['completed', 'rejected', 'cancelled'].includes(order.status),
   );
   const tableState = (area, number) => {
     const order = tableOrders
       .filter(
         (item) =>
-          String(item.table_area) === String(area) && Number(item.table_number) === Number(number)
+          String(item.table_area) === String(area) && Number(item.table_number) === Number(number),
       )
       .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
     if (!order) return { state: 'blank', label: 'Available', order: null };
@@ -1399,7 +1417,7 @@ function renderTableView() {
       return { state: 'running', label: 'Waiting to sync', order };
     const elapsedMinutes = Math.max(
       0,
-      Math.floor((Date.now() - new Date(order.created_at).getTime()) / 60000)
+      Math.floor((Date.now() - new Date(order.created_at).getTime()) / 60000),
     );
     const elapsedLabel =
       elapsedMinutes < 60
@@ -1418,64 +1436,135 @@ function renderTableView() {
     }
     return { state: 'running', label: String(order.status || 'Running'), order };
   };
-  const allocated = areas.map(area => ({
+  const allocated = areas.map((area) => ({
     ...area,
-    tables: Array.from({ length: Math.max(0, Number(area.to) - Number(area.from) + 1) }, (_, index) => {
-      const number = Number(area.from) + index;
-      return { number, ...tableState(area.name, number) };
-    }),
+    tables: Array.from(
+      { length: Math.max(0, Number(area.to) - Number(area.from) + 1) },
+      (_, index) => {
+        const number = Number(area.from) + index;
+        return { number, ...tableState(area.name, number) };
+      },
+    ),
   }));
-  const tables = allocated.flatMap(area => area.tables);
-  const availableCount = tables.filter(table => table.state === 'blank').length;
+  const tables = allocated.flatMap((area) => area.tables);
+  const availableCount = tables.filter((table) => table.state === 'blank').length;
   const activeCount = tables.length - availableCount;
-  const printedCount = tables.filter(table => table.state === 'printed').length;
-  updateWorkspaceMarkup(document.getElementById('table-view-stats'), `<span class="table-view-stat"><b>${tables.length}</b><span>Total tables</span></span><span class="table-view-stat is-available"><b>${availableCount}</b><span>Available</span></span><span class="table-view-stat is-active"><b>${activeCount}</b><span>In service</span></span>`);
-  if (!areas.some(area => area.name === tableAreaFilter)) tableAreaFilter = 'all';
+  const printedCount = tables.filter((table) => table.state === 'printed').length;
+  updateWorkspaceMarkup(
+    document.getElementById('table-view-stats'),
+    `<span class="table-view-stat"><b>${tables.length}</b><span>Total tables</span></span><span class="table-view-stat is-available"><b>${availableCount}</b><span>Available</span></span><span class="table-view-stat is-active"><b>${activeCount}</b><span>In service</span></span>`,
+  );
+  if (!areas.some((area) => area.name === tableAreaFilter)) tableAreaFilter = 'all';
   const areaSelect = document.getElementById('table-area-filter');
-  const areaOptions = '<option value="all">All dining areas</option>' + allocated.map(area => `<option value="${esc(area.name)}">${esc(area.name)} · ${area.tables.length} tables</option>`).join('');
+  const areaOptions =
+    '<option value="all">All dining areas</option>' +
+    allocated
+      .map(
+        (area) =>
+          `<option value="${esc(area.name)}">${esc(area.name)} · ${area.tables.length} tables</option>`,
+      )
+      .join('');
   if (areaSelect.innerHTML !== areaOptions) areaSelect.innerHTML = areaOptions;
   areaSelect.value = tableAreaFilter;
-  updateWorkspaceMarkup(document.getElementById('table-status-filters'), [
-    ['all', 'All tables', tables.length], ['available', 'Available', availableCount], ['active', 'In service', activeCount], ['printed', 'Awaiting payment', printedCount],
-  ].map(([status, label, count]) => `<button type="button" class="table-status-filter${tableStatusFilter === status ? ' is-active' : ''}" data-table-status="${status}" aria-pressed="${tableStatusFilter === status}">${label}<b>${count}</b></button>`).join(''));
+  updateWorkspaceMarkup(
+    document.getElementById('table-status-filters'),
+    [
+      ['all', 'All tables', tables.length],
+      ['available', 'Available', availableCount],
+      ['active', 'In service', activeCount],
+      ['printed', 'Awaiting payment', printedCount],
+    ]
+      .map(
+        ([status, label, count]) =>
+          `<button type="button" class="table-status-filter${tableStatusFilter === status ? ' is-active' : ''}" data-table-status="${status}" aria-pressed="${tableStatusFilter === status}">${label}<b>${count}</b></button>`,
+      )
+      .join(''),
+  );
   const moveToggle = document.getElementById('table-move-toggle');
   moveToggle.classList.toggle('is-active', moveKotItemsMode);
   moveToggle.setAttribute('aria-pressed', String(moveKotItemsMode));
   const query = document.getElementById('table-search').value.trim().toLowerCase();
-  const visibleAreas = allocated.filter(area => tableAreaFilter === 'all' || area.name === tableAreaFilter).map(area => ({
-    ...area,
-    visibleTables: area.tables.filter(table =>
-      (tableStatusFilter === 'all' || (tableStatusFilter === 'available' ? table.state === 'blank' : tableStatusFilter === 'printed' ? table.state === 'printed' : table.state !== 'blank')) &&
-      `${area.name} table ${String(table.number).padStart(2, '0')} ${table.number} ${table.order?.customer_name || ''} ${table.order?.customer_phone || ''}`.toLowerCase().includes(query)
-    ),
-  })).filter(area => area.visibleTables.length);
+  const visibleAreas = allocated
+    .filter((area) => tableAreaFilter === 'all' || area.name === tableAreaFilter)
+    .map((area) => ({
+      ...area,
+      visibleTables: area.tables.filter(
+        (table) =>
+          (tableStatusFilter === 'all' ||
+            (tableStatusFilter === 'available'
+              ? table.state === 'blank'
+              : tableStatusFilter === 'printed'
+                ? table.state === 'printed'
+                : table.state !== 'blank')) &&
+          `${area.name} table ${String(table.number).padStart(2, '0')} ${table.number} ${table.order?.customer_name || ''} ${table.order?.customer_phone || ''}`
+            .toLowerCase()
+            .includes(query),
+      ),
+    }))
+    .filter((area) => area.visibleTables.length);
   const visibleCount = visibleAreas.reduce((sum, area) => sum + area.visibleTables.length, 0);
-  document.getElementById('table-results-summary').textContent = moveKotItemsMode ? 'Move mode: select a table in service, then choose an available destination.' : `Showing ${visibleCount} of ${tables.length} tables${tableAreaFilter !== 'all' ? ` · ${tableAreaFilter}` : ''}`;
+  document.getElementById('table-results-summary').textContent = moveKotItemsMode
+    ? 'Move mode: select a table in service, then choose an available destination.'
+    : `Showing ${visibleCount} of ${tables.length} tables${tableAreaFilter !== 'all' ? ` · ${tableAreaFilter}` : ''}`;
   const renderTile = (area, table) => {
     const active = table.state !== 'blank';
     const movable = active && moveKotItemsMode;
     const settling = table.state === 'printed' && !moveKotItemsMode;
-    const status = !active ? 'Available' : table.state === 'printed' ? 'Awaiting payment' : table.state === 'kot' ? 'KOT sent' : table.order.status === 'saved' ? 'Saved bill' : table.order.status === 'held' ? 'On hold' : table.order.status === 'offline' ? 'Waiting to sync' : table.order.status === 'ready' ? 'Ready' : table.order.status === 'preparing' ? 'Preparing' : 'Running';
+    const status = !active
+      ? 'Available'
+      : table.state === 'printed'
+        ? 'Awaiting payment'
+        : table.state === 'kot'
+          ? 'KOT sent'
+          : table.order.status === 'saved'
+            ? 'Saved bill'
+            : table.order.status === 'held'
+              ? 'On hold'
+              : table.order.status === 'offline'
+                ? 'Waiting to sync'
+                : table.order.status === 'ready'
+                  ? 'Ready'
+                  : table.order.status === 'preparing'
+                    ? 'Preparing'
+                    : 'Running';
     const name = `${area.name} table ${String(table.number).padStart(2, '0')}`;
-    const instruction = movable ? 'Move this table' : settling ? 'Settle and save payment' : active ? 'Open table order' : 'Start an order';
+    const instruction = movable
+      ? 'Move this table'
+      : settling
+        ? 'Settle and save payment'
+        : active
+          ? 'Open table order'
+          : 'Start an order';
     const orderNumber = table.order?.daily_order_number || table.order?.bill_number;
-    const details = active ? `${table.label}${orderNumber ? ` · #${String(orderNumber).padStart(2, '0')}` : ''}` : 'Tap to start';
+    const details = active
+      ? `${table.label}${orderNumber ? ` · #${String(orderNumber).padStart(2, '0')}` : ''}`
+      : 'Tap to start';
     return `<div class="table-tile-wrap is-${table.state}"><button type="button" class="table-tile is-${table.state}${movable ? ' is-move-target' : ''}" data-dine-table-area="${esc(area.name)}" data-dine-table-number="${table.number}"${movable ? ` data-move-table-order="${esc(table.order.id)}"` : ''}${settling ? ` data-settle-table-order="${esc(table.order.id)}"` : ''} title="${esc(instruction)}" aria-label="${esc(`${name}: ${status}. ${instruction}`)}"><span class="table-tile-label">Table</span><b>${String(table.number).padStart(2, '0')}</b><small class="table-tile-status">${esc(movable ? 'Select to move' : status)}</small>${active ? `<strong class="table-tile-total">${counterMoney(table.order.total)}</strong>` : ''}<small class="table-tile-meta">${esc(details)}</small></button>${active && !moveKotItemsMode ? `<div class="table-tile-actions"><button type="button" class="table-tile-action" data-print-table-bill="${esc(table.order.id)}" aria-label="Print bill for ${esc(name)}" title="Print bill"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9V3h12v6M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2M6 14h12v7H6zM18 12h.01"/></svg></button><button type="button" class="table-tile-action" data-view-table-order="${esc(table.order.id)}" aria-label="View order for ${esc(name)}" title="View order"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/></svg><span>View order</span></button></div>` : ''}</div>`;
   };
-  let markup = visibleAreas.map(area => {
-    const available = area.tables.filter(table => table.state === 'blank').length;
-    return `<section class="table-area"><div class="table-area-head"><div class="table-area-title"><h3>${esc(area.name)}</h3><small>${available} available · ${area.tables.length - available} in service</small></div><span class="table-area-meta">${area.tables.length} tables</span></div><div class="table-grid">${area.visibleTables.map(table => renderTile(area, table)).join('')}</div></section>`;
-  }).join('') || `<div class="table-view-empty"><b>${tables.length ? 'No matching tables' : 'No dining areas configured'}</b><p>${tables.length ? 'Try another search, dining area or status filter.' : 'Add your dining areas and table ranges in Operations.'}</p></div>`;
+  let markup =
+    visibleAreas
+      .map((area) => {
+        const available = area.tables.filter((table) => table.state === 'blank').length;
+        return `<section class="table-area"><div class="table-area-head"><div class="table-area-title"><h3>${esc(area.name)}</h3><small>${available} available · ${area.tables.length - available} in service</small></div><span class="table-area-meta">${area.tables.length} tables</span></div><div class="table-grid">${area.visibleTables.map((table) => renderTile(area, table)).join('')}</div></section>`;
+      })
+      .join('') ||
+    `<div class="table-view-empty"><b>${tables.length ? 'No matching tables' : 'No dining areas configured'}</b><p>${tables.length ? 'Try another search, dining area or status filter.' : 'Add your dining areas and table ranges in Operations.'}</p></div>`;
   const storedBills = [...orderRecords.values()].filter(
-    (order) => order.mode === 'table' && ['saved', 'held'].includes(order.status) && !order.bill_printed_at &&
-      visibleAreas.some(area => area.name === order.table_area && area.visibleTables.some(table => table.number === Number(order.table_number)))
+    (order) =>
+      order.mode === 'table' &&
+      ['saved', 'held'].includes(order.status) &&
+      !order.bill_printed_at &&
+      visibleAreas.some(
+        (area) =>
+          area.name === order.table_area &&
+          area.visibleTables.some((table) => table.number === Number(order.table_number)),
+      ),
   );
   if (storedBills.length)
-    markup +=
-      `<section class="saved-bills"><div><span class="eyebrow">Dine-in workspace</span><h3>Saved bills</h3><p>Saved bills have not printed. Held bills remain open for later service.</p></div><div class="saved-bills-list">${storedBills.map((order) => `<button type="button" class="saved-bill-open" data-open-saved-table="${esc(order.table_area || 'Dining')}" data-open-saved-number="${esc(order.table_number)}"><span class="saved-bill-status is-${esc(order.status)}">${esc(order.status)}</span><span><b>${esc(order.table_area || 'Dining')} · Table ${esc(String(order.table_number || '').padStart(2, '0'))}</b><small>Bill #${esc(String(order.bill_number || order.daily_order_number || '').padStart(2, '0'))} · ${counterMoney(order.total)}</small></span><span class="saved-bill-note">Open bill</span></button>`).join('')}</div></section>`
-    ;
+    markup += `<section class="saved-bills"><div><span class="eyebrow">Dine-in workspace</span><h3>Saved bills</h3><p>Saved bills have not printed. Held bills remain open for later service.</p></div><div class="saved-bills-list">${storedBills.map((order) => `<button type="button" class="saved-bill-open" data-open-saved-table="${esc(order.table_area || 'Dining')}" data-open-saved-number="${esc(order.table_number)}"><span class="saved-bill-status is-${esc(order.status)}">${esc(order.status)}</span><span><b>${esc(order.table_area || 'Dining')} · Table ${esc(String(order.table_number || '').padStart(2, '0'))}</b><small>Bill #${esc(String(order.bill_number || order.daily_order_number || '').padStart(2, '0'))} · ${counterMoney(order.total)}</small></span><span class="saved-bill-note">Open bill</span></button>`).join('')}</div></section>`;
   updateWorkspaceMarkup(content, markup);
 }
+
 async function showTableView() {
   closeOpenPanels('tables');
   tableViewPanel.hidden = false;
@@ -1845,7 +1934,7 @@ const toPushKey = (value) => {
   return Uint8Array.from(raw, (character) => character.charCodeAt(0));
 };
 
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('/orders-sw.js?v=20', { updateViaCache: 'none' }).then(registration => registration.update()).catch(() => {});
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/orders-sw.js?v=21', { updateViaCache: 'none' }).then(registration => registration.update()).catch(() => {});
 document.getElementById('enable-notifications')?.addEventListener('click', async () => {
   closeOpenPanels();
   const button = document.getElementById('enable-notifications');

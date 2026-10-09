@@ -8,6 +8,7 @@ const orderStorageKey = `red-lantern-order:${params.get('signature') || expires}
 const orderAddonStorageKey = `${orderStorageKey}:addons`;
 const directOrderRequestKey = `${orderStorageKey}:request-id`;
 const orderCatalog = new Map();
+let orderCatalogReady = false;
 let orderSelections = {};
 let persistedAddonItems = [];
 let orderShowsPrices = false;
@@ -115,6 +116,7 @@ function showOrderOutageFallback(menu = activeMenu, { fullScreen = false } = {})
   const confirmation = document.getElementById('order-confirmation');
   dialog.querySelector('.order-dialog-head').hidden = true;
   summaryItems.hidden = true;
+  document.getElementById('order-subtotal').hidden = true;
   customerDetails.hidden = true;
   actions.hidden = true;
   status.hidden = true;
@@ -202,7 +204,7 @@ function orderPriceWithStyle(item) {
 }
 
 function styleLabel(item) {
-  return item.style ? `${item.style} (+₹10)` : '';
+  return item.style ? `${item.style}${orderShowsPrices ? ' (+₹10)' : ''}` : '';
 }
 
 function portionPriceHtml(dish) {
@@ -308,20 +310,20 @@ function registerOrderOptions(dish, category, index, showPrices) {
         return { ...style, key };
       });
       const selected =
-        styleOptions.find((style) => Number(orderSelections[style.key] || 0) > 0) ||
+        styleOptions.find((style) => Number(orderSelections[style.key] || 0) > 0 || persistedAddonItems.some(saved => saved.baseKey === style.key && Number(orderSelections[saved.key] || 0) > 0)) ||
         styleOptions[0];
       const quantity = Number(orderSelections[selected.key] || 0);
       const customisation =
         styleOptions.length > 1
           ? `<fieldset class="order-customisation"><legend>Choose style <em>(optional · Dry by default)</em></legend>${styleOptions
-              .slice(1)
               .map(
                 (style) =>
                   `<label><input type="radio" name="menu-style-${index}-${slug(`${category}-${dish.name}-${variant.portion}`)}" data-order-style value="${style.key}" ${style.key === selected.key ? 'checked' : ''}><span>${escapeHtml(style.label)}</span></label>`
               )
               .join('')}</fieldset>`
           : '';
-      return `<div class="order-picker" data-order-key="${selected.key}"><span>${variant.portion || 'Add'}</span><div class="quantity-control"><button type="button" data-order-action="minus" data-order-key="${selected.key}" aria-label="Remove one">−</button><strong data-order-quantity="${selected.key}">${quantity}</strong><button type="button" data-order-action="plus" data-order-key="${selected.key}" aria-label="Add one">+</button></div>${customisation}</div>`;
+      const optionName = escapeHtml(`${displayName(dish.name)}${variant.portion ? ` (${variant.portion})` : ''}`);
+      return `<div class="order-picker" data-order-key="${selected.key}"><span>${variant.portion || 'Add'}</span><div class="quantity-control"><button type="button" data-order-action="minus" data-order-key="${selected.key}" aria-label="Remove one ${optionName}">−</button><strong data-order-quantity="${selected.key}">${quantity}</strong><button type="button" data-order-action="plus" data-order-key="${selected.key}" aria-label="Add one ${optionName}">+</button></div>${customisation}</div>`;
     })
     .join('')}</div>`;
 }
@@ -356,22 +358,39 @@ function orderSummaryText() {
 function updateOrderUI() {
   const totalCount = Object.entries(orderSelections).reduce(
     (total, [key, quantity]) => total + (orderCatalog.has(key) ? Number(quantity || 0) : 0),
-    0
+    0,
   );
   document.querySelectorAll('[data-order-quantity]').forEach((element) => {
-    const quantity = Number(orderSelections[element.dataset.orderQuantity] || 0);
+    const key = element.dataset.orderQuantity;
+    const quantity = Object.entries(orderSelections).reduce(
+      (sum, [selectionKey, count]) =>
+        sum +
+        (selectionKey === key || orderCatalog.get(selectionKey)?.baseKey === key
+          ? Number(count || 0)
+          : 0),
+      0,
+    );
     element.textContent = quantity;
     element.closest('.order-picker')?.classList.toggle('selected', quantity > 0);
+    const minus = element.closest('.order-picker')?.querySelector('[data-order-action="minus"]');
+    if (minus) minus.disabled = quantity === 0;
   });
+  document
+    .querySelectorAll('.dish')
+    .forEach((dish) =>
+      dish.classList.toggle('is-selected', !!dish.querySelector('.order-picker.selected')),
+    );
   sessionStorage.setItem(orderStorageKey, JSON.stringify(orderSelections));
-  persistedAddonItems = [...orderCatalog.values()]
-    .filter((item) => item.modifiers?.length && Number(orderSelections[item.key] || 0) > 0)
-    .map((item) => ({
-      key: item.key,
-      baseKey: item.baseKey,
-      modifiers: item.modifiers,
-    }));
-  sessionStorage.setItem(orderAddonStorageKey, JSON.stringify(persistedAddonItems));
+  if (orderCatalogReady) {
+    persistedAddonItems = [...orderCatalog.values()]
+      .filter((item) => item.modifiers?.length && Number(orderSelections[item.key] || 0) > 0)
+      .map((item) => ({
+        key: item.key,
+        baseKey: item.baseKey,
+        modifiers: item.modifiers,
+      }));
+    sessionStorage.setItem(orderAddonStorageKey, JSON.stringify(persistedAddonItems));
+  }
   const fab = document.getElementById('open-order-summary');
   fab.hidden = totalCount === 0;
   document.getElementById('order-count').textContent = totalCount;
@@ -381,29 +400,44 @@ function updateOrderUI() {
 function renderOrderSummary() {
   const container = document.getElementById('order-summary-items');
   const items = Object.entries(orderSelections).filter(
-    ([key, quantity]) => quantity > 0 && orderCatalog.has(key)
+    ([key, quantity]) => quantity > 0 && orderCatalog.has(key),
   );
   container.innerHTML = items.length
     ? items
         .map(([key, quantity]) => {
           const item = orderCatalog.get(key);
           const styleChoices = item.gravyStyleAvailable
-            ? ['Gravy', 'Semi-Gravy']
+            ? ['', 'Gravy', 'Semi-Gravy']
                 .map((style) => {
                   const styleKey = encodeURIComponent(
-                    `${item.category}|${item.name}|${item.portion}|${style}`
+                    `${item.category}|${item.name}|${item.portion}|${style || 'Dry'}`,
                   );
-                  return `<label><input type="radio" name="summary-style-${key}" data-order-style value="${styleKey}" ${item.style === style ? 'checked' : ''}><span>${style} <em>+₹10</em></span></label>`;
+                  return `<label><input type="radio" name="summary-style-${key}" data-order-style value="${styleKey}" ${item.style === style ? 'checked' : ''}><span>${style || 'Dry'}${style && orderShowsPrices ? ' <em>+₹10</em>' : ''}</span></label>`;
                 })
                 .join('')
             : '';
           const customisation = styleChoices
             ? `<fieldset class="summary-style-options"><legend>Style <em>(optional · Dry by default)</em></legend>${styleChoices}</fieldset>`
             : '';
-          return `<div class="summary-item"><div><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml([item.category, item.portion, styleLabel(item)].filter(Boolean).join(' · '))}</span>${Addons.modifierText(item.modifiers) ? `<small class="summary-addons">+ ${escapeHtml(Addons.modifierText(item.modifiers))}</small>` : ''}${customisation}</div><div class="summary-quantity"><button type="button" data-order-action="minus" data-order-key="${key}">−</button><b>${quantity}</b><button type="button" data-order-action="plus" data-order-key="${key}">+</button></div></div>`;
+          const optionName = escapeHtml(`${item.name}${item.portion ? ` (${item.portion})` : ''}`);
+          return `<div class="summary-item"><div><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml([item.category, item.portion, styleLabel(item)].filter(Boolean).join(' · '))}</span>${Addons.modifierText(item.modifiers) ? `<small class="summary-addons">+ ${escapeHtml(Addons.modifierText(item.modifiers))}</small>` : ''}${customisation}</div><div class="summary-quantity"><button type="button" data-order-action="minus" data-order-key="${key}" aria-label="Remove one ${optionName}">−</button><b>${quantity}</b><button type="button" data-order-action="plus" data-order-key="${key}" aria-label="Add one ${optionName}">+</button></div></div>`;
         })
         .join('')
     : '<p class="empty">No dishes selected yet.</p>';
+  const prices = items.map(([key, quantity]) => ({
+    quantity,
+    amount: Number(orderPriceWithStyle(orderCatalog.get(key)).replace(/[^0-9.]/g, '')),
+  }));
+  const showTotal =
+    orderShowsPrices &&
+    items.length > 0 &&
+    prices.every((item) => Number.isFinite(item.amount) && item.amount > 0);
+  const total = prices.reduce((sum, item) => sum + item.amount * item.quantity, 0);
+  const formatted = `₹${total.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+  document.getElementById('order-subtotal').hidden = !showTotal;
+  document.getElementById('order-fab-total').hidden = !showTotal;
+  document.getElementById('order-subtotal-amount').textContent = formatted;
+  document.getElementById('order-fab-total').textContent = formatted;
   const customerDetails = document.getElementById('order-customer-details');
   const customerPhone = document.getElementById('order-customer-phone');
   customerDetails.hidden = !(orderIsBusinessCard || directOrdersEnabled);
@@ -476,21 +510,47 @@ function changeOrderStyle(control) {
   const previousKey =
     picker?.dataset.orderKey ||
     control.closest('.summary-item')?.querySelector('[data-order-action]')?.dataset.orderKey;
-  const nextKey = control.value;
-  if (!previousKey || !nextKey || previousKey === nextKey) return;
-  const quantity = Number(orderSelections[previousKey] || 0);
-  if (quantity) {
+  const nextBaseKey = control.value;
+  const previousItem = orderCatalog.get(previousKey);
+  const nextItem = orderCatalog.get(nextBaseKey);
+  if (!previousItem || !nextItem) return;
+  const previousBaseKey = previousItem.baseKey || previousKey;
+  const keys = picker
+    ? Object.keys(orderSelections).filter(
+        (key) => key === previousKey || orderCatalog.get(key)?.baseKey === previousKey,
+      )
+    : [previousKey];
+  keys.forEach((key) => {
+    const item = orderCatalog.get(key);
+    const quantity = Number(orderSelections[key] || 0);
+    if (!item || !quantity) return;
+    const nextKey = item.modifiers?.length
+      ? `${nextBaseKey}|addons:${encodeURIComponent(Addons.selectionFingerprint(item.modifiers))}`
+      : nextBaseKey;
+    if (nextKey === key) return;
+    if (item.modifiers?.length)
+      orderCatalog.set(nextKey, {
+        ...nextItem,
+        key: nextKey,
+        baseKey: nextBaseKey,
+        modifiers: item.modifiers,
+        modifierTotal: item.modifierTotal,
+      });
     orderSelections[nextKey] = Number(orderSelections[nextKey] || 0) + quantity;
-    delete orderSelections[previousKey];
-  }
-  if (picker) {
-    picker.dataset.orderKey = nextKey;
-    picker.querySelectorAll('[data-order-key]').forEach((element) => {
-      element.dataset.orderKey = nextKey;
+    delete orderSelections[key];
+  });
+  document.querySelectorAll('#menu-content .order-picker').forEach((menuPicker) => {
+    if (menuPicker !== picker && menuPicker.dataset.orderKey !== previousBaseKey) return;
+    menuPicker.dataset.orderKey = nextBaseKey;
+    menuPicker.querySelectorAll('[data-order-key]').forEach((element) => {
+      element.dataset.orderKey = nextBaseKey;
     });
-    const quantityLabel = picker.querySelector('[data-order-quantity]');
-    if (quantityLabel) quantityLabel.dataset.orderQuantity = nextKey;
-  }
+    const quantityLabel = menuPicker.querySelector('[data-order-quantity]');
+    if (quantityLabel) quantityLabel.dataset.orderQuantity = nextBaseKey;
+    menuPicker.querySelectorAll('[data-order-style]').forEach((radio) => {
+      radio.checked = radio.value === nextBaseKey;
+    });
+  });
   updateOrderUI();
 }
 
@@ -522,7 +582,7 @@ function updateAirAddonDialog() {
 function openAirAddonDialog(item) {
   airAddonBaseItem = item;
   document.getElementById('air-addon-title').textContent = item.name;
-  document.getElementById('air-addon-choices').innerHTML = (item.addonGroups || []).map((group) => `<fieldset data-air-addon-group="${escapeHtml(group.id)}"><legend>${escapeHtml(group.displayName || group.name)} <small>${group.min ? `Choose ${group.min}${group.max !== group.min ? `–${group.max}` : ''}` : `Optional · up to ${group.max}`}</small></legend>${group.options.filter((option) => option.active !== false).map((option) => `<label><input type="${group.selection === 'single' ? 'radio' : 'checkbox'}" name="air-addon-${escapeHtml(group.id)}" value="${escapeHtml(option.id)}"><span>${escapeHtml(option.name)}<b>${option.price ? `+₹${option.price}` : 'Included'}</b></span></label>`).join('')}</fieldset>`).join('');
+  document.getElementById('air-addon-choices').innerHTML = (item.addonGroups || []).map((group) => `<fieldset data-air-addon-group="${escapeHtml(group.id)}"><legend>${escapeHtml(group.displayName || group.name)} <small>${group.min ? `Choose ${group.min}${group.max !== group.min ? `–${group.max}` : ''}` : `Optional · up to ${group.max}`}</small></legend>${group.options.filter((option) => option.active !== false).map((option) => `<label><input type="${group.selection === 'single' ? 'radio' : 'checkbox'}" name="air-addon-${escapeHtml(group.id)}" value="${escapeHtml(option.id)}"><span>${escapeHtml(option.name)}<b>${option.price ? (orderShowsPrices ? `+₹${option.price}` : 'Extra') : 'Included'}</b></span></label>`).join('')}</fieldset>`).join('');
   updateAirAddonDialog();
   addonDialog.showModal();
 }
@@ -566,10 +626,9 @@ function setupOrderShortlist() {
     summaryItems.hidden = false;
     customerDetails.hidden = !(orderIsBusinessCard || directOrdersEnabled);
     actions.hidden = false;
+    renderOrderSummary();
     document.getElementById('order-action-status').hidden = false;
   };
-  dialog.insertBefore(customerDetails, summaryItems);
-  dialog.insertBefore(actions, summaryItems);
   const handleQuantity = (event) => {
     const button = event.target.closest('[data-order-action]');
     if (!button) return;
@@ -583,7 +642,11 @@ function setupOrderShortlist() {
       openAirAddonDialog(item);
       return;
     }
-    changeOrderQuantity(button.dataset.orderKey, button.dataset.orderAction === 'plus' ? 1 : -1);
+    let key = button.dataset.orderKey;
+    if (button.dataset.orderAction === 'minus' && button.closest('#menu-content') && !Number(orderSelections[key] || 0)) {
+      key = Object.keys(orderSelections).find(selectionKey => orderCatalog.get(selectionKey)?.baseKey === key && Number(orderSelections[selectionKey]) > 0) || key;
+    }
+    changeOrderQuantity(key, button.dataset.orderAction === 'plus' ? 1 : -1);
   };
   document.getElementById('menu-content').addEventListener('click', handleQuantity);
   document.getElementById('menu-content').addEventListener('change', (event) => {
@@ -710,6 +773,7 @@ function setupOrderShortlist() {
         : 'Our counter team will confirm your order shortly. Follow the live status here for acceptance, preparation, and ready updates.';
       dialog.querySelector('.order-dialog-head').hidden = true;
       summaryItems.hidden = true;
+      document.getElementById('order-subtotal').hidden = true;
       customerDetails.hidden = true;
       actions.hidden = true;
       status.hidden = true;
@@ -725,15 +789,11 @@ function setupOrderShortlist() {
       button.disabled = false;
     }
   });
-  document.getElementById('place-another-order').addEventListener('click', () => {
-    clearDirectOrderRequestId();
-    resetOrderDialog();
-    renderOrderSummary();
-  });
   confirmation.addEventListener('click', (event) => {
-    if (event.target.id !== 'fallback-try-again') return;
+    const button = event.target.closest('#place-another-order, #fallback-try-again');
+    if (!button) return;
+    if (button.id === 'place-another-order') clearDirectOrderRequestId();
     resetOrderDialog();
-    renderOrderSummary();
   });
   updateOrderUI();
 }
@@ -789,85 +849,145 @@ function setupMenuControls() {
   const sections = [...document.querySelectorAll('.category')];
   const typeNav = document.getElementById('menu-type-nav');
   const categoryNav = document.getElementById('category-nav');
+  const categorySelect = document.getElementById('category-select');
   const availableTypes = [...new Set(sections.map((section) => section.dataset.menuType))];
   let activeType = availableTypes[0] || 'food';
-
-  const highlightSection = (section) => {
-    section.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    window.setTimeout(() => {
-      sections.forEach((item) => item.classList.remove('category-selected'));
-      section.classList.add('category-selected');
-    }, 320);
+  let scrollFrame = 0;
+  const setActiveSection = (section) => {
+    categoryNav.querySelectorAll('[data-target]').forEach((button) => {
+      const selected = button.dataset.target === section?.id;
+      button.classList.toggle('active', selected);
+      button.setAttribute('aria-pressed', String(selected));
+    });
+    categorySelect.value = section?.id || '';
   };
-
+  const jumpToSection = (section) => {
+    if (!section || section.hidden) return;
+    setActiveSection(section);
+    sections.forEach((item) => item.classList.toggle('category-selected', item === section));
+    section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
   const renderCategoryNav = () => {
-    const activeSections = sections.filter((section) => section.dataset.menuType === activeType);
-    categoryNav.innerHTML = activeSections
+    categoryNav.innerHTML = sections
+      .filter((section) => section.dataset.menuType === activeType)
       .map(
-        (section, index) =>
-          `<button type="button" class="${index === 0 ? 'active' : ''}" data-target="${section.id}">${escapeHtml(section.dataset.category)}</button>`
+        (section) =>
+          `<button type="button" aria-pressed="false" data-target="${section.id}">${escapeHtml(section.dataset.category)}<b>${section.querySelectorAll('.dish').length}</b></button>`,
       )
       .join('');
   };
-
   const filterMenu = () => {
     const query = input.value.trim().toLowerCase();
     let visibleItems = 0;
     sections.forEach((section) => {
-      const inActiveMenu = section.dataset.menuType === activeType;
-      let sectionItems = 0;
+      let count = 0;
       section.querySelectorAll('.dish').forEach((dish) => {
-        const visible = inActiveMenu && (!query || dish.dataset.search.includes(query));
-        dish.hidden = !visible;
-        if (visible) sectionItems += 1;
+        dish.hidden =
+          section.dataset.menuType !== activeType ||
+          (!!query && !dish.dataset.search.includes(query));
+        if (!dish.hidden) count += 1;
       });
-      section.hidden = !inActiveMenu || sectionItems === 0;
-      visibleItems += sectionItems;
+      section.hidden = count === 0;
+      const button = categoryNav.querySelector(`[data-target="${section.id}"]`);
+      if (button) {
+        button.hidden = section.hidden;
+        button.querySelector('b').textContent = count;
+      }
+      section.querySelector('.category-count').textContent =
+        `${count} ${count === 1 ? 'dish' : 'dishes'}`;
+      visibleItems += count;
     });
+    const visibleSections = sections.filter((section) => !section.hidden);
+    categorySelect.innerHTML = visibleSections.length
+      ? visibleSections
+          .map(
+            (section) =>
+              `<option value="${section.id}">${escapeHtml(section.dataset.category)}</option>`,
+          )
+          .join('')
+      : '<option value="">No matching categories</option>';
+    categorySelect.disabled = visibleSections.length === 0;
+    const current = visibleSections.find(
+      (section) =>
+        section.id === categoryNav.querySelector('.active:not([hidden])')?.dataset.target,
+    );
+    setActiveSection(current || visibleSections[0]);
+    document.getElementById('menu-results-summary').textContent =
+      `${activeType === 'bar' ? 'Bar Menu' : 'Food Menu'} · ${visibleItems} ${visibleItems === 1 ? 'item' : 'items'}${query ? ' matching your search' : ` across ${visibleSections.length} categories`}`;
     let empty = document.getElementById('search-empty');
     if (!empty) {
-      empty = document.createElement('p');
+      empty = document.createElement('div');
       empty.id = 'search-empty';
-      empty.className = 'empty';
-      empty.textContent = 'No menu items match your search.';
+      empty.className = 'empty search-empty';
+      empty.innerHTML =
+        '<b>No dishes found</b><p>Try a different dish, drink or category.</p><button type="button" id="clear-menu-search">Clear search</button>';
+      empty.querySelector('button').addEventListener('click', () => {
+        input.value = '';
+        filterMenu();
+        input.focus();
+      });
       document.getElementById('menu-content').appendChild(empty);
     }
     empty.hidden = visibleItems > 0;
   };
   input.addEventListener('input', filterMenu);
   typeNav.innerHTML = availableTypes
-    .map(
-      (type, index) =>
-        `<button type="button" class="${index === 0 ? 'active' : ''}" data-menu-type="${type}">${type === 'bar' ? 'Bar Menu' : 'Food Menu'}</button>`
-    )
+    .map((type) => {
+      const count = sections
+        .filter((section) => section.dataset.menuType === type)
+        .reduce((sum, section) => sum + section.querySelectorAll('.dish').length, 0);
+      return `<button type="button" class="${type === activeType ? 'active' : ''}" aria-pressed="${type === activeType}" data-menu-type="${type}">${type === 'bar' ? 'Bar Menu' : 'Food Menu'}<b>${count}</b></button>`;
+    })
     .join('');
   typeNav.hidden = availableTypes.length < 2;
   typeNav.addEventListener('click', (event) => {
     const button = event.target.closest('[data-menu-type]');
     if (!button || button.dataset.menuType === activeType) return;
     activeType = button.dataset.menuType;
-    typeNav
-      .querySelectorAll('button')
-      .forEach((item) => item.classList.toggle('active', item === button));
+    typeNav.querySelectorAll('button').forEach((item) => {
+      const selected = item === button;
+      item.classList.toggle('active', selected);
+      item.setAttribute('aria-pressed', String(selected));
+    });
     renderCategoryNav();
     filterMenu();
-    const firstSection = sections.find(
-      (section) => section.dataset.menuType === activeType && !section.hidden
-    );
     sections.forEach((section) => section.classList.remove('category-selected'));
-    if (firstSection) firstSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const firstSection = sections.find((section) => !section.hidden);
+    if (firstSection) jumpToSection(firstSection);
   });
   categoryNav.addEventListener('click', (event) => {
     const button = event.target.closest('[data-target]');
-    if (!button) return;
-    categoryNav.querySelectorAll('button').forEach((item) => item.classList.remove('active'));
-    button.classList.add('active');
-    const section = document.getElementById(button.dataset.target);
-    if (!section) return;
-    highlightSection(section);
+    if (button && !button.hidden) jumpToSection(document.getElementById(button.dataset.target));
   });
+  categorySelect.addEventListener('change', () =>
+    jumpToSection(document.getElementById(categorySelect.value)),
+  );
+  const tools = document.querySelector('.menu-tools');
+  const updateToolsHeight = () =>
+    document.documentElement.style.setProperty(
+      '--menu-tools-height',
+      `${Math.ceil(tools.getBoundingClientRect().height) + 20}px`,
+    );
+  if (window.ResizeObserver) new ResizeObserver(updateToolsHeight).observe(tools);
+  window.addEventListener(
+    'scroll',
+    () => {
+      if (scrollFrame) return;
+      scrollFrame = requestAnimationFrame(() => {
+        scrollFrame = 0;
+        const visible = sections.filter((section) => !section.hidden);
+        const offset = tools.getBoundingClientRect().bottom + 30;
+        setActiveSection(
+          [...visible].reverse().find((section) => section.getBoundingClientRect().top <= offset) ||
+            visible[0],
+        );
+      });
+    },
+    { passive: true },
+  );
   renderCategoryNav();
   filterMenu();
+  updateToolsHeight();
 }
 
 function updateTimer() {
@@ -972,7 +1092,7 @@ async function loadMenu() {
           .map(
             ({ menuType, category, dishes }) => `
       <section class="category" id="${menuType}-${slug(category)}" data-menu-type="${menuType}" data-category="${escapeHtml(category)}">
-        <h2>${escapeHtml(category)}</h2>
+        <div class="category-head"><h2>${escapeHtml(category)}</h2><span class="category-count">${dishes.length} dishes</span></div>
         <div class="dish-grid">${dishes
           .map(
             (
@@ -1016,6 +1136,7 @@ async function loadMenu() {
         });
       });
       setupMenuControls();
+      orderCatalogReady = true;
       updateOrderUI();
     }
   } catch (error) {
