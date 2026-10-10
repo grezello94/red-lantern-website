@@ -44,9 +44,16 @@ function effectiveKotQuantities(kots, changes) {
   const sent = new Map();
   for (const kot of kots) {
     const round = new Map();
-    for (const ticket of kot.tickets || []) for (const item of ticket.items || []) {
-      const key = kotLineKey(item);
-      round.set(key, Math.max(round.get(key) || 0, Number(item.quantity) || 0));
+    for (const ticket of kot.tickets || []) {
+      const ticketQuantities = new Map();
+      for (const item of ticket.items || []) {
+        const key = kotLineKey(item);
+        ticketQuantities.set(key, (ticketQuantities.get(key) || 0) + (Number(item.quantity) || 0));
+      }
+      // Sum separate identical lines within one printer ticket. Copies routed
+      // to other printers represent the same food, so count their maximum once.
+      for (const [key, quantity] of ticketQuantities)
+        round.set(key, Math.max(round.get(key) || 0, quantity));
     }
     for (const [key, quantity] of round) sent.set(key, (sent.get(key) || 0) + quantity);
   }
@@ -71,6 +78,19 @@ if (fs.existsSync(envPath)) {
 const multer = require('multer');
 const { neon, neonConfig } = require('@neondatabase/serverless');
 const { Agent, fetch: undiciFetch } = require('undici');
+const { createDatabaseTransport } = require('./database-transport');
+const { createOperationalReadCache } = require('./operational-read-cache');
+const operationalReadCache = createOperationalReadCache();
+const coalesceOperationalRead = operationalReadCache.read;
+const { createLoadControl, installHandlerTracking, trackedHandler } = require('./server-load-control');
+const serverLoadControl = createLoadControl();
+const { installGracefulShutdown } = require('./server-shutdown');
+
+function runtimeLimit(name, fallback, minimum = 1, maximum = 1024) {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value >= minimum
+    ? Math.min(maximum, Math.floor(value)) : fallback;
+}
 
 // The standard Neon data endpoint resolves to IPv6-only on some local DNS
 // setups, even though the database host has usable IPv4 records. The auth
@@ -79,6 +99,10 @@ neonConfig.fetchEndpoint = (host) => `https://apiauth-${host}/sql`;
 const neonIpv4Fallbacks = ['13.251.17.193', '18.138.49.39', '3.0.167.45'];
 let neonIpv4Cursor = 0;
 const neonIpv4Agent = new Agent({
+  connections: runtimeLimit('DATABASE_MAX_ACTIVE', 24, 1, 128),
+  connectTimeout: 5000,
+  headersTimeout: runtimeLimit('DATABASE_QUERY_TIMEOUT_MS', 15000, 1000, 60000),
+  bodyTimeout: runtimeLimit('DATABASE_QUERY_TIMEOUT_MS', 15000, 1000, 60000),
   connect: {
     lookup(hostname, options, callback) {
       dns.resolve4(hostname, (error, addresses) => {
@@ -90,8 +114,33 @@ const neonIpv4Agent = new Agent({
     },
   },
 });
-neonConfig.fetchFunction = (url, options) =>
-  undiciFetch(url, { ...options, dispatcher: neonIpv4Agent });
+const databaseTransport = createDatabaseTransport({
+  fetch: undiciFetch, dispatcher: neonIpv4Agent,
+  maxActive: runtimeLimit('DATABASE_MAX_ACTIVE', 24, 1, 128),
+  maxPending: runtimeLimit('DATABASE_MAX_PENDING', 128, 1, 1024),
+  queueTimeoutMs: runtimeLimit('DATABASE_QUEUE_TIMEOUT_MS', 2000, 100, 10000),
+  queryTimeoutMs: runtimeLimit('DATABASE_QUERY_TIMEOUT_MS', 15000, 1000, 60000),
+});
+neonConfig.fetchFunction = databaseTransport.fetch;
+
+const backgroundTasks = new Set();
+function trackBackground(promise) {
+  backgroundTasks.add(promise);
+  promise.finally(() => backgroundTasks.delete(promise)).catch(() => {});
+  return promise;
+}
+
+// scrypt uses the worker pool, so several staff signing in cannot freeze order
+// submission or health checks on the JavaScript event loop.
+const credentialHashTasks = new Set();
+async function hashCredential(password, salt) {
+  while (credentialHashTasks.size >= 4) await Promise.race(credentialHashTasks);
+  const promise = new Promise((resolve, reject) => crypto.scrypt(password, salt, 64,
+    (error, result) => error ? reject(error) : resolve(result)));
+  credentialHashTasks.add(promise);
+  try { return await promise; }
+  finally { credentialHashTasks.delete(promise); }
+}
 
 function cleanEnvUrl(name) {
   if (!process.env[name]) return '';
@@ -146,6 +195,7 @@ if (
 }
 
 const app = express();
+installHandlerTracking(app);
 app.set('trust proxy', 1);
 const port = process.env.PORT || 3001;
 const host = process.env.HOST || '0.0.0.0';
@@ -202,7 +252,7 @@ const publicRequestWindows = new Map();
 function allowPublicRequest(req, res, scope, limit, windowMs) {
   const now = Date.now();
   const key = `${scope}:${hashIp(req)}`;
-  const previous = (publicRequestWindows.get(key) || []).filter(
+  const previous = (publicRequestWindows.get(key)?.timestamps || []).filter(
     (timestamp) => now - timestamp < windowMs
   );
   if (previous.length >= limit) {
@@ -222,13 +272,17 @@ function allowPublicRequest(req, res, scope, limit, windowMs) {
     });
     return false;
   }
-  previous.push(now);
-  publicRequestWindows.set(key, previous);
-  if (publicRequestWindows.size > 5000) {
-    for (const [entryKey, timestamps] of publicRequestWindows)
-      if (!timestamps.some((timestamp) => now - timestamp < windowMs))
-        publicRequestWindows.delete(entryKey);
+  if (!publicRequestWindows.has(key) && publicRequestWindows.size >= 5000) {
+    for (const [entryKey, entry] of publicRequestWindows)
+      if (entry.expiresAt <= now) publicRequestWindows.delete(entryKey);
+    if (publicRequestWindows.size >= 10000) {
+      res.set('Retry-After', '2');
+      res.status(503).json({ error: 'The system is busy. Please retry in a moment.', code: 'server_busy' });
+      return false;
+    }
   }
+  previous.push(now);
+  publicRequestWindows.set(key, { timestamps: previous, expiresAt: now + windowMs });
   return true;
 }
 
@@ -379,10 +433,15 @@ async function writeDiagnostic(event = {}) {
   }
 }
 
+let diagnosticWrites = 0;
+let droppedDiagnostics = 0;
 function logDiagnostic(event) {
-  writeDiagnostic(event).catch((error) => {
+  // Error storms must not create another unbounded queue of SQL writes.
+  if (diagnosticWrites >= 4) { droppedDiagnostics += 1; return; }
+  diagnosticWrites += 1;
+  trackBackground(writeDiagnostic(event)).catch((error) => {
     console.error('Diagnostic log error:', error.message);
-  });
+  }).finally(() => { diagnosticWrites -= 1; });
 }
 
 const storage = multer.memoryStorage();
@@ -977,6 +1036,10 @@ function blockSensitiveFiles(req, res, next) {
     '.env.example',
     '.gitignore',
     'server.js',
+    'database-transport.js',
+    'server-load-control.js',
+    'operational-read-cache.js',
+    'server-shutdown.js',
     'init-db.js',
     'package.json',
     'package-lock.json',
@@ -1011,28 +1074,51 @@ app.get('/api/healthz', (req, res) => {
   res.json({
     ok: true,
     service: 'red-lantern-website',
-    release: '2026.10.08.2',
+    release: '2026.10.10.1',
     ordersSchemaReady: app.locals.ordersSchemaReady === true,
     uptimeSeconds: Math.floor(process.uptime()),
   });
 });
+app.get('/api/readyz', (req, res) => {
+  const ready = Boolean(sql) && app.locals.ordersSchemaReady === true &&
+    !serverLoadControl.snapshot().draining;
+  res.set('Cache-Control', 'no-store').status(ready ? 200 : 503).json({ ready });
+});
 
+app.use(serverLoadControl.middleware);
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 app.use(express.json({ limit: '1mb' }));
+app.use((req, res, next) => {
+  res.once('finish', () => {
+    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) && res.statusCode < 400)
+      operationalReadCache.clear();
+  });
+  next();
+});
 app.use((req, res, next) => employeeRequestContext.run({ req }, () => {
   res.on('finish', () => {
     if (req.employee && ['POST','PUT','PATCH','DELETE'].includes(req.method) && res.statusCode < 400 &&
       !req.path.endsWith('/session') && !req.path.endsWith('/login')) {
-      void recordEmployeeAudit(req, req.employee.id, 'operation', {
+      void trackBackground(recordEmployeeAudit(req, req.employee.id, 'operation', {
         method: req.method, path: req.path, reason: String(req.body?.reason || '').slice(0, 240),
-      }).catch((error) => console.error('Employee operation audit failed:', error.message));
+      }).catch((error) => console.error('Employee operation audit failed:', error.message)));
     }
   });
   next();
 }));
 app.use(requireAdmin);
-app.use(requireOrdersConsole);
+app.use(trackedHandler(requireOrdersConsole));
 app.use(blockSensitiveFiles);
+app.get('/api/admin/runtime', (req, res) => {
+  res.set('Cache-Control', 'private, no-store').json({
+    ...serverLoadControl.snapshot(),
+    database: databaseTransport.snapshot(),
+    backgroundTasks: backgroundTasks.size,
+    droppedDiagnostics,
+    memory: process.memoryUsage(),
+    uptimeSeconds: Math.floor(process.uptime()),
+  });
+});
 
 app.use((req, res, next) => {
   const canonicalPage = canonicalAdminPage(req.path);
@@ -1190,9 +1276,9 @@ app.post('/api/orders/session', async (req, res) => {
       String(entry.username || entry.id).toLowerCase() === username.trim().toLowerCase());
     if (employee) {
       const passwordMatch = employee.passwordHash && secureCompare(
-        crypto.scryptSync(password, `employee:${employee.id}`, 64).toString('hex'), employee.passwordHash);
+        (await hashCredential(password, `employee:${employee.id}`)).toString('hex'), employee.passwordHash);
       const pinMatch = employee.pinHash && /^\d{4,6}$/.test(password) && secureCompare(
-        crypto.scryptSync(password, `captain:${employee.id}`, 64).toString('hex'), employee.pinHash);
+        (await hashCredential(password, `captain:${employee.id}`)).toString('hex'), employee.pinHash);
       if (employee.active !== false && (passwordMatch || pinMatch)) {
         req.employee = publicEmployee(employee);
         ordersLoginAttempts.delete(failures.key);
@@ -1319,10 +1405,52 @@ function publishSmartKdsUpdate(reason = 'updated', details = {}) {
   const payload = `event: smart-kds-update\ndata: ${JSON.stringify({ reason, orderId: details.orderId || null, at: new Date().toISOString() })}\n\n`;
   for (const client of smartKdsStreamClients) {
     try {
-      client.write(payload);
+      if (client.destroyed || client.writableEnded || !client.write(payload)) {
+        smartKdsStreamClients.delete(client);
+        client.destroy();
+      }
     } catch (_) {
       smartKdsStreamClients.delete(client);
+      client.destroy();
     }
+  }
+}
+async function openSmartKdsStream(req, res, errorMessage) {
+  const release = serverLoadControl.admitStream(req, res);
+  if (!release) return;
+  let heartbeat;
+  const cleanup = () => {
+    clearInterval(heartbeat);
+    smartKdsStreamClients.delete(res);
+    release();
+  };
+  res.once('close', cleanup);
+  res.once('error', cleanup);
+  res.once('finish', cleanup);
+  try {
+    await ensureSmartKdsTables();
+    if (res.destroyed || res.writableEnded) return cleanup();
+    res.status(200).set({
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'private, no-cache, no-transform',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    res.flushHeaders?.();
+    if (!res.write(`event: connected\ndata: ${JSON.stringify({ at: new Date().toISOString() })}\n\n`)) {
+      cleanup(); res.destroy(); return;
+    }
+    smartKdsStreamClients.add(res);
+    heartbeat = setInterval(() => {
+      try {
+        if (!res.write(': keepalive\n\n')) { cleanup(); res.destroy(); }
+      } catch (_) { cleanup(); res.destroy(); }
+    }, 25000);
+    heartbeat.unref?.();
+  } catch (_) {
+    cleanup();
+    if (!res.headersSent) res.status(500).json({ error: errorMessage });
+    else res.end();
   }
 }
 async function ensureOrderEventsTable() {
@@ -1828,11 +1956,17 @@ function splitSmartKdsProductionQuantity(quantity, profile = {}) {
   }
   return chunks;
 }
-async function getSmartKdsTimingPreview() {
+async function getSmartKdsTimingPreview({ orderId = null } = {}) {
+  return coalesceOperationalRead(`smart-timing:${orderId || 'all'}`,
+    () => buildSmartKdsTimingPreview({ orderId }));
+}
+async function buildSmartKdsTimingPreview({ orderId = null } = {}) {
   await ensureDirectOrdersTable();
   const [profileData, savedOrders] = await Promise.all([
     getSmartKdsMenuProfiles(),
-    sql`SELECT id,daily_order_number,mode,fulfillment_type,course_mode,service_priority,table_area,table_number,customer_name,status,items,created_at,updated_at FROM direct_orders WHERE status IN ('accepted','preparing','ready') ORDER BY created_at ASC`,
+    orderId
+      ? sql`SELECT id,daily_order_number,mode,fulfillment_type,course_mode,service_priority,table_area,table_number,customer_name,status,items,created_at,updated_at FROM direct_orders WHERE id=${orderId} AND status IN ('accepted','preparing','ready') ORDER BY created_at ASC`
+      : sql`SELECT id,daily_order_number,mode,fulfillment_type,course_mode,service_priority,table_area,table_number,customer_name,status,items,created_at,updated_at FROM direct_orders WHERE status IN ('accepted','preparing','ready') ORDER BY created_at ASC`,
   ]);
   const now = new Date();
   // An order left open from a previous shift must never be treated as food to
@@ -2437,11 +2571,13 @@ async function reconcileSmartKdsProductionTasks(orders = []) {
     );
   });
 }
-async function materializeSmartKdsOrderTiming(orderId) {
+function materializeSmartKdsOrderTiming(orderId) {
   // Saving the first timing plan makes a placed order independent from later
   // configuration edits.  This never fires or reorders a KOT.
-  const preview = await getSmartKdsTimingPreview();
-  return preview.orders.find((order) => String(order.id) === String(orderId)) || null;
+  return trackBackground((async () => {
+    const preview = await getSmartKdsTimingPreview({ orderId });
+    return preview.orders.find((order) => String(order.id) === String(orderId)) || null;
+  })());
 }
 async function cancelSmartKdsOrderTasks(orderId, reason = 'order-no-longer-active') {
   await ensureSmartKdsTables();
@@ -3893,13 +4029,21 @@ async function getAllContent(includeScheduled = false, includePrivate = false) {
 
 async function getCachedPublicContent() {
   const now = Date.now();
-  if (publicContentCache && now - publicContentCache.createdAt < publicContentCacheMs) {
+  if (publicContentCache?.content && now - publicContentCache.createdAt < publicContentCacheMs) {
     return publicContentCache.content;
   }
 
-  const content = await getAllContent();
-  publicContentCache = { content, createdAt: now };
-  return content;
+  if (publicContentCache?.promise) return publicContentCache.promise;
+  const entry = { promise: null, createdAt: now };
+  publicContentCache = entry;
+  entry.promise = getAllContent().then((content) => {
+    if (publicContentCache === entry) publicContentCache = { content, createdAt: Date.now() };
+    return content;
+  }).catch((error) => {
+    if (publicContentCache === entry) publicContentCache = null;
+    throw error;
+  });
+  return entry.promise;
 }
 
 function trimForPrompt(content) {
@@ -5105,7 +5249,7 @@ app.get('/api/air-menu', async (req, res) => {
 });
 
 app.post('/api/direct-orders', async (req, res) => {
-  if (!allowPublicRequest(req, res, 'direct-order', 30, 60 * 1000)) return;
+  if (!allowPublicRequest(req, res, 'direct-order', runtimeLimit('DIRECT_ORDER_IP_LIMIT_PER_MINUTE', 300, 30, 3000), 60 * 1000)) return;
   let directClientRequestId = '';
   try {
     const {
@@ -5173,6 +5317,8 @@ app.post('/api/direct-orders', async (req, res) => {
       });
     const phone = String(customerPhone || '').replace(/\D/g, '');
     if (phone.length < 7) return res.status(400).json({ error: 'Enter a valid mobile number.' });
+    const customerScope = crypto.createHash('sha256').update(phone).digest('hex');
+    if (!allowPublicRequest(req, res, `direct-order-customer:${customerScope}`, 30, 60 * 1000)) return;
     const fulfilment =
       String(fulfillmentType || '').toLowerCase() === 'pickup'
         ? 'pickup'
@@ -5311,7 +5457,7 @@ app.post('/api/direct-orders', async (req, res) => {
     const initialStatus = isTrustedCustomer ? 'accepted' : 'new';
     const [{ orderDay, number: dailyOrderNumber }, { billYear, number: billNumber }] =
       await Promise.all([nextDailyOrderNumber(), nextAnnualBillNumber()]);
-    const id = `RL${Date.now().toString(36).toUpperCase()}${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
+    const id = `RL${Date.now().toString(36).toUpperCase()}${crypto.randomBytes(8).toString('hex').toUpperCase()}`;
     const trackingToken = crypto.randomBytes(24).toString('base64url');
     const subtotal = cleanItems.reduce(
       (sum, item) =>
@@ -5372,21 +5518,22 @@ app.post('/api/direct-orders', async (req, res) => {
       itemCount: savedItems.reduce((count, item) => count + Number(item.quantity || 0), 0),
     });
     if (initialStatus === 'accepted')
-      await materializeSmartKdsOrderTiming(id).catch((error) =>
+      void materializeSmartKdsOrderTiming(id).catch((error) =>
         console.warn('Smart KDS timing materialisation failed:', error.message)
       );
     const suppliedName = String(customerName || '')
       .trim()
       .slice(0, 80);
     if (suppliedName)
-      await sql`UPDATE trusted_contacts SET customer_name=${suppliedName},updated_at=NOW() WHERE customer_phone=${phone} AND customer_name=''`;
+      void trackBackground(sql`UPDATE trusted_contacts SET customer_name=${suppliedName},updated_at=NOW() WHERE customer_phone=${phone} AND customer_name=''`
+        .catch((error) => console.warn('Customer name update failed:', error.message)));
     // The order is already safely stored. Push delivery must never delay or block it.
-    void notifyDirectOrder({
+    void trackBackground(notifyDirectOrder({
       id,
       dailyOrderNumber,
       total,
       itemCount: savedItems.reduce((count, item) => count + Number(item.quantity || 0), 0),
-    });
+    }));
     res.json({
       id,
       status: initialStatus,
@@ -5716,12 +5863,16 @@ app.post('/api/orders/counter', async (req, res) => {
             })
           )
           .digest('hex');
-      const merged = await sql`WITH claimed AS (
+      const merged = await sql`WITH active_order AS (
+        SELECT id FROM direct_orders
+        WHERE id=${activeTable[0].id} AND table_area=${dineInArea} AND table_number=${dineInNumber}
+          AND order_day=${orderDay}::date AND status IN ('saved','held','accepted','preparing','ready')
+        FOR UPDATE
+      ), claimed AS (
         INSERT INTO captain_order_requests (request_id,captain_id,order_id,payload_hash)
-        SELECT ${clientRequestId},${captain.id},${activeTable[0].id},${requestHash}
-        WHERE EXISTS (SELECT 1 FROM direct_orders WHERE id=${activeTable[0].id} AND status IN ('saved','held','accepted','preparing','ready'))
+        SELECT ${clientRequestId},${captain.id},id,${requestHash} FROM active_order
         ON CONFLICT (request_id) DO NOTHING
-        RETURNING request_id
+        RETURNING request_id,captain_id,order_id,payload_hash
       ), updated AS (
         UPDATE direct_orders
         SET items=COALESCE(items,'[]'::jsonb) || ${JSON.stringify(saved)}::jsonb,
@@ -5729,18 +5880,23 @@ app.post('/api/orders/counter', async (req, res) => {
             status=CASE WHEN ${stagedAction}='submit' AND status IN ('saved','held') THEN 'accepted' ELSE status END,
             special_request=CASE WHEN ${addonNote}='' THEN special_request WHEN COALESCE(special_request,'')='' THEN ${addonNote} ELSE special_request || ' · ' || ${addonNote} END,
             updated_at=NOW()
-        WHERE id=${activeTable[0].id} AND EXISTS (SELECT 1 FROM claimed)
+        WHERE id=${activeTable[0].id} AND status IN ('saved','held','accepted','preparing','ready')
+          AND EXISTS (SELECT 1 FROM claimed)
         RETURNING id,status,daily_order_number,total
       )
       SELECT r.captain_id,r.order_id,r.payload_hash,u.id,u.status,u.daily_order_number,u.total,TRUE AS applied
-      FROM captain_order_requests r JOIN updated u ON u.id=r.order_id
+      FROM claimed r JOIN updated u ON u.id=r.order_id
       WHERE r.request_id=${clientRequestId}
       UNION ALL
       SELECT r.captain_id,r.order_id,r.payload_hash,o.id,o.status,o.daily_order_number,o.total,FALSE AS applied
       FROM captain_order_requests r JOIN direct_orders o ON o.id=r.order_id
       WHERE r.request_id=${clientRequestId} AND NOT EXISTS (SELECT 1 FROM updated)
       LIMIT 1`;
-      const result = merged[0],
+      // A concurrent retry may wait for a matching INSERT to finish while
+      // retaining its earlier statement snapshot. Recover in a new statement.
+      const result = merged[0] || (await sql`SELECT r.captain_id,r.order_id,r.payload_hash,o.id,o.status,o.daily_order_number,o.total,FALSE AS applied
+        FROM captain_order_requests r JOIN direct_orders o ON o.id=r.order_id
+        WHERE r.request_id=${clientRequestId} LIMIT 1`)[0],
         applied = result?.applied === true || result?.applied === 't';
       if (!result)
         return res.status(409).json({
@@ -5774,16 +5930,16 @@ app.post('/api/orders/counter', async (req, res) => {
       // The order is already durable at this point. Build the Smart KDS plan
       // after replying so a busy kitchen never delays the Captain/POS screen.
       if (result.status === 'accepted' && applied)
-        void materializeSmartKdsOrderTiming(activeTable[0].id).catch((error) =>
+        void trackBackground(materializeSmartKdsOrderTiming(activeTable[0].id).catch((error) =>
           console.warn('Smart KDS timing materialisation failed:', error.message)
-        );
+        ));
       return;
     }
     const [{ number }, { billYear, number: billNumber }] = await Promise.all([
       nextDailyOrderNumber(),
       nextAnnualBillNumber(),
     ]);
-    const id = `RL${Date.now().toString(36).toUpperCase()}${crypto.randomBytes(2).toString('hex').toUpperCase()}`,
+    const id = `RL${Date.now().toString(36).toUpperCase()}${crypto.randomBytes(8).toString('hex').toUpperCase()}`,
       phone = suppliedPhone || `walkin-${id}`,
       trackingToken = crypto.randomBytes(24).toString('base64url');
     counterTableContext = isDineIn
@@ -5841,15 +5997,15 @@ app.post('/api/orders/counter', async (req, res) => {
       // Database confirmation is the POS success boundary. Smart KDS
       // materialisation and notifications are follow-up work and must not
       // keep staff staring at a blocked Send KOT button.
-      void materializeSmartKdsOrderTiming(id).catch((error) =>
+      void trackBackground(materializeSmartKdsOrderTiming(id).catch((error) =>
         console.warn('Smart KDS timing materialisation failed:', error.message)
-      );
-      void notifyDirectOrder({
+      ));
+      void trackBackground(notifyDirectOrder({
         id,
         dailyOrderNumber: number,
         total,
         itemCount: saved.reduce((count, item) => count + Number(item.quantity || 0), 0),
-      });
+      }));
     }
   } catch (error) {
     if (error?.code === '23505' && counterTableContext) {
@@ -5911,9 +6067,25 @@ app.get('/api/orders', async (req, res) => {
       );
     else
       ordersPromise = sql(
-        `${select} WHERE o.order_day=$1::date AND ($2='' OR o.customer_phone LIKE $3 OR CAST(o.daily_order_number AS TEXT) LIKE $3) ORDER BY o.created_at DESC LIMIT 100`,
+        `WITH visible_order_ids AS (
+          SELECT id FROM direct_orders
+          WHERE order_day=$1::date AND status IN ('new','saved','held','accepted','preparing','ready')
+            AND ($2='' OR customer_phone LIKE $3 OR CAST(daily_order_number AS TEXT) LIKE $3)
+          UNION ALL
+          SELECT id FROM (
+            SELECT id FROM direct_orders
+            WHERE order_day=$1::date AND status NOT IN ('new','saved','held','accepted','preparing','ready')
+              AND ($2='' OR customer_phone LIKE $3 OR CAST(daily_order_number AS TEXT) LIKE $3)
+            ORDER BY created_at DESC LIMIT 100
+          ) recent_closed
+        ) ${select} WHERE o.id IN (SELECT id FROM visible_order_ids) ORDER BY o.created_at DESC`,
         [today, search, like]
       );
+    const pendingOrdersQuery = ordersPromise;
+    ordersPromise = coalesceOperationalRead(
+      JSON.stringify(['orders', !!req.captain, history, requestedDay, search, today]),
+      () => pendingOrdersQuery
+    );
     let [orders, operatingStatus] = await Promise.all([ordersPromise, operatingStatusPromise]);
     res.set({
       'Cache-Control': 'no-store',
@@ -6087,7 +6259,7 @@ app.patch('/api/orders/:id/items', async (req, res) => {
   try {
     await Promise.all([ensureDirectOrdersTable(), ensureKotsTable(), ensureOrderEventsTable()]);
     const originalRows =
-      await sql`SELECT items,loyalty_points_redeemed,discount_amount,updated_at,status FROM direct_orders WHERE id=${req.params.id} LIMIT 1`;
+      await sql`SELECT items,loyalty_points_redeemed,discount_amount,updated_at::text AS updated_at,status FROM direct_orders WHERE id=${req.params.id} LIMIT 1`;
     if (!originalRows.length) return res.status(404).json({ error: 'Order not found.' });
     if (req.body?.expectedUpdatedAt && new Date(req.body.expectedUpdatedAt).getTime() !== new Date(originalRows[0].updated_at).getTime())
       return res.status(409).json({ error: 'This order changed on another device. Refresh before editing its items.' });
@@ -6135,21 +6307,39 @@ app.patch('/api/orders/:id/items', async (req, res) => {
     const total = subtotal - redeemed * loyalty.pointValue - Number(originalRows[0].discount_amount || 0);
     if (total < 0) return res.status(409).json({ error: 'Remove or reduce the discount before making this item change.' });
     const earned = loyalty.enabled ? Math.floor(total / loyalty.spend) * loyalty.earn : 0;
-    const rows =
-      await sql`UPDATE direct_orders SET items=${JSON.stringify(items)},total=${total},loyalty_points_earned=${earned},updated_at=NOW() WHERE id=${req.params.id} AND updated_at=${originalRows[0].updated_at} AND (${!!req.employee} OR created_at >= NOW() - INTERVAL '10 minutes') AND status IN ('new','saved','held','accepted','preparing','ready') RETURNING id`;
-    if (!rows.length)
-      return res.status(409).json({
-        error:
-          'Orders can only be modified during the first 10 minutes while they are being handled.',
-      });
-    await recordOrderEvent(req.params.id, 'items-updated', {
+    const changeDetails = {
       itemCount: items.reduce((count, item) => count + Number(item.quantity || 0), 0),
       total,
       loyaltyEarned: earned,
       beforeItems: original, afterItems: items,
       kotReductions,
       reason: String(req.body?.reason || '').trim().slice(0, 240),
-    });
+      ...(req.employee ? { employeeId: req.employee.id, employeeName: req.employee.name, employeeRole: req.employee.role } : {}),
+    };
+    // Quantity reductions affect what has already been sent to the kitchen.
+    // Save the edited items and their correction ledger atomically, under the
+    // same parent-row lock used by KOT creation, so no ticket sees half an edit.
+    const [, rows] = await sql.transaction((tx) => [
+      tx`SELECT id FROM direct_orders WHERE id=${req.params.id} FOR UPDATE`,
+      tx`WITH changed AS (
+        UPDATE direct_orders SET items=${JSON.stringify(items)},total=${total},loyalty_points_earned=${earned},updated_at=NOW()
+        WHERE id=${req.params.id} AND updated_at=${originalRows[0].updated_at}
+          AND (${!!req.employee} OR created_at >= NOW() - INTERVAL '10 minutes')
+          AND status IN ('new','saved','held','accepted','preparing','ready')
+          AND (SELECT COUNT(*) FROM order_kots WHERE order_id=${req.params.id})=${kots.length}
+          AND (SELECT COUNT(*) FROM order_events WHERE order_id=${req.params.id} AND event_type='items-updated')=${changes.length}
+        RETURNING id
+      ), logged AS (
+        INSERT INTO order_events (order_id,event_type,details)
+        SELECT id,'items-updated',${JSON.stringify(changeDetails)}::jsonb FROM changed RETURNING order_id
+      ) SELECT id FROM changed`,
+    ]);
+    if (!rows.length)
+      return res.status(409).json({
+        error: 'This order or its kitchen tickets changed. Refresh before editing. Guest edits are available for the first 10 minutes.',
+        code: 'order_changed',
+      });
+    await recordSmartKdsRealtimeEvent('items-updated', { orderId: req.params.id });
     await materializeSmartKdsOrderTiming(req.params.id).catch((error) =>
       console.warn('Smart KDS timing materialisation failed:', error.message)
     );
@@ -6214,7 +6404,7 @@ app.patch('/api/orders/:id', async (req, res) => {
         : []),
       ...(['rejected', 'cancelled'].includes(status)
         ? [
-            tx`WITH reversed AS (UPDATE direct_orders SET loyalty_awarded_at=NULL WHERE id=${req.params.id} AND loyalty_awarded_at IS NOT NULL RETURNING customer_phone, loyalty_points_earned) UPDATE loyalty_accounts a SET points=GREATEST(0, a.points-reversed.loyalty_points_earned), total_earned=GREATEST(0, a.total_earned-reversed.loyalty_points_earned), updated_at=NOW() FROM reversed WHERE a.customer_phone=reversed.customer_phone`,
+            tx`WITH reversed AS (UPDATE direct_orders SET loyalty_awarded_at=NULL WHERE id=${req.params.id} AND status=${status} AND loyalty_awarded_at IS NOT NULL RETURNING customer_phone, loyalty_points_earned) UPDATE loyalty_accounts a SET points=GREATEST(0, a.points-reversed.loyalty_points_earned), total_earned=GREATEST(0, a.total_earned-reversed.loyalty_points_earned), updated_at=NOW() FROM reversed WHERE a.customer_phone=reversed.customer_phone`,
             tx`WITH redeem AS (SELECT customer_phone, loyalty_points_redeemed FROM direct_orders WHERE id=${req.params.id} AND status=${status} AND loyalty_points_redeemed > 0), cleared AS (UPDATE direct_orders o SET loyalty_points_redeemed=0 FROM redeem WHERE o.id=${req.params.id} RETURNING redeem.customer_phone, redeem.loyalty_points_redeemed) UPDATE loyalty_accounts a SET points=a.points+cleared.loyalty_points_redeemed, total_redeemed=GREATEST(0,a.total_redeemed-cleared.loyalty_points_redeemed), updated_at=NOW() FROM cleared WHERE a.customer_phone=cleared.customer_phone`,
           ]
         : []),
@@ -6282,7 +6472,7 @@ app.post('/api/orders/:id/settle', async (req, res) => {
       if (existing.length) return res.json({ ok: true, duplicate: true });
     }
     const orderRows =
-      await sql`SELECT total FROM direct_orders WHERE id=${req.params.id} AND status IN ('accepted','preparing','ready') LIMIT 1`;
+      await sql`SELECT total,updated_at::text AS updated_at FROM direct_orders WHERE id=${req.params.id} AND status IN ('accepted','preparing','ready') LIMIT 1`;
     if (!orderRows.length)
       return res.status(409).json({ error: 'This order is not waiting for payment.' });
     const total = Math.max(0, Number(orderRows[0].total) || 0);
@@ -6293,7 +6483,7 @@ app.post('/api/orders/:id/settle', async (req, res) => {
       return res.status(400).json({ error: error.message });
     }
     const transactionResults = await sql.transaction((tx) => [
-      tx`UPDATE direct_orders SET status='completed',settled_at=NOW(),settlement_type=${plan.settlementType},settlement_amount=${plan.collectedTotal},payment_received=${plan.receivedTotal},change_due=${plan.changeDue},tip_amount=${plan.tipAmount},settlement_request_id=${settlementId},updated_at=NOW() WHERE id=${req.params.id} AND status IN ('accepted','preparing','ready') RETURNING customer_phone,customer_name,loyalty_points_earned`,
+      tx`UPDATE direct_orders SET status='completed',settled_at=NOW(),settlement_type=${plan.settlementType},settlement_amount=${plan.collectedTotal},payment_received=${plan.receivedTotal},change_due=${plan.changeDue},tip_amount=${plan.tipAmount},settlement_request_id=${settlementId},updated_at=NOW() WHERE id=${req.params.id} AND status IN ('accepted','preparing','ready') AND total=${orderRows[0].total} AND updated_at=${orderRows[0].updated_at} RETURNING customer_phone,customer_name,loyalty_points_earned`,
       ...plan.entries.map(
         (entry, index) =>
           tx`INSERT INTO order_payments (order_id,settlement_request_id,payment_index,payment_type,applied_amount,received_amount,collected_amount,change_amount,tip_amount)
@@ -6303,7 +6493,7 @@ app.post('/api/orders/:id/settle', async (req, res) => {
       ),
       ...(plan.outstanding === 0
         ? [
-            tx`WITH awarded AS (UPDATE direct_orders SET loyalty_awarded_at=NOW() WHERE id=${req.params.id} AND status='completed' AND loyalty_awarded_at IS NULL RETURNING customer_phone,loyalty_points_earned) INSERT INTO loyalty_accounts (customer_phone,points,total_earned) SELECT customer_phone,loyalty_points_earned,loyalty_points_earned FROM awarded ON CONFLICT (customer_phone) DO UPDATE SET points=loyalty_accounts.points+EXCLUDED.points,total_earned=loyalty_accounts.total_earned+EXCLUDED.total_earned,updated_at=NOW()`,
+            tx`WITH awarded AS (UPDATE direct_orders SET loyalty_awarded_at=NOW() WHERE id=${req.params.id} AND status='completed' AND settlement_request_id=${settlementId} AND loyalty_awarded_at IS NULL RETURNING customer_phone,loyalty_points_earned) INSERT INTO loyalty_accounts (customer_phone,points,total_earned) SELECT customer_phone,loyalty_points_earned,loyalty_points_earned FROM awarded ON CONFLICT (customer_phone) DO UPDATE SET points=loyalty_accounts.points+EXCLUDED.points,total_earned=loyalty_accounts.total_earned+EXCLUDED.total_earned,updated_at=NOW()`,
           ]
         : []),
     ]);
@@ -6312,7 +6502,7 @@ app.post('/api/orders/:id/settle', async (req, res) => {
       const duplicate =
         await sql`SELECT id FROM direct_orders WHERE id=${req.params.id} AND settlement_request_id=${settlementId} LIMIT 1`;
       if (duplicate.length) return res.json({ ok: true, duplicate: true });
-      return res.status(409).json({ error: 'This table is not waiting for settlement.' });
+      return res.status(409).json({ error: 'This bill changed on another device. Refresh its total before saving payment.', code: 'bill_changed' });
     }
     await ensureTrustedContactsTable();
     await sql`INSERT INTO trusted_contacts (customer_phone,customer_name) VALUES (${rows[0].customer_phone},${String(
@@ -6515,7 +6705,7 @@ app.post('/api/orders/:id/kots', async (req, res) => {
       ensureKotRoundStatusTable(),
     ]);
     const [orderRows, configRows, previous] = await Promise.all([
-      sql`SELECT o.id, o.status, o.mode, o.daily_order_number, o.customer_name, o.customer_phone, o.fulfillment_type, o.table_area, o.table_number, o.special_request, o.items, o.created_at, o.service_priority,
+      sql`SELECT o.id, o.status, o.mode, o.daily_order_number, o.customer_name, o.customer_phone, o.fulfillment_type, o.table_area, o.table_number, o.special_request, o.items, o.created_at, o.service_priority, o.updated_at::text AS updated_at,
         COALESCE((SELECT e.details->>'source' FROM order_events e WHERE e.order_id=o.id AND e.event_type='created' ORDER BY e.created_at ASC LIMIT 1), CASE WHEN o.mode='table' THEN 'counter' ELSE o.mode END) AS order_source,
         COALESCE((SELECT e.details->>'captainName' FROM order_events e WHERE e.order_id=o.id AND e.event_type='created' ORDER BY e.created_at ASC LIMIT 1), '') AS captain_name
         FROM direct_orders o WHERE o.id=${req.params.id} LIMIT 1`,
@@ -6541,20 +6731,8 @@ app.post('/api/orders/:id/kots', async (req, res) => {
     const routes = Array.isArray(config.routes) ? config.routes : [];
     const kotItemKey = (item) =>
       `${item.category || ''}::${item.name || ''}::${item.portion || ''}::${item.style || ''}::${item.note || ''}::${Addons.selectionFingerprint(item.modifiers)}`;
-    const sent = new Map();
-    previous.forEach((kot) => {
-      const quantities = new Map();
-      (Array.isArray(kot.tickets) ? kot.tickets : []).forEach((ticket) =>
-        (Array.isArray(ticket.items) ? ticket.items : []).forEach((item) => {
-          const key = kotItemKey(item);
-          quantities.set(key, Math.max(quantities.get(key) || 0, Number(item.quantity || 0)));
-        })
-      );
-      quantities.forEach((quantity, key) => sent.set(key, (sent.get(key) || 0) + quantity));
-    });
     const corrections = await sql`SELECT details FROM order_events WHERE order_id=${req.params.id} AND event_type='items-updated' ORDER BY created_at ASC`;
-    for (const event of corrections) for (const reduction of event.details?.kotReductions || [])
-      sent.set(reduction.key, Math.max(0, (sent.get(reduction.key) || 0) - Number(reduction.quantity || 0)));
+    const sent = effectiveKotQuantities(previous, corrections);
     const remainingSent = new Map(sent);
     const pending = (Array.isArray(orderRows[0].items) ? orderRows[0].items : [])
       .map((item) => {
@@ -6621,13 +6799,31 @@ app.post('/api/orders/:id/kots', async (req, res) => {
     const tickets = [...groups.values()].map((ticket) => ({ ...ticket, ...(kotWaiter ? { waiterId:kotWaiter.id, waiterName:kotWaiter.name } : {}) }));
     const fingerprint = crypto.createHash('sha256').update(JSON.stringify({ pending, previousRounds: previous.length, corrections: corrections.length })).digest('hex');
     const { kotDay, number: dailyKotNumber } = await nextDailyKotNumber();
-    const created =
-      await sql`INSERT INTO order_kots (order_id, order_number, tickets, item_fingerprint, kot_day, daily_kot_number) VALUES (${orderRows[0].id}, ${orderRows[0].daily_order_number}, ${JSON.stringify(tickets)}, ${fingerprint}, ${kotDay}::date, ${dailyKotNumber}) ON CONFLICT (order_id, item_fingerprint) WHERE item_fingerprint IS NOT NULL DO NOTHING RETURNING daily_kot_number AS kot_number`;
+    // Lock the parent order, then recheck in a separate transaction statement.
+    // Different devices can read order items and earlier rounds at different
+    // moments; a fingerprint alone cannot deduplicate those differing snapshots.
+    const [, created] = await sql.transaction((tx) => [
+      tx`SELECT id FROM direct_orders WHERE id=${orderRows[0].id} FOR UPDATE`,
+      tx`INSERT INTO order_kots (order_id, order_number, tickets, item_fingerprint, kot_day, daily_kot_number)
+        SELECT ${orderRows[0].id},${orderRows[0].daily_order_number},${JSON.stringify(tickets)},${fingerprint},${kotDay}::date,${dailyKotNumber}
+        FROM direct_orders o
+        WHERE o.id=${orderRows[0].id} AND o.status IN ('new','saved','held','accepted','preparing','ready')
+          AND o.updated_at=${orderRows[0].updated_at}
+          AND (SELECT COUNT(*) FROM order_kots WHERE order_id=o.id)=${previous.length}
+          AND (SELECT COUNT(*) FROM order_events WHERE order_id=o.id AND event_type='items-updated')=${corrections.length}
+        ON CONFLICT (order_id, item_fingerprint) WHERE item_fingerprint IS NOT NULL DO NOTHING
+        RETURNING daily_kot_number AS kot_number`,
+    ]);
     if (!created.length) {
       const existing =
         await sql`SELECT COALESCE(daily_kot_number, kot_number) AS kot_number, tickets FROM order_kots WHERE order_id=${orderRows[0].id} AND item_fingerprint=${fingerprint} LIMIT 1`;
-      if (!existing.length)
-        throw new Error('The existing KOT could not be recovered. Please retry.');
+      if (!existing.length) {
+        res.set('Retry-After', '1');
+        return res.status(503).json({
+          error: 'The order changed while its kitchen ticket was being prepared. It will be retried automatically.',
+          code: 'kot_snapshot_changed', orderId: req.params.id, retryable: true,
+        });
+      }
       await ensureKotTicketStatuses(orderRows[0].id, existing[0].kot_number, existing[0].tickets);
       if (req.captain && ['saved', 'held'].includes(orderRows[0].status)) {
         await sql`UPDATE direct_orders SET status='accepted',updated_at=NOW() WHERE id=${orderRows[0].id} AND status IN ('saved','held')`;
@@ -8149,34 +8345,7 @@ app.get('/api/admin/analytics/updates', async (req, res) => {
 });
 
 app.get('/api/admin/analytics/stream', async (req, res) => {
-  try {
-    await ensureSmartKdsTables();
-    res.status(200);
-    res.set({
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'private, no-cache, no-transform',
-      Connection: 'keep-alive',
-      'X-Accel-Buffering': 'no',
-    });
-    res.flushHeaders?.();
-    res.write(`event: connected\ndata: ${JSON.stringify({ at: new Date().toISOString() })}\n\n`);
-    smartKdsStreamClients.add(res);
-    const heartbeat = setInterval(() => {
-      try {
-        res.write(': keepalive\n\n');
-      } catch (_) {
-        clearInterval(heartbeat);
-        smartKdsStreamClients.delete(res);
-      }
-    }, 25000);
-    req.on('close', () => {
-      clearInterval(heartbeat);
-      smartKdsStreamClients.delete(res);
-    });
-  } catch (error) {
-    if (!res.headersSent) res.status(500).json({ error: 'Unable to open live dashboard updates.' });
-    else res.end();
-  }
+  await openSmartKdsStream(req, res, 'Unable to open live dashboard updates.');
 });
 
 app.get('/api/admin/analytics', async (req, res) => {
@@ -8800,34 +8969,7 @@ app.get('/api/orders/smart-kds/updates', async (req, res) => {
   }
 });
 app.get('/api/orders/smart-kds/stream', async (req, res) => {
-  try {
-    await ensureSmartKdsTables();
-    res.status(200);
-    res.set({
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache, no-transform',
-      Connection: 'keep-alive',
-      'X-Accel-Buffering': 'no',
-    });
-    res.flushHeaders?.();
-    res.write(`event: connected\ndata: ${JSON.stringify({ at: new Date().toISOString() })}\n\n`);
-    smartKdsStreamClients.add(res);
-    const heartbeat = setInterval(() => {
-      try {
-        res.write(': keepalive\n\n');
-      } catch (_) {
-        clearInterval(heartbeat);
-        smartKdsStreamClients.delete(res);
-      }
-    }, 25000);
-    req.on('close', () => {
-      clearInterval(heartbeat);
-      smartKdsStreamClients.delete(res);
-    });
-  } catch (error) {
-    if (!res.headersSent) res.status(500).json({ error: 'Unable to open Smart KDS live updates.' });
-    else res.end();
-  }
+  await openSmartKdsStream(req, res, 'Unable to open Smart KDS live updates.');
 });
 app.get('/api/admin/smart-kds/service-risk-preview', async (req, res) => {
   try {
@@ -8926,7 +9068,7 @@ app.get('/api/admin/captains/:id/pin', async (req, res) => {
       captain.id,
       process.env.CAPTAIN_PIN_ENCRYPTION_KEY || process.env.ADMIN_PASSWORD
     );
-    const expected = crypto.scryptSync(pin, `captain:${captain.id}`, 64).toString('hex');
+    const expected = (await hashCredential(pin, `captain:${captain.id}`)).toString('hex');
     if (!secureCompare(expected, captain.pinHash))
       throw new Error('Stored Captain PIN does not match its login hash.');
     await recordEmployeeAudit(req, captain.id, 'pin-viewed', { name: captain.name });
@@ -9049,7 +9191,7 @@ app.post('/api/orders/:id/priority', async (req, res) => {
 app.post('/api/orders/:id/discount', async (req, res) => {
   try {
     await ensureDirectOrdersTable();
-    const rows = await sql`SELECT total,discount_amount,updated_at FROM direct_orders WHERE id=${req.params.id} AND mode='table' AND status IN ('saved','held','accepted','preparing','ready') LIMIT 1`;
+    const rows = await sql`SELECT total,discount_amount,updated_at::text AS updated_at FROM direct_orders WHERE id=${req.params.id} AND mode='table' AND status IN ('saved','held','accepted','preparing','ready') LIMIT 1`;
     if (!rows.length) return res.status(409).json({ error: 'Discounts are available only for active dine-in bills.' });
     const before = rows[0], base = Number(before.total) + Number(before.discount_amount || 0);
     const policy = req.employee?.discountLimit || { type: 'fixed', value: base };
@@ -9103,7 +9245,8 @@ app.put('/api/admin/captains', async (req, res) => {
     const submitted = Array.isArray(req.body?.captains) ? req.body.captains : [];
     if (submitted.length > 50) return res.status(400).json({ error: 'Too many Captain accounts.' });
     const ids = new Set(), usernames = new Set(), userCodes = new Set();
-    const captains = submitted.map((entry) => {
+    const captains = [];
+    for (const entry of submitted) {
       const id = String(entry.id || crypto.randomUUID())
           .replace(/[^a-zA-Z0-9_-]/g, '')
           .slice(0, 64),
@@ -9140,7 +9283,7 @@ app.put('/api/admin/captains', async (req, res) => {
       if (permissions.captainApp && !previous?.pinHash && !pin) throw new Error(`Set a PIN for ${name} to use the Captain app.`);
       if (!previous?.pinHash && !pin && !previous?.passwordHash && !password) throw new Error(`Set a password or PIN for ${name}.`);
       const pinHash = pin
-        ? crypto.scryptSync(pin, `captain:${id}`, 64).toString('hex')
+        ? (await hashCredential(pin, `captain:${id}`)).toString('hex')
         : previous?.pinHash || null;
       const pinEncrypted = pin
         ? encryptCaptainPin(
@@ -9157,11 +9300,11 @@ app.put('/api/admin/captains', async (req, res) => {
       if (!Number.isFinite(discountValue) || discountValue < 0 || (discountType === 'percent' && discountValue > 100)) throw new Error('Enter a valid employee discount limit.');
       const authVersion = Number(previous?.authVersion || 0) +
         (pin || password || (previous && (previous.active !== false) !== (entry.active !== false)) ? 1 : 0);
-      return { id, name, username, userCode, phone: String(entry.phone || '').trim().slice(0, 30),
+      captains.push({ id, name, username, userCode, phone: String(entry.phone || '').trim().slice(0, 30),
         areas, active: entry.active !== false, role, tableScope, permissions, pinHash, pinEncrypted,
-        passwordHash: password ? crypto.scryptSync(password, `employee:${id}`, 64).toString('hex') : previous?.passwordHash || null,
-        requireEditReason: entry.requireEditReason !== false, discountLimit: { type: discountType, value: discountValue }, authVersion };
-    });
+        passwordHash: password ? (await hashCredential(password, `employee:${id}`)).toString('hex') : previous?.passwordHash || null,
+        requireEditReason: entry.requireEditReason !== false, discountLimit: { type: discountType, value: discountValue }, authVersion });
+    }
     const settings = Staff.captainSettings({ ...existing.settings, ...req.body?.settings, idleMinutes });
     await saveSection('captain', { captains, settings });
     if (JSON.stringify(Staff.captainSettings(existing.settings)) !== JSON.stringify(settings)) await recordEmployeeAudit(req, 'captain-settings', 'settings-updated', { name:'Captain App settings', before:Staff.captainSettings(existing.settings), after:settings });
@@ -9297,7 +9440,7 @@ app.post('/api/captain/login', async (req, res) => {
       idleMinutes = Math.max(2, Math.min(120, Number(config.settings?.idleMinutes) || 15));
     const pin = String(req.body?.pin || ''),
       stored = captain?.pinHash ? Buffer.from(captain.pinHash, 'hex') : null,
-      attempt = captain?.id ? crypto.scryptSync(pin, `captain:${captain.id}`, 64) : null;
+      attempt = captain?.id ? await hashCredential(pin, `captain:${captain.id}`) : null;
     if (
       !captain ||
       captain.active === false ||
@@ -10309,6 +10452,29 @@ async function startServer() {
   const server = app.listen(port, host, () => {
     console.log(`Red Lantern backend running on ${host}:${port}`);
   });
+  server.headersTimeout = 15000;
+  server.requestTimeout = 120000;
+  server.maxConnections = runtimeLimit('SERVER_MAX_CONNECTIONS', 512, 64, 4096);
+  const coordinator = installGracefulShutdown(server, {
+    loadControl: serverLoadControl, backgroundTasks, databaseTransport,
+    timeoutMs: runtimeLimit('SERVER_SHUTDOWN_TIMEOUT_MS', 30000, 1000, 300000),
+    closeStreams() {
+      for (const response of smartKdsStreamClients) response.end();
+      smartKdsStreamClients.clear();
+    },
+  });
+  for (const signal of ['SIGTERM', 'SIGINT']) {
+    process.once(signal, () => {
+      console.log(`${signal}: finishing active restaurant operations before shutdown.`);
+      coordinator.shutdown().then(({ graceful }) => {
+        if (!graceful) console.warn('Shutdown deadline reached; unfinished requests retain their retry identifiers.');
+        process.exit(0);
+      }).catch((error) => {
+        console.error('Shutdown failed:', error.message);
+        process.exit(1);
+      });
+    });
+  }
 
   server.on('error', (error) => {
     console.error('Server failed to start:', error);

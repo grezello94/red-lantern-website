@@ -19,6 +19,7 @@
     "print-bridge": "node print-bridge.js",
     "test": "npm run test:unit && npm run build && node scripts/test-print-bridge.js",
     "test:unit": "jest --runInBand",
+    "test:load": "node scripts/test-server-load.js",
     "lint": "eslint . --ext .js",
     "format": "prettier --write \"**/*.{js,css,html,json}\"",
     "typecheck": "tsc --noEmit",
@@ -55,6 +56,7 @@
     "web-push": "^3.6.7"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
     "@playwright/test": "^1.62.1",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^7.0.1",

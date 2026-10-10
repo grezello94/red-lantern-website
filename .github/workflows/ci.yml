@@ -25,5 +25,6 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run test:unit --silent
+      - run: npm run test:load
       - run: npm run build
       - run: npm run e2e

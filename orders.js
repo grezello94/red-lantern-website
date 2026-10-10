@@ -5710,7 +5710,7 @@ if (cachedTableAreas.length) {
 void checkPrintBridgeSetup();
 loadOrders();
 showTableView();
-setInterval(loadOrders, 3000);
+setInterval(() => { if (!document.hidden && navigator.onLine) void loadOrders(); }, 3000);
 // Cloud reconciliation is deliberately slower than the live table refresh:
 // it retries durable local work promptly without flooding the API or printers.
 setInterval(() => {
@@ -5724,11 +5724,11 @@ setInterval(() => {
     );
 }, 15000);
 setInterval(() => {
-  if (!operationsPanel.hidden && operationsTab === 'kitchen-display')
+  if (!document.hidden && navigator.onLine && !operationsPanel.hidden && operationsTab === 'kitchen-display')
     loadOperations().catch(() => {});
 }, 3000);
 setInterval(() => {
-  if (!counterPanel.hidden) refreshCounterLiveStatus();
+  if (!document.hidden && navigator.onLine && !counterPanel.hidden) refreshCounterLiveStatus();
 }, 1000);
 // Expiring restock schedules change the visible status without refreshing the
 // whole workspace or interrupting a scheduling draft.
@@ -5765,5 +5765,11 @@ async function recoverPendingPrinting() {
 }
 window.addEventListener('online', () => { void recoverPendingPrinting(); });
 window.addEventListener('focus', () => { void recoverPendingPrinting(); });
-document.addEventListener('visibilitychange', () => { if (!document.hidden) void recoverPendingPrinting(); });
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && navigator.onLine) {
+    void loadOrders();
+    void refreshCounterLiveStatus();
+    void recoverPendingPrinting();
+  }
+});
 setInterval(() => { void recoverPendingPrinting(); }, 15000);

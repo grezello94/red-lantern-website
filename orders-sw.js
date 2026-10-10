@@ -1,4 +1,4 @@
-const CACHE = 'red-lantern-orders-v39';
+const CACHE = 'red-lantern-orders-v40';
 const ORDER_SHELL = [
   '/orders',
   '/client-config.js',
@@ -7,8 +7,8 @@ const ORDER_SHELL = [
   '/src/orders/browser-bridge.js',
   '/printer-domain.js?v=2',
   '/addons-domain.js?v=1',
-  '/order-request.js?v=1',
-  '/orders.js?v=62',
+  '/order-request.js?v=2',
+  '/orders.js?v=63',
   '/orders.css?v=7',
   '/orders-logo.css?v=7',
   '/orders-fixes.css?v=28',

@@ -70,6 +70,19 @@ test('missing Retry-After uses backoff instead of retrying immediately', async (
     .fn()
     .mockResolvedValueOnce(response(503))
     .mockResolvedValueOnce(response(200, { id: 'saved' }));
-  await ReliableOrderRequests.json('/orders', {}, { fetcher, delays: [10], onRetry });
+  await ReliableOrderRequests.json('/orders', {}, { fetcher, delays: [10], onRetry, random: () => 0 });
   expect(onRetry).toHaveBeenCalledWith(expect.objectContaining({ delayMs: 10 }));
+});
+
+test('a shared Wi-Fi rate limit is respected and cancellation prevents another order attempt', async () => {
+  const controller = new AbortController();
+  const busy = response(429);
+  busy.headers.get = () => '60';
+  const fetcher = jest.fn().mockResolvedValue(busy);
+  const onRetry = jest.fn(() => controller.abort());
+  await expect(ReliableOrderRequests.json('/api/direct-orders', { signal: controller.signal }, {
+    fetcher, onRetry, random: () => 0.5,
+  })).rejects.toMatchObject({ name: 'AbortError' });
+  expect(onRetry).toHaveBeenCalledWith(expect.objectContaining({ delayMs: 60125 }));
+  expect(fetcher).toHaveBeenCalledTimes(1);
 });

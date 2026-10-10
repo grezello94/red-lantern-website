@@ -47,6 +47,7 @@ const mockSql = jest.fn(async (strings, ...values) => {
   return [];
 });
 jest.mock('@neondatabase/serverless', () => ({ neon: () => mockSql, neonConfig: {} }));
+mockSql.transaction = (callback) => Promise.all(callback(mockSql));
 jest.mock('web-push', () => ({ setVapidDetails: jest.fn(), sendNotification: jest.fn() }));
 
 describe('Orders schema upgrade and reconnect recovery', () => {

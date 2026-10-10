@@ -59,3 +59,4 @@ The tag script checks the current branch and repo status, then creates an annota
 - Browser smoke tests are kept in `tests/` and are run separately from Jest via `playwright.config.js`.
 - Admin can view Captain PINs set after the PIN viewing update. Keep `CAPTAIN_PIN_ENCRYPTION_KEY` stable in the server environment; if it is not set, the current `ADMIN_PASSWORD` is used for encryption. Changing the key makes previously saved PINs unavailable for viewing, though Captain login still works. Older PINs stored only as hashes must be changed once before they can be viewed.
 - Type checks are intentionally light and centered around the modularized order helpers under `src/orders`.
+- See [CAPACITY.md](CAPACITY.md) for concurrency guards, isolated load tests, measured limitations, and Coolify shutdown settings.
