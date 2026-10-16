@@ -41,7 +41,20 @@
       const timeout = setTimeout(() => controller.abort(), timeoutMs);
       try {
         const response = await fetcher(input, { ...init, signal: controller.signal });
-        const data = await response.json().catch(() => ({}));
+        let data;
+        try {
+          data = await response.json();
+          if (response.ok && (!data || typeof data !== 'object' || Array.isArray(data)))
+            throw new SyntaxError('The order confirmation must be a JSON object.');
+        } catch (error) {
+          if (response.ok) {
+            const failure = new Error('The order confirmation could not be read. Retrying the same request is safe.');
+            failure.name = 'OrderResponseParseError';
+            failure.cause = error;
+            throw failure;
+          }
+          data = {};
+        }
         if (response.ok || !retryableStatus(response.status) || attempt === attempts)
           return { response, data, attempt };
         const delayMs = retryDelay(response, attempt, options.delays, options.random);

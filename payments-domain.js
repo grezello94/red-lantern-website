@@ -22,11 +22,12 @@ function normalType(value) {
   return PAYMENT_TYPES.includes(type) ? type : '';
 }
 
-function normalizeEntry(source, index) {
+function normalizeEntry(source, index, allowZero = false) {
   const paymentType = normalType(source?.paymentType || source?.payment_type);
   if (!paymentType) throw new Error(`Choose a valid payment method for payment ${index + 1}.`);
   const appliedAmount = money(source?.amount ?? source?.appliedAmount ?? source?.applied_amount);
-  if (appliedAmount <= 0) throw new Error(`Enter an amount greater than zero for payment ${index + 1}.`);
+  if (appliedAmount < 0 || (appliedAmount === 0 && !allowZero))
+    throw new Error(`Enter an amount greater than zero for payment ${index + 1}.`);
   const unpaid = paymentType === 'due' || paymentType === 'not_paid';
   const suppliedReceived = Number(source?.paymentReceived ?? source?.receivedAmount ?? source?.received_amount);
   const receivedAmount = unpaid
@@ -51,6 +52,8 @@ function normalizeEntry(source, index) {
 function legacyEntries({ total, paymentType, amount, paymentReceived }) {
   const type = normalType(paymentType);
   if (!type) throw new Error('Choose a payment type.');
+  if (total === 0)
+    return [normalizeEntry({ paymentType: type, amount: 0, paymentReceived: paymentReceived ?? amount ?? 0 }, 0, true)];
   if (type === 'due' || type === 'not_paid')
     return [normalizeEntry({ paymentType: type, amount: total }, 0)];
   if (type === 'part') {
@@ -79,7 +82,7 @@ function normalizePaymentPlan(source = {}) {
   const total = money(source.total);
   if (total < 0) throw new Error('Bill total cannot be negative.');
   let entries = Array.isArray(source.payments)
-    ? source.payments.slice(0, 20).map(normalizeEntry)
+    ? source.payments.slice(0, 20).map((entry, index) => normalizeEntry(entry, index, total === 0))
     : legacyEntries({
         total,
         paymentType: source.paymentType,

@@ -8,7 +8,7 @@ async function openCaptain(page, settings = {}, grants = {}) {
     const req = route.request(), path = new URL(req.url()).pathname;
     if (req.method() !== 'GET') requests.push({path,body:req.postDataJSON()});
     const payloads = {'/api/staff/session':{employee,token:'test-tools-token'},'/api/captain/accounts':{captains:[employee]},'/api/captain/login':{captain:employee,token:'test-tools-token'},'/api/orders/operations':{config:{tableAreas:[{name:'AC',from:1,to:4}]}},'/api/orders':orders,'/api/orders/menu':[{key:'z',name:'Zesty Soup',category:'Soup',price:100},{key:'a',name:'Apple Juice',category:'Drinks',price:50}],'/api/orders/availability':[],'/api/captain/ready-alerts':{alerts:[]},'/api/staff/employees':{employees:[{id:'waiter',name:'Waiter One',tableService:true,areas:['AC']}]},'/api/captain/printers':{printers:[{id:'kitchen',name:'Kitchen',deviceName:'Kitchen queue',paperWidth:58}]}};
-    await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(req.method() === 'GET' ? payloads[path] || {} : {ok:true})});
+    await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(req.method() === 'GET' ? payloads[path] || {} : path.endsWith('/kots') ? {kotNumber:1} : {ok:true})});
   });
   await page.goto('/captain.html');
   await expect(page.locator('.table-tile')).toHaveCount(4);

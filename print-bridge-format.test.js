@@ -17,6 +17,28 @@ test('a fully discounted bill preserves its authoritative zero total and shows t
   expect(output).toContain('__TOTAL__GRAND TOTAL|₹0');
 });
 
+test('receipt totals and discounts preserve paise', () => {
+  const output = billText({ order: { total: 199.49, discount_amount: 0.5,
+    items: [{ name: 'Soup', quantity: 1, price: 199.99 }] } });
+  expect(output).toContain('Sub Total: ₹199.99');
+  expect(output).toContain('__SUMMARY__Staff discount|-₹0.50');
+  expect(output).toContain('__TOTAL__GRAND TOTAL|₹199.49');
+});
+
+test('wallet receipt amounts follow the saved bill rather than assuming one rupee per point', () => {
+  const output = billText({ order: { total: 410, discount_amount: 50, loyalty_points_redeemed: 20,
+    items: [{ name: 'Soup', quantity: 5, price: 100 }] } });
+  expect(output).toContain('__SUMMARY__Points discount|-₹40');
+  expect(output).toContain('__TOTAL__GRAND TOTAL|₹410');
+});
+
+test('split receipts can carry an exact monetary wallet allocation', () => {
+  const output = billText({ order: { total: 9.5, loyalty_points_redeemed: 0, loyalty_discount_amount: 0.5,
+    items: [{ name: 'Split item', quantity: 1, price: 10 }] } });
+  expect(output).toContain('__SUMMARY__Points discount|-₹0.50');
+  expect(output).toContain('__TOTAL__GRAND TOTAL|₹9.50');
+});
+
 test('KOT output identifies duplicate copies and prints saved add-on choices', () => {
   const output = kotText({
     order: {

@@ -10,7 +10,9 @@ const orderSearch = document.getElementById('order-search');
 const historyDate = document.getElementById('history-date');
 let known = new Set();
 let firstLoad = true;
-let ordersRefreshInFlight = false;
+let ordersRefreshInFlight = null;
+let ordersRefreshRequested = false;
+let ordersAuthRevision = 0;
 let renderedOrdersSignature = '';
 let hasRenderedOrders = false;
 let menuItems = [];
@@ -27,6 +29,25 @@ let orderSearchTimer = null;
 let orderView = 'current';
 let activeOrderDay = '';
 let orderRecords = new Map();
+let displayedOrderRecords = new Map();
+const pendingItemEditsKey = 'red-lantern-pending-item-edits';
+function pendingItemEdits() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(pendingItemEditsKey) || '{}');
+    return saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
+  } catch { return {}; }
+}
+function clearPendingItemEdit(action) {
+  if (action.type !== 'order-items') return;
+  const pending = pendingItemEdits();
+  if (pending[action.payload.orderId]?.actionId !== action.id) return;
+  delete pending[action.payload.orderId];
+  localStorage.setItem(pendingItemEditsKey, JSON.stringify(pending));
+}
+function assertNoPendingItemEdit(orderId) {
+  if (pendingItemEdits()[orderId])
+    throw new Error('This order has an offline item change waiting to sync. Reconnect and finish syncing it before editing again.');
+}
 let historyAll = false;
 let orderStatusFilter = 'all';
 let fulfillmentFilter = '';
@@ -123,6 +144,11 @@ function reserveOfflineTable(payload) {
   cacheTableOrders([...orderRecords.values()]);
   if (!tableViewPanel.hidden) renderTableView();
 }
+function releaseOfflineTable(requestId) {
+  if (!orderRecords.delete(`offline:${requestId}`)) return;
+  cacheTableOrders([...orderRecords.values()]);
+  if (!tableViewPanel.hidden) renderTableView();
+}
 let operationsMenu = [];
 let operationKotHistory = new Map();
 let completedKotHistory = [];
@@ -157,8 +183,16 @@ let counterLoyaltyTimer = null;
 let counterTable = null;
 let counterBillSplit = null;
 const offlineCounterOrdersKey = 'red-lantern-counter-orders';
+const offlineCounterReviewKey = 'red-lantern-counter-orders-review';
+let queueStorageNeedsReview = false;
 let counterSyncInProgress = false;
+let dineInSubmissionInProgress = false;
+let pendingDineInRequest = null;
+const counterWorkspaceDrafts = new Map();
+let counterDraftActor = '';
+let counterDraftBaseSignature = '';
 let bridgeLedgerPending = 0;
+let queuedWorkReviewMessage = '';
 const printBridgeOrigin = (typeof window !== 'undefined' && window.RED_LANTERN_CONFIG && window.RED_LANTERN_CONFIG.printBridgeOrigin) || 'http://127.0.0.1:9124';
 
 // A connection attempt and the saved pairing are separate. An unavailable
@@ -385,15 +419,62 @@ function settlementRequestId() {
 function offlineActionId(type) {
   return `${type}-${Date.now()}-${crypto.getRandomValues(new Uint32Array(1))[0].toString(36)}`;
 }
+function preserveCounterQueueReview(raw, error = '') {
+  let review;
+  const previous = localStorage.getItem(offlineCounterReviewKey) || '[]';
+  try { review = JSON.parse(previous); } catch { review = [{ raw: previous }]; }
+  if (!Array.isArray(review)) review = [{ raw: previous }];
+  review.push({ raw, error, savedAt: new Date().toISOString() });
+  localStorage.setItem(offlineCounterReviewKey, JSON.stringify(review));
+}
 function queuedCounterOrders() {
   try {
-    return JSON.parse(localStorage.getItem(offlineCounterOrdersKey) || '[]');
+    const raw = localStorage.getItem(offlineCounterOrdersKey) || '[]';
+    let orders;
+    try { orders = JSON.parse(raw); } catch { orders = null; }
+    const valid = Array.isArray(orders) ? orders.filter(order => order && typeof order === 'object' &&
+      typeof order.clientRequestId === 'string' && order.clientRequestId.trim() && Array.isArray(order.items)) : [];
+    if (!Array.isArray(orders) || valid.length !== orders.length) {
+      // Preserve the complete original data before removing malformed entries
+      // from the active queue, so valid orders can continue syncing safely.
+      preserveCounterQueueReview(raw);
+      localStorage.setItem(offlineCounterOrdersKey, JSON.stringify(valid));
+    }
+    queueStorageNeedsReview = false;
+    return valid;
   } catch {
+    queueStorageNeedsReview = true;
+    queuedWorkReviewMessage = 'Saved order data needs review and remains on this device. No saved data has been cleared.';
     return [];
   }
 }
+function queuedOrderReviewCount() {
+  try {
+    const raw = localStorage.getItem(offlineCounterReviewKey);
+    if (!raw) return 0;
+    const review = JSON.parse(raw);
+    return Array.isArray(review) ? review.length : 1;
+  } catch { return 1; }
+}
 function saveQueuedCounterOrders(orders) {
+  if (queueStorageNeedsReview) throw new Error('Saved order data needs review before more orders can be stored on this device.');
   localStorage.setItem(offlineCounterOrdersKey, JSON.stringify(orders));
+}
+function retryableOrderError(error) {
+  return !error.status || error.status >= 500 || [408, 425, 429].includes(error.status);
+}
+function preserveQueuedOrder(error) {
+  return retryableOrderError(error) || [401, 403, 409].includes(error.status);
+}
+function queuedEmployeePayload(payload) {
+  return { ...payload, actorEmployeeId: payload.actorEmployeeId || window.currentEmployee?.id || '' };
+}
+function assertQueuedEmployee(payload) {
+  if (!payload.actorEmployeeId || String(payload.actorEmployeeId) === String(window.currentEmployee?.id || '')) return;
+  queuedWorkReviewMessage = 'Saved changes belong to another staff account. Sign in with that account to sync them.';
+  const error = new Error(queuedWorkReviewMessage);
+  error.status = 403;
+  throw error;
 }
 async function saveToBridgeLedger(payload) {
   const response = await fetchPrintBridge(`/v1/ledger/actions`, {
@@ -408,6 +489,7 @@ async function saveToBridgeLedger(payload) {
   return body.action;
 }
 async function saveBridgeAction(type, payload) {
+  payload = queuedEmployeePayload(payload);
   const id = offlineActionId(type);
   const response = await fetchPrintBridge(`/v1/ledger/actions`, {
     method: 'POST',
@@ -422,25 +504,26 @@ async function saveBridgeAction(type, payload) {
 }
 async function dispatchBridgeAction(action) {
   const payload = action.payload || {};
+  assertQueuedEmployee(payload);
   let response;
   if (action.type === 'counter-order') return sendCounterOrder(payload);
   if (action.type === 'order-status')
     response = await fetch(`/api/orders/${encodeURIComponent(payload.orderId)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: payload.status, reason: payload.reason || '' }),
+      body: JSON.stringify({ status: payload.status, reason: payload.reason || '', actorEmployeeId: payload.actorEmployeeId }),
     });
   else if (action.type === 'order-items')
     response = await fetch(`/api/orders/${encodeURIComponent(payload.orderId)}/items`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ quantities: payload.quantities, reason: payload.reason || '', expectedUpdatedAt: payload.expectedUpdatedAt }),
+      body: JSON.stringify({ quantities: payload.quantities, reason: payload.reason || '', expectedUpdatedAt: payload.expectedUpdatedAt, actorEmployeeId: payload.actorEmployeeId }),
     });
   else if (action.type === 'order-table')
     response = await fetch(`/api/orders/${encodeURIComponent(payload.orderId)}/table`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tableArea: payload.tableArea, tableNumber: payload.tableNumber }),
+      body: JSON.stringify({ tableArea: payload.tableArea, tableNumber: payload.tableNumber, expectedUpdatedAt: payload.expectedUpdatedAt, actorEmployeeId: payload.actorEmployeeId }),
     });
   else if (action.type === 'kitchen-status')
     response = await fetch(
@@ -448,7 +531,7 @@ async function dispatchBridgeAction(action) {
       {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: payload.status }),
+        body: JSON.stringify({ status: payload.status, actorEmployeeId: payload.actorEmployeeId }),
       }
     );
   else if (action.type === 'availability-update')
@@ -458,21 +541,21 @@ async function dispatchBridgeAction(action) {
         ? {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ unavailableUntil: payload.unavailableUntil }),
+            body: JSON.stringify({ unavailableUntil: payload.unavailableUntil, actorEmployeeId: payload.actorEmployeeId }),
           }
-        : { method: 'DELETE' }
+        : { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ actorEmployeeId: payload.actorEmployeeId }) }
     );
   else if (action.type === 'operations-config')
     response = await fetch('/api/orders/operations', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ config: payload.config }),
+      body: JSON.stringify({ config: payload.config, actorEmployeeId: payload.actorEmployeeId }),
     });
   else if (action.type === 'table-areas')
     response = await fetch('/api/orders/operations/table-areas', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tableAreas: payload.tableAreas }),
+      body: JSON.stringify({ tableAreas: payload.tableAreas, actorEmployeeId: payload.actorEmployeeId }),
     });
   else if (action.type === 'settlement')
     response = await fetch(`/api/orders/${encodeURIComponent(payload.orderId)}/settle`, {
@@ -482,6 +565,8 @@ async function dispatchBridgeAction(action) {
         paymentType: payload.paymentType,
         amount: payload.amount,
         requestId: payload.requestId,
+        expectedUpdatedAt: payload.expectedUpdatedAt,
+        actorEmployeeId: payload.actorEmployeeId,
       }),
     });
   else throw new Error('Unsupported offline action type.');
@@ -495,8 +580,17 @@ async function dispatchBridgeAction(action) {
 }
 async function queueWhenOffline(type, payload, applyLocal) {
   if (navigator.onLine) return false;
-  await saveBridgeAction(type, payload);
+  if (type === 'order-items') assertNoPendingItemEdit(payload.orderId);
+  const actionId = await saveBridgeAction(type, payload);
   applyLocal?.();
+  if (type === 'order-items') {
+    const pending = pendingItemEdits();
+    pending[payload.orderId] = {
+      actionId, actorEmployeeId: window.currentEmployee?.id || '',
+      order: displayedOrderRecords.get(payload.orderId) || orderRecords.get(payload.orderId),
+    };
+    localStorage.setItem(pendingItemEditsKey, JSON.stringify(pending));
+  }
   updateConnectivity(
     'Offline change saved safely on this computer. It will sync when internet returns.'
   );
@@ -527,7 +621,9 @@ async function flushBridgeLedger() {
     try {
       const result = await dispatchBridgeAction(action);
       await updateBridgeLedger(action.id, 'synced');
+      clearPendingItemEdit(action);
       bridgeLedgerPending = Math.max(0, bridgeLedgerPending - 1);
+      if (action.type === 'counter-order') releaseOfflineTable(action.payload.clientRequestId);
       if (action.type === 'counter-order')
         void autoPrintOrder({
           id: result.id,
@@ -546,12 +642,17 @@ async function flushBridgeLedger() {
         cacheOperationsConfig(operationsConfig);
       }
     } catch (error) {
-      if (error.status >= 400 && error.status < 500 && error.status !== 409)
+      if (error.status >= 400 && error.status < 500 && !preserveQueuedOrder(error)) {
         await updateBridgeLedger(
           action.id,
           'blocked',
           error.message || 'This order needs staff review.'
         );
+        clearPendingItemEdit(action);
+        queuedWorkReviewMessage = 'A saved change needs manager review. Its original data is preserved in the local order ledger.';
+        bridgeLedgerPending = Math.max(0, bridgeLedgerPending - 1);
+        if (action.type === 'counter-order') releaseOfflineTable(action.payload.clientRequestId);
+      }
       break;
     }
   }
@@ -597,10 +698,11 @@ window.addEventListener('unhandledrejection', (event) =>
 function updateConnectivity(message) {
   const pending = queuedCounterOrders().length + bridgeLedgerPending,
     online = navigator.onLine;
-  connectivity.hidden = online && !pending && !message;
+  const reviewCount = queuedOrderReviewCount();
+  connectivity.hidden = online && !pending && !message && !queuedWorkReviewMessage && !reviewCount;
   connectivity.className = online ? 'is-online' : 'is-offline';
   connectivity.textContent =
-    message ||
+    message || queuedWorkReviewMessage || (reviewCount ? 'Some saved orders need manager review. Their original data is preserved on this device.' : '') ||
     (!online
       ? `Offline mode — orders are saved on this device and will sync when internet returns.${pending ? ` ${pending} waiting.` : ''}`
       : pending
@@ -614,6 +716,11 @@ async function sendCounterOrder(payload) {
     body: JSON.stringify(payload),
   });
   const result = await response.json().catch(() => ({}));
+  if (response.ok && (typeof result.id !== 'string' || !result.id.trim())) {
+    const error = new Error('The Orders server has not confirmed this order yet. Its saved request will be retried.');
+    error.status = 503;
+    throw error;
+  }
   if (!response.ok) {
     const error = new Error(result.error || 'Unable to save the order.');
     error.status = response.status;
@@ -624,6 +731,7 @@ async function sendCounterOrder(payload) {
 async function flushQueuedCounterOrders() {
   if (counterSyncInProgress || !navigator.onLine) return;
   counterSyncInProgress = true;
+  queuedWorkReviewMessage = '';
   try {
     let bridgeQueuedAtStart = 0;
     try {
@@ -633,22 +741,36 @@ async function flushQueuedCounterOrders() {
     const browserQueuedAtStart = queued.length;
     while (queued.length && navigator.onLine) {
       try {
-        const result = await sendCounterOrder(queued[0]);
+        const payload = queued[0];
+        assertQueuedEmployee(payload);
+        const result = await sendCounterOrder(payload);
+        releaseOfflineTable(payload.clientRequestId);
         autoPrintOrder({
           id: result.id,
-          mode: queued[0].tableArea ? 'table' : 'counter',
+          mode: payload.tableArea ? 'table' : 'counter',
           status: result.status || 'accepted',
         });
-        queued.shift();
+        // A cashier can save another order while this request is in flight.
+        // Remove only the acknowledged request from the latest stored queue.
+        queued = queuedCounterOrders().filter(order => order.clientRequestId !== payload.clientRequestId);
         saveQueuedCounterOrders(queued);
       } catch (error) {
-        if (error.status >= 400 && error.status < 500 && error.status !== 409) {
-          queued.shift();
+        const requestId = queued[0].clientRequestId;
+        if (error.status >= 400 && error.status < 500 && !preserveQueuedOrder(error)) {
+          try { preserveCounterQueueReview(JSON.stringify(queued[0]), error.message); }
+          catch {
+            queuedWorkReviewMessage = 'A saved order needs review and remains queued because its review copy could not be saved.';
+            break;
+          }
+          releaseOfflineTable(requestId);
+          queued = queuedCounterOrders().filter(order => order.clientRequestId !== requestId);
           saveQueuedCounterOrders(queued);
           continue;
         }
-        if (error.status === 409 && !queued[0].errorReported) {
-          queued[0].errorReported = true;
+        queued = queuedCounterOrders();
+        const pending = queued.find(order => order.clientRequestId === requestId);
+        if (error.status === 409 && pending && !pending.errorReported) {
+          pending.errorReported = true;
           saveQueuedCounterOrders(queued);
           reportOrdersDiagnostic({
             level: 'warning',
@@ -659,7 +781,7 @@ async function flushQueuedCounterOrders() {
         break;
       }
     }
-    if (!queued.length && (bridgeQueuedAtStart || browserQueuedAtStart)) {
+    if (!queued.length && !bridgeLedgerPending && !queuedWorkReviewMessage && !queuedOrderReviewCount() && (bridgeQueuedAtStart || browserQueuedAtStart)) {
       updateConnectivity('Queued orders synced successfully.');
       setTimeout(() => updateConnectivity(), 4000);
       loadOrders();
@@ -1018,7 +1140,10 @@ function openCounterChoice(item) {
     `<span class="eyebrow">Customize item</span><h2 id="counter-choice-title">${esc(item.name)}</h2><p>${esc(item.category || 'Menu')} · Choose your portion${item.gravyStyleAvailable ? ' and preparation' : ''}</p><div class="counter-choice-options" role="group" aria-label="Portion">${options.map(([value, label, price], index) => `<label><input type="radio" name="counter-portion" value="${esc(value)}" data-counter-choice-price="${Number(String(price).replace(/[^0-9.]/g, ''))}" ${index === 0 ? 'checked' : ''}><span>${esc(label)} <b>${counterMoney(String(price).replace(/[^0-9.]/g, ''))}</b></span></label>`).join('')}</div>${item.gravyStyleAvailable ? '<fieldset class="counter-style-options"><legend>Preparation style</legend><label><input type="radio" name="counter-style" value="" checked> Regular</label><label><input type="radio" name="counter-style" value="Gravy"> Gravy <b>+₹10</b></label><label><input type="radio" name="counter-style" value="Semi-gravy"> Semi-gravy <b>+₹10</b></label></fieldset>' : ''}<button type="button" id="counter-choice-add" class="counter-place-order">Add to order</button>`;
   if (typeof dialog.showModal === 'function') dialog.showModal();
 }
-const counterMoney = (value) => `₹${Math.round(Number(value) || 0)}`;
+const counterMoney = (value) => {
+  const amount = Math.round((Number(value) || 0) * 100) / 100;
+  return `₹${Number.isInteger(amount) ? amount : amount.toFixed(2)}`;
+};
 function updateWorkspaceMarkup(element, markup) {
   if (element.innerHTML === markup) return;
   const top = element.scrollTop,
@@ -1115,24 +1240,17 @@ function renderCounterOrder() {
       .join('') || '<p class="counter-empty"><b>No matching items</b><span>Try another category or search.</span></p>');
   const items = counterCart
     .map((line, index) => {
-      const unit = line.price + (line.style ? 10 : 0);
+      const unit = Number(line.price) + (line.style ? 10 : 0) + window.RedLanternAddons.lineModifierTotal(line);
       return `<div class="counter-cart-line"><div><b>${esc(line.name)}</b><small>${esc(line.portion || 'Regular')}${line.style ? ` · ${esc(line.style)}` : ''} · ${counterMoney(unit)} each</small></div><div class="counter-quantity"><button type="button" data-counter-qty="${index}" data-counter-change="-1" aria-label="Decrease ${esc(line.name)} quantity">−</button><b>${line.quantity}</b><button type="button" data-counter-qty="${index}" data-counter-change="1" aria-label="Increase ${esc(line.name)} quantity">+</button></div><strong>${counterMoney(unit * line.quantity)}</strong></div>`;
     })
     .join('');
   updateWorkspaceMarkup(document.getElementById('counter-cart-items'),
     items || `<p class="counter-empty"><span class="counter-empty-icon" aria-hidden="true">${actionIcon('receipt')}</span><b>Your order starts here</b><span>Choose items from the menu to build this order.</span></p>`);
-  const subtotal = counterCart.reduce(
-    (sum, line) => sum + (line.price + (line.style ? 10 : 0)) * line.quantity,
-    0
-  );
-  const requestedPoints = Math.floor(
-    Number(document.getElementById('counter-wallet-redeem')?.value || 0)
-  );
-  const usablePoints =
-    counterLoyaltyPoints >= 100
-      ? Math.min(counterLoyaltyPoints, subtotal, Math.max(0, requestedPoints))
-      : 0;
-  const total = counterMoney(subtotal - usablePoints);
+  const amounts = counterBillAmounts();
+  const total = counterMoney(amounts.total);
+  const redeem = document.getElementById('counter-wallet-redeem');
+  if (redeem) redeem.disabled = !!counterTable?.orderId;
+  if (counterTable?.orderId) counterWallet.hidden = true;
   const count = counterCart.reduce((sum, line) => sum + line.quantity, 0);
   document.getElementById('counter-total').textContent = total;
   document.getElementById('counter-cart-count').textContent = `${count} item${count === 1 ? '' : 's'}`;
@@ -1149,7 +1267,7 @@ function renderCounterOrder() {
   counterLastItemCount = count;
   syncCounterWorkspaceLayout();
   const note = document.getElementById('counter-wallet-note');
-  if (note) note.textContent = usablePoints ? `₹${usablePoints} wallet discount applied.` : '';
+  if (note) note.textContent = amounts.redemption ? `₹${amounts.redemption} wallet discount applied.` : '';
 }
 async function loadCounterLoyalty() {
   const phone = String(document.getElementById('counter-customer-phone')?.value || '').replace(
@@ -1159,6 +1277,13 @@ async function loadCounterLoyalty() {
   const walletBalance = document.getElementById('counter-wallet-balance');
   const redeemWrap = document.getElementById('counter-wallet-redeem-wrap');
   const redeem = document.getElementById('counter-wallet-redeem');
+  if (counterTable?.orderId) {
+    counterLoyaltyPoints = 0;
+    counterWallet.hidden = true;
+    if (redeem) { redeem.value = '0'; redeem.disabled = true; }
+    renderCounterOrder();
+    return;
+  }
   if (phone.length < 7) {
     counterLoyaltyPoints = 0;
     counterWallet.hidden = true;
@@ -1175,6 +1300,7 @@ async function loadCounterLoyalty() {
       body: JSON.stringify({ phone }),
     });
     const data = await response.json();
+    if (counterTable?.orderId || phone !== String(document.getElementById('counter-customer-phone')?.value || '').replace(/\D/g, '')) return;
     if (!response.ok) throw new Error();
     counterLoyaltyPoints = Number(data.points || 0);
     if (walletBalance)
@@ -1188,14 +1314,90 @@ async function loadCounterLoyalty() {
       if (counterLoyaltyPoints < 100) redeem.value = '0';
     }
   } catch {
+    if (counterTable?.orderId) return;
     counterLoyaltyPoints = 0;
     if (walletBalance) walletBalance.textContent = 'Wallet points are unavailable right now.';
     if (redeemWrap) redeemWrap.hidden = true;
   }
   renderCounterOrder();
 }
+function counterDraftKey(table = counterTable, actor = counterDraftActor) {
+  return JSON.stringify([actor, table?.area || '', table?.number || '', table?.orderId || '']);
+}
+function counterDraftState() {
+  return {
+    items: counterCart,
+    name: document.getElementById('counter-customer-name').value,
+    phone: document.getElementById('counter-customer-phone').value,
+    note: document.getElementById('counter-special-request').value,
+    points: document.getElementById('counter-wallet-redeem').value,
+    split: counterBillSplit,
+  };
+}
+function rememberCounterDraft() {
+  const state = counterDraftState(), signature = JSON.stringify(state);
+  if (!counterDraftBaseSignature) { counterDraftBaseSignature = signature; return; }
+  if (signature === counterDraftBaseSignature) { counterWorkspaceDrafts.delete(counterDraftKey()); return; }
+  counterWorkspaceDrafts.set(counterDraftKey(), JSON.parse(JSON.stringify({
+    ...state, table: counterTable, loyaltyPoints: counterLoyaltyPoints,
+    walletHidden: counterWallet.hidden,
+    baseSignature: counterDraftBaseSignature,
+  })));
+}
+function finishCounterDraft() {
+  counterWorkspaceDrafts.delete(counterDraftKey());
+  counterDraftBaseSignature = JSON.stringify(counterDraftState());
+}
 async function openCounterOrder(table = null) {
-  counterTable = table;
+  if (dineInSubmissionInProgress) return;
+  rememberCounterDraft();
+  const sameWorkspace = (!table && !counterTable) || (table && counterTable &&
+    table.area === counterTable.area && Number(table.number) === Number(counterTable.number));
+  const opening = counterPanel.hidden;
+  if (!opening && sameWorkspace) {
+    counterPanel.hidden = true;
+    syncCounterWorkspaceLayout();
+    void showTableView();
+    return;
+  }
+  const existingOrder = table?.orderId ? orderRecords.get(table.orderId) : null;
+  if (existingOrder || !sameWorkspace) {
+    clearTimeout(counterLoyaltyTimer);
+    counterBillSplit = null;
+    counterCart = (existingOrder?.items || []).map(item => ({
+      ...item, price: Number(String(item.price || 0).replace(/[^0-9.]/g, '')),
+    }));
+    counterLoyaltyPoints = 0;
+    document.getElementById('counter-customer-name').value = existingOrder?.customer_name || '';
+    document.getElementById('counter-customer-phone').value = String(existingOrder?.customer_phone || '').startsWith('walkin-') ? '' : existingOrder?.customer_phone || '';
+    document.getElementById('counter-special-request').value = existingOrder?.special_request || '';
+    document.getElementById('counter-wallet-redeem').value = '0';
+    document.getElementById('counter-order-status').textContent = '';
+    counterWallet.hidden = true;
+  }
+  counterTable = table ? {
+    ...table, expectedUpdatedAt: existingOrder?.order_version || existingOrder?.updated_at,
+    originalItems: JSON.parse(JSON.stringify(existingOrder?.items || [])),
+    discountAmount: Math.max(0, Number(existingOrder?.discount_amount || 0)),
+    redeemedPoints: Math.max(0, Number(existingOrder?.loyalty_points_redeemed || 0)),
+    redemptionAmount: Number(existingOrder?.loyalty_points_redeemed || 0) > 0
+      ? Math.max(0, counterCart.reduce((sum, item) => sum + counterItemTotal(item), 0) - Number(existingOrder?.total || 0) - Number(existingOrder?.discount_amount || 0))
+      : 0,
+  } : null;
+  counterDraftActor = window.currentEmployee?.id || '';
+  const draft = counterWorkspaceDrafts.get(counterDraftKey());
+  if (draft) {
+    counterTable = draft.table;
+    counterCart = draft.items;
+    counterBillSplit = draft.split;
+    counterLoyaltyPoints = draft.loyaltyPoints;
+    counterWallet.hidden = draft.walletHidden;
+    document.getElementById('counter-customer-name').value = draft.name;
+    document.getElementById('counter-customer-phone').value = draft.phone;
+    document.getElementById('counter-special-request').value = draft.note;
+    document.getElementById('counter-wallet-redeem').value = draft.points;
+    counterDraftBaseSignature = draft.baseSignature;
+  } else counterDraftBaseSignature = JSON.stringify(counterDraftState());
   const isDineIn = !!table;
   document.getElementById('counter-workspace-badge').textContent = isDineIn ? 'Dine-in' : 'Takeaway';
   const title = document.querySelector('#counter-order-panel .counter-order-head h2');
@@ -1220,13 +1422,6 @@ async function openCounterOrder(table = null) {
   }
   if (dineInActions) dineInActions.hidden = !isDineIn;
   if (placeButton) placeButton.hidden = isDineIn;
-  const opening = counterPanel.hidden;
-  if (!opening) {
-    counterPanel.hidden = true;
-    syncCounterWorkspaceLayout();
-    void showTableView();
-    return;
-  }
   closeOpenPanels('counter');
   counterPanel.hidden = false;
   syncCounterWorkspaceLayout();
@@ -1261,7 +1456,39 @@ let splitMode = 'equal',
   splitItemAssignments = [],
   splitPercentages = [50, 50];
 function counterItemTotal(item) {
-  return (Number(item.price) + (item.style ? 10 : 0)) * Number(item.quantity || 0);
+  return (Number(item.price) + (item.style ? 10 : 0) + window.RedLanternAddons.lineModifierTotal(item)) * Number(item.quantity || 0);
+}
+function counterBillAmounts() {
+  const subtotal = counterCart.reduce((sum, item) => sum + counterItemTotal(item), 0);
+  const requested = Math.max(0, Math.floor(Number(document.getElementById('counter-wallet-redeem')?.value || 0)));
+  const discount = counterTable?.orderId ? counterTable.discountAmount || 0 : 0;
+  const redemption = counterTable?.orderId ? counterTable.redemptionAmount || 0
+    : counterLoyaltyPoints >= 100 ? Math.min(counterLoyaltyPoints, subtotal, requested) : 0;
+  return { subtotal, discount, redemption, total: Math.max(0, subtotal - discount - redemption) };
+}
+function setCounterSubmitting(submitting) {
+  dineInSubmissionInProgress = submitting;
+  counterPanel.setAttribute('aria-busy', String(submitting));
+  document.querySelectorAll('.counter-menu, .counter-customer, #counter-cart-items, #counter-clear, #dine-in-actions, #counter-place-order, .fulfillment-actions')
+    .forEach(element => { element.inert = submitting; });
+}
+function counterLineIdentity(line) {
+  return JSON.stringify([
+    line.name || '', line.category || '', line.portion || '', line.style || '',
+    line.note || '', line.menuType || 'food', line.courseOverride || '',
+    window.RedLanternAddons.selectionFingerprint(line.modifiers),
+  ]);
+}
+function counterDraftEditsExistingItems() {
+  const matched = new Set();
+  return (counterTable?.originalItems || []).some(original => {
+    const index = counterCart.findIndex((line, index) => !matched.has(index) &&
+      (original.lineId ? line.lineId === original.lineId : counterLineIdentity(line) === counterLineIdentity(original)));
+    if (index < 0) return true;
+    matched.add(index);
+    const current = counterCart[index];
+    return counterLineIdentity(current) !== counterLineIdentity(original) || Number(current.quantity) < Number(original.quantity);
+  });
 }
 function splitParts(count) {
   return Array.from({ length: count }, (_, index) => ({ label: `Part ${index + 1}`, items: [] }));
@@ -1269,7 +1496,8 @@ function splitParts(count) {
 function renderSplitBill() {
   const content = document.getElementById('split-bill-content');
   if (!content) return;
-  const total = counterCart.reduce((sum, item) => sum + counterItemTotal(item), 0);
+  const { total, subtotal } = counterBillAmounts();
+  const share = subtotal > 0 ? total / subtotal : 0;
   const counts = [2, 3, 4, 5, 6, 7, 8];
   if (splitMode === 'equal')
     content.innerHTML = `<div class="split-panel"><b>How many portions do you want to divide this bill into?</b><div class="split-counts">${counts.map((count) => `<button type="button" data-split-count="${count}" class="${count === splitPartCount ? 'is-active' : ''}">${count}</button>`).join('')}<input id="split-custom-count" type="number" min="2" max="20" value="${splitPartCount}" aria-label="Custom number of portions"></div><div class="split-group-list">${splitPercentages.map((percentage, index) => `<label class="split-group-row"><span><b>Part ${index + 1}</b><small>${counterMoney((total * percentage) / 100)}</small></span><span><input type="number" min="0.01" max="100" step="0.01" value="${percentage}" data-split-percentage="${index}"> %</span></label>`).join('')}</div><div class="split-summary">The percentages must total <b>100%</b>. Use equal shares or adjust each part.</div></div>`;
@@ -1280,7 +1508,7 @@ function renderSplitBill() {
     counterCart.forEach((item) =>
       groups.find(([category]) => category === (item.category || 'Other'))[1].push(item)
     );
-    content.innerHTML = `<div class="split-panel"><b>Group items by menu category</b><p>Each category below will print as its own bill.</p><div class="split-group-list">${groups.map(([category, items]) => `<div class="split-group-row"><span><b>${esc(category)}</b><small>${items.map((item) => `${item.quantity}× ${esc(item.name)}`).join(', ')}</small></span><b>${counterMoney(items.reduce((sum, item) => sum + counterItemTotal(item), 0))}</b></div>`).join('')}</div></div>`;
+    content.innerHTML = `<div class="split-panel"><b>Group items by menu category</b><p>Each category below will print as its own bill.</p><div class="split-group-list">${groups.map(([category, items]) => `<div class="split-group-row"><span><b>${esc(category)}</b><small>${items.map((item) => `${item.quantity}× ${esc(item.name)}`).join(', ')}</small></span><b>${counterMoney(items.reduce((sum, item) => sum + counterItemTotal(item), 0) * share)}</b></div>`).join('')}</div></div>`;
   } else {
     const options = splitParts(splitPartCount)
       .map((part, index) => `<option value="${index}">${part.label}</option>`)
@@ -1293,7 +1521,7 @@ function renderSplitBill() {
       )
       .join(
         ''
-      )}</div></div><div class="split-item-list">${counterCart.map((item, index) => `<label class="split-item-row"><span><b>${Number(item.quantity)}× ${esc(item.name)}</b><small>${esc(item.category || 'Other')}${item.portion ? ` · ${esc(item.portion)}` : ''} · ${counterMoney(counterItemTotal(item))}</small></span><select data-split-item="${index}">${options.replace(`value="${splitItemAssignments[index] || 0}"`, `value="${splitItemAssignments[index] || 0}" selected`)}</select></label>`).join('')}</div></div>`;
+      )}</div></div><div class="split-item-list">${counterCart.map((item, index) => `<label class="split-item-row"><span><b>${Number(item.quantity)}× ${esc(item.name)}</b><small>${esc(item.category || 'Other')}${item.portion ? ` · ${esc(item.portion)}` : ''} · ${counterMoney(counterItemTotal(item) * share)}</small></span><select data-split-item="${index}">${options.replace(`value="${splitItemAssignments[index] || 0}"`, `value="${splitItemAssignments[index] || 0}" selected`)}</select></label>`).join('')}</div></div>`;
   }
   splitBillDialog
     .querySelectorAll('[data-split-mode]')
@@ -1320,6 +1548,10 @@ function openSplitBill() {
 function saveSplitBill() {
   let parts;
   if (splitMode === 'equal') {
+    if (splitPercentages.some(value => !Number.isFinite(Number(value)) || Number(value) <= 0 || Number(value) > 100)) {
+      alert('Every split percentage must be greater than zero and no more than 100.');
+      return;
+    }
     const percentageTotal = splitPercentages.reduce((sum, value) => sum + Number(value || 0), 0);
     if (Math.abs(percentageTotal - 100) > 0.01) {
       alert(`Percentages must total 100% (currently ${percentageTotal.toFixed(2)}%).`);
@@ -1566,6 +1798,14 @@ function renderTableView() {
 }
 
 async function showTableView() {
+  // The floor always represents the current session, regardless of the last
+  // search or history date selected in the live orders panel.
+  orderView = 'current';
+  historyAll = false;
+  if (orderSearch) orderSearch.value = '';
+  document.querySelectorAll('[data-order-view]').forEach(tab => tab.classList.toggle('is-active', tab.dataset.orderView === 'current'));
+  const dateWrap = document.getElementById('history-date-wrap');
+  if (dateWrap) dateWrap.hidden = true;
   closeOpenPanels('tables');
   tableViewPanel.hidden = false;
   if (Array.isArray(operationsConfig.tableAreas) && operationsConfig.tableAreas.length)
@@ -1616,6 +1856,7 @@ function openMoveTable(orderId) {
     return;
   }
   moveTableDialog.dataset.orderId = orderId;
+  moveTableDialog.dataset.orderVersion = order.order_version || order.updated_at || '';
   moveTableDialog.dataset.mode = 'table';
   document.getElementById('move-table-copy').textContent =
     `Choose an available destination for ${order.table_area} · Table ${String(order.table_number).padStart(2, '0')}.`;
@@ -1694,6 +1935,7 @@ moveTableDialog.addEventListener('click', async (event) => {
       orderId: moveTableDialog.dataset.orderId,
       tableArea,
       tableNumber: Number(tableNumber),
+      expectedUpdatedAt: moveTableDialog.dataset.orderVersion || undefined,
     };
     if (
       await queueWhenOffline('order-table', payload, () => {
@@ -1712,7 +1954,7 @@ moveTableDialog.addEventListener('click', async (event) => {
     const response = await fetch(`/api/orders/${encodeURIComponent(payload.orderId)}/table`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tableArea, tableNumber: Number(tableNumber) }),
+      body: JSON.stringify({ tableArea, tableNumber: Number(tableNumber), expectedUpdatedAt: payload.expectedUpdatedAt }),
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || 'Unable to move the table.');
@@ -1914,7 +2156,7 @@ const esc = (value) =>
     /[&<>"']/g,
     (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' })[char]
   );
-const money = (value) => `₹${Number(value || 0).toFixed(0)}`;
+const money = counterMoney;
 const fulfillmentLabel = (order) =>
   order?.mode === 'table'
     ? `${order.table_area || 'Dining'} · Table ${String(order.table_number || '').padStart(2, '0')}`
@@ -1934,7 +2176,7 @@ const toPushKey = (value) => {
   return Uint8Array.from(raw, (character) => character.charCodeAt(0));
 };
 
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('/orders-sw.js?v=21', { updateViaCache: 'none' }).then(registration => registration.update()).catch(() => {});
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/orders-sw.js?v=22', { scope: '/order', updateViaCache: 'none' }).then(registration => registration.update()).catch(() => {});
 document.getElementById('enable-notifications')?.addEventListener('click', async () => {
   closeOpenPanels();
   const button = document.getElementById('enable-notifications');
@@ -1983,22 +2225,93 @@ document.getElementById('enable-notifications')?.addEventListener('click', async
 });
 
 async function loadOrders() {
-  if (ordersRefreshInFlight) return;
-  ordersRefreshInFlight = true;
+  ordersRefreshRequested = true;
+  if (ordersRefreshInFlight) return ordersRefreshInFlight;
+  ordersRefreshInFlight = (async () => {
+    do {
+      ordersRefreshRequested = false;
+      await refreshOrders();
+    } while (ordersRefreshRequested);
+  })();
   try {
-    let query = String(orderSearch?.value || '')
-      .replace(/\D/g, '')
-      .slice(0, 16);
-    const date = historyAll ? '' : String(historyDate?.value || '');
-    const response = await fetch(
-      `/api/orders?search=${encodeURIComponent(query)}&history=${orderView === 'history' ? '1' : '0'}&date=${encodeURIComponent(date)}`,
+    await ordersRefreshInFlight;
+  } finally {
+    ordersRefreshInFlight = null;
+  }
+}
+function orderReadSelection() {
+  return {
+    query: String(orderSearch?.value || '').replace(/\D/g, '').slice(0, 16),
+    view: orderView,
+    date: orderView === 'history' && !historyAll ? String(historyDate?.value || '') : '',
+  };
+}
+function renderOrders(rows) {
+  const visible = rows.filter(order =>
+    (orderStatusFilter === 'all' || order.status === orderStatusFilter) &&
+    (!fulfillmentFilter || String(order.fulfillment_type || '').toLowerCase() === fulfillmentFilter));
+  root.innerHTML = visible.map(renderOrder).join('') || '<div class="empty-state">No orders in this view.</div>';
+  renderedOrdersSignature = '';
+  hasRenderedOrders = true;
+  cacheTableOrders([...orderRecords.values()]);
+  if (!tableViewPanel.hidden) renderTableView();
+}
+function validateOrderQuantities(order, quantities) {
+  if (quantities.length !== order.items.length || quantities.some(quantity => !Number.isInteger(quantity) || quantity < 0 || quantity > 20))
+    throw new Error('Enter whole item quantities from 0 to 20.');
+  if (!quantities.some(quantity => quantity > 0)) throw new Error('Keep at least one item, or cancel the order.');
+  const originalSubtotal = order.items.reduce((sum, item) => sum + counterItemTotal(item), 0);
+  const nextSubtotal = order.items.reduce((sum, item, index) => sum + counterItemTotal({ ...item, quantity: quantities[index] }), 0);
+  const deductions = Math.max(0, originalSubtotal - Number(order.total || 0));
+  if (nextSubtotal < deductions) throw new Error('The changed bill cannot be lower than its existing discounts and wallet deduction.');
+}
+function applyOrderQuantities(order, quantities) {
+  const originalSubtotal = order.items.reduce((sum, item) => sum + counterItemTotal(item), 0);
+  const deduction = originalSubtotal - Number(order.total ?? originalSubtotal);
+  order.items = order.items.map((item, index) => ({ ...item, quantity: quantities[index] })).filter(item => item.quantity > 0);
+  order.total = Math.max(0, order.items.reduce((sum, item) => sum + counterItemTotal(item), 0) - deduction);
+}
+async function refreshOrders() {
+  const authRevision = ordersAuthRevision;
+  const selection = orderReadSelection();
+  let { query } = selection;
+  const { date, view } = selection;
+  try {
+    const response = await fetchOrdersService(
+      `/api/orders?search=${encodeURIComponent(query)}&history=${view === 'history' ? '1' : '0'}&date=${encodeURIComponent(date)}`,
       { cache: 'no-store' }
     );
+    if (authRevision !== ordersAuthRevision) return;
+    if ([401, 403].includes(response.status)) {
+      if (window.RedLanternAuthCache) await window.RedLanternAuthCache.clearStaffData();
+      else clearPrivateOrdersView();
+      return;
+    }
     if (!response.ok) throw new Error('Unable to refresh orders.');
-    const rows = await response.json();
+    let rows = await response.json();
+    if (authRevision !== ordersAuthRevision) return;
     if (!Array.isArray(rows)) throw new Error('Unable to read orders. Please refresh.');
-    orderRecords = new Map(rows.map((order) => [order.id, order]));
-    cacheTableOrders(rows);
+    // A slow response belongs to the view that requested it. Fetch the latest
+    // selection before replacing the screen or any current-session snapshots.
+    if (JSON.stringify(selection) !== JSON.stringify(orderReadSelection())) {
+      ordersRefreshRequested = true;
+      return;
+    }
+    if (view === 'current') {
+      const pending = pendingItemEdits();
+      rows = rows.map(order => {
+        const edit = pending[order.id];
+        return edit?.order && (!edit.actorEmployeeId || String(edit.actorEmployeeId) === String(window.currentEmployee?.id || '')) ? edit.order : order;
+      });
+    }
+    displayedOrderRecords = new Map(rows.map(order => [order.id, order]));
+    if (view === 'current' && !query) {
+      const offline = [...orderRecords.values()].filter(order => String(order.id).startsWith('offline:'));
+      orderRecords = new Map([...rows, ...offline].map(order => [order.id, order]));
+      cacheTableOrders([...orderRecords.values()]);
+    } else if (view === 'current') {
+      rows.forEach(order => orderRecords.set(order.id, order));
+    }
     const orderDay = response.headers.get('X-Orders-Day') || '';
     const sessionOpen = response.headers.get('X-Orders-Session') !== 'closed';
     if (activeOrderDay && orderDay && activeOrderDay !== orderDay && orderSearch) {
@@ -2076,6 +2389,7 @@ async function loadOrders() {
             ? `${visibleRows.length} ${orderStatusFilter === 'all' ? 'current' : orderStatusFilter} order${visibleRows.length === 1 ? '' : 's'}`
             : 'Session closed · orders archived';
   } catch (error) {
+    if (authRevision !== ordersAuthRevision) return;
     if (!hasRenderedOrders) {
       root.innerHTML = `<div class="empty-state">${esc(error.message)}</div>`;
       renderedOrdersSignature = '';
@@ -2089,7 +2403,7 @@ async function loadOrders() {
         source: 'live orders refresh',
       });
   } finally {
-    ordersRefreshInFlight = false;
+    root.setAttribute('aria-busy', 'false');
   }
 }
 
@@ -2104,7 +2418,7 @@ function renderOrder(order) {
     0
   );
   const storedTotal = Number(order.total);
-  const total = storedTotal > 0 ? storedTotal : fallbackTotal;
+  const total = order.total != null && Number.isFinite(storedTotal) && storedTotal >= 0 ? storedTotal : fallbackTotal;
   const age = Math.max(0, Math.floor((Date.now() - new Date(order.created_at)) / 60000));
   const placedAt = new Intl.DateTimeFormat('en-IN', {
     timeZone: 'Asia/Kolkata',
@@ -2150,9 +2464,9 @@ async function setStatus(id, status, reason = '') {
   try {
     if (
       await queueWhenOffline('order-status', { orderId: id, status, reason }, () => {
-        const order = orderRecords.get(id);
+        const order = displayedOrderRecords.get(id) || orderRecords.get(id);
         if (order) order.status = status;
-        renderOrders([...orderRecords.values()]);
+        renderOrders([...displayedOrderRecords.values()]);
       })
     )
       return;
@@ -2207,7 +2521,9 @@ async function cancelOrder(id) {
 }
 
 function openModifyOrder(id) {
-  const order = orderRecords.get(id);
+  try { assertNoPendingItemEdit(id); }
+  catch (error) { alert(error.message); return; }
+  const order = displayedOrderRecords.get(id) || orderRecords.get(id);
   if (!order || !Array.isArray(order.items)) return;
   let dialog = document.getElementById('modify-order-dialog');
   if (!dialog) {
@@ -2232,16 +2548,14 @@ function openModifyOrder(id) {
       const quantities = [...dialog.querySelectorAll('[data-modify-quantity]')].map((input) =>
         Number(input.value || 0)
       );
+      validateOrderQuantities(order, quantities);
       const reason = dialog.querySelector('#employee-item-edit-reason')?.value.trim() || '';
       if (window.currentEmployee?.requireEditReason !== false && window.currentEmployee && reason.length < 3) throw new Error('Enter a reason for editing or deleting KOT items.');
       if (
-        await queueWhenOffline('order-items', { orderId: id, quantities, reason, expectedUpdatedAt: order.updated_at }, () => {
-          const order = orderRecords.get(id);
-          if (order)
-            order.items = (order.items || [])
-              .map((item, index) => ({ ...item, quantity: quantities[index] }))
-              .filter((item) => item.quantity > 0);
-          renderOrders([...orderRecords.values()]);
+        await queueWhenOffline('order-items', { orderId: id, quantities, reason, expectedUpdatedAt: order.order_version || order.updated_at }, () => {
+          const order = displayedOrderRecords.get(id) || orderRecords.get(id);
+          if (order) applyOrderQuantities(order, quantities);
+          renderOrders([...displayedOrderRecords.values()]);
         })
       ) {
         dialog.close();
@@ -2250,7 +2564,7 @@ function openModifyOrder(id) {
       const response = await fetch(`/api/orders/${encodeURIComponent(id)}/items`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ quantities, reason, expectedUpdatedAt: order.updated_at }),
+        body: JSON.stringify({ quantities, reason, expectedUpdatedAt: order.order_version || order.updated_at }),
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || 'Unable to modify this order.');
@@ -2266,38 +2580,46 @@ function openModifyOrder(id) {
 function splitReceiptParts(receipt, split) {
   if (!split?.parts?.length) return [receipt];
   const priceOf = (item) =>
-    Number(String(item.price || 0).replace(/[^0-9.]/g, '')) + (item.style ? 10 : 0);
-  const total = Math.max(
-    0,
-    Number(receipt.total) ||
-      (receipt.items || []).reduce(
-        (sum, item) => sum + priceOf(item) * Number(item.quantity || 0),
-        0
-      )
-  );
+    Number(String(item.price || 0).replace(/[^0-9.]/g, '')) + (item.style ? 10 : 0) + window.RedLanternAddons.lineModifierTotal(item);
+  const subtotal = (receipt.items || []).reduce((sum, item) => sum + priceOf(item) * Number(item.quantity || 0), 0);
+  const storedTotal = Number(receipt.total);
+  const total = Math.max(0, receipt.total != null && Number.isFinite(storedTotal) ? storedTotal : subtotal);
   const percentageShares = split.mode === 'equal';
-  let remaining = Math.round(total * 100);
+  const weights = split.parts.map(part => percentageShares ? Number(part.percentage)
+    : (part.items || []).reduce((sum, item) => sum + priceOf(item) * Number(item.quantity || 0), 0));
+  const weightTotal = weights.reduce((sum, weight) => sum + weight, 0);
+  if (weights.some(weight => !Number.isFinite(weight) || weight < 0) || weightTotal <= 0)
+    throw new Error('Assign valid amounts to every split bill.');
+  const distribute = units => {
+    const exact = weights.map(weight => units * weight / weightTotal);
+    const allocated = exact.map(Math.floor);
+    let remaining = units - allocated.reduce((sum, amount) => sum + amount, 0);
+    const roundingOrder = exact.map((amount, index) => ({ index, fraction: amount - allocated[index] }))
+      .sort((a, b) => b.fraction - a.fraction || a.index - b.index);
+    for (let index = 0; remaining > 0; index += 1, remaining -= 1)
+      allocated[roundingOrder[index % roundingOrder.length].index] += 1;
+    return allocated;
+  };
+  const centsByPart = distribute(Math.round(total * 100));
+  const discountCents = distribute(Math.max(0, Math.round(Number(receipt.discount_amount || 0) * 100)));
+  const redeemedPoints = distribute(Math.max(0, Math.floor(Number(receipt.loyalty_points_redeemed || 0))));
+  const explicitWallet = Number(receipt.loyalty_discount_amount);
+  const walletAmount = receipt.loyalty_discount_amount != null && Number.isFinite(explicitWallet) && explicitWallet >= 0
+    ? explicitWallet : Math.max(0, subtotal - total - Number(receipt.discount_amount || 0));
+  const walletCents = distribute(Math.round(walletAmount * 100));
   return split.parts
     .map((part, index) => {
       const items = percentageShares ? [] : (part.items || []).map((item) => ({ ...item }));
-      const itemTotal = items.reduce(
-        (sum, item) => sum + priceOf(item) * Number(item.quantity || 0),
-        0
-      );
-      const cents = percentageShares
-        ? index === split.parts.length - 1
-          ? remaining
-          : Math.round((total * 100 * Number(part.percentage || 0)) / 100)
-        : Math.round(itemTotal * 100);
-      remaining -= cents;
-      const partTotal = cents / 100;
+      const partTotal = centsByPart[index] / 100;
       return {
         ...receipt,
         items: percentageShares
           ? [{ name: `Bill share — ${part.label}`, quantity: 1, price: partTotal }]
           : items,
         total: partTotal,
-        loyalty_points_redeemed: 0,
+        loyalty_points_redeemed: percentageShares ? 0 : redeemedPoints[index],
+        loyalty_discount_amount: percentageShares ? 0 : walletCents[index] / 100,
+        discount_amount: percentageShares ? 0 : discountCents[index] / 100,
         special_request: [receipt.special_request, `Split bill: ${part.label}`]
           .filter(Boolean)
           .join(' · '),
@@ -2306,7 +2628,18 @@ function splitReceiptParts(receipt, split) {
     .filter((part) => Number(part.total) > 0);
 }
 
+const manualPrintInFlight = new Map();
+const manualPrintAttempts = new Map();
 async function printOrder(id, split = null, { requireBridge = false } = {}) {
+  const key = JSON.stringify([id, split, requireBridge]);
+  if (manualPrintInFlight.has(key)) return manualPrintInFlight.get(key);
+  const request = performManualPrint(id, split, { requireBridge, key });
+  manualPrintInFlight.set(key, request);
+  try { return await request; }
+  finally { manualPrintInFlight.delete(key); }
+}
+async function performManualPrint(id, split, { requireBridge, key }) {
+  let printDispatched = false;
   try {
     const health = await readPrintBridgeHealth();
     const operationsResponse = await fetch('/api/orders/operations', { cache: 'no-store' });
@@ -2322,23 +2655,35 @@ async function printOrder(id, split = null, { requireBridge = false } = {}) {
     if (!receiptResponse.ok) throw new Error(receipt.error || 'Unable to prepare the receipt.');
     const receipts = splitReceiptParts(receipt, split);
     if (!receipts.length) throw new Error('Assign at least one item to every split bill.');
-    const manualBillRequestId = crypto.randomUUID();
+    const signature = JSON.stringify([receipt, billPrinter.deviceName, billPrinter.workstationId]);
+    let attempt = manualPrintAttempts.get(key);
+    if (!attempt || attempt.signature !== signature) {
+      attempt = { signature, requestId: crypto.randomUUID() };
+      manualPrintAttempts.set(key, attempt);
+    }
     for (const [partIndex, part] of receipts.entries()) {
+      printDispatched = true;
       const printed = await fetchPrintBridge('/v1/print-bill', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          printJobId: `manual-bill:${id}:${manualBillRequestId}:${partIndex}`,
+          printJobId: `manual-bill:${id}:${attempt.requestId}:${partIndex}`,
           printerName: billPrinter.deviceName,
           order: part,
           settings: printerSettingsFor(billPrinter, 'bill'),
         }),
       });
-      if (!printed.ok)
+      const body = await printed.json().catch(() => ({}));
+      if (!printed.ok || body.ok === false)
         throw new Error(
-          (await printed.json().catch(() => ({}))).error || 'Bill printer did not accept the job.'
+          body.error || 'Bill printer did not accept the job.'
         );
+      if (body.pending || printed.status === 202)
+        throw temporaryPrintError(body.detail || 'The bill printer is still processing this receipt. Retry to check the same print job.');
+      if (body.uncertain)
+        throw new Error(body.detail || 'This receipt needs printer review before it can be marked printed.');
     }
+    manualPrintAttempts.delete(key);
     return;
   } catch (error) {
     reportOrdersDiagnostic({
@@ -2346,7 +2691,7 @@ async function printOrder(id, split = null, { requireBridge = false } = {}) {
       message: `Direct bill reprint failed: ${error.message}`,
       source: 'manual bill printing',
     });
-    if (split || requireBridge) throw error;
+    if (split || requireBridge || printDispatched) throw error;
   }
   const popup = window.open('', 'red-lantern-receipt', 'popup=yes,width=420,height=720');
   if (!popup) {
@@ -2361,15 +2706,21 @@ async function printOrder(id, split = null, { requireBridge = false } = {}) {
     const order = await response.json();
     if (!response.ok) throw new Error(order.error || 'Unable to prepare this receipt.');
     const items = Array.isArray(order.items) ? order.items : [];
+    const receiptMoney = value => {
+      const amount = Number(value) || 0;
+      return `₹${Number.isInteger(amount) ? amount : amount.toFixed(2)}`;
+    };
     const itemPrice = (item) =>
-      Number(String(item.price || '').replace(/[^0-9.]/g, '')) + (item.style ? 10 : 0);
+      Number(String(item.price || '').replace(/[^0-9.]/g, '')) + (item.style ? 10 : 0) + window.RedLanternAddons.lineModifierTotal(item);
     const quantity = items.reduce((total, item) => total + Number(item.quantity || 0), 0);
     const calculatedTotal = items.reduce(
       (total, item) => total + Number(item.quantity || 0) * itemPrice(item),
       0
     );
     const grandTotal = order.total != null && Number.isFinite(Number(order.total)) && Number(order.total) >= 0 ? Number(order.total) : calculatedTotal;
-    const walletDiscount = Math.max(0, Math.floor(Number(order.loyalty_points_redeemed || 0)));
+    const explicitWallet = Number(order.loyalty_discount_amount);
+    const walletDiscount = order.loyalty_discount_amount != null && Number.isFinite(explicitWallet) && explicitWallet >= 0
+      ? explicitWallet : Math.max(0, calculatedTotal - grandTotal - Number(order.discount_amount || 0));
     const dailyNumber = Number(order.daily_order_number);
     const token =
       Number.isFinite(dailyNumber) && dailyNumber > 0 ? String(dailyNumber).padStart(2, '0') : '—';
@@ -2394,12 +2745,12 @@ async function printOrder(id, split = null, { requireBridge = false } = {}) {
       .map((item) => {
         const label = `${item.name || 'Item'}${item.portion ? ` (${item.portion})` : ''}${item.style ? ` — ${item.style}` : ''}`;
         const qty = Number(item.quantity || 0);
-        return `<tr><td class="item-name">${esc(label)}</td><td>${qty}</td><td>${money(itemPrice(item))}</td><td>${money(qty * itemPrice(item))}</td></tr>`;
+        return `<tr><td class="item-name">${esc(label)}</td><td>${qty}</td><td>${receiptMoney(itemPrice(item))}</td><td>${receiptMoney(qty * itemPrice(item))}</td></tr>`;
       })
       .join('');
     popup.document.open();
     popup.document.write(
-      `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Red Lantern · Token ${esc(token)}</title><style>@page{size:80mm auto;margin:4mm}*{box-sizing:border-box}body{width:72mm;margin:0;color:#111;font:12px Arial,sans-serif}.center{text-align:center}.restaurant{font-size:18px;font-weight:800;letter-spacing:.2px}.sub{margin:3px 0;color:#333}.rule{border:0;border-top:1px dashed #222;margin:10px 0}.wallet{padding:7px 0;font-weight:700}.details{line-height:1.55}.details b{display:inline-block;min-width:68px}table{width:100%;border-collapse:collapse;margin-top:8px;font-size:11px}th{padding:5px 0;border-bottom:1px solid #222;text-align:right;font-size:10px}th:first-child{text-align:left}td{padding:5px 0;vertical-align:top;text-align:right;border-bottom:1px dotted #bbb}.item-name{text-align:left;padding-right:5px}.totals{display:flex;justify-content:space-between;font-size:13px;font-weight:700}.grand{display:flex;justify-content:space-between;margin-top:6px;font-size:16px;font-weight:800}.note{margin-top:8px;font-size:10px;line-height:1.4}.footer{margin-top:14px;font-size:10px;text-align:center;color:#333}@media print{body{width:72mm}}</style></head><body><div class="center"><div class="restaurant">RED LANTERN RESTAURANT</div><div class="sub">Restaurant Mobile Number: 9922853605</div><div class="sub">Direct Order Receipt</div></div><hr class="rule"><div class="wallet">Wallet Points: ${Number(order.loyalty_points || 0)}</div><div class="details"><div><b>Name:</b> ${esc(order.customer_name || 'Not provided')}</div><div><b>Mobile:</b> ${esc(order.customer_phone || '—')}</div><div><b>Type:</b> ${esc(orderType)}</div><div><b>Token No:</b> ${esc(token)}</div><div><b>Placed:</b> ${esc(placedAt)}</div></div>${order.special_request ? `<div class="note"><b>Special request:</b> ${esc(order.special_request)}</div>` : ''}<hr class="rule"><table><thead><tr><th>Item</th><th>Qty</th><th>Price</th><th>Amount</th></tr></thead><tbody>${itemRows}</tbody></table><hr class="rule"><div class="totals"><span>Total Qty: ${quantity}</span><span>Items: ${items.length}</span></div><div class="totals"><span>Subtotal</span><span>${money(calculatedTotal)}</span></div>${Number(order.discount_amount) > 0 ? `<div class="totals"><span>Staff discount</span><span>−${money(Number(order.discount_amount))}</span></div>` : ''}${walletDiscount ? `<div class="totals"><span>Wallet points discount</span><span>−${money(walletDiscount)}</span></div>` : ''}<div class="grand"><span>GRAND TOTAL</span><span>${money(grandTotal)}</span></div><hr class="rule"><div class="footer">Thank you for ordering with us!<br>Red Lantern Restaurant</div><script>window.onload=()=>setTimeout(()=>window.print(),150);window.onafterprint=()=>window.close();<\/script></body></html>`
+      `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Red Lantern · Token ${esc(token)}</title><style>@page{size:80mm auto;margin:4mm}*{box-sizing:border-box}body{width:72mm;margin:0;color:#111;font:12px Arial,sans-serif}.center{text-align:center}.restaurant{font-size:18px;font-weight:800;letter-spacing:.2px}.sub{margin:3px 0;color:#333}.rule{border:0;border-top:1px dashed #222;margin:10px 0}.wallet{padding:7px 0;font-weight:700}.details{line-height:1.55}.details b{display:inline-block;min-width:68px}table{width:100%;border-collapse:collapse;margin-top:8px;font-size:11px}th{padding:5px 0;border-bottom:1px solid #222;text-align:right;font-size:10px}th:first-child{text-align:left}td{padding:5px 0;vertical-align:top;text-align:right;border-bottom:1px dotted #bbb}.item-name{text-align:left;padding-right:5px}.totals{display:flex;justify-content:space-between;font-size:13px;font-weight:700}.grand{display:flex;justify-content:space-between;margin-top:6px;font-size:16px;font-weight:800}.note{margin-top:8px;font-size:10px;line-height:1.4}.footer{margin-top:14px;font-size:10px;text-align:center;color:#333}@media print{body{width:72mm}}</style></head><body><div class="center"><div class="restaurant">RED LANTERN RESTAURANT</div><div class="sub">Restaurant Mobile Number: 9922853605</div><div class="sub">Direct Order Receipt</div></div><hr class="rule"><div class="wallet">Wallet Points: ${Number(order.loyalty_points || 0)}</div><div class="details"><div><b>Name:</b> ${esc(order.customer_name || 'Not provided')}</div><div><b>Mobile:</b> ${esc(order.customer_phone || '—')}</div><div><b>Type:</b> ${esc(orderType)}</div><div><b>Token No:</b> ${esc(token)}</div><div><b>Placed:</b> ${esc(placedAt)}</div></div>${order.special_request ? `<div class="note"><b>Special request:</b> ${esc(order.special_request)}</div>` : ''}<hr class="rule"><table><thead><tr><th>Item</th><th>Qty</th><th>Price</th><th>Amount</th></tr></thead><tbody>${itemRows}</tbody></table><hr class="rule"><div class="totals"><span>Total Qty: ${quantity}</span><span>Items: ${items.length}</span></div><div class="totals"><span>Subtotal</span><span>${receiptMoney(calculatedTotal)}</span></div>${Number(order.discount_amount) > 0 ? `<div class="totals"><span>Staff discount</span><span>−${receiptMoney(Number(order.discount_amount))}</span></div>` : ''}${walletDiscount ? `<div class="totals"><span>Wallet points discount</span><span>−${receiptMoney(walletDiscount)}</span></div>` : ''}<div class="grand"><span>GRAND TOTAL</span><span>${receiptMoney(grandTotal)}</span></div><hr class="rule"><div class="footer">Thank you for ordering with us!<br>Red Lantern Restaurant</div><script>window.onload=()=>setTimeout(()=>window.print(),150);window.onafterprint=()=>window.close();<\/script></body></html>`
     );
     popup.document.close();
   } catch (error) {
@@ -3521,8 +3872,10 @@ function monitorPrintBridgeInstallation() {
   }, 3000);
 }
 async function loadOperations() {
+  const authRevision = ordersAuthRevision;
   const response = await fetch('/api/orders/operations', { cache: 'no-store' });
   const data = await response.json();
+  if (authRevision !== ordersAuthRevision) return;
   if (!response.ok) throw new Error(data.error || 'Unable to load Operations.');
   operationsConfig = data.config || { printers: [], routes: [] };
   if (!Array.isArray(operationsConfig.tableAreas) || !operationsConfig.tableAreas.length)
@@ -3558,12 +3911,14 @@ async function loadOperations() {
       }
     })
   );
+  const [completed, statuses] = await Promise.all([completedHistoryPromise, stationStatusPromise]);
+  if (authRevision !== ordersAuthRevision) return;
   operationKotHistory = new Map(histories);
   // Keep every KOT punched today. Restricting this to completed orders made
   // valid KOTs disappear from the record while their orders were still open.
-  completedKotHistory = await completedHistoryPromise;
+  completedKotHistory = completed;
   kitchenStationStatuses = new Map(
-    (await stationStatusPromise).map((entry) => [
+    statuses.map((entry) => [
       `${entry.order_id}::${entry.kot_number}::${entry.printer_id}`,
       entry.status,
     ])
@@ -4221,6 +4576,8 @@ viewKotDialog.addEventListener('click', async (event) => {
     order = orderRecords.get(orderId),
     index = Number(edit ? edit.dataset.viewKotEdit : button.dataset.viewKotDelete);
   if (!order || !Number.isInteger(index)) return;
+  try { assertNoPendingItemEdit(orderId); }
+  catch (error) { alert(error.message); return; }
   let quantity = 0;
   if (edit) {
     const current = Number(order.items?.[index]?.quantity || 0),
@@ -4244,11 +4601,10 @@ viewKotDialog.addEventListener('click', async (event) => {
   );
   button.disabled = true;
   try {
+    validateOrderQuantities(order, quantities);
     if (
-      await queueWhenOffline('order-items', { orderId, quantities, reason, expectedUpdatedAt: order.updated_at }, () => {
-        order.items = order.items
-          .map((item, itemIndex) => ({ ...item, quantity: quantities[itemIndex] }))
-          .filter((item) => item.quantity > 0);
+      await queueWhenOffline('order-items', { orderId, quantities, reason, expectedUpdatedAt: order.order_version || order.updated_at }, () => {
+        applyOrderQuantities(order, quantities);
         cacheTableOrders([...orderRecords.values()]);
         renderTableView();
       })
@@ -4259,7 +4615,7 @@ viewKotDialog.addEventListener('click', async (event) => {
     const response = await fetch(`/api/orders/${encodeURIComponent(orderId)}/items`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ quantities, reason, expectedUpdatedAt: order.updated_at }),
+      body: JSON.stringify({ quantities, reason, expectedUpdatedAt: order.order_version || order.updated_at }),
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok)
@@ -4291,24 +4647,11 @@ document.getElementById('table-view-content')?.addEventListener('click', async (
   if (viewOrder) {
     const order = orderRecords.get(viewOrder.dataset.viewTableOrder);
     if (!order) return;
-    counterBillSplit = null;
-    counterCart = (Array.isArray(order.items) ? order.items : []).map((item) => ({
-      ...item,
-      price: Number(String(item.price || 0).replace(/[^0-9.]/g, '')),
-    }));
     await openCounterOrder({
       area: order.table_area || 'Dining',
       number: Number(order.table_number),
       orderId: order.id,
     });
-    document.getElementById('counter-customer-name').value = order.customer_name || '';
-    document.getElementById('counter-customer-phone').value = String(
-      order.customer_phone || ''
-    ).startsWith('walkin-')
-      ? ''
-      : order.customer_phone || '';
-    document.getElementById('counter-special-request').value = order.special_request || '';
-    renderCounterOrder();
     return;
   }
   const printBill = event.target.closest('[data-print-table-bill]');
@@ -4346,9 +4689,11 @@ document.getElementById('table-view-content')?.addEventListener('click', async (
     const order = orderRecords.get(settling.dataset.settleTableOrder);
     if (!order) return;
     settleTableDialog.dataset.orderId = order.id;
+    settleTableDialog.dataset.orderVersion = order.order_version || order.updated_at || '';
+    settleTableDialog.dataset.orderTotal = String(Number(order.total || 0));
     document.getElementById('settle-table-title').textContent =
-      `Settle & Save — ${order.table_area} ${order.table_number} [₹${Number(order.total || 0).toFixed(0)}]`;
-    document.getElementById('settlement-amount').value = Number(order.total || 0).toFixed(0);
+      `Settle & Save — ${order.table_area} ${order.table_number} [₹${Number(order.total || 0).toFixed(2)}]`;
+    document.getElementById('settlement-amount').value = Number(order.total || 0).toFixed(2);
     document.getElementById('settle-table-status').textContent = '';
     settleTableDialog.showModal();
     return;
@@ -4363,28 +4708,15 @@ document.getElementById('table-view-content')?.addEventListener('click', async (
         ['saved', 'held'].includes(item.status)
     );
     if (!order) return;
-    counterBillSplit = null;
-    counterCart = (Array.isArray(order.items) ? order.items : []).map((item) => ({
-      ...item,
-      price: Number(String(item.price || 0).replace(/[^0-9.]/g, '')),
-    }));
     await openCounterOrder({
       area: order.table_area || 'Dining',
       number: Number(order.table_number),
+      orderId: order.id,
     });
-    document.getElementById('counter-customer-name').value = order.customer_name || '';
-    document.getElementById('counter-customer-phone').value = String(
-      order.customer_phone || ''
-    ).startsWith('walkin-')
-      ? ''
-      : order.customer_phone || '';
-    document.getElementById('counter-special-request').value = order.special_request || '';
-    renderCounterOrder();
     return;
   }
   const table = event.target.closest('[data-dine-table-number]');
   if (!table) return;
-  counterBillSplit = null;
   const existing = [...orderRecords.values()].find(
     (order) =>
       order.mode === 'table' &&
@@ -4397,16 +4729,6 @@ document.getElementById('table-view-content')?.addEventListener('click', async (
       'This table order is safely stored on this device and waiting to sync. Reconnect to continue editing it.'
     );
     return;
-  }
-  if (!existing) {
-    counterCart = [];
-    counterLoyaltyPoints = 0;
-    document.getElementById('counter-customer-name').value = '';
-    document.getElementById('counter-customer-phone').value = '';
-    document.getElementById('counter-special-request').value = '';
-    const redeem = document.getElementById('counter-wallet-redeem');
-    if (redeem) redeem.value = '0';
-    document.getElementById('counter-order-status').textContent = '';
   }
   openCounterOrder({
     area: table.dataset.dineTableArea || 'Dining',
@@ -4449,7 +4771,12 @@ settleTableDialog.addEventListener('click', async (event) => {
       orderId = settleTableDialog.dataset.orderId,
       amount = Number(document.getElementById('settlement-amount').value || 0),
       requestId = settlementRequestId(),
-      payload = { orderId, paymentType, amount, requestId };
+      payload = { orderId, paymentType, amount, requestId, expectedUpdatedAt: settleTableDialog.dataset.orderVersion || undefined };
+    const total = Number(settleTableDialog.dataset.orderTotal);
+    if (!['cash', 'upi', 'card', 'due', 'other'].includes(paymentType) || !Number.isFinite(amount) || amount < 0)
+      throw new Error('Enter a valid payment method and a nonnegative settlement amount.');
+    if (paymentType !== 'due' && Math.round(amount * 100) < Math.round(total * 100))
+      throw new Error('The payment amount must cover the full bill. Choose Due to record an unpaid bill.');
     settlementPayload = payload;
     const applyLocal = () => {
       const order = orderRecords.get(orderId);
@@ -4464,7 +4791,7 @@ settleTableDialog.addEventListener('click', async (event) => {
     const response = await fetch(`/api/orders/${encodeURIComponent(orderId)}/settle`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Settlement-Id': requestId },
-      body: JSON.stringify({ paymentType, amount, requestId }),
+      body: JSON.stringify({ paymentType, amount, requestId, expectedUpdatedAt: payload.expectedUpdatedAt }),
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || 'Unable to settle this table.');
@@ -4533,14 +4860,17 @@ document.getElementById('counter-menu-items')?.addEventListener('click', (event)
     (line) =>
       line.name === item.name &&
       line.category === item.category &&
-      line.portion === portion &&
-      !line.style
+      String(line.portion || '') === portion &&
+      !line.style && !line.note && !line.courseOverride &&
+      !window.RedLanternAddons.selectionFingerprint(line.modifiers) &&
+      (line.menuType || 'food') === (item.menuType || 'food')
   );
   if (existing) existing.quantity += 1;
   else
     counterCart.push({
       name: item.name,
       category: item.category,
+      menuType: item.menuType || 'food',
       portion,
       style: '',
       price,
@@ -4563,14 +4893,17 @@ document.getElementById('counter-choice-dialog')?.addEventListener('click', (eve
     (line) =>
       line.name === counterChoiceItem.name &&
       line.category === counterChoiceItem.category &&
-      line.portion === portion &&
-      line.style === style
+      String(line.portion || '') === portion &&
+      String(line.style || '') === style && !line.note && !line.courseOverride &&
+      !window.RedLanternAddons.selectionFingerprint(line.modifiers) &&
+      (line.menuType || 'food') === (counterChoiceItem.menuType || 'food')
   );
   if (existing) existing.quantity += 1;
   else
     counterCart.push({
       name: counterChoiceItem.name,
       category: counterChoiceItem.category,
+      menuType: counterChoiceItem.menuType || 'food',
       portion,
       style,
       price,
@@ -4598,25 +4931,51 @@ document.getElementById('counter-clear')?.addEventListener('click', () => {
   renderCounterOrder();
 });
 async function submitDineInAction(action) {
+  if (dineInSubmissionInProgress) return;
   const status = document.getElementById('counter-order-status');
   if (!counterTable || !counterCart.length) {
     status.textContent = 'Add at least one menu item first.';
     return;
   }
-  const button = document.querySelector(`[data-dine-action="${action}"]`);
-  if (button) button.disabled = true;
+  let reason = '';
+  if (window.currentEmployee && counterDraftEditsExistingItems()) {
+    if (!window.employeeCan('editOrders')) {
+      status.textContent = 'Editing or removing existing order items is not enabled for this staff account.';
+      return;
+    }
+    if (window.currentEmployee.requireEditReason !== false) {
+      const entered = prompt('Reason for editing or removing existing order items:');
+      if (entered === null) return;
+      reason = entered.trim();
+      if (reason.length < 3) {
+        status.textContent = 'Enter a brief reason for editing or removing existing order items.';
+        return;
+      }
+    }
+  }
+  setCounterSubmitting(true);
+  const buttons = [...document.querySelectorAll('[data-dine-action]')];
+  buttons.forEach(button => { button.disabled = true; });
   const payload = {
     clientRequestId: counterRequestId(),
+    actorEmployeeId: window.currentEmployee?.id || '',
     action,
+    reason,
     customerName: document.getElementById('counter-customer-name').value.trim(),
     customerPhone: document.getElementById('counter-customer-phone').value.trim(),
     specialRequest: document.getElementById('counter-special-request').value.trim(),
-    loyaltyPoints: Math.floor(Number(document.getElementById('counter-wallet-redeem')?.value || 0)),
+    loyaltyPoints: counterTable.orderId ? 0 : Math.floor(Number(document.getElementById('counter-wallet-redeem')?.value || 0)),
     tableArea: counterTable.area,
     tableNumber: counterTable.number,
+    tableOrderId: counterTable.orderId || '',
+    expectedUpdatedAt: counterTable.expectedUpdatedAt,
     items: counterCart.map((item) => ({ ...item })),
   };
   const tableLabel = `${counterTable.area} · Table ${String(counterTable.number).padStart(2, '0')}`;
+  const requestSignature = JSON.stringify({ ...payload, clientRequestId: undefined });
+  if (pendingDineInRequest?.signature === requestSignature)
+    payload.clientRequestId = pendingDineInRequest.requestId;
+  else pendingDineInRequest = { signature: requestSignature, requestId: payload.clientRequestId };
   let savedInBridgeLedger = false;
   let savedOrderResult = null;
   try {
@@ -4647,6 +5006,7 @@ async function submitDineInAction(action) {
     }
     const result = await sendCounterOrder(payload);
     savedOrderResult = result;
+    pendingDineInRequest = null;
     if (savedInBridgeLedger) {
       await updateBridgeLedger(payload.clientRequestId, 'synced');
       bridgeLedgerPending = Math.max(0, bridgeLedgerPending - 1);
@@ -4675,16 +5035,17 @@ async function submitDineInAction(action) {
         action === 'hold' ? `${tableLabel} is on hold.` : `${tableLabel} saved in Saved bills.`;
     counterBillSplit = null;
     counterCart = [];
+    finishCounterDraft();
     renderCounterOrder();
     await loadOrders();
     await showTableView();
   } catch (error) {
     if (savedOrderResult) {
-      counterBillSplit = null; counterCart = []; renderCounterOrder();
+      counterBillSplit = null; counterCart = []; finishCounterDraft(); renderCounterOrder();
       status.textContent = `${tableLabel}: order saved. ${error.message || 'Printing needs attention.'} Use the saved order to retry printing.`;
       await loadOrders();
     } else if (
-      (!navigator.onLine || !error.status || error.status >= 500) &&
+      (!navigator.onLine || retryableOrderError(error)) &&
       ['save', 'hold'].includes(action)
     ) {
       if (!savedInBridgeLedger) {
@@ -4693,14 +5054,20 @@ async function submitDineInAction(action) {
         saveQueuedCounterOrders(queued);
       }
       reserveOfflineTable(payload);
+      pendingDineInRequest = null;
       counterBillSplit = null;
       counterCart = [];
+      finishCounterDraft();
       renderCounterOrder();
       status.textContent = `${tableLabel} is saved offline and reserved. It will sync automatically when internet returns.`;
       updateConnectivity();
-    } else status.textContent = error.message || 'Unable to save this dine-in bill.';
+    } else {
+      if (!retryableOrderError(error)) pendingDineInRequest = null;
+      status.textContent = error.message || 'Unable to save this dine-in bill.';
+    }
   } finally {
-    if (button) button.disabled = false;
+    setCounterSubmitting(false);
+    buttons.forEach(button => { button.disabled = false; });
   }
 }
 document.getElementById('dine-in-actions')?.addEventListener('click', async (event) => {
@@ -4713,6 +5080,7 @@ document.getElementById('dine-in-actions')?.addEventListener('click', async (eve
   await submitDineInAction(action);
 });
 document.getElementById('counter-place-order')?.addEventListener('click', async () => {
+  if (dineInSubmissionInProgress) return;
   const status = document.getElementById('counter-order-status');
   if (!counterCart.length) {
     status.textContent = 'Add at least one menu item first.';
@@ -4722,6 +5090,7 @@ document.getElementById('counter-place-order')?.addEventListener('click', async 
   button.disabled = true;
   const payload = {
     clientRequestId: counterRequestId(),
+    actorEmployeeId: window.currentEmployee?.id || '',
     customerName: document.getElementById('counter-customer-name').value.trim(),
     customerPhone: document.getElementById('counter-customer-phone').value.trim(),
     specialRequest: document.getElementById('counter-special-request').value.trim(),
@@ -4752,6 +5121,7 @@ document.getElementById('counter-place-order')?.addEventListener('click', async 
     : 'Internet is unavailable — saving this order safely on this device…';
   let savedInBridgeLedger = false;
   let confirmedCounterOrder = null;
+  setCounterSubmitting(true);
   try {
     let result;
     try {
@@ -4780,6 +5150,7 @@ document.getElementById('counter-place-order')?.addEventListener('click', async 
     document.getElementById('counter-special-request').value = '';
     document.getElementById('counter-wallet-redeem').value = '0';
     counterWallet.hidden = true;
+    finishCounterDraft();
     renderCounterOrder();
     void autoPrintOrder({
       id: result.id,
@@ -4800,11 +5171,12 @@ document.getElementById('counter-place-order')?.addEventListener('click', async 
       counterCart = []; counterLoyaltyPoints = 0;
       for (const id of ['counter-customer-name', 'counter-customer-phone', 'counter-special-request']) document.getElementById(id).value = '';
       document.getElementById('counter-wallet-redeem').value = '0'; counterWallet.hidden = true;
+      finishCounterDraft();
       renderCounterOrder();
       status.textContent = `${orderLabel} order accepted. Local sync or printing is waiting and will retry automatically.`;
       void autoPrintOrder({ id: confirmedCounterOrder.id, mode: counterTable ? 'table' : 'counter', status: confirmedCounterOrder.status || 'accepted' });
       void loadOrders();
-    } else if (!navigator.onLine || !error.status || error.status >= 500) {
+    } else if (!navigator.onLine || retryableOrderError(error)) {
       if (!savedInBridgeLedger) {
         const queued = queuedCounterOrders();
         queued.push(payload);
@@ -4815,6 +5187,10 @@ document.getElementById('counter-place-order')?.addEventListener('click', async 
       document.getElementById('counter-customer-name').value = '';
       document.getElementById('counter-customer-phone').value = '';
       document.getElementById('counter-special-request').value = '';
+      counterLoyaltyPoints = 0;
+      document.getElementById('counter-wallet-redeem').value = '0';
+      counterWallet.hidden = true;
+      finishCounterDraft();
       renderCounterOrder();
       status.textContent = counterTable
         ? 'Table order saved offline and the table is reserved. It will sync automatically when internet returns.'
@@ -4829,6 +5205,7 @@ document.getElementById('counter-place-order')?.addEventListener('click', async 
       status.textContent = error.message;
     }
   } finally {
+    setCounterSubmitting(false);
     button.disabled = false;
   }
 });
@@ -5688,6 +6065,32 @@ document.getElementById('availability-schedule-form')?.addEventListener('submit'
   }
 });
 
+function clearPrivateOrdersView() {
+  ordersAuthRevision += 1;
+  ordersRefreshRequested = false;
+  orderRecords.clear(); displayedOrderRecords.clear(); known.clear();
+  operationKotHistory.clear(); completedKotHistory = []; kitchenStationStatuses.clear();
+  firstLoad = true; hasRenderedOrders = false; renderedOrdersSignature = '';
+  rememberCounterDraft();
+  counterCart = []; counterTable = null; counterBillSplit = null; counterLoyaltyPoints = 0;
+  counterDraftBaseSignature = '';
+  for (const id of ['counter-customer-name', 'counter-customer-phone', 'counter-special-request'])
+    document.getElementById(id).value = '';
+  document.getElementById('counter-wallet-redeem').value = '0';
+  document.getElementById('view-table-kot').removeAttribute('data-order-id');
+  document.getElementById('view-kot-content').replaceChildren();
+  counterWallet.hidden = true;
+  renderCounterOrder();
+  closeOpenPanels();
+  document.querySelectorAll('dialog[open]').forEach(dialog => dialog.close());
+  const message = '<div class="empty-state">Sign in to load current orders.</div>';
+  root.innerHTML = message;
+  document.getElementById('table-view-content').innerHTML = message;
+  const liveCount = document.getElementById('live-orders-count');
+  if (liveCount) liveCount.textContent = '0';
+}
+window.addEventListener('red-lantern-auth-changed', clearPrivateOrdersView);
+
 const cachedTableAreas = readCachedTableAreas();
 const cachedTableOrders = readCachedTableOrders();
 const cachedOperationsConfig = readCachedOperationsConfig();
@@ -5710,7 +6113,7 @@ if (cachedTableAreas.length) {
 void checkPrintBridgeSetup();
 loadOrders();
 showTableView();
-setInterval(() => { if (!document.hidden && navigator.onLine) void loadOrders(); }, 3000);
+setInterval(() => { if (!document.hidden && navigator.onLine && !ordersRefreshInFlight) void loadOrders(); }, 3000);
 // Cloud reconciliation is deliberately slower than the live table refresh:
 // it retries durable local work promptly without flooding the API or printers.
 setInterval(() => {

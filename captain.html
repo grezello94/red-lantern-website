@@ -443,12 +443,13 @@
         <div class="captain-move-footer"><button type="button" data-close-move>Cancel</button><button type="submit" id="captain-move-confirm" class="send-button">Move table</button></div>
       </form>
     </dialog>
+    <script src="/auth-cache.js?v=1"></script>
     <script src="/client-config.js"></script>
     <script src="/addons-domain.js?v=1"></script>
-    <script src="/order-request.js?v=2"></script>
+    <script src="/order-request.js?v=3"></script>
     <script src="/staff-domain.js?v=2"></script>
-    <script src="/captain.js?v=64"></script>
-    <script src="/captain-tools.js?v=1"></script>
+    <script src="/captain.js?v=66"></script>
+    <script src="/captain-tools.js?v=2"></script>
     <script>
       if ('serviceWorker' in navigator) {
         let reloadedForCaptainWorker = false;
@@ -459,7 +460,7 @@
           }
         });
         navigator.serviceWorker
-          .register('/captain-sw.js?v=25')
+          .register('/captain-sw.js?v=28', { scope: '/captain', updateViaCache: 'none' })
           .then((registration) => {
             registration.update().catch(() => {});
             if (registration.waiting) registration.waiting.postMessage({ type: 'SKIP_WAITING' });

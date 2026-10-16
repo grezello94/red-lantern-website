@@ -1,6 +1,16 @@
 const { normalizePaymentPlan } = require('./payments-domain');
 
 describe('payment plans', () => {
+  test('zero-value discounted bills settle without recording a collection', () => {
+    expect(normalizePaymentPlan({ total: 0, paymentType: 'cash', paymentReceived: 0 }))
+      .toMatchObject({ appliedTotal: 0, collectedTotal: 0, receivedTotal: 0, outstanding: 0 });
+    expect(normalizePaymentPlan({ total: 0, payments: [{ paymentType: 'cash', amount: 0 }] }))
+      .toMatchObject({ collectedTotal: 0, outstanding: 0 });
+    expect(() => normalizePaymentPlan({ total: 100, payments: [{ paymentType: 'cash', amount: 0 }] }))
+      .toThrow(/greater than zero/);
+    expect(() => normalizePaymentPlan({ total: 0, payments: [{ paymentType: 'cash', amount: 100 }] }))
+      .toThrow(/zero-value/);
+  });
   test('records cash received and change without inflating collections', () => {
     expect(
       normalizePaymentPlan({ total: 490, paymentType: 'cash', paymentReceived: 500 })

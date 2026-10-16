@@ -1,5 +1,8 @@
 const { test, expect } = require('@playwright/test');
 
+const legacySession = route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ legacy: true, employee: null }) });
+test.beforeEach(async ({ page }) => { await page.route('**/api/staff/session', legacySession); });
+
 function registerOrder(status = 'accepted') {
   return {
     id: 'order-payment-test',
@@ -72,6 +75,7 @@ test('Register reprints through Bridge without a browser popup', async ({ page }
   page.on('popup', (popup) => popups.push(popup));
   await page.route('**/api/orders**', async (route) => {
     const path = new URL(route.request().url()).pathname;
+    if (path === '/api/staff/session') return legacySession(route);
     let data = [];
     if (path.endsWith('/print'))
       data = { ...registerOrder(), items: [{ name: 'Rice', quantity: 1, price: 800 }] };
@@ -116,6 +120,7 @@ for (const size of [{width:810,height:1080}, {width:1180,height:820}, {width:144
     await page.setViewportSize(size);
     await page.route('**/api/**', async route => {
       const path = new URL(route.request().url()).pathname;
+    if (path === '/api/staff/session') return legacySession(route);
       let data = {};
       if (path === '/api/orders') data = [registerOrder(), {...registerOrder(),id:'parcel-test',mode:'counter',daily_order_number:13}];
       if (path.endsWith('/print')) data = {...registerOrder(),items:[{name:'Vegetable fried rice',quantity:2,price:400}]};
@@ -173,6 +178,7 @@ test('Register theme toggle persists and covers payment, split and bill dialogs'
   await page.setViewportSize({width:1180,height:820});
   await page.route('**/api/**', async route => {
     const path = new URL(route.request().url()).pathname;
+    if (path === '/api/staff/session') return legacySession(route);
     const order = {...registerOrder(),items:[{name:'Rice',quantity:1,price:800}]};
     await route.fulfill({contentType:'application/json',body:JSON.stringify(path === '/api/orders' ? [order] : path.endsWith('/print') ? order : {})});
   });
@@ -208,6 +214,7 @@ test('busy Register lists use compact View order and printer controls', async ({
   await page.setViewportSize({width:1180,height:820});
   await page.route('**/api/**', async route => {
     const path = new URL(route.request().url()).pathname;
+    if (path === '/api/staff/session') return legacySession(route);
     const orders = Array.from({length:24}, (_, index) => ({...registerOrder(),id:`busy-${index}`,mode:index < 12 ? 'table' : 'counter',table_number:index+1,daily_order_number:index+1}));
     await route.fulfill({contentType:'application/json',body:JSON.stringify(path === '/api/orders' ? orders : {})});
   });

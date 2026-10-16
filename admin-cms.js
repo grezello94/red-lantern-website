@@ -3365,6 +3365,25 @@ function setupSmartKds() {
     status.hidden = !error && /^Smart KDS is staff-controlled\.?$/i.test(String(message).trim());
   };
   const numberValue = (id) => Number(document.getElementById(id)?.value || 0);
+  let loaded = false, loading = false, configSaving = false, stationsSaving = false;
+  let configDirty = false, stationsDirty = false, configRevision = 0, stationsRevision = 0;
+  let savedConfig = {}, remoteRevision = 0;
+  document.addEventListener('admin-smart-kds-config-saved', (event) => {
+    if (!event.detail?.config) return;
+    savedConfig = event.detail.config; remoteRevision += 1;
+  });
+  const setEditingEnabled = () => {
+    form.querySelectorAll('input,select,button').forEach((input) => {
+      input.disabled = !loaded || (input.type === 'submit' && configSaving);
+    });
+    stationsRoot.querySelectorAll('input,select,button').forEach((input) => { input.disabled = !loaded; });
+    saveStations.disabled = !loaded || stationsSaving;
+  };
+  const trackConfig = () => { configDirty = true; configRevision += 1; };
+  const trackStations = () => { stationsDirty = true; stationsRevision += 1; };
+  form.addEventListener('input', trackConfig); form.addEventListener('change', trackConfig);
+  stationsRoot.addEventListener('input', trackStations); stationsRoot.addEventListener('change', trackStations);
+  setEditingEnabled();
   const renderCourses = (config) => {
     const courses = Array.isArray(config.courseOrder) ? config.courseOrder : [];
     courseBody.innerHTML = courses
@@ -3414,18 +3433,30 @@ function setupSmartKds() {
     renderStations(Array.isArray(data.stations) ? data.stations : []);
   };
   const load = async () => {
+    if (loading || configSaving || stationsSaving || configDirty || stationsDirty) return;
+    loading = true;
+    const revision = `${configRevision}:${stationsRevision}:${remoteRevision}`;
     try {
       const response = await fetch('/api/admin/smart-kds/config', { cache: 'no-store' });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Unable to load Smart KDS settings.');
+      if (!data.config || typeof data.config !== 'object' || Array.isArray(data.config))
+        throw new Error('The server did not return the saved Smart KDS settings. Retry before editing.');
+      if (revision !== `${configRevision}:${stationsRevision}:${remoteRevision}`) return;
+      savedConfig = data.config;
       fill(data);
+      loaded = true;
       setStatus(data.message || 'Smart KDS is staff-controlled.');
     } catch (error) {
       setStatus(error.message || 'Unable to load Smart KDS settings.', true);
+    } finally {
+      loading = false; setEditingEnabled();
     }
   };
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
+    if (!loaded || configSaving) return;
+    const revision = configRevision;
     const courseDefaults = {};
     const courseOrder = [...courseBody.querySelectorAll('[data-smart-kds-course]')]
       .map((row, index) => ({
@@ -3438,6 +3469,7 @@ function setupSmartKds() {
     courseBody.querySelectorAll('[data-smart-kds-course]').forEach((row) => {
       const course = row.dataset.smartKdsCourse;
       courseDefaults[course] = {
+        ...savedConfig.courseDefaults?.[course],
         targetMin: Number(row.querySelector('[data-target-min]')?.value || 0),
         targetMax: Number(row.querySelector('[data-target-max]')?.value || 0),
         spacingAfterMin: Number(row.querySelector('[data-spacing]')?.value || 0),
@@ -3445,32 +3477,38 @@ function setupSmartKds() {
     });
     const submit = form.querySelector('button[type="submit"]');
     try {
+      configSaving = true;
       submit.disabled = true;
       const response = await fetch('/api/admin/smart-kds/config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           config: {
+            ...savedConfig,
             displayMode: document.getElementById(ids.displayMode)?.value || 'normal',
             mode: document.getElementById(ids.schedulingMode)?.value || 'shadow',
             courseOrder,
             courseDefaults,
             timing: {
+              ...savedConfig.timing,
               platingMinutes: numberValue(ids.platingMinutes),
               handoffBufferMinutes: numberValue(ids.handoffBufferMinutes),
               courseReadyToleranceMinutes: numberValue(ids.courseReadyToleranceMinutes),
               parcelDefaultTargetMinutes: numberValue(ids.parcelDefaultTargetMinutes),
             },
             batching: {
+              ...savedConfig.batching,
               defaultWindowSeconds: numberValue(ids.defaultWindowSeconds),
               defaultMaxBatchSize: numberValue(ids.defaultMaxBatchSize),
             },
-            fairness: { starvationAfterMinutes: numberValue(ids.starvationAfterMinutes) },
+            fairness: { ...savedConfig.fairness, starvationAfterMinutes: numberValue(ids.starvationAfterMinutes) },
             serviceRisk: {
+              ...savedConfig.serviceRisk,
               firstFoodAfterMinutes: numberValue(ids.firstFoodAfterMinutes),
               serviceGapAfterMinutes: numberValue(ids.serviceGapAfterMinutes),
             },
             riskThresholds: {
+              ...savedConfig.riskThresholds,
               watchMinutes: numberValue(ids.watchMinutes),
               startSoonMinutes: numberValue(ids.startSoonMinutes),
               criticalOverdueMinutes: numberValue(ids.criticalOverdueMinutes),
@@ -3480,15 +3518,21 @@ function setupSmartKds() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Unable to save Smart KDS settings.');
-      renderCourses(data.config);
-      setStatus('Smart KDS settings saved. Kitchen staff still choose every action.');
+      if (!data.config || typeof data.config !== 'object') throw new Error('The server did not confirm the saved Smart KDS settings.');
+      document.dispatchEvent(new CustomEvent('admin-smart-kds-config-saved', { detail: { config: data.config } }));
+      if (revision === configRevision) { renderCourses(data.config); configDirty = false; }
+      setStatus(revision === configRevision ? 'Smart KDS settings saved. Kitchen staff still choose every action.'
+        : 'Smart KDS settings saved. Newer edits remain unsaved.');
     } catch (error) {
       setStatus(error.message || 'Unable to save Smart KDS settings.', true);
     } finally {
+      configSaving = false;
       submit.disabled = false;
     }
   });
   saveStations.addEventListener('click', async () => {
+    if (!loaded || stationsSaving) return;
+    const revision = stationsRevision;
     const stations = [...stationsRoot.querySelectorAll('[data-smart-kds-station]')].map((row) => ({
       station_id: row.dataset.smartKdsStation,
       station_name: row.querySelector('strong')?.textContent || row.dataset.smartKdsStation,
@@ -3497,6 +3541,7 @@ function setupSmartKds() {
       enabled: !!row.querySelector('[data-station-enabled]')?.checked,
     }));
     try {
+      stationsSaving = true;
       saveStations.disabled = true;
       const response = await fetch('/api/admin/smart-kds/stations', {
         method: 'PUT',
@@ -3505,11 +3550,14 @@ function setupSmartKds() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Unable to save kitchen stations.');
-      renderStations(data.stations || []);
-      setStatus('Kitchen station settings saved. They will not change today’s KOT routing.');
+      if (!Array.isArray(data.stations)) throw new Error('The server did not confirm the saved kitchen stations. Retry before leaving.');
+      if (revision === stationsRevision) { renderStations(data.stations || []); stationsDirty = false; }
+      setStatus(revision === stationsRevision ? 'Kitchen station settings saved. They will not change today’s KOT routing.'
+        : 'Kitchen station settings saved. Newer station edits remain unsaved.');
     } catch (error) {
       setStatus(error.message || 'Unable to save kitchen stations.', true);
     } finally {
+      stationsSaving = false;
       saveStations.disabled = false;
     }
   });
@@ -3532,6 +3580,7 @@ function setupSmartKdsProfiles() {
   let coverage = null;
   let page = 1;
   let loading = false;
+  const dirtyProfiles = new Set(), savingProfiles = new Set(), profileRevisions = new Map();
   const esc = (value) =>
     String(value ?? '').replace(
       /[&<>"']/g,
@@ -3586,6 +3635,7 @@ function setupSmartKdsProfiles() {
     ).join('');
   };
   const render = () => {
+    const expanded = new Set([...root.querySelectorAll('[data-profile-key][open]')].map((card) => card.dataset.profileKey));
     const rows = filtered();
     const visible = rows.slice(0, page * pageSize);
     const stationNote = Number(coverage?.stationUnassigned || 0)
@@ -3605,7 +3655,7 @@ function setupSmartKdsProfiles() {
                 label: station.station_name,
               })),
             ];
-            return `<details class="smart-kds-profile" data-profile-key="${esc(item.itemKey)}"><summary><div><strong>${esc(item.name)}</strong><div class="smart-kds-profile-meta">Air Menu category: ${esc(item.category)} · ${esc(item.menuType === 'bar' ? 'Bar menu' : 'Food menu')}</div></div><span class="smart-kds-profile-course">${esc(item.category || 'Menu')}</span><span class="smart-kds-profile-meta">${esc(stations.find((station) => station.station_id === profile.stationId)?.station_name || 'Station not assigned')}</span><span class="smart-kds-profile-meta">${esc(profile.prepTimeEstimate || '—')} min prep</span></summary><div class="smart-kds-profile-fields"><div class="form-grid"><label class="form-group"><span>Serving timing pattern</span><select data-profile-field="course">${optionList(
+            return `<details class="smart-kds-profile" data-profile-key="${esc(item.itemKey)}" ${expanded.has(item.itemKey) ? 'open' : ''}><summary><div><strong>${esc(item.name)}</strong><div class="smart-kds-profile-meta">Air Menu category: ${esc(item.category)} · ${esc(item.menuType === 'bar' ? 'Bar menu' : 'Food menu')}</div></div><span class="smart-kds-profile-course">${esc(item.category || 'Menu')}</span><span class="smart-kds-profile-meta">${esc(stations.find((station) => station.station_id === profile.stationId)?.station_name || 'Station not assigned')}</span><span class="smart-kds-profile-meta">${esc(profile.prepTimeEstimate || '—')} min prep</span></summary><div class="smart-kds-profile-fields"><div class="form-grid"><label class="form-group"><span>Serving timing pattern</span><select data-profile-field="course">${optionList(
               profile.course,
               courses.map((course) => ({
                 value: course,
@@ -3615,9 +3665,12 @@ function setupSmartKdsProfiles() {
           })
           .join('')
       : '<p class="help-text">No menu dishes match this filter.</p>';
+    root.querySelectorAll('[data-profile-key]').forEach((card) => {
+      card.querySelector('[data-save-profile]').disabled = savingProfiles.has(card.dataset.profileKey);
+    });
   };
   const load = async () => {
-    if (loading) return;
+    if (loading || dirtyProfiles.size || savingProfiles.size) return;
     loading = true;
     showLoading();
     try {
@@ -3649,21 +3702,33 @@ function setupSmartKdsProfiles() {
       loading = false;
     }
   };
+  const collectProfile = (card) => {
+    const profile = {};
+    card.querySelectorAll('[data-profile-field]').forEach((field) => {
+      profile[field.dataset.profileField] = field.type === 'checkbox' ? field.checked
+        : field.type === 'number' ? Number(field.value) : field.value;
+    });
+    return profile;
+  };
+  const trackProfile = (event) => {
+    const card = event.target.closest('[data-profile-key]');
+    const item = items.find((entry) => entry.itemKey === card?.dataset.profileKey);
+    if (!item || !event.target.matches('[data-profile-field]')) return;
+    item.profile = { ...item.profile, ...collectProfile(card) };
+    dirtyProfiles.add(item.itemKey);
+    profileRevisions.set(item.itemKey, (profileRevisions.get(item.itemKey) || 0) + 1);
+  };
+  root.addEventListener('input', trackProfile); root.addEventListener('change', trackProfile);
   const save = async (card) => {
     const item = items.find((entry) => entry.itemKey === card.dataset.profileKey);
-    if (!item) return;
-    const profile = { itemKey: item.itemKey };
-    card.querySelectorAll('[data-profile-field]').forEach((field) => {
-      const key = field.dataset.profileField;
-      profile[key] =
-        field.type === 'checkbox'
-          ? field.checked
-          : field.type === 'number'
-            ? Number(field.value)
-            : field.value;
-    });
+    if (!item || savingProfiles.has(item.itemKey)) return;
+    const profile = { itemKey: item.itemKey, ...collectProfile(card) };
+    item.profile = { ...item.profile, ...profile };
+    dirtyProfiles.add(item.itemKey);
+    const revision = profileRevisions.get(item.itemKey) || 0;
     const button = card.querySelector('[data-save-profile]');
     try {
+      savingProfiles.add(item.itemKey);
       button.disabled = true;
       const response = await fetch('/api/admin/smart-kds/menu-profiles', {
         method: 'PUT',
@@ -3673,13 +3738,19 @@ function setupSmartKdsProfiles() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Unable to save this production profile.');
       const saved = data.saved?.[0]?.profile;
-      if (saved) item.profile = saved;
+      if (!saved) throw new Error('The server did not confirm the saved production profile. Retry before leaving.');
+      if (revision === (profileRevisions.get(item.itemKey) || 0)) {
+        item.profile = saved; dirtyProfiles.delete(item.itemKey);
+      }
       render();
-      setStatus(`${item.name} production profile saved. KOT flow is still unchanged.`);
+      setStatus(`${item.name} production profile saved.${revision !== (profileRevisions.get(item.itemKey) || 0) ? ' Newer edits remain unsaved.' : ' KOT flow is still unchanged.'}`);
     } catch (error) {
       setStatus(error.message || 'Unable to save this production profile.', true);
     } finally {
+      savingProfiles.delete(item.itemKey);
       button.disabled = false;
+      [...root.querySelectorAll('[data-profile-key]')].find((row) => row.dataset.profileKey === item.itemKey)
+        ?.querySelector('[data-save-profile]')?.removeAttribute('disabled');
     }
   };
   let timer;
@@ -4093,7 +4164,15 @@ function setupSmartKdsTimingOverrides() {
     !status
   )
     return;
-  let config = null;
+  let config = null, remoteRevision = 0, adjustmentRevision = 0, saving = false;
+  document.addEventListener('admin-smart-kds-config-saved', (event) => {
+    if (!event.detail?.config) return;
+    config = event.detail.config; remoteRevision += 1;
+  });
+  [categoryValue, stationTargetValue, stationValue].forEach((input) => {
+    input.addEventListener('input', () => { adjustmentRevision += 1; });
+    input.addEventListener('change', () => { adjustmentRevision += 1; });
+  });
   const esc = (value) =>
     String(value ?? '').replace(
       /[&<>"']/g,
@@ -4111,6 +4190,7 @@ function setupSmartKdsTimingOverrides() {
     stationValue.value = Number(config?.timing?.stationHandoffAdjustments?.[station.value] || 0);
   };
   const load = async () => {
+    const revision = remoteRevision;
     try {
       const [configResponse, profilesResponse] = await Promise.all([
         fetch('/api/admin/smart-kds/config', { cache: 'no-store' }),
@@ -4124,6 +4204,7 @@ function setupSmartKdsTimingOverrides() {
         throw new Error(
           configData.error || profilesData.error || 'Unable to load timing adjustments.'
         );
+      if (revision !== remoteRevision) return;
       config = configData.config;
       const categories = [
         ...new Set((profilesData.items || []).map((item) => `${item.menuType}::${item.category}`)),
@@ -4143,37 +4224,43 @@ function setupSmartKdsTimingOverrides() {
       setStatus(error.message || 'Unable to load timing adjustments.', true);
     }
   };
-  category.addEventListener('change', refreshInputs);
-  station.addEventListener('change', refreshInputs);
+  category.addEventListener('change', () => { adjustmentRevision += 1; refreshInputs(); });
+  station.addEventListener('change', () => { adjustmentRevision += 1; refreshInputs(); });
   save.addEventListener('click', async () => {
-    if (!config) return;
+    if (!config || saving) return;
+    const revision = adjustmentRevision;
     try {
+      saving = true;
       save.disabled = true;
-      config.timing = config.timing || {};
-      config.timing.categoryTargetAdjustments = config.timing.categoryTargetAdjustments || {};
-      config.timing.stationTargetAdjustments = config.timing.stationTargetAdjustments || {};
-      config.timing.stationHandoffAdjustments = config.timing.stationHandoffAdjustments || {};
+      const submitted = { ...config, timing: { ...config.timing,
+        categoryTargetAdjustments: { ...config.timing?.categoryTargetAdjustments },
+        stationTargetAdjustments: { ...config.timing?.stationTargetAdjustments },
+        stationHandoffAdjustments: { ...config.timing?.stationHandoffAdjustments } } };
       if (category.value)
-        config.timing.categoryTargetAdjustments[category.value] = Number(categoryValue.value || 0);
+        submitted.timing.categoryTargetAdjustments[category.value] = Number(categoryValue.value || 0);
       if (station.value)
-        config.timing.stationTargetAdjustments[station.value] = Number(
+        submitted.timing.stationTargetAdjustments[station.value] = Number(
           stationTargetValue.value || 0
         );
       if (station.value)
-        config.timing.stationHandoffAdjustments[station.value] = Number(stationValue.value || 0);
+        submitted.timing.stationHandoffAdjustments[station.value] = Number(stationValue.value || 0);
       const response = await fetch('/api/admin/smart-kds/config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(config),
+        body: JSON.stringify(submitted),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Unable to save timing adjustments.');
+      if (!data.config || typeof data.config !== 'object') throw new Error('The server did not confirm the saved timing adjustments.');
       config = data.config;
-      refreshInputs();
-      setStatus('Category and station timing adjustments saved.');
+      document.dispatchEvent(new CustomEvent('admin-smart-kds-config-saved', { detail: { config } }));
+      if (revision === adjustmentRevision) refreshInputs();
+      setStatus(revision === adjustmentRevision ? 'Category and station timing adjustments saved.'
+        : 'Timing adjustments saved. Newer edits remain unsaved.');
     } catch (error) {
       setStatus(error.message || 'Unable to save timing adjustments.', true);
     } finally {
+      saving = false;
       save.disabled = false;
     }
   });

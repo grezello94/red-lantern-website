@@ -10,3 +10,13 @@ coverage
 uploads
 releases
 .DS_Store
+RED-LANTERN-POS-EXTRACT
+RED-LANTERN-POS-EXTRACT.zip
+.codex
+.agents
+tests
+__tests__
+*.test.js
+scripts/test-*.js
+scripts/load-server-fixture.js
+FLOW_AUDIT.md

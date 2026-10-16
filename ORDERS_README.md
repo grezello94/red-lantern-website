@@ -63,7 +63,7 @@ Air Menu is the source of truth for counter and QR order items.
 
 ## Wallet points
 
-One wallet point equals ₹1.
+Wallet point values follow Admin loyalty settings; the default is ₹1 per point. A saved bill retains its original monetary wallet deduction if those settings later change.
 
 - A customer needs at least 100 points to redeem.
 - Counter staff can enter the amount to redeem, up to the current points balance and order total.
@@ -224,10 +224,9 @@ Customer details, dish names, and order contents are intentionally excluded from
 
 ## Current follow-up work
 
-- Complete table live states (running, KOT sent, paid) from saved table orders and Bill settlement.
-- Add table move/transfer workflow for active orders.
-- Expand KOT typography/settings so every saved control is reflected in the physical template.
-- Add dedicated Bill/KOT test print actions in Manage Printers.
+Table live states, active-table moves, Bill/KOT test printing, and per-printer formatting are implemented. The latest software audit is recorded in [FLOW_AUDIT.md](FLOW_AUDIT.md).
+
+Remaining acceptance work is on the actual restaurant setup: verify paper/typography and physical output on each printer, exercise the staff devices/network, and complete the production configuration/backup evidence in [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md).
 
 ## Developer reference
 

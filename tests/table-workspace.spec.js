@@ -244,7 +244,7 @@ test('printer action prints the selected bill and settlement frees that exact ta
   await expect(tile(page, 'AC', 2)).toHaveAttribute('data-settle-table-order', 'ac-saved');
   await tile(page, 'AC', 2).click();
   await expect(page.locator('#settle-table-dialog')).toBeVisible();
-  await expect(page.locator('#settlement-amount')).toHaveValue('400');
+  await expect(page.locator('#settlement-amount')).toHaveValue('400.00');
   await page.locator('input[name="settlement-type"][value="upi"]').check();
   await page.locator('.settle-confirm').click();
   await expect(page.locator('#settle-table-dialog')).toBeHidden();

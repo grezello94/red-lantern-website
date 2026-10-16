@@ -27,17 +27,18 @@ test below is `[x]` and every failure has been resolved and retested.
 
 ## Automated checks
 
-- GitHub Actions runs `npm test` on Node 22 for every pull request and change to `main`.
+- GitHub Actions runs lint, type checking, `npm test`, local load checks, and browser tests on Node 22 for every pull request and change to `main`.
 - `npm test` checks the application source, rebuilds the downloadable Bridge bundles, and starts a temporary localhost Print Bridge with a temporary SQLite ledger.
 - In Admin, open **Database Health** after deployment. It checks the Orders database, storage warning threshold, Admin credentials, and Orders-console credentials without exposing secrets.
 
-Latest local automated result (18 September 2026 re-audit):
+Latest local automated verification (16 October 2026):
 
 - [x] Lint and type checking — passed
-- [x] Unit tests — 117/117 passed
-- [x] Browser regression tests — full suite 36/36 passed after live KOT dispatch changes
+- [x] Unit/API tests — passed on Node 22; current counts are recorded in [FLOW_AUDIT.md](FLOW_AUDIT.md)
+- [x] Browser regression tests — full suite passed with retries disabled; current counts are recorded in [FLOW_AUDIT.md](FLOW_AUDIT.md)
 - [x] Local Print Bridge integration test — passed with an isolated temporary ledger
-- Runtime used locally: Node 24.12.0; CI remains configured for Node 22.
+- [x] Local Docker image — built on Node 22 and tested as an unprivileged user with networking disabled, isolated credentials, and no production database. Health/readiness, staff authentication, workspace pages, required assets and Bridge downloads passed; local backups and test fixtures were absent.
+- Runtime used for release verification: Node 22.23.3, matching the Docker/CI major version.
 
 Re-audit fixes:
 
@@ -71,6 +72,9 @@ printer, production database, network, or staff tests below.
   against a separate database, never the live database.
   Verified by/date: ____________________ Restore report: ____________________
 - [ ] Coolify deployment and error notifications reach the responsible person.
+  Verified by/date: ____________________ Evidence: ____________________
+- [ ] Coolify/container stop grace time is at least 40 seconds, allowing the
+  server's 30-second shutdown deadline to drain work.
   Verified by/date: ____________________ Evidence: ____________________
 - [ ] Port `9124` listens only on `127.0.0.1` on the billing computer and no
   router port-forwarding exposes it.
@@ -128,7 +132,7 @@ the evidence field. Remove or clearly label test orders afterward.
 
 ### Register, Captain and table service
 
-- [ ] Create one dine-in order from the Register. Confirm table/area, customer,
+- [ ] Create one dine-in order from the Orders console. Confirm table/area, customer,
   Captain name, item prices, quantities, total, and KOT number are correct.
   Tester/date/device: ____________________ Evidence: ____________________
 - [ ] Create and add to one table order from the Captain App. Confirm separate

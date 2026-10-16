@@ -22,7 +22,7 @@ const { DatabaseSync } = require('node:sqlite');
 const PORT = Number(process.env.PRINT_BRIDGE_PORT || 9124);
 // Keep this in sync with downloads/print-bridge-release.json. Operations uses
 // that signed-off release record to tell staff whether this computer is current.
-const BRIDGE_VERSION = '2026.10.08.2';
+const BRIDGE_VERSION = '2026.10.15.1';
 const BRIDGE_CAPABILITIES = Object.freeze({
   testPrint: true,
   setupStatus: true,
@@ -1376,7 +1376,10 @@ function billText(payload) {
     const parsed = Number(settings[key]);
     return Math.max(0, Math.min(500, Number.isFinite(parsed) ? parsed : fallback));
   };
-  const money = (value) => `₹${Math.round(Number(value) || 0)}`;
+  const money = (value) => {
+    const rounded = Math.round(((Number(value) || 0) + Number.EPSILON) * 100) / 100;
+    return `₹${Number.isInteger(rounded) ? rounded : rounded.toFixed(2)}`;
+  };
   const decimal = (value) => (Number(value) || 0).toFixed(2);
   const itemPrice = (item) =>
     Number(String(item.price || '').replace(/[^0-9.]/g, '')) +
@@ -1390,7 +1393,14 @@ function billText(payload) {
     order.total != null && Number.isFinite(Number(order.total)) && Number(order.total) >= 0
       ? Number(order.total)
       : subtotal;
-  const walletDiscount = Math.max(0, Math.floor(Number(order.loyalty_points_redeemed || 0)));
+  const hasStoredTotal = order.total != null && Number.isFinite(Number(order.total)) && Number(order.total) >= 0;
+  const walletDiscount = order.loyalty_discount_amount != null && Number.isFinite(Number(order.loyalty_discount_amount))
+    ? Math.max(0, Number(order.loyalty_discount_amount))
+    : Number(order.loyalty_points_redeemed || 0) > 0
+      ? hasStoredTotal
+        ? Math.max(0, subtotal - total - Number(order.discount_amount || 0))
+        : Math.max(0, Number(order.loyalty_points_redeemed))
+      : 0;
   const itemRows = items.flatMap((item, index) => {
     const label = `${settings.showItemSerial ? `${index + 1}. ` : ''}${item.name || 'Item'}${item.portion ? ` (${item.portion})` : ''}`;
     const quantity = Number(item.quantity || 0),

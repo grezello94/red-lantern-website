@@ -24,7 +24,7 @@ let liveConnected = false;
 let refreshTimer = null;
 let updateCursor = null;
 let loadSequence = 0;
-let loadInFlight = false;
+let loadInFlight = null;
 let reloadRequested = false;
 let updateCheckInFlight = false;
 let selectedStation = localStorage.getItem('redLanternSmartKdsStation') || 'all';
@@ -33,6 +33,32 @@ let selectedStation = localStorage.getItem('redLanternSmartKdsStation') || 'all'
 // that could accidentally hide urgent work at the start of a shift.
 let selectedCategory = 'all';
 const Addons = window.RedLanternAddons;
+const pendingKitchenActions = new Set();
+const kitchenActionKey = (orderId, taskKey) => JSON.stringify([String(orderId), String(taskKey)]);
+const kitchenCanAct = () => data.schedulingMode === 'manual' && (!window.employeeCan || window.employeeCan('updateKitchen'));
+const taskIsPending = (task) => pendingKitchenActions.has(kitchenActionKey(task.orderId, task.taskKey));
+let timelineSequence = 0;
+function syncKitchenPending() {
+  document.querySelectorAll('#board button[data-task][data-order]').forEach(button => {
+    button.disabled = !kitchenCanAct() || pendingKitchenActions.has(kitchenActionKey(button.dataset.order, button.dataset.task));
+  });
+  document.querySelectorAll('#board [data-batch-action]').forEach(button => {
+    button.disabled = !kitchenCanAct() || pendingKitchenActions.has(`batch:${button.dataset.batch}`);
+  });
+}
+async function smartKdsJson(path, options = {}) {
+  const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 20000);
+  try {
+    const response = await fetch(path, { ...options, signal: controller.signal });
+    const payload = await response.json().catch(error => { if (response.ok) throw error; return null; });
+    if (!response.ok) {
+      const error = new Error(payload?.error || 'Unable to complete the kitchen request.');
+      error.status = response.status;
+      throw error;
+    }
+    return payload;
+  } finally { clearTimeout(timer); }
+}
 
 function operator() {
   const input = $('#operator');
@@ -69,8 +95,10 @@ function taskDish(task) {
 }
 function filteredTasks() {
   const tasks = Array.isArray(data.recommendations) ? data.recommendations : [];
+  const states = taskStateMap();
   return tasks.filter(
     (task) =>
+      !['served', 'cancelled', 'superseded'].includes(states.get(task.taskKey) || task.taskState) &&
       (selectedStation === 'all' || String(task.stationId || '') === selectedStation) &&
       (selectedCategory === 'all' || menuCategory(task) === selectedCategory)
   );
@@ -85,18 +113,16 @@ function kitchenTime(value) {
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) return '';
   const time = new Intl.DateTimeFormat('en-IN', {
+    timeZone: 'Asia/Kolkata',
     hour: '2-digit',
     minute: '2-digit',
     hour12: true,
   }).format(date);
-  const today = new Date();
-  const sameDay =
-    date.getFullYear() === today.getFullYear() &&
-    date.getMonth() === today.getMonth() &&
-    date.getDate() === today.getDate();
+  const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' });
+  const sameDay = day.format(date) === day.format(new Date());
   return sameDay
     ? time
-    : `${date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })} · ${time}`;
+    : `${date.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short' })} · ${time}`;
 }
 function taskLocation(task) {
   return task.mode === 'table'
@@ -108,8 +134,10 @@ function taskInstruction(task, state) {
   const location = taskLocation(task);
   const target = kitchenTime(task.targetServeAt);
   const start = kitchenTime(task.plannedStartAt || task.latestSafeStartAt);
+  if (state === 'held' || task.action === 'manual-hold') return `Hold ${dish} for ${location} until kitchen staff releases it.`;
   if (state === 'ready' || state === 'expo') return `Send ${dish} for ${location} to expo now.`;
-  if (state === 'fired' || state === 'preparing')
+  if (state === 'fired') return `Start ${dish} for ${location} now${target ? ` · target ready ${target}` : ''}.`;
+  if (state === 'preparing')
     return `Continue ${dish} for ${location}${target ? ` · target ready ${target}` : ''}.`;
   if (
     task.capacityState === 'allocated' &&
@@ -129,8 +157,10 @@ function taskInstruction(task, state) {
   return `Review ${dish} for ${location}${target ? ` · target ready ${target}` : ''}.`;
 }
 function kitchenActionLabel(task, state) {
+  if (state === 'held' || task.action === 'manual-hold') return 'Wait';
   if (state === 'ready' || state === 'expo') return 'Send out now';
-  if (state === 'fired' || state === 'preparing') return 'Cooking now';
+  if (state === 'fired') return 'Make now';
+  if (state === 'preparing') return 'Cooking now';
   if (task.action === 'service-risk') return 'Make first';
   if (task.action === 'wait-capacity' || task.action === 'hold-for-course') return 'Wait';
   if (task.action === 'assign-station') return 'Assign station';
@@ -138,8 +168,10 @@ function kitchenActionLabel(task, state) {
   return 'Make now';
 }
 function kitchenCommand(task, state) {
+  if (state === 'held' || task.action === 'manual-hold') return 'Wait until kitchen staff releases this dish';
   if (state === 'ready' || state === 'expo') return 'Take this dish to expo now';
-  if (state === 'fired' || state === 'preparing') return 'Keep cooking this dish';
+  if (state === 'fired') return 'Start preparation for this dish';
+  if (state === 'preparing') return 'Keep cooking this dish';
   if (task.action === 'wait-capacity') return 'Wait until the station is free';
   if (task.action === 'hold-for-course' || task.capacityState === 'hold-for-course')
     return 'Wait for the earlier course';
@@ -160,6 +192,7 @@ function taskAction(task, state) {
 function taskGroup(task, state) {
   if (state === 'ready' || state === 'expo') return 'ready';
   if (state === 'fired' || state === 'preparing') return 'now';
+  if (state === 'held' || ['manual-hold', 'wait-capacity', 'hold-for-course', 'assign-station'].includes(task.action)) return 'hold';
   // "Overdue" means the kitchen should look at the item now. It is not, by
   // itself, proof that a guest's table is at risk. Keep that distinction clear
   // so the board does not turn every delayed item into a service-risk alert.
@@ -177,8 +210,9 @@ function taskCard(task, state) {
       : state === 'held'
         ? 'Held by kitchen'
         : 'Action unavailable';
-  const control = primary
-    ? `<button class="primary ${esc(primary[0])}" data-action="${esc(primary[0])}" data-task="${esc(task.taskKey)}" data-order="${esc(task.orderId)}" data-station="${esc(task.stationId)}">${esc(primary[1])}</button>`
+  const control = primary && kitchenCanAct()
+    ? `<button class="primary ${esc(primary[0])}" data-action="${esc(primary[0])}" data-task="${esc(task.taskKey)}" data-order="${esc(task.orderId)}" data-station="${esc(task.stationId)}" ${taskIsPending(task) ? 'disabled' : ''}>${esc(primary[1])}</button>`
+    : primary ? `<button class="primary" disabled>${data.schedulingMode !== 'manual' ? 'Shadow mode · view only' : 'View only'}</button>`
     : `<button disabled>${esc(unavailable)}</button>`;
   const table = taskLocation(task);
   const target = kitchenTime(task.targetServeAt);
@@ -198,6 +232,7 @@ function renderKitchenBriefing(tasks, states) {
     .filter(({ state }) => !['held', 'served', 'cancelled', 'superseded'].includes(state));
   const commands = current
     .filter(({ task }) => task.action !== 'fairness-protected' || task.baseAction === 'start-now')
+    .filter(({ task, state }) => taskGroup(task, state) !== 'hold')
     .slice(0, 4);
   if (!commands.length) {
     root.innerHTML = `<div class="briefing-heading"><div><span>CHEF BRIEFING</span><h2>No current cooking instruction</h2><p>There is no live work to call to the kitchen for this display.</p></div></div>`;
@@ -283,7 +318,7 @@ function render() {
   }));
   const totals = {
     startNow: visible.filter(
-      ({ task }) => task.baseAction === 'start-now' || task.action === 'start-now'
+      ({ task, state }) => taskGroup(task, state) !== 'hold' && (task.baseAction === 'start-now' || task.action === 'start-now')
     ).length,
     serviceRisk: visible.filter(
       ({ task }) => task.action === 'service-risk' || task.serviceRiskSeverity === 'critical'
@@ -297,7 +332,8 @@ function render() {
     (batch) =>
       batch.action === 'fire-batch' &&
       batch.batchId &&
-      (selectedStation === 'all' || String(batch.stationId) === selectedStation)
+      (selectedStation === 'all' || String(batch.stationId) === selectedStation) &&
+      batch.allocations?.length && batch.allocations.every(allocation => visible.some(({ task, state }) => String(task.taskKey) === String(allocation.taskKey) && ['ordered', 'eligible', 'scheduled'].includes(state)))
   );
   $('#summary').innerHTML = [
     ['startNow', 'Start now', 'now'],
@@ -324,11 +360,11 @@ function render() {
             )
               .map((item) => {
                 const dish = taskDish(item);
-                return `<span>${esc(item.orderNumber ? `Order #${String(item.orderNumber).padStart(2, '0')} · ${item.quantity}× ${dish}` : `${item.quantity}× ${dish}`)}</span>`;
+                return `<span>${esc(item.orderNumber ? `Order #${String(item.orderNumber).padStart(2, '0')} · ${dish}` : dish)}</span>`;
               })
               .join(
                 ''
-              )}</div></div><button data-batch-action data-batch="${esc(batch.batchId)}">Start batch</button></article>`
+              )}</div></div><button data-batch-action data-batch="${esc(batch.batchId)}" ${!kitchenCanAct() || pendingKitchenActions.has(`batch:${batch.batchId}`) ? 'disabled' : ''}>Start batch</button></article>`
         )
         .join('')}</div></section>`
     : '';
@@ -343,20 +379,29 @@ function render() {
     batchCards + sections ||
     '<div class="empty"><b>No current kitchen work for this display.</b><br>Earlier unresolved orders, if any, are shown above for review in Normal KDS.</div>';
 }
-async function load() {
+function load() {
   // The live recommendation endpoint performs a full scheduling snapshot.
   // Never overlap snapshots: a slow one followed by the five-second refresh
   // used to queue several expensive calculations and leave the board loading.
   if (loadInFlight) {
     reloadRequested = true;
-    return;
+    return loadInFlight;
   }
-  loadInFlight = true;
+  const promise = (async () => {
+    do {
+      reloadRequested = false;
+      await refreshSmartKds();
+    } while (reloadRequested);
+  })().finally(() => { if (loadInFlight === promise) loadInFlight = null; });
+  loadInFlight = promise;
+  return promise;
+}
+async function refreshSmartKds() {
   const request = ++loadSequence;
   try {
-    const response = await fetch('/api/orders/smart-kds/recommendations', { cache: 'no-store' });
-    const payload = await response.json();
-    if (!response.ok) throw Error(payload.error || 'Unable to load Smart KDS.');
+    const payload = await smartKdsJson('/api/orders/smart-kds/recommendations', { cache: 'no-store' });
+    if (!payload || !Array.isArray(payload.recommendations)) throw new Error('Kitchen recommendations were incomplete. Retaining the last display.');
+    if (['taskStates', 'stations', 'batches', 'staleOrders'].some(key => payload[key] != null && !Array.isArray(payload[key]))) throw new Error('Kitchen recommendations were incomplete. Retaining the last display.');
     if (request !== loadSequence) return;
     data = payload;
     const operatorInput = $('#operator');
@@ -377,12 +422,16 @@ async function load() {
     );
     render();
   } catch (error) {
-    if (request === loadSequence) setLiveStatus(error.message);
-  } finally {
-    loadInFlight = false;
-    if (reloadRequested) {
-      reloadRequested = false;
-      queueLoad();
+    if (request === loadSequence) {
+      setLiveStatus(error.message);
+      const denied = [401, 403].includes(error.status);
+      if (denied) {
+        data = { recommendations: [], taskStates: [], batches: [], stations: [], staleOrders: [], summary: {}, schedulingMode: 'shadow' };
+        $('#timeline-dialog').close(); $('#override-dialog').close();
+        render();
+      }
+      $('#live').textContent = denied ? 'Sign in to view kitchen work' : 'Connection problem · last board';
+      $('#live').className = 'live-state stale';
     }
   }
 }
@@ -391,10 +440,8 @@ async function pollForUpdates() {
   updateCheckInFlight = true;
   try {
     const suffix = Number.isInteger(updateCursor) ? `?after=${updateCursor}` : '';
-    const response = await fetch(`/api/orders/smart-kds/updates${suffix}`, { cache: 'no-store' });
-    const payload = await response.json();
-    if (!response.ok) throw Error(payload.error || 'Unable to check Smart KDS updates.');
-    if (Number.isInteger(Number(payload.cursor))) updateCursor = Number(payload.cursor);
+    const payload = await smartKdsJson(`/api/orders/smart-kds/updates${suffix}`, { cache: 'no-store' });
+    if (Number.isInteger(Number(payload.cursor))) updateCursor = Math.max(Number(updateCursor) || 0, Number(payload.cursor));
     if (payload.events?.length) queueLoad();
   } catch (_) {
     // The regular refresh keeps the display usable during a brief network loss.
@@ -405,24 +452,24 @@ async function pollForUpdates() {
 function formatTime(value) {
   const date = new Date(value);
   return Number.isFinite(date.getTime())
-    ? new Intl.DateTimeFormat('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }).format(
+    ? new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true }).format(
         date
       )
     : '—';
 }
 async function showTimeline(orderId) {
+  const request = ++timelineSequence;
   const dialog = $('#timeline-dialog');
   const content = $('#timeline-content');
   $('#timeline-title').textContent = 'Loading timeline…';
   content.innerHTML = '<p class="timeline-loading">Loading saved kitchen events…</p>';
-  dialog.showModal();
+  if (!dialog.open) dialog.showModal();
   try {
-    const response = await fetch(
+    const payload = await smartKdsJson(
       `/api/orders/smart-kds/orders/${encodeURIComponent(orderId)}/timeline`,
       { cache: 'no-store' }
     );
-    const payload = await response.json();
-    if (!response.ok) throw Error(payload.error || 'Unable to load the order timeline.');
+    if (request !== timelineSequence || !dialog.open) return;
     const order = payload.order || {};
     const heading =
       order.mode === 'table'
@@ -439,6 +486,7 @@ async function showTimeline(orderId) {
           .join('')
       : '<p class="timeline-loading">No Smart KDS production tasks have been saved for this order yet.</p>';
   } catch (error) {
+    if (request !== timelineSequence || !dialog.open) return;
     content.innerHTML = `<p class="timeline-loading error">${esc(error.message)}</p>`;
   }
 }
@@ -448,17 +496,23 @@ document.addEventListener('click', async (event) => {
   const batch = event.target.closest('[data-batch-action]');
   const action = event.target.closest('[data-action]');
   if (!batch && !action) return;
+  if (!kitchenCanAct()) return;
   const button = batch || action;
+  const keys = batch
+    ? [`batch:${batch.dataset.batch}`, ...((data.batches || []).find(entry => String(entry.batchId) === String(batch.dataset.batch))?.allocations || []).map(task => kitchenActionKey(task.orderId, task.taskKey))]
+    : [kitchenActionKey(action.dataset.order, action.dataset.task)];
+  if (button.disabled || keys.some(key => pendingKitchenActions.has(key))) return;
+  keys.forEach(key => pendingKitchenActions.add(key));
+  syncKitchenPending();
   button.disabled = true;
   try {
-    let response;
+    let payload;
     if (batch) {
       const reason = String(window.prompt('Why are you starting this batch?') || '').trim();
       if (reason.length < 3) {
-        button.disabled = false;
         return;
       }
-      response = await fetch(
+      payload = await smartKdsJson(
         `/api/orders/smart-kds/batches/${encodeURIComponent(batch.dataset.batch)}/start`,
         {
           method: 'POST',
@@ -467,7 +521,7 @@ document.addEventListener('click', async (event) => {
         }
       );
     } else {
-      response = await fetch('/api/orders/smart-kds/actions', {
+      payload = await smartKdsJson('/api/orders/smart-kds/actions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Kitchen-Operator': operator() },
         body: JSON.stringify({
@@ -478,12 +532,14 @@ document.addEventListener('click', async (event) => {
         }),
       });
     }
-    const payload = await response.json();
-    if (!response.ok) throw Error(payload.error || 'Action failed.');
+    if (payload?.ok !== true) throw new Error('The kitchen action was not confirmed. Refresh before retrying.');
     await load();
   } catch (error) {
+    await load();
     alert(error.message);
-    button.disabled = false;
+  } finally {
+    keys.forEach(key => pendingKitchenActions.delete(key));
+    render();
   }
 });
 $('#station-filter').addEventListener('change', (event) => {
@@ -496,6 +552,9 @@ $('#category-filter').addEventListener('change', (event) => {
   render();
 });
 $('#operator').addEventListener('change', () => operator());
+$('#kitchen-detail-controls')?.addEventListener('change', event => {
+  document.body.classList.toggle('show-kitchen-controls', event.target.checked);
+});
 document.addEventListener('click', (event) => {
   const jump = event.target.closest('[data-jump-section]');
   if (!jump) return;
@@ -504,20 +563,24 @@ document.addEventListener('click', (event) => {
     ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 });
 $('#timeline-close').addEventListener('click', () => $('#timeline-dialog').close());
+$('#timeline-dialog').addEventListener('close', () => { if (!$('#timeline-dialog').open) timelineSequence += 1; });
 $('#timeline-dialog').addEventListener('click', (event) => {
   if (event.target === $('#timeline-dialog')) $('#timeline-dialog').close();
 });
-$('#fullscreen').onclick = () =>
-  document.fullscreenElement
-    ? document.exitFullscreen()
-    : document.documentElement.requestFullscreen();
-setInterval(() => {
+$('#fullscreen').onclick = () => {
+  const result = document.fullscreenElement ? document.exitFullscreen?.() : document.documentElement.requestFullscreen?.();
+  result?.catch(() => setLiveStatus('Fullscreen is unavailable in this browser.'));
+};
+function updateKitchenClock() {
   $('#clock').textContent = new Intl.DateTimeFormat('en-IN', {
+    timeZone: 'Asia/Kolkata',
     hour: '2-digit',
     minute: '2-digit',
     hour12: true,
   }).format(new Date());
-}, 1000);
+}
+updateKitchenClock();
+setInterval(updateKitchenClock, 1000);
 function connectLiveUpdates() {
   if (!window.EventSource) return;
   const stream = new EventSource('/api/orders/smart-kds/stream');
@@ -538,4 +601,4 @@ connectLiveUpdates();
 setInterval(pollForUpdates, 4000);
 // Time alone changes urgency even when no user touches an order. Recalculate
 // frequently enough to cross a safe-start boundary without relying on SSE.
-setInterval(load, 5000);
+setInterval(() => { if (!loadInFlight && !document.hidden) void load(); }, 5000);

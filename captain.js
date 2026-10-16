@@ -25,7 +25,7 @@ function applyCaptainPermissionsUI() {
     button.hidden = !captainAllowed(button.dataset.tableService === 'bill_requested' ? 'requestBills' : 'requestService');
   });
   const settings = captainSettings();
-  $('#send-kot').disabled = settings.mandatoryKot || !settings.printKot || !captainAllowed('releaseKots');
+  $('#send-kot').disabled = state.sending || settings.mandatoryKot || !settings.printKot || !captainAllowed('releaseKots');
   if (settings.mandatoryKot) $('#send-kot').checked = true;
   else if (!settings.printKot || !captainAllowed('releaseKots')) $('#send-kot').checked = false;
   window.applyCaptainToolsUI?.();
@@ -76,6 +76,7 @@ const state = {
   kotRetry: null,
   submittingRequestId: '',
 };
+let captainOrderController = new AbortController();
 const requestId = () =>
   `captain-${Date.now()}-${crypto.getRandomValues(new Uint32Array(1))[0].toString(36)}`;
 async function fetchWithTimeout(input, init = {}, timeout = 7000) {
@@ -143,6 +144,9 @@ const courseOptions = (defaultCourse = '', selected = '') =>
   `<option value="">Default${defaultCourse ? ` (${esc(defaultCourse)})` : ''}</option>${['drink', 'soup', 'starter', 'main', 'side', 'dessert', 'other'].map((course) => `<option value="${course}" ${selected === course ? 'selected' : ''}>${course[0].toUpperCase() + course.slice(1)}</option>`).join('')}`;
 const captainHeaders = () =>
   state.captain?.token ? { 'X-Captain-Session': state.captain.token } : {};
+const captainSessionIdentity = () =>
+  state.captain ? JSON.stringify([state.captain.id, state.captain.token]) : '';
+const captainSessionCurrent = (identity) => !!identity && identity === captainSessionIdentity();
 function captainPrintLocation() {
   if (!navigator.geolocation)
     return Promise.reject(new Error('Location is required to print a bill from Captain.'));
@@ -232,6 +236,7 @@ async function readPendingJournal() {
       Array.isArray(record.entries)
     ) {
       state.pending = normalisePending(record.entries);
+      state.pending.forEach(clearMatchingDraftForPending);
       state.pendingUpdatedAt = Number(record.updatedAt);
       renderPendingSync();
     }
@@ -316,6 +321,22 @@ function clearDraft() {
 function restoreDraft() {
   const key = draftKey(),
     notice = $('#captain-draft-status');
+  $('#customer-name').value = '';
+  $('#customer-phone').value = '';
+  $('#special-request').value = '';
+  $('#course-mode').value = 'normal_coursing';
+  const waiter = $('#captain-kot-waiter');
+  if (waiter) {
+    waiter.value = '';
+    delete waiter.dataset.draftWaiter;
+  }
+  $('#order-status').textContent = '';
+  $('#active-kot-progress').hidden = true;
+  document.querySelectorAll('[data-table-service]').forEach(button => {
+    button.dataset.defaultLabel ||= button.textContent;
+    button.textContent = button.dataset.defaultLabel;
+    button.disabled = false;
+  });
   notice.hidden = true;
   if (!key) return;
   const draft = readLocalJSON(key, null);
@@ -351,11 +372,12 @@ function restoreDraft() {
   notice.textContent = `Restored unsent draft from ${new Date(draft.savedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}.`;
 }
 function clearMatchingDraftForPending(entry) {
+  if (entry?.kind === 'kot-retry') return;
   const payload = entry?.payload;
   if (!state.captain || !payload?.clientRequestId) return;
   const area = String(payload.tableArea || ''),
     number = Number(payload.tableNumber || 0),
-    key = `red-lantern-captain-draft:${captainDay()}:${state.captain.id}:${area}:${number}`,
+    key = `red-lantern-captain-draft:${captainDay()}:${state.captain.id}:${area}:${number}${payload.fulfillmentType === 'delivery' ? ':delivery' : ''}`,
     draft = readLocalJSON(key, null),
     signature = (items) =>
       (Array.isArray(items) ? items : [])
@@ -371,7 +393,8 @@ function clearMatchingDraftForPending(entry) {
       table &&
       String(table.area || '') === area &&
       Number(table.number || 0) === number &&
-      String(table.mode || '') === String(payload.mode || '')
+      String(table.mode || 'table') === String(payload.mode || 'table') &&
+      String(table.fulfillmentType || '') === String(payload.fulfillmentType || '')
     )
       localStorage.removeItem(contextKey);
   } catch {}
@@ -389,17 +412,20 @@ function normalisePending(entries) {
       const kind = entry.kind === 'kot-retry' ? 'kot-retry' : 'order';
       const status =
         kind === 'kot-retry' ? 'kot-retry' : entry.status === 'review' ? 'review' : 'queued';
-      return { ...entry, kind, status };
+      // Older journals cannot prove that a request never reached the server.
+      const attemptedAt = entry.attemptedAt === null ? null : Number(entry.attemptedAt || entry.queuedAt) || Date.now();
+      return { ...entry, kind, status, attemptedAt };
     });
 }
 function savePending() {
   const key = pendingKey();
   if (!key) return;
-  state.pendingUpdatedAt = Date.now();
+  state.pendingUpdatedAt = Math.max(Date.now(), state.pendingUpdatedAt + 1);
   const record = { key, updatedAt: state.pendingUpdatedAt, entries: state.pending };
   try {
-    if (state.pending.length) localStorage.setItem(key, JSON.stringify(record));
-    else localStorage.removeItem(key);
+    // Keep the empty revision too, so an older IndexedDB copy cannot restore
+    // acknowledged orders if the page closes before its journal write commits.
+    localStorage.setItem(key, JSON.stringify(record));
   } catch {}
   void writePendingJournal(record);
 }
@@ -424,6 +450,8 @@ function pendingOrderCard(entry, index, inNav = false) {
     conflict = entry.conflict,
     review = entry.status === 'review',
     kotRetry = entry.kind === 'kot-retry',
+    editable = !review && !kotRetry && entry.attemptedAt === null,
+    busy = state.syncingPending || state.sending,
     live = conflict?.id
       ? `Live order #${esc(conflict.orderNumber || '')} is already open on this table.`
       : 'The table changed while this device was offline.',
@@ -431,7 +459,7 @@ function pendingOrderCard(entry, index, inNav = false) {
       .slice(0, 4)
       .map((item) => `${Number(item.quantity || 0)}× ${esc(item.name)}`)
       .join(' · ');
-  return `<article class="${review ? 'is-review' : ''}"><div><b>${kotRetry ? 'KOT waiting · ' : review ? 'Needs review · ' : ''}${order.mode === 'takeaway' || order.mode === 'counter' ? (order.fulfillmentType === 'delivery' ? 'Delivery' : 'Takeaway') : `${esc(order.tableArea || 'Table')} · Table ${esc(String(order.tableNumber || ''))}`}</b><small>${kotRetry ? `Order #${esc(entry.orderNumber || '')} is saved; the kitchen has not been notified yet.` : review ? live : `${itemCount} item${itemCount === 1 ? '' : 's'} · ${when}`}</small>${review && liveItems ? `<em>Already on table: ${liveItems}</em>` : ''}<span>${items.map((item) => `${Number(item.quantity || 0)}× ${esc(item.name)}`).join(' · ')}</span></div><div>${review && conflict?.id ? `<button type="button" data-accept-pending="${index}">${inNav ? 'Review & merge' : 'Accept as new round'}</button>` : ''}${kotRetry ? `<button type="button" data-retry-pending-kot="${index}">Send KOT</button>` : ''}${!review && !kotRetry ? `<button type="button" data-recover-pending="${index}">Edit</button>` : ''}<button type="button" data-discard-pending="${index}">${review ? 'Reject' : kotRetry ? 'Dismiss' : 'Discard'}</button></div></article>`;
+  return `<article class="${review ? 'is-review' : ''}"><div><b>${kotRetry ? 'KOT waiting · ' : review ? 'Needs review · ' : ''}${order.mode === 'takeaway' || order.mode === 'counter' ? (order.fulfillmentType === 'delivery' ? 'Delivery' : 'Takeaway') : `${esc(order.tableArea || 'Table')} · Table ${esc(String(order.tableNumber || ''))}`}</b><small>${kotRetry ? `Order #${esc(entry.orderNumber || '')} is saved; the kitchen has not been notified yet.` : review ? live : `${itemCount} item${itemCount === 1 ? '' : 's'} · ${when}${!editable ? ' · Sync to confirm this original order before editing; it may already be saved.' : ''}`}</small>${review && liveItems ? `<em>Already on table: ${liveItems}</em>` : ''}<span>${items.map((item) => `${Number(item.quantity || 0)}× ${esc(item.name)}`).join(' · ')}</span></div><div>${review && conflict?.id ? `<button type="button" data-accept-pending="${index}" ${busy ? 'disabled' : ''}>${inNav ? 'Review & merge' : 'Accept as new round'}</button>` : ''}${kotRetry ? `<button type="button" data-retry-pending-kot="${index}" ${busy ? 'disabled' : ''}>Send KOT</button>` : ''}${editable ? `<button type="button" data-recover-pending="${index}" ${busy ? 'disabled' : ''}>Edit</button>` : ''}<button type="button" data-discard-pending="${index}" ${busy ? 'disabled' : ''}>${review ? 'Reject' : kotRetry ? 'Dismiss' : 'Discard'}</button></div></article>`;
 }
 function renderPendingSync(message = '') {
   const root = $('#captain-pending-sync'),
@@ -439,12 +467,12 @@ function renderPendingSync(message = '') {
     reviews = state.pending.filter((entry) => entry.status === 'review').length,
     kotRetries = state.pending.filter((entry) => entry.kind === 'kot-retry').length,
     syncable = state.pending.some((entry) => entry.status !== 'review'),
-    detail = message || state.pendingError;
+    detail = esc(message || state.pendingError);
   root.hidden = !count && !detail;
   root.innerHTML = count
     ? `<div class="pending-sync-head"><span aria-hidden="true">${reviews ? '!' : kotRetries ? 'K' : '↻'}</span><div><b>${reviews ? `${reviews} order${reviews === 1 ? ' needs' : 's need'} table review` : kotRetries ? `${kotRetries} saved KOT${kotRetries === 1 ? '' : 's'} waiting to send` : `${count} order${count === 1 ? '' : 's'} waiting to sync`}</b><small>${detail || (reviews ? 'Discuss the live table order, then accept it as a new round or reject it.' : kotRetries ? 'The order is already saved. Send the KOT once the kitchen printer is available.' : navigator.onLine ? 'Ready to sync safely.' : 'Saved on this device until internet returns.')}</small></div>${navigator.onLine && syncable ? '<button type="button" data-sync-pending>Sync now</button>' : ''}</div><div class="pending-sync-list">${state.pending.map((entry, index) => pendingOrderCard(entry, index)).join('')}</div>`
     : detail
-      ? `<span aria-hidden="true">!</span><div><b>Order sync needs attention</b><small>${esc(detail)}</small></div>`
+      ? `<span aria-hidden="true">!</span><div><b>Order sync needs attention</b><small>${detail}</small></div>`
       : '';
   renderCaptainNav();
 }
@@ -461,6 +489,7 @@ function queuePending(payload) {
       payload,
       queuedAt: Date.now(),
       status: 'queued',
+      attemptedAt: null,
     });
   savePending();
   renderPendingSync();
@@ -513,20 +542,27 @@ function recoverPending(index) {
   const entry = state.pending[index],
     payload = entry?.payload;
   if (!payload) return;
+  if (state.syncingPending || state.sending || entry.kind !== 'order' || entry.attemptedAt !== null) {
+    state.pendingError = 'Sync to confirm the original saved order before editing. Wait for an active sync to finish.';
+    renderPendingSync();
+    return;
+  }
   const counter = payload.mode === 'takeaway' || payload.mode === 'counter';
   if (!counter && !state.areas.some((area) => area.name === payload.tableArea)) {
     state.pendingError = 'This saved order is for an area no longer assigned to this Captain.';
     renderPendingSync();
     return;
   }
-  const active = activeTable(payload.tableArea, Number(payload.tableNumber));
+  saveDraft();
+  state.kotRetry = null;
   state.table = {
     area: payload.tableArea,
     number: Number(payload.tableNumber),
-    orderId: active?.id || '',
+    orderId: payload.tableOrderId || '',
     mode: counter ? 'takeaway' : 'table',
     fulfillmentType: payload.fulfillmentType || '',
   };
+  restoreDraft();
   state.cart = (Array.isArray(payload.items) ? payload.items : [])
     .filter((item) => item && item.name && Number(item.quantity) > 0)
     .map((item) => ({
@@ -548,6 +584,7 @@ function recoverPending(index) {
   setScreen('menu');
 }
 function acceptPendingConflict(index) {
+  if (state.syncingPending || state.sending) return;
   const entry = state.pending[index],
     payload = entry?.payload,
     conflict = entry?.conflict;
@@ -570,6 +607,7 @@ function acceptPendingConflict(index) {
   void flushPending();
 }
 function discardPending(index) {
+  if (state.syncingPending || state.sending) return;
   const entry = state.pending[index],
     payload = entry?.payload;
   if (!payload) return;
@@ -593,30 +631,44 @@ function clearQueuedKotRetry(orderId) {
   if (next.length === state.pending.length) return;
   state.pending = next;
   savePending();
+  renderPendingSync();
 }
 async function postCaptainKot(orderId, waiterId = '') {
+  const session = captainSessionIdentity();
   const response = await fetchWithTimeout(`/api/orders/${encodeURIComponent(orderId)}/kots`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...captainHeaders() },
       body: JSON.stringify({ waiterId }),
     }),
     data = await response.json().catch(() => ({}));
+  if (!captainSessionCurrent(session)) throw new Error('Captain account changed. Sign in again to confirm this KOT.');
   if (response.status === 401) {
     signOut('Captain sign-in has expired. Sign in again.');
     throw new Error('Captain sign-in has expired.');
   }
-  if (response.status === 409 && data.latestKot?.kot_number) {
+  if (response.status === 409 && Number.isInteger(Number(data?.latestKot?.kot_number)) && Number(data.latestKot.kot_number) > 0) {
     clearQueuedKotRetry(orderId);
     return { kotNumber: data.latestKot.kot_number, reused: true };
   }
   if (!response.ok)
     throw new Error(
-      data.error || 'The order is saved, but its KOT could not be sent. Please retry.'
+      data?.error || 'The order is saved, but its KOT could not be sent. Please retry.'
     );
+  if (!Number.isInteger(Number(data?.kotNumber)) || Number(data.kotNumber) <= 0)
+    throw new Error('The kitchen ticket was not confirmed. Retry this saved KOT.');
   clearQueuedKotRetry(orderId);
   return data;
 }
 async function postCaptainOrder(payload, options = {}) {
+  const session = captainSessionIdentity();
+  const entry = state.pending.find(pending => pending.kind === 'order' && pending.payload?.clientRequestId === payload.clientRequestId);
+  const previouslyAttempted = !!entry && entry.attemptedAt !== null;
+  let retried = false;
+  if (entry) {
+    entry.attemptedAt = Date.now();
+    savePending();
+    renderPendingSync();
+  }
   const { response, data } = await OrderRequests.json(
     '/api/orders/counter',
     {
@@ -626,24 +678,36 @@ async function postCaptainOrder(payload, options = {}) {
         'X-Counter-Order-Id': payload.clientRequestId,
         ...captainHeaders(),
       },
+      signal: captainOrderController.signal,
       body: JSON.stringify(payload),
     },
     {
       attempts: 3,
       timeoutMs: 8000,
-      onRetry: options.onRetry,
+      onRetry: details => { retried = true; options.onRetry?.(details); },
     }
   );
+  if (!captainSessionCurrent(session)) throw new Error('Captain account changed. Sign in again to confirm this order.');
   if (response.status === 401) {
     signOut('Your Captain session expired. Sign in again.');
     throw new Error('Captain sign-in has expired.');
   }
   if (!response.ok) {
-    const error = new Error(data.error || 'Unable to save the order.');
+    const error = new Error(data?.error || 'Unable to save the order.');
     error.status = response.status;
-    error.code = data.code || '';
-    error.conflict = data.conflict || null;
-    error.transient = response.status === 408 || response.status === 429 || response.status >= 500;
+    error.code = data?.code || '';
+    error.conflict = data?.conflict || null;
+    error.transient = [408, 425, 429].includes(response.status) || response.status >= 500;
+    error.uncertain = previouslyAttempted || retried;
+    if (entry && !error.uncertain && !error.transient) {
+      entry.attemptedAt = null;
+      savePending();
+    }
+    throw error;
+  }
+  if (typeof data?.id !== 'string' || !data.id.trim()) {
+    const error = new Error('The saved order was not confirmed. Retry this original request.');
+    error.transient = true;
     throw error;
   }
   if (payload.sendKot) {
@@ -651,6 +715,7 @@ async function postCaptainOrder(payload, options = {}) {
       const kotData = await postCaptainKot(data.id, payload.kotWaiterId);
       return { ...data, kotNumber: kotData.kotNumber, kotReused: !!kotData.reused };
     } catch (error) {
+      if (!captainSessionCurrent(session)) throw error;
       queueKotRetry(payload, data);
       error.savedOrder = data;
       throw error;
@@ -660,41 +725,36 @@ async function postCaptainOrder(payload, options = {}) {
 }
 async function flushPending({ automatic = false } = {}) {
   if (automatic && !captainSettings().autoSync) return;
-  if (!state.captain || state.syncingPending || !state.pending.length || !navigator.onLine) return;
+  if (!state.captain || state.syncingPending || state.sending || !state.pending.length || !navigator.onLine) return;
+  const session = captainSessionIdentity();
   state.syncingPending = true;
   state.pendingError = '';
   renderPendingSync('Syncing saved orders…');
   try {
-    while (navigator.onLine) {
+    while (navigator.onLine && captainSessionCurrent(session)) {
       const index = state.pending.findIndex((entry) => entry.status !== 'review');
       if (index < 0) break;
       const pending = state.pending[index];
       try {
         if (pending.kind === 'kot-retry') {
           await postCaptainKot(pending.savedOrderId, pending.payload?.kotWaiterId);
+          if (!captainSessionCurrent(session)) return;
           const settledIndex = state.pending.indexOf(pending);
           if (settledIndex >= 0) state.pending.splice(settledIndex, 1);
           savePending();
           continue;
         }
         await postCaptainOrder(pending.payload);
-        state.pending.splice(index, 1);
-        savePending();
+        if (!captainSessionCurrent(session)) return;
+        removePendingOrder(pending.payload.clientRequestId);
       } catch (error) {
+        if (!captainSessionCurrent(session)) return;
         if (error.savedOrder) {
-          const originalIndex = state.pending.indexOf(pending);
-          if (originalIndex >= 0) state.pending.splice(originalIndex, 1);
-          savePending();
+          removePendingOrder(pending.payload.clientRequestId);
           continue;
         }
         if (error.code === 'table_changed') {
-          state.pending[index] = {
-            ...pending,
-            status: 'review',
-            conflict: error.conflict || null,
-            reviewedAt: Date.now(),
-          };
-          savePending();
+          reviewPendingOrder(pending.payload.clientRequestId, error.conflict);
           continue;
         }
         state.pendingError = `Could not send ${pending.kind === 'kot-retry' ? 'the saved KOT' : 'a saved order'}: ${error.message}`;
@@ -703,8 +763,10 @@ async function flushPending({ automatic = false } = {}) {
     }
     if (!state.pending.length) state.pendingError = '';
   } finally {
-    state.syncingPending = false;
-    renderPendingSync();
+    if (captainSessionCurrent(session)) {
+      state.syncingPending = false;
+      renderPendingSync();
+    }
   }
 }
 function renderReadyAlerts() {
@@ -722,12 +784,14 @@ function renderReadyAlerts() {
 }
 async function loadReadyAlerts() {
   if (!state.captain || !captainAllowed('viewKots')) return;
+  const session = captainSessionIdentity();
   try {
     const response = await fetch(`/api/captain/ready-alerts?mode=${captainSettings().notifications === 'item' ? 'item' : 'kot'}`,  {
         cache: 'no-store',
         headers: captainHeaders(),
       }),
       data = await response.json();
+    if (!captainSessionCurrent(session)) return;
     if (response.status === 401) {
       signOut('Your Captain session expired. Sign in again.');
       return;
@@ -752,7 +816,7 @@ async function loadReadyAlerts() {
         if ('Notification' in window && Notification.permission === 'granted')
           navigator.serviceWorker?.ready
             .then((registration) =>
-              registration.showNotification(`Table ${alert.table_number} ready`, {
+              captainSessionCurrent(session) && registration.showNotification(`Table ${alert.table_number} ready`, {
                 body: `${alert.table_area} · Order #${String(alert.daily_order_number).padStart(2, '0')} · ${alert.item_name || `KOT #${alert.kot_number}`}`,
                 icon: '/images/red-lantern-logo-600.webp',
                 tag: key,
@@ -818,7 +882,9 @@ function prepareSavedKotRelease(order) {
       : null;
 }
 function clearSavedKotRelease() {
-  if (state.kotRetry?.releaseOnly) state.kotRetry = null;
+  // New items must be saved as a round; an earlier failed ticket remains in
+  // the pending journal and can still be retried independently.
+  state.kotRetry = null;
 }
 function orderAge(order) {
   const minutes = order?.created_at
@@ -834,12 +900,14 @@ async function loadKotProgress(orderId) {
   const root = $('#active-kot-progress');
   root.hidden = true;
   if (!orderId || !captainAllowed('viewKots')) return;
+  const session = captainSessionIdentity();
   try {
     const response = await fetch(
         `/api/captain/orders/${encodeURIComponent(orderId)}/kot-progress`,
         { cache: 'no-store', headers: captainHeaders() }
       ),
       data = await response.json();
+    if (!captainSessionCurrent(session) || state.table?.orderId !== orderId) return;
     if (!response.ok || !Array.isArray(data.rounds) || !data.rounds.length) return;
     root.innerHTML = `<b>Kitchen progress</b><div>${data.rounds
       .map((round) => {
@@ -1074,14 +1142,14 @@ function renderTableLoadFailure(message) {
     `<section class="captain-load-failure"><span aria-hidden="true">⌁</span><div><b>Table board needs a connection</b><p>${esc(message)}</p><button type="button" data-retry-captain-load>Try again</button></div></section>`;
 }
 async function refreshCaptainProfile() {
-  const accountId = state.captain?.id;
-  if (!accountId || !navigator.onLine) return false;
+  const session = captainSessionIdentity();
+  if (!session || !navigator.onLine) return false;
   const response = await fetchWithTimeout('/api/staff/session', { headers: captainHeaders(), cache: 'no-store' });
-  if (state.captain?.id !== accountId) return false;
+  if (!captainSessionCurrent(session)) return false;
   if (response.status === 401) { signOut('Your employee access was revoked or expired. Sign in again.'); return false; }
   if (response.ok) {
     const profile = await response.json();
-    if (state.captain?.id !== accountId) return false;
+    if (!captainSessionCurrent(session)) return false;
     if (profile.employee) {
       if (!profile.employee.permissions?.captainApp) { signOut('Captain app access was revoked.'); return false; }
       const previousAccess = JSON.stringify([state.captain.permissions, state.captain.areas, state.captain.tableScope]);
@@ -1121,9 +1189,11 @@ async function load() {
     }
     return;
   }
+  const session = captainSessionIdentity();
   try {
     $('#captain-connection').textContent = 'Loading live table status…';
     if (!(await refreshCaptainProfile())) return;
+    if (!captainSessionCurrent(session)) return;
     const options = { cache: 'no-store', headers: captainHeaders() },
       criticalUrls = ['/api/orders/operations', '/api/orders/menu', '/api/orders?history=0'],
       fetchCritical = async (url) => {
@@ -1142,6 +1212,7 @@ async function load() {
         throw failure || new Error('The server did not respond.');
       },
       [operations, menu, orders] = await Promise.all(criticalUrls.map(fetchCritical));
+    if (!captainSessionCurrent(session)) return;
     if ([operations, menu, orders].some((response) => response.status === 401)) {
       signOut('Your Captain session expired. Sign in again.');
       return;
@@ -1165,6 +1236,7 @@ async function load() {
         availability ? availability.json() : [],
         insights ? insights.json() : { items: [] },
       ]);
+    if (!captainSessionCurrent(session)) return;
     const unavailable = new Set(
         (Array.isArray(availabilityData) ? availabilityData : []).map((item) => item.item_key)
       ),
@@ -1192,6 +1264,7 @@ async function load() {
     void loadReadyAlerts();
     return true;
   } catch (error) {
+    if (!captainSessionCurrent(session)) return false;
     if (!restoreOfflineSnapshot()) {
       const message =
         'The live table board could not be reached. Check the connection, then try again.';
@@ -1412,6 +1485,12 @@ function renderCart() {
       : '<p class="cart-empty">No items yet. Add dishes from the menu.</p>';
   $('#cart-list').innerHTML = lines;
   $('#order-dock-list').innerHTML = lines;
+  document.querySelectorAll('#cart-list button, #cart-list select, #order-dock-list button, #order-dock-list select').forEach(control => { control.disabled = state.sending; });
+  ['customer-name', 'customer-phone', 'special-request', 'course-mode', 'captain-kot-waiter'].forEach(id => {
+    const field = $(`#${id}`);
+    if (field) field.disabled = state.sending;
+  });
+  $('#send-kot').disabled = state.sending || captainSettings().mandatoryKot || !captainSettings().printKot || !captainAllowed('releaseKots');
   $('#cart-caption').textContent = savedOrder
     ? `Saved order #${state.kotRetry.orderNumber} is ready to release.`
     : count
@@ -1454,6 +1533,7 @@ function renderCart() {
   saveDraft();
 }
 function openChoice(item) {
+  if (state.sending) return;
   if (state.table?.orderId && !captainAllowed('addRounds')) { showCaptainToast('Adding items is not enabled for your account.', 'error'); return; }
   const options = priceOptions(item);
   if (!options.length) return;
@@ -1504,6 +1584,7 @@ function updateCaptainChoiceSummary() {
   $('#captain-addon-error').textContent = result.ok ? '' : result.error;
 }
 function addChoice() {
+  if (state.sending) return;
   const choice = state.choice;
   if (!choice) return;
   clearSavedKotRelease();
@@ -1547,6 +1628,7 @@ function addChoice() {
   renderMenu();
 }
 function addSimpleItem(item) {
+  if (state.sending) return;
   if (state.table?.orderId && !captainAllowed('addRounds')) { showCaptainToast('Adding items is not enabled for your account.', 'error'); return; }
   const [portion, price] = priceOptions(item)[0] || [];
   if (!portion || !price) return;
@@ -1572,14 +1654,42 @@ function addSimpleItem(item) {
   renderMenu();
 }
 function signOut(message = 'Signed out.') {
+  const headers = captainHeaders();
+  captainOrderController.abort(new Error('Captain account changed.'));
+  captainOrderController = new AbortController();
+  saveDraft();
   document.querySelectorAll('dialog[open]').forEach((dialog) => dialog.close());
-  if (navigator.onLine) void fetch('/api/staff/session', { method: 'DELETE' }).catch(() => {});
+  if (navigator.onLine) void fetch('/api/staff/session', { method: 'DELETE', headers }).catch(() => {});
   clearTimeout(captainIdleTimer);
   state.captain = null;
   state.loginAccount = null;
   state.table = null;
+  state.lastTable = null;
   state.cart = [];
   state.kotRetry = null;
+  state.screen = 'tables';
+  state.menu = [];
+  state.areas = [];
+  state.area = '';
+  state.tableFilter = 'all';
+  state.orders = [];
+  state.salesOrders = [];
+  state.readyAlerts = [];
+  state.pending = [];
+  state.pendingUpdatedAt = 0;
+  state.pendingError = '';
+  state.syncingPending = false;
+  state.sending = false;
+  state.submittingRequestId = '';
+  state.draftRestored = false;
+  captainHeldTable = null;
+  cancelCaptainHold();
+  restoreDraft();
+  renderReadyAlerts();
+  renderPendingSync();
+  renderTables();
+  renderMenu();
+  renderCart();
   try {
     sessionStorage.removeItem(sessionKey);
     sessionStorage.removeItem(loginSelectionKey);
@@ -1645,7 +1755,7 @@ $('#captain-pin-form').addEventListener('submit', async (event) => {
   status.textContent = 'Signing in…';
   try {
     const remembered = $('#captain-stay-logged-in').checked;
-    const response = await fetch('/api/captain/login', {
+    const response = await fetchWithTimeout('/api/captain/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: account.id, pin, remember: remembered }),
@@ -1685,6 +1795,7 @@ $('#captain-nav-signout').addEventListener('click', () => {
   if (confirm(`Sign out ${state.captain?.name || 'Captain'}?`)) signOut();
 });
 $('#captain-nav-links').addEventListener('click', (event) => {
+  if (state.sending) return;
   const button = event.target.closest('[data-captain-nav-screen]');
   if (!button) return;
   const screen = button.dataset.captainNavScreen;
@@ -1697,31 +1808,42 @@ $('#captain-nav-links').addEventListener('click', (event) => {
   setScreen(screen);
 });
 $('#captain-nav-active-list').addEventListener('click', (event) => {
+  if (state.sending) return;
   const button = event.target.closest('[data-captain-nav-table]');
   if (!button) return;
   const area = button.dataset.captainNavTable,
     number = Number(button.dataset.captainNavNumber),
     active = activeTable(area, number);
   if (!active) return;
+  saveDraft();
   state.table = { area, number, orderId: active.id };
   state.cart = [];
-  prepareSavedKotRelease(active);
+  state.kotRetry = null;
+  restoreDraft();
+  if (!state.cart.length) prepareSavedKotRelease(active);
+  $('#captain-table-service').hidden = false;
+  applyCaptainPermissionsUI();
   $('#captain-nav').hidden = true;
   renderCart();
   setScreen('menu');
   void loadKotProgress(active.id);
 });
 $('#captain-nav-ready-list').addEventListener('click', (event) => {
+  if (state.sending) return;
   const button = event.target.closest('[data-captain-ready-table]');
   if (!button) return;
   const area = button.dataset.captainReadyTable,
     number = Number(button.dataset.captainReadyNumber),
     active = activeTable(area, number);
   if (!active) return;
+  saveDraft();
   state.table = { area, number, orderId: active.id };
   state.cart = [];
-  prepareSavedKotRelease(active);
+  state.kotRetry = null;
+  restoreDraft();
+  if (!state.cart.length) prepareSavedKotRelease(active);
   $('#captain-table-service').hidden = false;
+  applyCaptainPermissionsUI();
   $('#captain-nav').hidden = true;
   renderCart();
   setScreen('menu');
@@ -1729,13 +1851,16 @@ $('#captain-nav-ready-list').addEventListener('click', (event) => {
 $('#captain-ready-alerts').addEventListener('click', async (event) => {
   const button = event.target.closest('[data-ready-served]');
   if (!button) return;
+  const session = captainSessionIdentity();
   button.disabled = true;
   try {
-    const response = await fetch(
+    const response = await fetchWithTimeout(
         `/api/captain/orders/${encodeURIComponent(button.dataset.readyServed)}/kots/${encodeURIComponent(button.dataset.readyKot)}/served`,
         { method: 'POST', headers: captainHeaders() }
       ),
       data = await response.json();
+    if (!captainSessionCurrent(session)) return;
+    if (response.status === 401) { signOut('Your Captain session expired. Sign in again.'); return; }
     if (!response.ok) throw new Error(data.error || 'Unable to mark served.');
     const servedKey = `${button.dataset.readyServed}:${button.dataset.readyKot}`;
     state.readySeen[servedKey] = Date.now();
@@ -1746,6 +1871,7 @@ $('#captain-ready-alerts').addEventListener('click', async (event) => {
     renderReadyAlerts();
     showCaptainToast('Marked as served.', 'success');
   } catch (error) {
+    if (!captainSessionCurrent(session)) return;
     button.disabled = false;
     button.textContent = error.message || 'Try again';
   }
@@ -1753,12 +1879,14 @@ $('#captain-ready-alerts').addEventListener('click', async (event) => {
 $('#captain-table-service').addEventListener('click', async (event) => {
   const button = event.target.closest('[data-table-service]');
   if (!button || !state.table?.orderId) return;
+  const session = captainSessionIdentity(), table = state.table;
   button.disabled = true;
   try {
     const serviceState = button.dataset.tableService,
       proximity = serviceState === 'bill_requested' ? await captainPrintLocation() : undefined;
-    const response = await fetch(
-        `/api/captain/orders/${encodeURIComponent(state.table.orderId)}/service`,
+    if (!captainSessionCurrent(session) || state.table !== table) return;
+    const response = await fetchWithTimeout(
+        `/api/captain/orders/${encodeURIComponent(table.orderId)}/service`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...captainHeaders() },
@@ -1766,9 +1894,13 @@ $('#captain-table-service').addEventListener('click', async (event) => {
         }
       ),
       data = await response.json();
+    if (!captainSessionCurrent(session)) return;
+    if (response.status === 401) { signOut('Your Captain session expired. Sign in again.'); return; }
+    if (state.table !== table) return;
     if (!response.ok) throw new Error(data.error || 'Unable to send request.');
     button.textContent = 'Requested ✓';
   } catch (error) {
+    if (!captainSessionCurrent(session) || state.table !== table) return;
     button.disabled = false;
     button.textContent = error.message || 'Try again';
   }
@@ -1807,6 +1939,7 @@ $('#captain-order-action-toggle').addEventListener('click', () => {
   toggle.setAttribute('aria-expanded', String(!list.hidden));
 });
 $('#captain-order-action-list').addEventListener('click', (event) => {
+  if (state.sending) return;
   const closeActions = () => {
     const list = $('#captain-order-action-list'),
       toggle = $('#captain-order-action-toggle');
@@ -1817,6 +1950,7 @@ $('#captain-order-action-list').addEventListener('click', (event) => {
   if (event.target.closest('[data-start-takeaway], [data-start-delivery]')) {
     const delivery = !!event.target.closest('[data-start-delivery]');
     if (!captainAllowed(delivery ? 'deliveryOrders' : 'pickupOrders') || !(delivery ? captainSettings().homeDelivery : captainSettings().takeAway)) return;
+    saveDraft();
     state.kotRetry = null;
     state.table = { area: '', number: 0, orderId: '', mode: 'takeaway', fulfillmentType: delivery ? 'delivery' : 'takeaway' };
     state.cart = [];
@@ -1835,11 +1969,13 @@ $('#captain-order-action-list').addEventListener('click', (event) => {
   }
 });
 $('#table-board').addEventListener('click', (event) => {
+  if (state.sending) return;
   const button = event.target.closest('[data-table-area]');
   if (!button) return;
   const active = activeTable(button.dataset.tableArea, Number(button.dataset.tableNumber));
   if (active?.captain_accessible === false) return;
   if (!active && !captainAllowed('createOrders')) return;
+  saveDraft();
   state.kotRetry = null;
   state.table = {
     area: button.dataset.tableArea,
@@ -1939,6 +2075,7 @@ document.addEventListener(
   true
 );
 function changeMenuItem(item, delta) {
+  if (state.sending) return;
   const options = priceOptions(item);
   if (delta > 0) {
     if (options.length === 1 && !item.gravyStyleAvailable && !item.addonGroups?.length) addSimpleItem(item);
@@ -2002,6 +2139,7 @@ $('#choice-sheet').addEventListener('change', (event) => {
 $('#choice-add').addEventListener('click', addChoice);
 $('#choice-close').addEventListener('click', () => $('#choice-sheet').close());
 function changeCartQuantity(event) {
+  if (state.sending) return;
   const noteButton = event.target.closest('[data-cart-note]');
   if (noteButton) {
     const line = state.cart[Number(noteButton.dataset.cartNote)];
@@ -2017,11 +2155,12 @@ function changeCartQuantity(event) {
   if (!button) return;
   const line = state.cart[Number(button.dataset.cartIndex)];
   if (!line) return;
-  line.quantity += Number(button.dataset.cartChange);
+  line.quantity = Math.min(20, line.quantity + Number(button.dataset.cartChange));
   if (line.quantity <= 0) state.cart.splice(Number(button.dataset.cartIndex), 1);
   renderCart();
 }
 function changeCartCourse(event) {
+  if (state.sending) return;
   const select = event.target.closest('[data-cart-course]');
   if (!select) return;
   const index = Number(select.dataset.cartCourse);
@@ -2032,11 +2171,9 @@ function changeCartCourse(event) {
   const duplicateIndex = state.cart.findIndex(
     (candidate, candidateIndex) => candidateIndex !== index && candidate.key === line.key
   );
-  if (duplicateIndex >= 0) {
-    state.cart[duplicateIndex].quantity = Math.min(
-      20,
-      Number(state.cart[duplicateIndex].quantity || 0) + Number(line.quantity || 0)
-    );
+  const combined = duplicateIndex >= 0 ? Number(state.cart[duplicateIndex].quantity || 0) + Number(line.quantity || 0) : 0;
+  if (duplicateIndex >= 0 && combined <= 20) {
+    state.cart[duplicateIndex].quantity = combined;
     state.cart.splice(index, 1);
   }
   renderCart();
@@ -2065,7 +2202,7 @@ $('#clear-menu-search').addEventListener('click', () => {
 document
   .querySelectorAll('[data-captain-back]')
   .forEach((button) =>
-    button.addEventListener('click', () => setScreen(state.screen === 'review' ? 'menu' : 'tables'))
+    button.addEventListener('click', () => { if (!state.sending) setScreen(state.screen === 'review' ? 'menu' : 'tables'); })
   );
 $('#basket-bar').addEventListener('click', () => setScreen('review'));
 $('#refresh-captain').addEventListener('click', load);
@@ -2075,6 +2212,7 @@ $('#table-board').addEventListener('click', (event) => {
 $('#send-kot').addEventListener('change', renderCart);
 $('#place-order').addEventListener('click', async () => {
   if (state.sending || !state.table || (!state.cart.length && !state.kotRetry)) return;
+  const session = captainSessionIdentity();
   let payload = null;
   const status = $('#order-status'),
     isTakeaway = state.table.mode === 'takeaway',
@@ -2123,7 +2261,8 @@ $('#place-order').addEventListener('click', async () => {
       if (!navigator.onLine) throw new Error('You are offline. Reconnect to send this saved KOT.');
       status.textContent = `Sending KOT for saved order #${state.kotRetry.orderNumber}…`;
       const retry = state.kotRetry,
-        kot = await postCaptainKot(retry.id);
+        kot = await postCaptainKot(retry.id, $('#captain-kot-waiter')?.value || '');
+      if (!captainSessionCurrent(session)) return;
       await complete({ orderNumber: retry.orderNumber, kotNumber: kot.kotNumber }, true);
       return;
     }
@@ -2155,11 +2294,14 @@ $('#place-order').addEventListener('click', async () => {
     status.textContent = sendKot ? 'Sending KOT to kitchen…' : 'Saving order without a KOT…';
     const data = await postCaptainOrder(payload, {
       onRetry: ({ nextAttempt, attempts }) => {
+        if (!captainSessionCurrent(session)) return;
         status.textContent = `Connection delayed — confirming this same order safely (${nextAttempt}/${attempts})…`;
       },
     });
+    if (!captainSessionCurrent(session)) return;
     await complete(data, sendKot);
   } catch (error) {
+    if (!captainSessionCurrent(session)) return;
     if (error.savedOrder) {
       removePendingOrder(payload?.clientRequestId);
       state.submittingRequestId = '';
@@ -2169,6 +2311,7 @@ $('#place-order').addEventListener('click', async () => {
       $('#customer-phone').value = '';
       $('#special-request').value = '';
       state.kotRetry = { id: error.savedOrder.id, orderNumber: error.savedOrder.orderNumber };
+      if (state.table && state.table.mode !== 'takeaway') state.table.orderId = error.savedOrder.id;
       status.textContent = `Order #${error.savedOrder.orderNumber} is saved. Retry will send only its KOT.`;
       showCaptainToast(
         `Order #${error.savedOrder.orderNumber} was saved. Retry KOT to notify the kitchen.`,
@@ -2184,13 +2327,18 @@ $('#place-order').addEventListener('click', async () => {
       $('#customer-phone').value = '';
       $('#special-request').value = '';
       await load();
+      if (!captainSessionCurrent(session)) return;
       setScreen('tables');
       state.pendingError =
         'The table changed before this round could be saved. Review it once; it will not be submitted automatically.';
       renderPendingSync();
       showCaptainToast('Table changed. Review this round before adding it.', 'error');
-    } else if (payload && error.transient) {
+    } else if (payload && (error.transient || error.uncertain)) {
       saveForSync();
+      if (!error.transient) {
+        state.pendingError = `${error.message} Sync to confirm this original order before editing.`;
+        renderPendingSync();
+      }
     } else {
       removePendingOrder(payload?.clientRequestId);
       state.submittingRequestId = '';
@@ -2199,8 +2347,10 @@ $('#place-order').addEventListener('click', async () => {
       showCaptainToast(error.message || 'Unable to save the order.', 'error');
     }
   } finally {
-    state.sending = false;
-    renderCart();
+    if (captainSessionCurrent(session)) {
+      state.sending = false;
+      renderCart();
+    }
   }
 });
 ['customer-name', 'customer-phone', 'course-mode', 'special-request'].forEach((id) =>
@@ -2248,6 +2398,7 @@ document.addEventListener('visibilitychange', () => {
 );
 let editingCartNoteIndex = -1;
 function openCartNote(index) {
+  if (state.sending) return;
   const line = state.cart[index];
   if (!line) return;
   editingCartNoteIndex = index;
@@ -2363,10 +2514,12 @@ function restoreLatestDraft() {
 window.addEventListener('pagehide', saveDraft);
 window.addEventListener('beforeunload', saveDraft);
 const loadLiveCaptainBoard = load;
-let captainLoadPromise = null;
+let captainLoadPromise = null, captainLoadSession = '';
 load = function () {
-  if (captainLoadPromise) return captainLoadPromise;
-  captainLoadPromise = (async () => {
+  const session = captainSessionIdentity();
+  if (captainLoadPromise && captainLoadSession === session) return captainLoadPromise;
+  captainLoadSession = session;
+  const promise = (async () => {
     const showSnapshot =
         !!state.captain &&
         navigator.onLine &&
@@ -2379,11 +2532,12 @@ load = function () {
       restoreLatestDraft();
     }
     const result = await request;
-    restoreLatestDraft();
+    if (captainSessionCurrent(session)) restoreLatestDraft();
     return result;
   })().finally(() => {
-    captainLoadPromise = null;
+    if (captainLoadPromise === promise) captainLoadPromise = null;
   });
+  captainLoadPromise = promise;
   return captainLoadPromise;
 };
 const captainSetScreen = setScreen;
@@ -2438,6 +2592,7 @@ renderTables = function () {
   });
 };
 function openCaptainTableActions(tile) {
+  if (state.sending) return;
   const order = activeTable(tile.dataset.tableArea, Number(tile.dataset.tableNumber));
   if (!order || order.captain_accessible === false) return;
   captainHeldTable = {
@@ -2447,6 +2602,7 @@ function openCaptainTableActions(tile) {
   };
   $('#captain-table-actions-title').textContent = `Table No: ${captainHeldTable.number}`;
   $('#captain-table-actions-status').textContent = '';
+  captainTableActionSheet.querySelectorAll('button').forEach(button => { button.disabled = false; });
   captainTableActionSheet.querySelector('[data-captain-table-action="view"]').hidden = !captainAllowed('viewKots');
   captainTableActionSheet.querySelector('[data-captain-table-action="move"]').hidden = !captainAllowed('moveTables');
   captainTableActionSheet.querySelector('[data-captain-table-action="bill"]').hidden = !captainAllowed('requestBills');
@@ -2532,9 +2688,14 @@ captainTableActionSheet.addEventListener('click', async (event) => {
   if (action === 'view') {
     const { area, number, order } = captainHeldTable;
     captainTableActionSheet.close();
+    saveDraft();
     state.table = { area, number, orderId: order.id };
     state.cart = [];
-    prepareSavedKotRelease(order);
+    state.kotRetry = null;
+    restoreDraft();
+    if (!state.cart.length) prepareSavedKotRelease(order);
+    $('#captain-table-service').hidden = false;
+    applyCaptainPermissionsUI();
     renderCart();
     setScreen('menu');
     void loadKotProgress(order.id);
@@ -2542,13 +2703,15 @@ captainTableActionSheet.addEventListener('click', async (event) => {
   }
   if (action === 'bill') {
     const held = captainHeldTable;
+    const session = captainSessionIdentity();
     if (!captainAllowed('requestBills')) return;
     const button = event.target.closest('[data-captain-table-action]');
     button.disabled = true;
     $('#captain-table-actions-status').textContent = 'Requesting bill…';
     try {
       const proximity = await captainPrintLocation();
-      const response = await fetch(
+      if (!captainSessionCurrent(session) || captainHeldTable !== held || !captainTableActionSheet.open) return;
+      const response = await fetchWithTimeout(
           `/api/captain/orders/${encodeURIComponent(held.order.id)}/service`,
           {
             method: 'POST',
@@ -2557,20 +2720,27 @@ captainTableActionSheet.addEventListener('click', async (event) => {
           }
         ),
         data = await response.json();
+      if (!captainSessionCurrent(session)) return;
+      if (response.status === 401) { signOut('Your Captain session expired. Sign in again.'); return; }
+      if (captainHeldTable !== held || !captainTableActionSheet.open) return;
       if (!response.ok) throw new Error(data.error || 'Unable to request the bill.');
       captainTableActionSheet.close();
       showCaptainToast('Bill request sent to the counter for printing.', 'success');
     } catch (error) {
+      if (!captainSessionCurrent(session) || captainHeldTable !== held || !captainTableActionSheet.open) return;
       $('#captain-table-actions-status').textContent = error.message || 'Unable to request the bill.';
       showCaptainToast(error.message || 'Unable to request the bill.', 'error');
     } finally {
-      button.disabled = false;
+      if (captainSessionCurrent(session) && captainHeldTable === held) button.disabled = false;
     }
     return;
   }
   if (action === 'move') {
     if (!captainAllowed('moveTables')) return;
     captainTableActionSheet.close();
+    $('#captain-move-area').disabled = false;
+    $('#captain-move-number').disabled = false;
+    $('#captain-move-confirm').textContent = 'Move table';
     const areaSelect = $('#captain-move-area');
     areaSelect.innerHTML = state.areas.map((area) => `<option value="${esc(area.name)}">${esc(area.name)}</option>`).join('');
     areaSelect.value = captainHeldTable.area;
@@ -2597,6 +2767,7 @@ $('#captain-move-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const held = captainHeldTable, button = $('#captain-move-confirm');
   if (!held || button.disabled || !captainAllowed('moveTables')) return;
+  const session = captainSessionIdentity();
   const tableArea = $('#captain-move-area').value, tableNumber = Number($('#captain-move-number').value);
   const area = state.areas.find((entry) => entry.name === tableArea);
   if (!area || !Number.isInteger(tableNumber) || tableNumber < area.from || tableNumber > area.to || activeTable(tableArea, tableNumber)) {
@@ -2605,21 +2776,32 @@ $('#captain-move-form').addEventListener('submit', async (event) => {
   }
   button.disabled = true;
   button.textContent = 'Moving…';
+  $('#captain-move-area').disabled = true;
+  $('#captain-move-number').disabled = true;
   try {
     const response = await fetchWithTimeout(`/api/captain/orders/${encodeURIComponent(held.order.id)}/move`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', ...captainHeaders() },
       body: JSON.stringify({ tableArea, tableNumber }),
     });
     const data = await response.json();
+    if (!captainSessionCurrent(session)) return;
+    if (response.status === 401) { signOut('Your Captain session expired. Sign in again.'); return; }
+    if (captainHeldTable !== held) return;
     if (!response.ok) throw new Error(data.error || 'Unable to move this table.');
     $('#captain-move-sheet').close();
     await load();
+    if (!captainSessionCurrent(session) || captainHeldTable !== held) return;
     showCaptainToast(`Moved to ${tableArea} Table ${String(tableNumber).padStart(2, '0')}.`, 'success');
   } catch (error) {
+    if (!captainSessionCurrent(session) || captainHeldTable !== held) return;
     $('#captain-move-error').textContent = error.message || 'Unable to move this table.';
   } finally {
-    button.disabled = false;
-    button.textContent = 'Move table';
+    if (captainSessionCurrent(session) && captainHeldTable === held) {
+      button.disabled = false;
+      button.textContent = 'Move table';
+      $('#captain-move-area').disabled = false;
+      $('#captain-move-number').disabled = false;
+    }
   }
 });
 // Dismiss sheets without moving the underlying board; native dialog keeps focus trapped.
@@ -2658,6 +2840,10 @@ setInterval(() => {
     void refreshCaptainProfile().catch(() => {});
 }, 30000);
 window.addEventListener('popstate', () => {
+  if (state.sending) {
+    history.pushState({ captain: true, screen: state.screen }, '', location.href);
+    return;
+  }
   const openSheet = document.querySelector('dialog[open]');
   if (openSheet) {
     openSheet.close();

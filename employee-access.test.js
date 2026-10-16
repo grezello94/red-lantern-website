@@ -11,6 +11,9 @@ const mockSql = jest.fn(async (strings, ...values) => {
   if (query.includes('INSERT INTO website_content (id, data)')) { mockConfig = structuredClone(values[1]); return []; }
   if (query.includes('SELECT config FROM order_operations_config')) return [{ config: { tableAreas: [{name:'AC',from:1,to:10}] } }];
   if (query.includes('FROM direct_orders o WHERE o.id=')) return mockOrders.filter((order) => order.id === values[0]);
+  if (query.includes('UPDATE direct_orders SET service_state='))
+    return mockOrders.filter((order) => order.id === values[1] && order.mode === 'table' && ['saved','held','accepted','preparing','ready'].includes(order.status))
+      .map((order) => ({ id: order.id }));
   if (query.includes('FROM direct_orders o') && !query.includes('LIMIT 0') && !query.includes('GROUP BY')) return mockOrders;
   return [];
 });

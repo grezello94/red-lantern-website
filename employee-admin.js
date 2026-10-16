@@ -165,6 +165,7 @@
     const card = role.closest('[data-captain-card]');
     card.querySelector('[data-employee-role-description]').textContent = Staff.roles[role.value].description;
     card.querySelector('[data-captain-scope]').value = role.value === 'billing' ? 'all' : 'own';
+    syncControls(card);
   });
   const section = document.getElementById('tab-captain-app');
   const settingsCard = document.createElement('section');

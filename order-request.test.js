@@ -86,3 +86,25 @@ test('a shared Wi-Fi rate limit is respected and cancellation prevents another o
   expect(onRetry).toHaveBeenCalledWith(expect.objectContaining({ delayMs: 60125 }));
   expect(fetcher).toHaveBeenCalledTimes(1);
 });
+
+test('an unreadable success response retries the same order instead of falsely confirming an empty receipt', async () => {
+  const malformed = { ...response(201), json: async () => { throw new SyntaxError('Unexpected end of JSON'); } };
+  const fetcher = jest.fn().mockResolvedValueOnce(malformed).mockResolvedValueOnce(response(200, { id: 'durable-order', duplicate: true }));
+  const init = { method: 'POST', body: JSON.stringify({ clientRequestId: 'same-order-id' }) };
+  const result = await ReliableOrderRequests.json('/api/orders/counter', init, { fetcher, delays: [0] });
+  expect(result.data).toEqual({ id: 'durable-order', duplicate: true });
+  expect(fetcher.mock.calls[1][1].body).toBe(init.body);
+});
+
+test('repeated unreadable confirmations remain recoverable for manual retry', async () => {
+  const fetcher = jest.fn().mockResolvedValue({ ...response(201), json: async () => { throw new SyntaxError('Truncated response'); } });
+  await expect(ReliableOrderRequests.json('/api/orders/counter', {}, { fetcher, attempts: 2, delays: [0] }))
+    .rejects.toMatchObject({ name: 'OrderResponseParseError', transient: true });
+  expect(fetcher).toHaveBeenCalledTimes(2);
+});
+
+test.each([null, [], 'success'])('invalid confirmation shape %p cannot confirm an order', async data => {
+  const fetcher = jest.fn().mockResolvedValue(response(201, data));
+  await expect(ReliableOrderRequests.json('/api/orders/counter', {}, { fetcher, attempts: 1 }))
+    .rejects.toMatchObject({ name: 'OrderResponseParseError', transient: true });
+});

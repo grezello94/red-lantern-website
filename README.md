@@ -51,7 +51,9 @@ npm run release:check
 npm run release:tag
 ```
 
-The tag script checks the current branch and repo status, then creates an annotated tag based on the version in `package.json`.
+The release check runs lint, type checking, unit/API tests, the build, Print Bridge smoke checks, local load checks, and browser tests with retries disabled. Run it on Node 22, matching production.
+
+Commit the complete release, including new runtime files, tests and generated downloads, before tagging. The tag script rejects tracked changes and creates an annotated tag based on `package.json`; it does not verify the branch or untracked files.
 
 ## Notes
 

@@ -40,6 +40,48 @@ const { AsyncLocalStorage } = require('async_hooks');
 const employeeRequestContext = new AsyncLocalStorage();
 const employeeSessionCookie = 'rl_employee_session';
 const kotLineKey = (item) => `${item.category || ''}::${item.name || ''}::${item.portion || ''}::${item.style || ''}::${item.note || ''}::${Addons.selectionFingerprint(item.modifiers)}`;
+function legacyKotSourceBindings(orderItems, kots) {
+  const identity = item => JSON.stringify([kotLineKey(item),
+    String(item.menuType || 'food').toLowerCase(), String(item.courseOverride || '').toLowerCase()]);
+  const legacyLines = (Array.isArray(orderItems) ? orderItems : []).map((item, index) => ({
+    item, id: String(item.lineId || `legacy-${index}`),
+  })).filter(line => /^legacy-\d+$/.test(line.id));
+  return (Array.isArray(kots) ? kots : []).flatMap(kot => Array.isArray(kot.tickets) ? kot.tickets : [])
+    .flatMap(ticket => Array.isArray(ticket.items) ? ticket.items : [])
+    .filter(item => !item.lineId).map(item => ({ item,
+      sourceIds: legacyLines.filter(line => identity(line.item) === identity(item)).map(line => line.id),
+    }));
+}
+function kotSourceLineIds(orderItems, tickets) {
+  return [...new Set([
+    ...(Array.isArray(tickets) ? tickets : []).flatMap(ticket => ticket.items || [])
+      .map(item => String(item.lineId || '')).filter(Boolean),
+    ...legacyKotSourceBindings(orderItems, [{ tickets }]).flatMap(binding => binding.sourceIds),
+  ])];
+}
+function orderTimestampMicros(value) {
+  const timestamp = String(value || '').trim();
+  const parts = timestamp.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})(?:\.(\d{1,6}))?(Z|[+-]\d{2}(?::?\d{2})?)$/i);
+  if (!parts) return null;
+  const zone = /^[+-]\d{2}$/.test(parts[4]) ? `${parts[4]}:00` : parts[4];
+  const milliseconds = Date.parse(`${parts[1]}T${parts[2]}.${(parts[3] || '').padEnd(3, '0').slice(0, 3)}${zone}`);
+  if (!Number.isFinite(milliseconds)) return null;
+  // Date alone discards PostgreSQL's final three fractional digits. Preserve
+  // them so two edits in the same millisecond still have distinct revisions.
+  return (BigInt(milliseconds) * 1000n + BigInt((parts[3] || '').padEnd(6, '0').slice(3))).toString();
+}
+
+function soldWalletDeduction(order) {
+  if (!(Number(order.loyalty_points_redeemed) > 0)) return 0;
+  const subtotal = (Array.isArray(order.items) ? order.items : []).reduce((sum, item) =>
+    sum + Number(item.quantity || 0) *
+      ((Number(String(item.price || '').replace(/[^0-9.]/g, '')) || 0) + (item.style ? 10 : 0) + Addons.lineModifierTotal(item)), 0);
+  // The sold bill already records the monetary value of its redeemed points.
+  // Current point values and an enabled/disabled loyalty toggle apply to new
+  // redemptions; they must not reprice an existing bill's deduction.
+  return Math.max(0, Payments.money(subtotal - Number(order.total || 0) - Number(order.discount_amount || 0)));
+}
+
 function effectiveKotQuantities(kots, changes) {
   const sent = new Map();
   for (const kot of kots) {
@@ -809,7 +851,9 @@ function safeOrdersDestination(value) {
   try {
     const target = new URL(String(value || '/register'), 'https://red-lantern.local');
     const allowed = new Set(['/orders', '/orders.html', '/register', '/register.html', '/kds', '/kds.html', '/smart-kds', '/smart-kds.html', '/kitchen-display']);
-    return allowed.has(target.pathname) ? `${target.pathname}${target.search}${target.hash}` : '/register';
+    const requestPath = normalizedAdminPath(target.pathname);
+    const destination = requestPath === '/order' ? '/orders' : requestPath;
+    return allowed.has(destination) ? `${destination}${target.search}${target.hash}` : '/register';
   } catch (_) {
     return '/register';
   }
@@ -825,25 +869,40 @@ function currentOrdersLoginFailures(req) {
 }
 
 async function requireOrdersConsole(req, res, next) {
-  if (['/api/orders/session','/api/staff/session','/api/captain/login','/api/captain/accounts'].includes(req.path)) return next();
+  // Match Express's case-insensitive routes and optional trailing slash. Route
+  // parameters may contain encoded slashes or '..', so leave them encoded and
+  // only decode paths that can reach static files. Keep req.path intact for IDs.
+  const routePath = req.path.toLowerCase().replace(/\/+$/, '') || '/';
+  const requestPath = /^\/api\/(?:orders|register|staff|captain)(?:\/|$)/.test(routePath)
+    ? routePath : normalizedAdminPath(req.path);
+  if ((req.method === 'GET' || req.method === 'HEAD') && requestPath === '/order') {
+    const queryIndex = req.originalUrl.indexOf('?');
+    return res.redirect(302, `/orders${queryIndex < 0 ? '' : req.originalUrl.slice(queryIndex)}`);
+  }
+  if (['/api/orders/session','/api/staff/session','/api/captain/login','/api/captain/accounts'].includes(requestPath)) return next();
   const employeeToken = req.get('X-Captain-Session') || cookieValue(req, employeeSessionCookie);
-  const employeePath = req.path.startsWith('/api/orders') || req.path.startsWith('/api/register') || req.path.startsWith('/api/staff') ||
-    req.path.startsWith('/api/captain') ||
-    !!Staff.pagePermission(req.path) || /^\/(?:orders|register|kds|smart-kds)(?:-[a-z-]+)?\.(?:js|css)$/.test(req.path) || /^\/staff(?:\.html)?$/.test(req.path);
+  const employeePath = requestPath.startsWith('/api/orders') || requestPath.startsWith('/api/register') || requestPath.startsWith('/api/staff') ||
+    requestPath.startsWith('/api/captain') ||
+    !!Staff.pagePermission(requestPath) || /^\/(?:orders|register|kds|smart-kds)(?:-[a-z-]+)?\.(?:js|css)$/.test(requestPath) || /^\/staff(?:\.html)?$/.test(requestPath);
+  const actorEmployeeId = String(req.body?.actorEmployeeId || '').trim();
+  if (actorEmployeeId && employeePath && !employeeToken)
+    return res.status(401).json({ error: 'Sign in with the employee account that prepared this request.', code: 'employee_session_changed' });
   if (employeeToken && employeePath) {
     const employee = await getActiveCaptainSession(employeeToken);
     if (!employee) {
       res.clearCookie(employeeSessionCookie, authCookieOptions(req));
-      if (!req.path.startsWith('/api/')) return res.redirect('/staff-login');
+      if (!requestPath.startsWith('/api/')) return res.redirect('/staff-login');
       return res.status(401).json({ error: 'Your employee access has expired or was revoked. Sign in again.', loginUrl: '/staff-login' });
     }
     req.employee = employee;
-    if (req.path.startsWith('/api/captain') && !Staff.can(employee, 'captainApp'))
+    if (actorEmployeeId && actorEmployeeId !== String(employee.id))
+      return res.status(403).json({ error: 'The signed-in employee changed. Review this request with the original account.', code: 'employee_session_changed' });
+    if (requestPath.startsWith('/api/captain') && !Staff.can(employee, 'captainApp'))
       return res.status(403).json({ error: 'The Captain workspace is not enabled for your account.' });
     if (req.get('X-Captain-Session') || (Staff.can(employee, 'captainApp') && !Staff.can(employee, 'billingConsole') && !Staff.can(employee, 'register'))) req.captain = employee;
-    const pageRight = Staff.pagePermission(req.path);
+    const pageRight = Staff.pagePermission(requestPath);
     if (pageRight && !Staff.can(employee, pageRight)) return res.redirect(`/staff?denied=${encodeURIComponent(pageRight)}`);
-    if (req.path.startsWith('/api/orders') || req.path.startsWith('/api/register')) {
+    if (requestPath.startsWith('/api/orders') || requestPath.startsWith('/api/register')) {
       try {
         if (!(await authorizeEmployeeOrderRequest(req, res))) return;
       } catch (error) {
@@ -853,35 +912,35 @@ async function requireOrdersConsole(req, res, next) {
     return next();
   }
   const protectedPath =
-    req.path === '/orders' ||
-    req.path === '/orders.html' ||
-    req.path === '/register' ||
-    req.path === '/register.html' ||
-    req.path === '/register.js' ||
-    req.path === '/register.css' ||
-    req.path === '/kds' ||
-    req.path === '/kds.html' ||
-    req.path === '/kds.js' ||
-    req.path === '/kds.css' ||
-    req.path === '/smart-kds' ||
-    req.path === '/smart-kds.html' ||
-    req.path === '/smart-kds.js' ||
-    req.path === '/smart-kds-controls.js' ||
-    req.path === '/smart-kds-controls.css' ||
-    req.path === '/smart-kds.css' ||
-    req.path === '/smart-kds-batch.css' ||
-    req.path === '/kitchen-display' ||
-    req.path === '/orders.js' ||
-    req.path === '/orders.css' ||
-    req.path.startsWith('/api/register') ||
-    req.path.startsWith('/api/orders') || req.path.startsWith('/api/staff') || /^\/staff(?:\.html)?$/.test(req.path);
-  if ((req.get('X-Captain-Session') || cookieValue(req, employeeSessionCookie)) && req.path.startsWith('/api/orders'))
+    requestPath === '/orders' ||
+    requestPath === '/orders.html' ||
+    requestPath === '/register' ||
+    requestPath === '/register.html' ||
+    requestPath === '/register.js' ||
+    requestPath === '/register.css' ||
+    requestPath === '/kds' ||
+    requestPath === '/kds.html' ||
+    requestPath === '/kds.js' ||
+    requestPath === '/kds.css' ||
+    requestPath === '/smart-kds' ||
+    requestPath === '/smart-kds.html' ||
+    requestPath === '/smart-kds.js' ||
+    requestPath === '/smart-kds-controls.js' ||
+    requestPath === '/smart-kds-controls.css' ||
+    requestPath === '/smart-kds.css' ||
+    requestPath === '/smart-kds-batch.css' ||
+    requestPath === '/kitchen-display' ||
+    requestPath === '/orders.js' ||
+    requestPath === '/orders.css' ||
+    requestPath.startsWith('/api/register') ||
+    requestPath.startsWith('/api/orders') || requestPath.startsWith('/api/staff') || /^\/staff(?:\.html)?$/.test(requestPath);
+  if ((req.get('X-Captain-Session') || cookieValue(req, employeeSessionCookie)) && requestPath.startsWith('/api/orders'))
     return res.status(401).json({ error: 'Employee sign-in is required.' });
   if (!protectedPath) return next();
   const username = process.env.ORDERS_USERNAME;
   const password = process.env.ORDERS_PASSWORD;
   if (!username || !password) {
-    if (!req.path.startsWith('/api/')) return res.redirect('/staff-login');
+    if (!requestPath.startsWith('/api/')) return res.redirect('/staff-login');
     return res.status(401).json({ error: 'Employee sign-in is required.', loginUrl: '/staff-login' });
   }
   if (readOrdersSession(req)) return next();
@@ -889,7 +948,7 @@ async function requireOrdersConsole(req, res, next) {
   const [providedUser, ...providedPassword] =
     scheme === 'Basic' && encoded ? Buffer.from(encoded, 'base64').toString('utf8').split(':') : [];
   if (
-    req.path.startsWith('/api/') &&
+    requestPath.startsWith('/api/') &&
     secureCompare(providedUser || '', username) &&
     secureCompare(providedPassword.join(':'), password)
   )
@@ -920,10 +979,10 @@ async function requireOrdersConsole(req, res, next) {
     '/smart-kds.html',
     '/kitchen-display',
     '/staff', '/staff.html',
-  ].includes(req.path);
+  ].includes(requestPath);
   if ((req.method === 'GET' || req.method === 'HEAD') && isPage)
     return res.redirect(302, loginUrl);
-  if (req.path.startsWith('/api/'))
+  if (requestPath.startsWith('/api/'))
     return res.status(401).json({
       error: 'Staff sign-in is required.',
       code: 'staff_auth_required',
@@ -934,9 +993,12 @@ async function requireOrdersConsole(req, res, next) {
 
 async function authorizeEmployeeOrderRequest(req, res) {
   const employee = req.employee;
+  // Express decodes route parameters after matching. Do not decode an encoded
+  // slash in an order ID into a route segment while deciding its permission.
+  const requestPath = req.path.toLowerCase().replace(/\/+$/, '');
   const deny = (message) => { res.status(403).json({ error: message, code: 'employee_permission_denied' }); return false; };
-  const right = Staff.routePermission(req.method, req.path, req.body);
-  if (req.path.startsWith('/api/orders/smart-kds/') && (employee.areas.length || employee.tableScope !== 'all'))
+  const right = Staff.routePermission(req.method, requestPath, req.body);
+  if (requestPath.startsWith('/api/orders/smart-kds/') && (employee.areas.length || employee.tableScope !== 'all'))
     return deny('Smart KDS requires restaurant-wide kitchen access. Use the standard Kitchen display for area-restricted work.');
   if (!right) return deny('This operation is not available to your employee account.');
   if (right === 'read') {
@@ -968,8 +1030,8 @@ async function authorizeEmployeeOrderRequest(req, res) {
     }
   } else if (right === 'releaseKots' && Staff.can(employee, 'captainApp') && !Staff.captainSettings(employee.captainSettings).printKot) return deny('Captain KOT printing is disabled.');
   else if (!Staff.can(employee, right)) return deny(`${Staff.labels[right] || 'This action'} is not enabled for your account.`);
-  const orderMatch = req.path.match(/^\/api\/orders\/([^/]+)(?:\/(?:items|table|service|kots|print|bill-printed|bill-print\/[^/]+|settle|discount|priority|assignment|delivery-assignment|delivery-progress|kitchen-status\/[^/]+))?$/);
-  if (orderMatch && !['menu','operations','availability','counter','live-summary','readiness','push-key','push-subscriptions','kot-history','kitchen-statuses','smart-kds'].includes(orderMatch[1])) {
+  const orderMatch = req.path.replace(/\/+$/, '').match(/^\/api\/orders\/([^/]+)(?:\/(?:items|table|service|kots|print|bill-printed|bill-print\/[^/]+|settle|discount|priority|assignment|delivery-assignment|delivery-progress|kitchen-status\/[^/]+))?$/i);
+  if (orderMatch && !['menu','operations','availability','counter','live-summary','readiness','push-key','push-subscriptions','kot-history','kitchen-statuses','smart-kds'].includes(orderMatch[1].toLowerCase())) {
     await Promise.all([ensureDirectOrdersTable(), ensureOrderEventsTable()]);
     const rows = await sql`SELECT o.*,
       COALESCE((SELECT e.details->>'captainId' FROM order_events e WHERE e.order_id=o.id AND e.event_type='created' ORDER BY e.created_at ASC LIMIT 1),'') AS captain_id
@@ -1773,8 +1835,8 @@ function smartKdsStationForMenuItem(item, routes = []) {
   );
   return String((exact || category || fallback)?.printerId || '').trim();
 }
-async function upsertMenuProductionProfile(item, profile) {
-  await sql`INSERT INTO menu_production_profiles (item_key,menu_type,category,item_name,course_type,station_id,prep_time_estimate,min_prep_time,max_prep_time,plating_time,handoff_buffer,target_adjustment_minutes,batchable,batch_group_id,max_batch_size,optimal_batch_size,batch_window_seconds,parallel_capacity_cost,long_prep_item,requires_previous_course,can_pre_prep,can_hold_after_cooking,max_hold_time,priority_modifier,profile_version,updated_at) VALUES (${item.itemKey},${item.menuType},${item.category},${item.name},${profile.course},${profile.stationId || null},${profile.prepTimeEstimate},${profile.minPrepTime},${profile.maxPrepTime},${profile.platingTime},${profile.handoffBuffer},${profile.targetAdjustmentMinutes},${profile.batchable},${profile.batchGroupId || null},${profile.maxBatchSize},${profile.optimalBatchSize},${profile.batchWindowSeconds},${profile.parallelCapacityCost},${profile.longPrepItem},${profile.requiresPreviousCourse},${profile.canPrePrep},${profile.canHoldAfterCooking},${profile.maxHoldTime},${profile.priorityModifier},${profile.version},NOW()) ON CONFLICT (item_key) DO UPDATE SET menu_type=EXCLUDED.menu_type,category=EXCLUDED.category,item_name=EXCLUDED.item_name,course_type=EXCLUDED.course_type,station_id=EXCLUDED.station_id,prep_time_estimate=EXCLUDED.prep_time_estimate,min_prep_time=EXCLUDED.min_prep_time,max_prep_time=EXCLUDED.max_prep_time,plating_time=EXCLUDED.plating_time,handoff_buffer=EXCLUDED.handoff_buffer,target_adjustment_minutes=EXCLUDED.target_adjustment_minutes,batchable=EXCLUDED.batchable,batch_group_id=EXCLUDED.batch_group_id,max_batch_size=EXCLUDED.max_batch_size,optimal_batch_size=EXCLUDED.optimal_batch_size,batch_window_seconds=EXCLUDED.batch_window_seconds,parallel_capacity_cost=EXCLUDED.parallel_capacity_cost,long_prep_item=EXCLUDED.long_prep_item,requires_previous_course=EXCLUDED.requires_previous_course,can_pre_prep=EXCLUDED.can_pre_prep,can_hold_after_cooking=EXCLUDED.can_hold_after_cooking,max_hold_time=EXCLUDED.max_hold_time,priority_modifier=EXCLUDED.priority_modifier,profile_version=menu_production_profiles.profile_version+1,updated_at=NOW()`;
+function upsertMenuProductionProfile(item, profile, query = sql) {
+  return query`INSERT INTO menu_production_profiles (item_key,menu_type,category,item_name,course_type,station_id,prep_time_estimate,min_prep_time,max_prep_time,plating_time,handoff_buffer,target_adjustment_minutes,batchable,batch_group_id,max_batch_size,optimal_batch_size,batch_window_seconds,parallel_capacity_cost,long_prep_item,requires_previous_course,can_pre_prep,can_hold_after_cooking,max_hold_time,priority_modifier,profile_version,updated_at) VALUES (${item.itemKey},${item.menuType},${item.category},${item.name},${profile.course},${profile.stationId || null},${profile.prepTimeEstimate},${profile.minPrepTime},${profile.maxPrepTime},${profile.platingTime},${profile.handoffBuffer},${profile.targetAdjustmentMinutes},${profile.batchable},${profile.batchGroupId || null},${profile.maxBatchSize},${profile.optimalBatchSize},${profile.batchWindowSeconds},${profile.parallelCapacityCost},${profile.longPrepItem},${profile.requiresPreviousCourse},${profile.canPrePrep},${profile.canHoldAfterCooking},${profile.maxHoldTime},${profile.priorityModifier},${profile.version},NOW()) ON CONFLICT (item_key) DO UPDATE SET menu_type=EXCLUDED.menu_type,category=EXCLUDED.category,item_name=EXCLUDED.item_name,course_type=EXCLUDED.course_type,station_id=EXCLUDED.station_id,prep_time_estimate=EXCLUDED.prep_time_estimate,min_prep_time=EXCLUDED.min_prep_time,max_prep_time=EXCLUDED.max_prep_time,plating_time=EXCLUDED.plating_time,handoff_buffer=EXCLUDED.handoff_buffer,target_adjustment_minutes=EXCLUDED.target_adjustment_minutes,batchable=EXCLUDED.batchable,batch_group_id=EXCLUDED.batch_group_id,max_batch_size=EXCLUDED.max_batch_size,optimal_batch_size=EXCLUDED.optimal_batch_size,batch_window_seconds=EXCLUDED.batch_window_seconds,parallel_capacity_cost=EXCLUDED.parallel_capacity_cost,long_prep_item=EXCLUDED.long_prep_item,requires_previous_course=EXCLUDED.requires_previous_course,can_pre_prep=EXCLUDED.can_pre_prep,can_hold_after_cooking=EXCLUDED.can_hold_after_cooking,max_hold_time=EXCLUDED.max_hold_time,priority_modifier=EXCLUDED.priority_modifier,profile_version=menu_production_profiles.profile_version+1,updated_at=NOW()`;
 }
 function smartKdsProfileRow(row) {
   return {
@@ -2191,16 +2253,20 @@ async function smartKdsCourseStatesByOrder(orders = []) {
   return states;
 }
 async function markSmartKdsCoursesServedFromKot(orderId, kotNumber) {
-  await Promise.all([ensureSmartKdsTables(), ensureKotsTable()]);
+  await Promise.all([ensureSmartKdsTables(), ensureKotsTable(), ensureKotRoundStatusTable()]);
   const rows =
     await sql`SELECT tickets FROM order_kots WHERE order_id=${orderId} AND COALESCE(daily_kot_number,kot_number)=${kotNumber} LIMIT 1`;
   const lines = (Array.isArray(rows[0]?.tickets) ? rows[0].tickets : []).flatMap((ticket) =>
     Array.isArray(ticket.items) ? ticket.items : []
   );
   if (!lines.length) return;
-  const sourceLineIds = new Set(
-    lines.map((line) => String(line.lineId || '').trim()).filter(Boolean)
-  );
+  const [orders, kots] = await Promise.all([
+    sql`SELECT items FROM direct_orders WHERE id=${orderId} LIMIT 1`,
+    sql`SELECT tickets FROM order_kots WHERE order_id=${orderId}`,
+  ]);
+  const sourceLineIds = new Set(kotSourceLineIds(orders[0]?.items, rows[0].tickets));
+  const legacyBindings = JSON.stringify(legacyKotSourceBindings(orders[0]?.items, kots));
+  if (!sourceLineIds.size) return;
   const persistedTasks = sourceLineIds.size
     ? await sql`SELECT DISTINCT course_type FROM kitchen_production_tasks WHERE order_id=${orderId} AND source_line_id = ANY(${[...sourceLineIds]}) AND course_type IS NOT NULL`
     : [];
@@ -2235,11 +2301,18 @@ async function markSmartKdsCoursesServedFromKot(orderId, kotNumber) {
       // KOT add-ons can belong to the same course as an earlier served KOT.
       // Only serve the exact lines printed in this round; split production
       // chunks retain the same source_line_id and are updated together.
-      await sql`UPDATE kitchen_production_tasks SET task_state='served',active_batch_id=NULL,served_at=NOW(),version=version+1,updated_at=NOW() WHERE order_id=${orderId} AND course_type=${course} AND source_line_id = ANY(${[...sourceLineIds]}) AND task_state NOT IN ('served','cancelled','superseded')`;
-    } else {
-      // Legacy KOT records predate line IDs. Preserve their historic behavior
-      // rather than leaving an old served ticket permanently open.
-      await sql`UPDATE kitchen_production_tasks SET task_state='served',active_batch_id=NULL,served_at=NOW(),version=version+1,updated_at=NOW() WHERE order_id=${orderId} AND course_type=${course} AND task_state NOT IN ('served','cancelled','superseded')`;
+      await sql`UPDATE kitchen_production_tasks t SET task_state='served',active_batch_id=NULL,served_at=NOW(),version=version+1,updated_at=NOW()
+        WHERE order_id=${orderId} AND course_type=${course} AND source_line_id = ANY(${[...sourceLineIds]})
+          AND task_state NOT IN ('served','cancelled','superseded') AND NOT EXISTS (
+            SELECT 1 FROM order_kots k CROSS JOIN LATERAL jsonb_array_elements(k.tickets) ticket
+              CROSS JOIN LATERAL jsonb_array_elements(ticket->'items') item
+              LEFT JOIN order_kot_round_status s ON s.order_id=k.order_id
+                AND s.kot_number=COALESCE(k.daily_kot_number,k.kot_number) AND s.printer_id=ticket->>'printerId'
+            WHERE k.order_id=t.order_id AND (item->>'lineId'=t.source_line_id OR EXISTS (
+              SELECT 1 FROM jsonb_array_elements(${legacyBindings}::jsonb) legacy
+              WHERE legacy->'item'=item AND (legacy->'sourceIds') ? t.source_line_id
+            )) AND COALESCE(s.status,'accepted')<>'served'
+          )`;
     }
     const remaining =
       await sql`SELECT COUNT(*)::integer AS count FROM kitchen_production_tasks WHERE order_id=${orderId} AND course_type=${course} AND task_state NOT IN ('served','cancelled','superseded')`;
@@ -5595,6 +5668,61 @@ app.post('/api/orders/counter', async (req, res) => {
     counterClientRequestId = clientRequestId;
     if (captain && !clientRequestId)
       return res.status(400).json({ error: 'A request ID is required for Captain orders.' });
+    const expectedTableOrderId = String(tableOrderId || '').trim().slice(0, 120);
+    const dineInArea = String(tableArea || '').trim().slice(0, 60),
+      dineInNumber = Number.parseInt(tableNumber, 10),
+      isDineIn = !!dineInArea && Number.isInteger(dineInNumber) && dineInNumber > 0 && dineInNumber <= 9999;
+    const orderDay = kolkataOrderDay();
+    const stagedAction = ['save', 'hold'].includes(String(action)) ? String(action) : 'submit';
+    const initialStatus = stagedAction === 'hold' ? 'held' : stagedAction === 'save' ? 'saved' : 'accepted';
+    const lineIdentity = (item) => JSON.stringify([
+      String(item.name || ''), String(item.category || ''), String(item.portion || ''),
+      String(item.style || ''), String(item.note || ''), String(item.menuType || 'food'),
+      String(item.courseOverride || ''), Addons.selectionFingerprint(item.modifiers),
+    ]);
+    let tableUpdate = null;
+    const retainedOriginalQuantities = new Map(), retainedLineIds = new Set(), retainedLineQuantities = new Map();
+    if (!captain && expectedTableOrderId) {
+      const expectedVersion = orderTimestampMicros(req.body?.expectedUpdatedAt);
+      if (expectedVersion === null)
+        return res.status(409).json({ error: 'Refresh this table before saving its bill.', code: 'order_changed' });
+      if (!clientRequestId)
+        return res.status(400).json({ error: 'A request ID is required when updating a table bill.' });
+      if (!Array.isArray(items) || items.length > 200 || items.some((item) =>
+        !Number.isInteger(Number(item.quantity)) || Number(item.quantity) < 0 || Number(item.quantity) > 20))
+        return res.status(400).json({ error: 'Provide whole-number item quantities from 0 to 20, with at most 200 saved lines.' });
+      await Promise.all([ensureDirectOrdersTable(), ensureOrderEventsTable()]);
+      const original = (await sql`SELECT o.*,o.updated_at::text AS updated_at,
+        COALESCE((SELECT e.details->>'captainId' FROM order_events e WHERE e.order_id=o.id AND e.event_type='created' ORDER BY e.created_at ASC LIMIT 1),'') AS captain_id
+        FROM direct_orders o WHERE o.id=${expectedTableOrderId} LIMIT 1`)[0];
+      if (req.employee && (!original || !Staff.orderAccessible(req.employee, original)))
+        return res.status(403).json({ error: 'This active table is outside your assigned order access.' });
+      const actor = req.employee?.id || 'orders-console';
+      const requestHash = crypto.createHash('sha256').update(JSON.stringify({
+        actor, orderId: expectedTableOrderId, expectedVersion, tableArea: dineInArea, tableNumber: dineInNumber,
+        items: items.map((item) => ({ lineId: String(item.lineId || ''), identity: lineIdentity(item), quantity: Number(item.quantity) })),
+        action: stagedAction, customerName: String(customerName ?? ''), customerPhone: String(customerPhone ?? ''),
+        specialRequest: String(specialRequest ?? ''), loyaltyPoints: Number(loyaltyPoints || 0),
+        courseMode: String(courseMode || ''), reason: String(req.body?.reason || '').trim().slice(0, 240),
+      })).digest('hex');
+      const recovered = (await sql`SELECT r.captain_id,r.order_id,r.payload_hash,o.id,o.status,o.daily_order_number,o.total,FALSE AS applied
+        FROM captain_order_requests r JOIN direct_orders o ON o.id=r.order_id
+        WHERE r.request_id=${clientRequestId} LIMIT 1`)[0];
+      if (recovered) {
+        if (recovered.captain_id !== actor || recovered.order_id !== expectedTableOrderId || recovered.payload_hash !== requestHash)
+          return res.status(409).json({ error: 'This request ID was already used for a different table update.', code: 'request_id_reused' });
+        return res.status(201).json({ id: recovered.id, status: recovered.status,
+          orderNumber: String(recovered.daily_order_number).padStart(2, '0'), total: Number(recovered.total), continued: true, duplicate: true });
+      }
+      if (!original || !isDineIn || original.mode !== 'table' || original.table_area !== dineInArea || Number(original.table_number) !== dineInNumber ||
+        !['saved','held','accepted','preparing','ready'].includes(original.status))
+        return res.status(409).json({ error: 'This table changed. Refresh before saving its bill.', code: 'table_changed' });
+      if (expectedVersion !== orderTimestampMicros(original.updated_at))
+        return res.status(409).json({ error: 'This order changed on another device. Refresh before saving its bill.', code: 'order_changed' });
+      if ((await sql`SELECT id FROM direct_orders WHERE client_request_id=${clientRequestId} LIMIT 1`).length)
+        return res.status(409).json({ error: 'This request ID was already used to create an order.', code: 'request_id_reused' });
+      tableUpdate = { original, actor, requestHash };
+    }
     const menu = await getSection('airMenu');
     const priceNumber = (value) => Number(String(value || '').replace(/[^0-9.]/g, '')) || 0;
     const displayItemName = (value) =>
@@ -5613,10 +5741,40 @@ app.post('/api/orders/counter', async (req, res) => {
     ];
     const portionPrice = menuPortionPrice;
     const submitted = Array.isArray(items)
-      ? items.filter((item) => Number(item.quantity) > 0).slice(0, 30)
+      ? items.filter((item) => Number(item.quantity) > 0).slice(0, tableUpdate ? 200 : 30)
       : [];
     const clean = submitted
       .map((item) => {
+        if (tableUpdate) {
+          const originalItems = Array.isArray(tableUpdate.original.items) ? tableUpdate.original.items : [];
+          const originalIndex = originalItems.findIndex((original, index) =>
+            !retainedOriginalQuantities.has(index) &&
+            (item.lineId ? original.lineId === item.lineId : !original.lineId) &&
+            lineIdentity(original) === lineIdentity(item));
+          if (originalIndex >= 0) {
+            const original = originalItems[originalIndex], lineId = original.lineId || `legacy-${originalIndex}`;
+            let availabilityKey = '';
+            if (Number(item.quantity) > Number(original.quantity || 0)) {
+              const source = menuItems.find((dish) =>
+                dish.menuType === String(original.menuType || 'food').toLowerCase() &&
+                displayItemName(dish.name).toLowerCase() === String(original.name || '').toLowerCase() &&
+                String(dish.category || '').trim().toLowerCase() === String(original.category || '').trim().toLowerCase());
+              if (!source || !priceNumber(portionPrice(source, original.portion))) return null;
+              const modifiers = validateMenuItemModifiers(menu, source, original.modifiers);
+              if (!modifiers.ok) return { modifierError: modifiers.error };
+              if (original.style && !(source.gravyStyleAvailable || source.gravyAvailable || source.semiGravyAvailable))
+                return { modifierError: 'This preparation style is no longer available for additional items.' };
+              availabilityKey = `${String(source.category || '').toLowerCase()}::${String(source.name || '').toLowerCase()}`;
+            }
+            retainedOriginalQuantities.set(originalIndex, Number(item.quantity));
+            retainedLineIds.add(lineId);
+            retainedLineQuantities.set(lineId, Number(original.quantity || 0));
+            // Sold lines retain trusted price, modifier and kitchen snapshots,
+            // even when their menu item has changed or is no longer available.
+            return { ...original, lineId, orderedAt: original.orderedAt || tableUpdate.original.created_at,
+              quantity: Number(item.quantity), ...(availabilityKey ? { availabilityKey } : {}) };
+          }
+        }
         const name = String(item.name || '')
             .trim()
             .slice(0, 100),
@@ -5681,7 +5839,7 @@ app.post('/api/orders/counter', async (req, res) => {
       ensureOperationsConfigTable(),
       ensureMenuAvailabilityTable(),
     ]);
-    if (clientRequestId) {
+    if (clientRequestId && !tableUpdate) {
       const existing =
         await sql`SELECT id,daily_order_number,total FROM direct_orders WHERE client_request_id=${clientRequestId} LIMIT 1`;
       if (
@@ -5714,10 +5872,18 @@ app.post('/api/orders/counter', async (req, res) => {
     );
     if (clean.some((item) => unavailable.has(item.availabilityKey)))
       return res.status(409).json({ error: 'One or more selected items are out of stock.' });
-    const orderDay = kolkataOrderDay();
-    const saved = await attachSmartKdsOrderItemProfiles(
-        clean.map(({ availabilityKey, ...item }) => item)
-      ),
+    const savedLines = clean.flatMap(({ availabilityKey, ...item }) => {
+      const soldQuantity = retainedLineQuantities.get(item.lineId);
+      if (!(soldQuantity > 0 && item.quantity > soldQuantity)) return [item];
+      // Extra units start their own production task. Reusing a ready/served
+      // source line would incorrectly inherit the earlier kitchen state.
+      return [{ ...item, quantity: soldQuantity }, { ...item, lineId: crypto.randomUUID(),
+        orderedAt: new Date().toISOString(), quantity: item.quantity - soldQuantity }];
+    });
+    if (savedLines.length > 200)
+      return res.status(400).json({ error: 'This bill has too many separate kitchen lines. Save fewer additions at once.' });
+    const profiledLines = await attachSmartKdsOrderItemProfiles(savedLines);
+    const saved = profiledLines.map((item, index) => retainedLineIds.has(item.lineId) ? savedLines[index] : item),
       subtotal = saved.reduce(
         (sum, item) =>
           sum +
@@ -5739,6 +5905,7 @@ app.post('/api/orders/counter', async (req, res) => {
       ? Math.max(0, Math.floor(Number(loyaltyPoints) || 0))
       : 0;
     if (
+      !tableUpdate &&
       requestedLoyaltyPoints &&
       (suppliedPhone.length < 7 ||
         requestedLoyaltyPoints < loyalty.minRedeem ||
@@ -5747,12 +5914,6 @@ app.post('/api/orders/counter', async (req, res) => {
       return res.status(400).json({
         error: `Use a valid mobile number and at least ${loyalty.minRedeem} points, up to the order total.`,
       });
-    const dineInArea = String(tableArea || '')
-        .trim()
-        .slice(0, 60),
-      dineInNumber = Number.parseInt(tableNumber, 10);
-    const isDineIn =
-      !!dineInArea && Number.isInteger(dineInNumber) && dineInNumber > 0 && dineInNumber <= 9999;
     if (captain && !isDineIn && String(req.body?.mode || '').toLowerCase() !== 'takeaway')
       return res.status(400).json({ error: 'Choose an allocated table or Takeaway.' });
     if (captain && !captainCan(captain, isDineIn ? 'createOrders' : req.body?.fulfillmentType === 'delivery' ? 'deliveryOrders' : 'pickupOrders'))
@@ -5780,9 +5941,6 @@ app.post('/api/orders/counter', async (req, res) => {
     const activeTable = isDineIn
       ? await sql`SELECT id,items,total,daily_order_number,loyalty_points_redeemed,status FROM direct_orders WHERE mode='table' AND table_area=${dineInArea} AND table_number=${dineInNumber} AND order_day=${orderDay}::date AND status IN ('saved','held','accepted','preparing','ready') LIMIT 1`
       : [];
-    const expectedTableOrderId = String(tableOrderId || '')
-      .trim()
-      .slice(0, 120);
     const tableConflict = activeTable[0]
       ? {
           id: activeTable[0].id,
@@ -5792,7 +5950,7 @@ app.post('/api/orders/counter', async (req, res) => {
         }
       : null;
     if (
-      captain &&
+      (captain || tableUpdate) &&
       expectedTableOrderId &&
       (!activeTable.length || activeTable[0].id !== expectedTableOrderId)
     )
@@ -5808,10 +5966,11 @@ app.post('/api/orders/counter', async (req, res) => {
         code: 'table_changed',
         conflict: tableConflict,
       });
-    if (activeTable.length && !captain)
+    if (activeTable.length && !captain && !tableUpdate)
       return res.status(409).json({
         error:
           'This table is already active. Add items from the Orders console to keep one bill and one KOT flow.',
+        code: 'table_changed',
       });
     const orderMode = isDineIn ? 'table' : 'counter',
       fulfillment = isDineIn ? 'dine_in' : req.body?.fulfillmentType === 'delivery' ? 'delivery' : 'takeaway';
@@ -5827,14 +5986,108 @@ app.post('/api/orders/counter', async (req, res) => {
           : 'as_ready';
     // Counter and table orders can both be deliberately saved or held before
     // the kitchen is notified. Other actions create an accepted order.
-    const stagedAction = ['save', 'hold'].includes(String(action)) ? String(action) : 'submit';
-    const initialStatus =
-      stagedAction === 'hold' ? 'held' : stagedAction === 'save' ? 'saved' : 'accepted';
     const total = subtotal - requestedLoyaltyPoints * loyalty.pointValue,
       earned = loyalty.enabled
         ? Math.floor((subtotal - requestedLoyaltyPoints * loyalty.pointValue) / loyalty.spend) *
           loyalty.earn
         : 0;
+    if (tableUpdate) {
+      const original = tableUpdate.original,
+        originalItems = Array.isArray(original.items) ? original.items : [],
+        reducedItems = originalItems.some((item, index) =>
+          (retainedOriginalQuantities.get(index) || 0) < Number(item.quantity || 0)),
+        addedItems = saved.some((item) => !retainedLineIds.has(item.lineId)) || originalItems.some((item, index) =>
+          (retainedOriginalQuantities.get(index) || 0) > Number(item.quantity || 0)),
+        itemsChanged = reducedItems || addedItems,
+        reason = String(req.body?.reason || '').trim().slice(0, 240);
+      if (req.employee && addedItems && !Staff.can(req.employee, 'addRounds'))
+        return res.status(403).json({ error: 'Adding to active orders is not enabled for your account.' });
+      if (req.employee && reducedItems && !Staff.can(req.employee, 'editOrders'))
+        return res.status(403).json({ error: 'Editing existing order items is not enabled for your account.' });
+      if (req.employee && reducedItems && req.employee.requireEditReason !== false && reason.length < 3)
+        return res.status(400).json({ error: 'Enter a reason for editing or removing order items.' });
+      const redeemed = Math.max(0, Number(original.loyalty_points_redeemed || 0));
+      if (Number(loyaltyPoints || 0) && Number(loyaltyPoints) !== redeemed)
+        return res.status(409).json({ error: 'Wallet redemption cannot be changed while updating an existing table bill.' });
+      if (redeemed && suppliedPhone && suppliedPhone !== original.customer_phone)
+        return res.status(409).json({ error: 'Keep the original customer mobile number on a bill with redeemed wallet points.' });
+      const updatedTotal = Payments.money(subtotal - soldWalletDeduction(original) - Number(original.discount_amount || 0));
+      if (updatedTotal < 0)
+        return res.status(409).json({ error: 'Reduce the existing discount or wallet redemption before reducing this bill.' });
+      const updatedEarned = loyalty.enabled ? Math.floor(updatedTotal / loyalty.spend) * loyalty.earn : 0;
+      await Promise.all([ensureKotsTable(), ensureOrderEventsTable()]);
+      const [kots, changes] = await Promise.all([
+        sql`SELECT tickets FROM order_kots WHERE order_id=${original.id}`,
+        sql`SELECT details FROM order_events WHERE order_id=${original.id} AND event_type='items-updated' ORDER BY created_at ASC`,
+      ]);
+      const sent = effectiveKotQuantities(kots, changes), nextQuantities = new Map();
+      for (const item of saved)
+        nextQuantities.set(kotLineKey(item), (nextQuantities.get(kotLineKey(item)) || 0) + Number(item.quantity));
+      const kotReductions = [...sent].map(([key, quantity]) => ({ key, quantity: Math.max(0, quantity - (nextQuantities.get(key) || 0)) }))
+        .filter((entry) => entry.quantity > 0);
+      const changeDetails = {
+        itemCount: saved.reduce((count, item) => count + Number(item.quantity || 0), 0),
+        total: updatedTotal, loyaltyEarned: updatedEarned,
+        beforeItems: originalItems, afterItems: saved, kotReductions, reason,
+        ...(req.employee ? { employeeId: req.employee.id, employeeName: req.employee.name, employeeRole: req.employee.role } : {}),
+      };
+      const nextStatus = ['saved', 'held'].includes(original.status)
+        ? initialStatus : original.status;
+      const nextName = customerName === undefined ? original.customer_name
+          : String(customerName || 'Walk-in customer').trim().slice(0, 80),
+        nextPhone = suppliedPhone || original.customer_phone,
+        nextNote = specialRequest === undefined ? original.special_request : String(specialRequest || '').trim().slice(0, 240),
+        nextCourseMode = courseMode === undefined ? original.course_mode || resolvedCourseMode : resolvedCourseMode;
+      // A full-cart edit and its KOT corrections must commit under the same
+      // parent-row lock as ticket creation. Only claim the request after all
+      // version and ticket snapshots still match; retries reuse the ledger.
+      const [, updated] = await sql.transaction((tx) => [
+        tx`SELECT id FROM direct_orders WHERE id=${original.id} FOR UPDATE`,
+        tx`WITH current_order AS (
+          SELECT id FROM direct_orders
+          WHERE id=${original.id} AND mode='table' AND table_area=${dineInArea} AND table_number=${dineInNumber}
+            AND order_day=${orderDay}::date AND updated_at=${original.updated_at}
+            AND status IN ('saved','held','accepted','preparing','ready')
+            AND (SELECT COUNT(*) FROM order_kots WHERE order_id=${original.id})=${kots.length}
+            AND (SELECT COUNT(*) FROM order_events WHERE order_id=${original.id} AND event_type='items-updated')=${changes.length}
+        ), claimed AS (
+          INSERT INTO captain_order_requests (request_id,captain_id,order_id,payload_hash)
+          SELECT ${clientRequestId},${tableUpdate.actor},id,${tableUpdate.requestHash} FROM current_order
+          ON CONFLICT (request_id) DO NOTHING RETURNING request_id,captain_id,order_id,payload_hash
+        ), changed AS (
+          UPDATE direct_orders SET items=${JSON.stringify(saved)},total=${updatedTotal},loyalty_points_earned=${updatedEarned},
+            status=${nextStatus},customer_name=${nextName},customer_phone=${nextPhone},special_request=${nextNote},course_mode=${nextCourseMode},updated_at=NOW()
+          WHERE id=${original.id} AND EXISTS (SELECT 1 FROM claimed)
+          RETURNING id,status,daily_order_number,total
+        ), logged AS (
+          INSERT INTO order_events (order_id,event_type,details)
+          SELECT id,'items-updated',${JSON.stringify(changeDetails)}::jsonb FROM changed WHERE ${itemsChanged}
+          RETURNING order_id
+        ) SELECT r.captain_id,r.order_id,r.payload_hash,o.id,o.status,o.daily_order_number,o.total,TRUE AS applied
+          FROM claimed r JOIN changed o ON o.id=r.order_id
+        UNION ALL
+          SELECT r.captain_id,r.order_id,r.payload_hash,o.id,o.status,o.daily_order_number,o.total,FALSE AS applied
+          FROM captain_order_requests r JOIN direct_orders o ON o.id=r.order_id
+          WHERE r.request_id=${clientRequestId} AND NOT EXISTS (SELECT 1 FROM changed)
+        LIMIT 1`,
+      ]);
+      const result = updated[0] || (await sql`SELECT r.captain_id,r.order_id,r.payload_hash,o.id,o.status,o.daily_order_number,o.total,FALSE AS applied
+        FROM captain_order_requests r JOIN direct_orders o ON o.id=r.order_id
+        WHERE r.request_id=${clientRequestId} LIMIT 1`)[0];
+      if (!result)
+        return res.status(409).json({ error: 'This order or its kitchen tickets changed. Refresh before saving.', code: 'order_changed' });
+      if (result.captain_id !== tableUpdate.actor || result.order_id !== original.id || result.payload_hash !== tableUpdate.requestHash)
+        return res.status(409).json({ error: 'This request ID was already used for a different table update.', code: 'request_id_reused' });
+      const applied = result.applied === true || result.applied === 't';
+      res.status(201).json({ id: result.id, status: result.status,
+        orderNumber: String(result.daily_order_number).padStart(2, '0'), total: Number(result.total), continued: true, duplicate: !applied });
+      if (applied && itemsChanged)
+        void trackBackground((async () => {
+          await recordSmartKdsRealtimeEvent('items-updated', { orderId: original.id });
+          await materializeSmartKdsOrderTiming(original.id);
+        })().catch((error) => console.warn('Smart KDS table update failed:', error.message)));
+      return;
+    }
     if (activeTable.length && captain) {
       if (!captainCan(captain, 'addRounds'))
         return res.status(403).json({ error: 'Adding to active orders is not enabled for this staff account.' });
@@ -6052,8 +6305,8 @@ app.get('/api/orders', async (req, res) => {
       ? String(req.query.date)
       : '';
     const select = req.captain
-      ? "SELECT o.id,o.status,o.mode,o.customer_name,o.items,o.total,o.created_at,o.updated_at,o.order_day,o.daily_order_number,o.fulfillment_type,o.course_mode,o.table_area,o.table_number,o.bill_printed_at,o.service_state,o.service_requested_at,o.employee_assigned_id,o.delivery_employee_id,o.delivery_status,o.discount_amount,o.discount_reason,COALESCE((SELECT e.details->>'captainId' FROM order_events e WHERE e.order_id=o.id AND e.event_type='created' ORDER BY e.created_at ASC LIMIT 1),'') AS captain_id FROM direct_orders o"
-      : "SELECT o.*, (SELECT COUNT(*) FROM direct_orders h WHERE h.customer_phone=o.customer_phone) AS customer_order_count, (SELECT MAX(h.created_at) FROM direct_orders h WHERE h.customer_phone=o.customer_phone AND h.id<>o.id) AS customer_last_order_at, COALESCE((SELECT e.details->>'captainId' FROM order_events e WHERE e.order_id=o.id AND e.event_type='created' ORDER BY e.created_at ASC LIMIT 1),'') AS captain_id, COALESCE((SELECT string_agg(DISTINCT NULLIF(TRIM(e.details->>'captainName'), ''), ', ') FROM order_events e WHERE e.order_id=o.id AND e.event_type IN ('created','captain-items-added')),'') AS captain_names FROM direct_orders o";
+      ? "SELECT o.id,o.status,o.mode,o.customer_name,o.items,o.total,o.created_at,o.updated_at,to_char(o.updated_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS order_version,o.order_day,o.daily_order_number,o.fulfillment_type,o.course_mode,o.table_area,o.table_number,o.bill_printed_at,o.service_state,o.service_requested_at,o.employee_assigned_id,o.delivery_employee_id,o.delivery_status,o.discount_amount,o.discount_reason,COALESCE((SELECT e.details->>'captainId' FROM order_events e WHERE e.order_id=o.id AND e.event_type='created' ORDER BY e.created_at ASC LIMIT 1),'') AS captain_id FROM direct_orders o"
+      : "SELECT o.*,to_char(o.updated_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS order_version, (SELECT COUNT(*) FROM direct_orders h WHERE h.customer_phone=o.customer_phone) AS customer_order_count, (SELECT MAX(h.created_at) FROM direct_orders h WHERE h.customer_phone=o.customer_phone AND h.id<>o.id) AS customer_last_order_at, COALESCE((SELECT e.details->>'captainId' FROM order_events e WHERE e.order_id=o.id AND e.event_type='created' ORDER BY e.created_at ASC LIMIT 1),'') AS captain_id, COALESCE((SELECT string_agg(DISTINCT NULLIF(TRIM(e.details->>'captainName'), ''), ', ') FROM order_events e WHERE e.order_id=o.id AND e.event_type IN ('created','captain-items-added')),'') AS captain_names FROM direct_orders o";
     let ordersPromise;
     if (history && !requestedDay)
       ordersPromise = sql(
@@ -6259,20 +6512,25 @@ app.patch('/api/orders/:id/items', async (req, res) => {
   try {
     await Promise.all([ensureDirectOrdersTable(), ensureKotsTable(), ensureOrderEventsTable()]);
     const originalRows =
-      await sql`SELECT items,loyalty_points_redeemed,discount_amount,updated_at::text AS updated_at,status FROM direct_orders WHERE id=${req.params.id} LIMIT 1`;
+      await sql`SELECT items,total,loyalty_points_redeemed,discount_amount,updated_at::text AS updated_at,status FROM direct_orders WHERE id=${req.params.id} LIMIT 1`;
     if (!originalRows.length) return res.status(404).json({ error: 'Order not found.' });
-    if (req.body?.expectedUpdatedAt && new Date(req.body.expectedUpdatedAt).getTime() !== new Date(originalRows[0].updated_at).getTime())
+    if (req.body?.expectedUpdatedAt && orderTimestampMicros(req.body.expectedUpdatedAt) !== orderTimestampMicros(originalRows[0].updated_at))
       return res.status(409).json({ error: 'This order changed on another device. Refresh before editing its items.' });
     const original = Array.isArray(originalRows[0].items) ? originalRows[0].items : [];
     const quantities = Array.isArray(req.body?.quantities) ? req.body.quantities : [];
     if (quantities.length !== original.length || quantities.some((value) => !Number.isInteger(Number(value)) || Number(value) < 0 || Number(value) > 20))
       return res.status(400).json({ error: 'Provide a whole-number quantity from 0 to 20 for every order item.' });
-    const items = original
-      .map((item, index) => ({
-        ...item,
-        quantity: Math.max(0, Math.min(20, Number(quantities[index]) || 0)),
-      }))
-      .filter((item) => item.quantity > 0);
+    const items = original.flatMap((item, index) => {
+      const quantity = Number(quantities[index]);
+      if (!quantity) return [];
+      const lineId = item.lineId || `legacy-${index}`;
+      if (quantity <= Number(item.quantity)) return [{ ...item, lineId, quantity }];
+      return [{ ...item, lineId },
+        { ...item, lineId: crypto.randomUUID(), orderedAt: new Date().toISOString(),
+          quantity: quantity - Number(item.quantity) }];
+    });
+    if (items.length > 200)
+      return res.status(400).json({ error: 'This bill has too many separate kitchen lines. Save fewer additions at once.' });
     if (!items.length)
       return res.status(400).json({ error: 'Keep at least one item in the order.' });
     const [kots, changes] = await Promise.all([
@@ -6291,20 +6549,40 @@ app.patch('/api/orders/:id/items', async (req, res) => {
       0
     );
     const menu = await getSection('airMenu');
+    const additions = original.filter((item, index) => Number(quantities[index]) > Number(item.quantity));
+    if (additions.length) {
+      await ensureMenuAvailabilityTable();
+      const unavailable = new Set((await sql`SELECT item_key FROM menu_availability WHERE unavailable_until>NOW()`).map(row => row.item_key));
+      const menuItems = [...(menu.items || []).map(item => ({ ...item, menuType: 'food' })),
+        ...(menu.barItems || []).map(item => ({ ...item, menuType: 'bar' }))];
+      const displayName = value => String(value || '').replace(/[.…·]{2,}/g, ' ')
+        .replace(/\s+\d{2,5}(?:\.\d{1,2})?\s*\/?\s*$/, '').replace(/\s+/g, ' ').trim().toLowerCase();
+      for (const line of additions) {
+        const source = menuItems.find(item => item.menuType === String(line.menuType || 'food').toLowerCase()
+          && displayName(item.name) === String(line.name || '').trim().toLowerCase()
+          && String(item.category || '').trim().toLowerCase() === String(line.category || '').trim().toLowerCase());
+        if (!source || !price(menuPortionPrice(source, line.portion)))
+          return res.status(409).json({ error: 'An item is no longer available. Refresh the menu before adding more.' });
+        if (unavailable.has(`${String(source.category || '').toLowerCase()}::${String(source.name || '').toLowerCase()}`))
+          return res.status(409).json({ error: 'One or more selected items are out of stock.' });
+        const modifiers = validateMenuItemModifiers(menu, source, line.modifiers);
+        if (!modifiers.ok) return res.status(400).json({ error: modifiers.error });
+        if (line.style && !(source.gravyStyleAvailable || source.gravyAvailable || source.semiGravyAvailable))
+          return res.status(409).json({ error: 'This preparation style is no longer available for additional items.' });
+      }
+    }
     const loyalty = {
       enabled: menu.loyalty?.enabled !== false,
       spend: Math.max(1, Number(menu.loyalty?.spend) || 10),
       earn: Math.max(1, Number(menu.loyalty?.earn) || 1),
       pointValue: Math.max(0.01, Number(menu.loyalty?.pointValue) || 1),
     };
-    const redeemed = loyalty.enabled
-      ? Math.max(0, Number(originalRows[0].loyalty_points_redeemed || 0))
-      : 0;
-    if (redeemed * loyalty.pointValue > subtotal)
+    const redeemedAmount = soldWalletDeduction(originalRows[0]);
+    if (redeemedAmount > subtotal)
       return res.status(409).json({
         error: 'This change would make the redeemed loyalty points larger than the order total.',
       });
-    const total = subtotal - redeemed * loyalty.pointValue - Number(originalRows[0].discount_amount || 0);
+    const total = Payments.money(subtotal - redeemedAmount - Number(originalRows[0].discount_amount || 0));
     if (total < 0) return res.status(409).json({ error: 'Remove or reduce the discount before making this item change.' });
     const earned = loyalty.enabled ? Math.floor(total / loyalty.spend) * loyalty.earn : 0;
     const changeDetails = {
@@ -6466,15 +6744,35 @@ app.post('/api/orders/:id/settle', async (req, res) => {
       .trim()
       .slice(0, 100);
     const settlementId = requestId || `server-${crypto.randomUUID()}`;
-    if (requestId) {
+    const recoverSettlement = async () => {
       const existing =
-        await sql`SELECT id FROM direct_orders WHERE id=${req.params.id} AND settlement_request_id=${requestId} LIMIT 1`;
-      if (existing.length) return res.json({ ok: true, duplicate: true });
-    }
+        await sql`SELECT id,total FROM direct_orders WHERE id=${req.params.id} AND settlement_request_id=${settlementId} LIMIT 1`;
+      if (!existing.length) return false;
+      let requestedPlan;
+      try {
+        requestedPlan = Payments.normalizePaymentPlan({ ...req.body, total: Number(existing[0].total) });
+      } catch (error) {
+        res.status(400).json({ error: error.message });
+        return true;
+      }
+      const stored = await sql`SELECT payment_type,applied_amount,received_amount,collected_amount,change_amount,tip_amount
+        FROM order_payments WHERE order_id=${req.params.id} AND settlement_request_id=${settlementId} ORDER BY payment_index`;
+      const storedPlan = stored.map((entry) => [entry.payment_type, Number(entry.applied_amount), Number(entry.received_amount),
+        Number(entry.collected_amount), Number(entry.change_amount), Number(entry.tip_amount)]);
+      const attemptedPlan = requestedPlan.entries.map((entry) => [entry.paymentType, entry.appliedAmount, entry.receivedAmount,
+        entry.collectedAmount, entry.changeAmount, entry.tipAmount]);
+      if (JSON.stringify(storedPlan) !== JSON.stringify(attemptedPlan))
+        res.status(409).json({ error: 'This payment request ID was already used with different payment details.', code: 'request_id_reused' });
+      else res.json({ ok: true, duplicate: true });
+      return true;
+    };
+    if (requestId && await recoverSettlement()) return;
     const orderRows =
       await sql`SELECT total,updated_at::text AS updated_at FROM direct_orders WHERE id=${req.params.id} AND status IN ('accepted','preparing','ready') LIMIT 1`;
     if (!orderRows.length)
       return res.status(409).json({ error: 'This order is not waiting for payment.' });
+    if (req.body?.expectedUpdatedAt && orderTimestampMicros(req.body.expectedUpdatedAt) !== orderTimestampMicros(orderRows[0].updated_at))
+      return res.status(409).json({ error: 'This bill changed on another device. Refresh its total before saving payment.', code: 'bill_changed' });
     const total = Math.max(0, Number(orderRows[0].total) || 0);
     let plan;
     try {
@@ -6499,9 +6797,7 @@ app.post('/api/orders/:id/settle', async (req, res) => {
     ]);
     const rows = transactionResults[0];
     if (!rows.length) {
-      const duplicate =
-        await sql`SELECT id FROM direct_orders WHERE id=${req.params.id} AND settlement_request_id=${settlementId} LIMIT 1`;
-      if (duplicate.length) return res.json({ ok: true, duplicate: true });
+      if (await recoverSettlement()) return;
       return res.status(409).json({ error: 'This bill changed on another device. Refresh its total before saving payment.', code: 'bill_changed' });
     }
     await ensureTrustedContactsTable();
@@ -6906,7 +7202,7 @@ app.get('/api/orders/kitchen-statuses', async (req, res) => {
     await ensureKotRoundStatusTable();
     const day = kolkataOrderDay();
     const rows =
-      await sql`SELECT DISTINCT ON (s.order_id,s.printer_id) o.mode,o.table_area,o.employee_assigned_id,o.delivery_employee_id,o.fulfillment_type,s.order_id,s.kot_number,s.printer_id,s.status,s.updated_at,
+      await sql`SELECT o.mode,o.table_area,o.employee_assigned_id,o.delivery_employee_id,o.fulfillment_type,s.order_id,s.kot_number,s.printer_id,s.status,s.updated_at,
         COALESCE((SELECT e.details->>'captainId' FROM order_events e WHERE e.order_id=o.id AND e.event_type='created' ORDER BY e.created_at ASC LIMIT 1),'') AS captain_id
         FROM order_kot_round_status s JOIN direct_orders o ON o.id=s.order_id WHERE o.order_day=${day}::date AND o.status IN ('accepted','preparing','ready') ORDER BY s.order_id,s.printer_id,s.kot_number DESC`;
     res.set('Cache-Control', 'no-store');
@@ -6927,11 +7223,13 @@ app.patch('/api/orders/:id/table', async (req, res) => {
       return res.status(400).json({ error: 'Choose a valid destination table.' });
     const today = kolkataOrderDay();
     const [orderRows, configRows] = await Promise.all([
-      sql`SELECT id,status,table_area,table_number FROM direct_orders WHERE id=${req.params.id} AND mode='table' AND order_day=${today}::date LIMIT 1`,
+      sql`SELECT id,status,table_area,table_number,updated_at::text AS updated_at FROM direct_orders WHERE id=${req.params.id} AND mode='table' AND order_day=${today}::date LIMIT 1`,
       sql`SELECT config FROM order_operations_config WHERE config_key='default' LIMIT 1`,
     ]);
     const order = orderRows[0];
     if (!order) return res.status(404).json({ error: 'Table order not found.' });
+    if (req.body?.expectedUpdatedAt && orderTimestampMicros(req.body.expectedUpdatedAt) !== orderTimestampMicros(order.updated_at))
+      return res.status(409).json({ error: 'This table order changed. Refresh before moving it.', code: 'order_changed' });
     if (!['saved', 'held', 'accepted', 'preparing', 'ready'].includes(order.status))
       return res.status(409).json({ error: 'Only an active table order can be moved.' });
     const areas = Array.isArray(configRows[0]?.config?.tableAreas)
@@ -6954,7 +7252,9 @@ app.patch('/api/orders/:id/table', async (req, res) => {
       await sql`SELECT id FROM direct_orders WHERE mode='table' AND table_area=${tableArea} AND table_number=${tableNumber} AND order_day=${today}::date AND status IN ('saved','held','accepted','preparing','ready') AND id<>${req.params.id} LIMIT 1`;
     if (occupied.length)
       return res.status(409).json({ error: 'That destination table already has an active order.' });
-    await sql`UPDATE direct_orders SET table_area=${tableArea},table_number=${tableNumber} WHERE id=${req.params.id}`;
+    const changed = await sql`UPDATE direct_orders SET table_area=${tableArea},table_number=${tableNumber},updated_at=NOW() WHERE id=${req.params.id} AND mode='table' AND order_day=${today}::date AND status IN ('saved','held','accepted','preparing','ready') AND updated_at=${order.updated_at} RETURNING id`;
+    if (!changed.length)
+      return res.status(409).json({ error: 'This table order changed. Refresh before moving it.', code: 'order_changed' });
     await recordOrderEvent(req.params.id, 'table-moved', {
       fromArea: order.table_area,
       fromNumber: Number(order.table_number),
@@ -6963,36 +7263,95 @@ app.patch('/api/orders/:id/table', async (req, res) => {
     });
     res.json({ ok: true, tableArea, tableNumber });
   } catch (error) {
+    if (error?.code === '23505')
+      return res.status(409).json({ error: 'That destination table already has an active order.' });
     res.status(500).json({ error: 'Unable to move the table order.' });
   }
 });
 app.patch('/api/orders/:id/kitchen-status/:printerId', async (req, res) => {
   try {
-    await ensureDirectOrdersTable();
-    await ensureKotStationStatusTable();
-    await ensureKotRoundStatusTable();
+    await Promise.all([ensureDirectOrdersTable(), ensureKotsTable(), ensureOrderEventsTable(),
+      ensureKotStationStatusTable(), ensureKotRoundStatusTable(), ensureSmartKdsTables()]);
     const status = ['accepted', 'preparing', 'ready'].includes(String(req.body?.status || ''))
         ? String(req.body.status)
         : '',
-      kotNumber = Number.parseInt(req.body?.kotNumber, 10);
-    const printerId = String(req.params.printerId || '')
-      .replace(/[^a-zA-Z0-9_-]/g, '')
-      .slice(0, 80);
-    if (!status || !printerId || !Number.isInteger(kotNumber) || kotNumber < 1)
+      kotNumber = Number(req.body?.kotNumber);
+    const printerId = String(req.params.printerId || '').slice(0, 80);
+    if (!status || !/^[a-zA-Z0-9_-]+$/.test(printerId) || !Number.isInteger(kotNumber) || kotNumber < 1)
       return res.status(400).json({ error: 'Choose a valid KOT status update.' });
-    const found =
-      await sql`SELECT id FROM direct_orders WHERE id=${req.params.id} AND status NOT IN ('completed','rejected','cancelled') LIMIT 1`;
-    if (!found.length) return res.status(404).json({ error: 'That active order was not found.' });
-    await sql`INSERT INTO order_kot_round_status (order_id,kot_number,printer_id,status) VALUES (${req.params.id},${kotNumber},${printerId},${status}) ON CONFLICT (order_id,kot_number,printer_id) DO UPDATE SET status=EXCLUDED.status,updated_at=NOW()`;
-    await sql`INSERT INTO order_kot_station_status (order_id,printer_id,status) VALUES (${req.params.id},${printerId},${status}) ON CONFLICT (order_id,printer_id) DO UPDATE SET status=EXCLUDED.status,updated_at=NOW()`;
-    if (status === 'preparing' || status === 'ready') {
-      await ensureSmartKdsTables();
-      const changedTasks =
-        await sql`UPDATE kitchen_production_tasks SET task_state=${status},active_batch_id=NULL,eligible_at=COALESCE(eligible_at,NOW()),scheduled_at=CASE WHEN ${status}='preparing' THEN COALESCE(scheduled_at,NOW()) ELSE scheduled_at END,fired_at=CASE WHEN ${status}='preparing' THEN COALESCE(fired_at,NOW()) ELSE fired_at END,preparing_at=CASE WHEN ${status}='preparing' THEN COALESCE(preparing_at,NOW()) ELSE preparing_at END,ready_at=CASE WHEN ${status}='ready' THEN NOW() ELSE ready_at END,version=version+1,updated_at=NOW() WHERE order_id=${req.params.id} AND station_id=${printerId} AND task_state IN ('ordered','eligible','scheduled','preparing') RETURNING task_id,order_id`;
-      const operator = smartKdsOperator(req);
-      for (const task of changedTasks)
-        await sql`INSERT INTO kitchen_task_events (task_id,order_id,event_type,details,actor_type,actor_id) VALUES (${task.task_id},${task.order_id},${`status-${status}`},${JSON.stringify({ printerId, kotNumber })},'kitchen',${operator})`;
-    }
+    const found = (await sql`SELECT o.id,o.items,o.mode,o.table_area,o.employee_assigned_id,o.delivery_employee_id,o.fulfillment_type,o.updated_at::text AS updated_at,k.tickets,
+      COALESCE((SELECT e.details->>'captainId' FROM order_events e WHERE e.order_id=o.id AND e.event_type='created' ORDER BY e.created_at ASC LIMIT 1),'') AS captain_id
+      FROM direct_orders o JOIN order_kots k ON k.order_id=o.id
+      WHERE o.id=${req.params.id} AND o.status IN ('accepted','preparing','ready')
+        AND COALESCE(k.daily_kot_number,k.kot_number)=${kotNumber} LIMIT 1`)[0];
+    if (!found) return res.status(404).json({ error: 'That active kitchen ticket was not found.' });
+    if (req.employee && !Staff.orderAccessible(req.employee, found))
+      return res.status(403).json({ error: 'This order is outside your assigned access.' });
+    const tickets = (Array.isArray(found.tickets) ? found.tickets : []).filter(ticket => ticket.printerId === printerId);
+    if (!tickets.length) return res.status(404).json({ error: 'That station is not part of this kitchen ticket.' });
+    const existing = (await sql`SELECT status FROM order_kot_round_status WHERE order_id=${req.params.id} AND kot_number=${kotNumber} AND printer_id=${printerId} LIMIT 1`)[0];
+    const previous = existing?.status || 'accepted';
+    if (existing && previous === status) return res.json({ ok: true, status, kotNumber, duplicate: true });
+    if ((req.body?.expectedStatus && req.body.expectedStatus !== previous) ||
+      ['accepted','preparing','ready','served'].indexOf(status) < ['accepted','preparing','ready','served'].indexOf(previous))
+      return res.status(409).json({ error: 'This kitchen ticket changed. Refresh before updating it.', code: 'kot_changed' });
+    const sourceIds = kotSourceLineIds(found.items, tickets);
+    const kots = await sql`SELECT tickets FROM order_kots WHERE order_id=${req.params.id}`;
+    const legacyBindings = JSON.stringify(legacyKotSourceBindings(found.items, kots));
+    const details = JSON.stringify({ printerId, kotNumber, status });
+    const operator = smartKdsOperator(req);
+    // Serialize round changes with payment, edits and KOT creation. A station
+    // may have several rounds; only the selected ticket's source lines advance.
+    const [, changed] = await sql.transaction(tx => [
+      tx`SELECT id FROM direct_orders WHERE id=${req.params.id} FOR UPDATE`,
+      tx`WITH active_order AS (
+        SELECT id FROM direct_orders WHERE id=${req.params.id} AND updated_at=${found.updated_at}
+          AND status IN ('accepted','preparing','ready')
+      ), changed_round AS (
+        INSERT INTO order_kot_round_status (order_id,kot_number,printer_id,status)
+        SELECT id,${kotNumber},${printerId},${status} FROM active_order
+        ON CONFLICT (order_id,kot_number,printer_id) DO UPDATE SET status=EXCLUDED.status,updated_at=NOW()
+          WHERE order_kot_round_status.status=${previous}
+        RETURNING order_id,kot_number,printer_id,status
+      ), station_state AS (
+        INSERT INTO order_kot_station_status (order_id,printer_id,status)
+        SELECT ${req.params.id},${printerId},CASE MIN(rank)
+          WHEN 0 THEN 'accepted' WHEN 1 THEN 'preparing' WHEN 2 THEN 'ready' ELSE 'served' END
+        FROM (
+          SELECT CASE s.status WHEN 'preparing' THEN 1 WHEN 'ready' THEN 2 WHEN 'served' THEN 3 ELSE 0 END AS rank
+          FROM order_kot_round_status s WHERE s.order_id=${req.params.id} AND s.printer_id=${printerId} AND s.kot_number<>${kotNumber}
+          UNION ALL SELECT CASE ${status} WHEN 'preparing' THEN 1 WHEN 'ready' THEN 2 ELSE 0 END
+        ) states WHERE EXISTS (SELECT 1 FROM changed_round)
+        HAVING COUNT(*)>0
+        ON CONFLICT (order_id,printer_id) DO UPDATE SET status=EXCLUDED.status,updated_at=NOW()
+      ), changed_tasks AS (
+        UPDATE kitchen_production_tasks t SET task_state=${status},active_batch_id=NULL,
+          eligible_at=COALESCE(eligible_at,NOW()),
+          scheduled_at=CASE WHEN ${status}='preparing' THEN COALESCE(scheduled_at,NOW()) ELSE scheduled_at END,
+          fired_at=CASE WHEN ${status}='preparing' THEN COALESCE(fired_at,NOW()) ELSE fired_at END,
+          preparing_at=CASE WHEN ${status}='preparing' THEN COALESCE(preparing_at,NOW()) ELSE preparing_at END,
+          ready_at=CASE WHEN ${status}='ready' THEN NOW() ELSE ready_at END,version=version+1,updated_at=NOW()
+        WHERE order_id=${req.params.id} AND (station_id=${printerId} OR station_id IN (
+          SELECT station_id FROM kitchen_stations WHERE printer_id=${printerId}))
+          AND source_line_id=ANY(${sourceIds}) AND task_state IN ('ordered','held','eligible','scheduled','fired','preparing')
+          AND ${status} IN ('preparing','ready') AND EXISTS (SELECT 1 FROM changed_round)
+          AND (${status}<>'ready' OR NOT EXISTS (
+            SELECT 1 FROM order_kots k CROSS JOIN LATERAL jsonb_array_elements(k.tickets) ticket
+              CROSS JOIN LATERAL jsonb_array_elements(ticket->'items') item
+              LEFT JOIN order_kot_round_status s ON s.order_id=k.order_id AND s.kot_number=COALESCE(k.daily_kot_number,k.kot_number) AND s.printer_id=${printerId}
+            WHERE k.order_id=t.order_id AND ticket->>'printerId'=${printerId} AND (item->>'lineId'=t.source_line_id OR EXISTS (
+              SELECT 1 FROM jsonb_array_elements(${legacyBindings}::jsonb) legacy
+              WHERE legacy->'item'=item AND (legacy->'sourceIds') ? t.source_line_id
+            ))
+              AND CASE WHEN COALESCE(k.daily_kot_number,k.kot_number)=${kotNumber} THEN ${status} ELSE COALESCE(s.status,'accepted') END NOT IN ('ready','served')
+          )) RETURNING task_id,order_id
+      ), logged_tasks AS (
+        INSERT INTO kitchen_task_events (task_id,order_id,event_type,details,actor_type,actor_id)
+        SELECT task_id,order_id,${`status-${status}`},${details}::jsonb,'kitchen',${operator} FROM changed_tasks
+      ) SELECT * FROM changed_round`,
+    ]);
+    if (!changed.length)
+      return res.status(409).json({ error: 'This order or kitchen ticket changed. Refresh before updating it.', code: 'kot_changed' });
     await recordOrderEvent(req.params.id, 'kitchen-status', { printerId, kotNumber, status });
     res.json({ ok: true, status, kotNumber });
   } catch (error) {
@@ -8636,29 +8995,30 @@ app.get('/api/admin/smart-kds/metrics', async (req, res) => {
 });
 app.put('/api/admin/smart-kds/stations', async (req, res) => {
   try {
-    await ensureSmartKdsTables();
-    const stations = Array.isArray(req.body?.stations) ? req.body.stations.slice(0, 250) : [];
-    for (const source of stations) {
-      const stationId = String(source?.station_id || '')
-        .trim()
-        .slice(0, 120);
-      if (!stationId) continue;
-      const stationName =
-        String(source.station_name || stationId)
-          .trim()
-          .slice(0, 120) || stationId;
-      const printerId =
-        String(source.printer_id || '')
-          .trim()
-          .slice(0, 120) || null;
-      const capacity = Math.max(
-        1,
-        Math.min(50, Number.parseInt(source.max_concurrent_tasks, 10) || 1)
-      );
-      const enabled = source.enabled !== false;
-      await sql`INSERT INTO kitchen_stations (station_id,station_name,printer_id,enabled,max_concurrent_tasks,updated_at) VALUES (${stationId},${stationName},${printerId},${enabled},${capacity},NOW()) ON CONFLICT (station_id) DO UPDATE SET station_name=EXCLUDED.station_name,printer_id=EXCLUDED.printer_id,enabled=EXCLUDED.enabled,max_concurrent_tasks=EXCLUDED.max_concurrent_tasks,version=kitchen_stations.version+1,updated_at=NOW()`;
-      await sql`INSERT INTO kitchen_station_state (station_id,enabled,available_capacity,updated_at) VALUES (${stationId},${enabled},${capacity},NOW()) ON CONFLICT (station_id) DO UPDATE SET enabled=EXCLUDED.enabled,available_capacity=EXCLUDED.available_capacity,version=kitchen_station_state.version+1,updated_at=NOW()`;
+    if (!Array.isArray(req.body?.stations) || req.body.stations.length > 250)
+      return res.status(400).json({ error: 'Provide an array of at most 250 kitchen stations.' });
+    const stations = [], stationIds = new Set();
+    for (const source of req.body.stations) {
+      if (!source || typeof source !== 'object' || Array.isArray(source) || typeof source.station_id !== 'string')
+        return res.status(400).json({ error: 'Every kitchen station needs a valid station ID.' });
+      const stationId = source.station_id.trim(), stationName = String(source.station_name || stationId).trim(),
+        printerId = source.printer_id == null ? null : String(source.printer_id).trim() || null,
+        capacity = source.max_concurrent_tasks === undefined ? 1 : Number(source.max_concurrent_tasks);
+      if (!stationId || stationId.length > 120 || stationIds.has(stationId) || stationName.length > 120 ||
+        (source.station_name !== undefined && typeof source.station_name !== 'string') ||
+        (source.printer_id != null && typeof source.printer_id !== 'string') || (printerId?.length || 0) > 120 ||
+        (source.max_concurrent_tasks !== undefined && !['number','string'].includes(typeof source.max_concurrent_tasks)) ||
+        !Number.isInteger(capacity) || capacity < 1 || capacity > 50 ||
+        (source.enabled !== undefined && typeof source.enabled !== 'boolean'))
+        return res.status(400).json({ error: 'Use unique station IDs, names up to 120 characters, and whole-number capacity from 1 to 50.' });
+      stationIds.add(stationId);
+      stations.push({ stationId, stationName: stationName || stationId, printerId, capacity, enabled: source.enabled !== false });
     }
+    await ensureSmartKdsTables();
+    if (stations.length) await sql.transaction((tx) => stations.flatMap(({ stationId, stationName, printerId, enabled, capacity }) => [
+      tx`INSERT INTO kitchen_stations (station_id,station_name,printer_id,enabled,max_concurrent_tasks,updated_at) VALUES (${stationId},${stationName},${printerId},${enabled},${capacity},NOW()) ON CONFLICT (station_id) DO UPDATE SET station_name=EXCLUDED.station_name,printer_id=EXCLUDED.printer_id,enabled=EXCLUDED.enabled,max_concurrent_tasks=EXCLUDED.max_concurrent_tasks,version=kitchen_stations.version+1,updated_at=NOW()`,
+      tx`INSERT INTO kitchen_station_state (station_id,enabled,available_capacity,updated_at) VALUES (${stationId},${enabled},${capacity},NOW()) ON CONFLICT (station_id) DO UPDATE SET enabled=EXCLUDED.enabled,available_capacity=EXCLUDED.available_capacity,version=kitchen_station_state.version+1,updated_at=NOW()`,
+    ]));
     clearSmartKdsReadCaches();
     const foundation = await getSmartKdsFoundation();
     await recordSmartKdsRealtimeEvent('stations-updated');
@@ -8686,24 +9046,55 @@ app.get('/api/admin/smart-kds/menu-profiles', async (req, res) => {
 });
 app.put('/api/admin/smart-kds/menu-profiles', async (req, res) => {
   try {
+    const incoming = req.body?.profiles;
+    if (!Array.isArray(incoming) || !incoming.length || incoming.length > 250)
+      return res.status(400).json({ error: 'Choose between 1 and 250 menu profiles to save.' });
+    const itemKeys = new Set();
+    const numericFields = { prepTimeEstimate: [1,240], minPrepTime: [1,240], maxPrepTime: [1,300],
+      platingTime: [0,60], handoffBuffer: [0,60], targetAdjustmentMinutes: [-60,60],
+      maxBatchSize: [1,100], optimalBatchSize: [1,100], batchWindowSeconds: [0,3600],
+      parallelCapacityCost: [1,50], maxHoldTime: [0,240], priorityModifier: [-100,100] };
+    for (const source of incoming) {
+      if (!source || typeof source !== 'object' || Array.isArray(source) || typeof source.itemKey !== 'string' ||
+        !source.itemKey || source.itemKey.length > 300 || itemKeys.has(source.itemKey))
+        return res.status(400).json({ error: 'Every selected menu profile needs a unique valid item key.' });
+      itemKeys.add(source.itemKey);
+      if (Object.entries(numericFields).some(([key, [minimum, maximum]]) => source[key] !== undefined &&
+        (!['number','string'].includes(typeof source[key]) || String(source[key]).trim() === '' ||
+          !Number.isInteger(Number(source[key])) || Number(source[key]) < minimum || Number(source[key]) > maximum)) ||
+        ['batchable','longPrepItem','requiresPreviousCourse','canPrePrep','canHoldAfterCooking'].some((key) =>
+          source[key] !== undefined && typeof source[key] !== 'boolean') ||
+        (source.course !== undefined && (typeof source.course !== 'string' || !COURSE_TYPES.includes(source.course.toLowerCase()))) ||
+        (source.stationId != null && (typeof source.stationId !== 'string' || source.stationId.trim().length > 120)) ||
+        (source.batchGroupId != null && (typeof source.batchGroupId !== 'string' || source.batchGroupId.trim().length > 120)))
+        return res.status(400).json({ error: 'Provide valid preparation times, capacities, and kitchen profile settings for every item.' });
+    }
     await ensureSmartKdsTables();
-    const incoming = Array.isArray(req.body?.profiles) ? req.body.profiles.slice(0, 250) : [];
-    if (!incoming.length)
-      return res.status(400).json({ error: 'Choose at least one menu profile to save.' });
-    const current = await getSmartKdsMenuProfiles();
-    const items = new Map(current.items.map((item) => [item.itemKey, item]));
-    const stationIds = new Set(current.stations.map((station) => station.station_id));
-    const saved = [];
+    // Profile reads normally create missing defaults. Validation must be read
+    // only so an invalid batch cannot create or update any production profile.
+    const [menu, configRows, stationRows] = await Promise.all([
+      getSection('airMenu'), sql`SELECT config FROM kitchen_scheduling_config WHERE config_key='default' LIMIT 1`,
+      sql`SELECT station_id FROM kitchen_stations`,
+    ]);
+    const config = normalizeSmartKdsConfig(configRows[0]?.config || defaultSmartKdsConfig());
+    const items = new Map([
+      ...(Array.isArray(menu.items) ? menu.items.map((item) => ({ ...item, menuType: 'food' })) : []),
+      ...(Array.isArray(menu.barItems) ? menu.barItems.map((item) => ({ ...item, menuType: 'bar' })) : []),
+    ].map((item) => ({ itemKey: smartKdsMenuItemKey(item.menuType, item.category, item.name), menuType: item.menuType,
+      category: String(item.category || 'Menu').trim() || 'Menu', name: String(item.name || '').trim() }))
+      .filter((item) => item.itemKey && item.name).slice(0, 2000).map((item) => [item.itemKey, item]));
+    const stationIds = new Set(stationRows.map((station) => station.station_id)), prepared = [];
     for (const source of incoming) {
       const item = items.get(String(source?.itemKey || ''));
       if (!item)
         return res.status(400).json({ error: 'One of the selected menu items no longer exists.' });
-      const profile = normalizeMenuProductionProfile(source, item, current.config);
+      const profile = normalizeMenuProductionProfile(source, item, config);
       if (profile.stationId && !stationIds.has(profile.stationId))
         return res.status(400).json({ error: `${item.name} has an unknown kitchen station.` });
-      await upsertMenuProductionProfile(item, profile);
-      saved.push({ itemKey: item.itemKey, profile });
+      prepared.push({ item, profile });
     }
+    await sql.transaction((tx) => prepared.map(({ item, profile }) => upsertMenuProductionProfile(item, profile, tx)));
+    const saved = prepared.map(({ item, profile }) => ({ itemKey: item.itemKey, profile }));
     clearSmartKdsReadCaches({ foundation: false });
     await recordSmartKdsRealtimeEvent('production-profiles-updated');
     res.json({ ok: true, saved, schedulerActive: false });
@@ -9021,7 +9412,7 @@ async function recordEmployeeAudit(req, employeeId, action, details = {}) {
     VALUES (${employeeId},${action},${actor?.id || 'admin'},${actor?.name || process.env.ADMIN_USERNAME || 'Administrator'},${JSON.stringify(details)},${hashIp(req)},${String(req.get('user-agent') || '').slice(0, 300)})`;
 }
 const captainOrderAccess = async (captain, orderId, statuses) => {
-  const rows = await sql`SELECT o.id,o.mode,o.table_area,o.table_number,o.status,o.employee_assigned_id,
+  const rows = await sql`SELECT o.id,o.mode,o.table_area,o.table_number,o.status,o.employee_assigned_id,o.updated_at::text AS updated_at,
     COALESCE((SELECT e.details->>'captainId' FROM order_events e WHERE e.order_id=o.id AND e.event_type='created' ORDER BY e.created_at ASC LIMIT 1),'') AS captain_id
     FROM direct_orders o WHERE o.id=${orderId} AND o.mode='table' LIMIT 1`;
   const order = rows[0];
@@ -9130,13 +9521,17 @@ app.get('/api/staff/employees', async (req, res) => {
 app.post('/api/orders/:id/assignment', async (req, res) => {
   try {
     await ensureDirectOrdersTable();
-    const rows = await sql`SELECT table_area,status FROM direct_orders WHERE id=${req.params.id} AND mode='table' LIMIT 1`;
+    const rows = await sql`SELECT table_area,status,updated_at::text AS updated_at FROM direct_orders WHERE id=${req.params.id} AND mode='table' LIMIT 1`;
     if (!rows.length || !['saved','held','accepted','preparing','ready'].includes(rows[0].status)) return res.status(409).json({ error: 'Only an active table can be assigned.' });
     const id = String(req.body?.employeeId || '');
     const config = await getSection('captain');
     const employee = (config.captains || []).find((entry) => entry.id === id && entry.active !== false && Staff.can(entry, 'captainApp'));
     if (!employee || (employee.areas?.length && !employee.areas.includes(rows[0].table_area))) return res.status(400).json({ error: 'Choose an active Captain or waiter assigned to this dining area.' });
-    await sql`UPDATE direct_orders SET employee_assigned_id=${id},updated_at=NOW() WHERE id=${req.params.id} AND status IN ('saved','held','accepted','preparing','ready')`;
+    const changed = await sql`UPDATE direct_orders SET employee_assigned_id=${id},updated_at=NOW()
+      WHERE id=${req.params.id} AND mode='table' AND updated_at=${rows[0].updated_at}
+        AND status IN ('saved','held','accepted','preparing','ready') RETURNING id`;
+    if (!changed.length)
+      return res.status(409).json({ error: 'This table order changed. Refresh before assigning it.', code: 'order_changed' });
     await recordOrderEvent(req.params.id, 'employee-assigned', { assignedEmployeeId: id, assignedEmployeeName: employee.name });
     res.json({ ok: true });
   } catch (error) { res.status(503).json({ error: 'Unable to assign this table.' }); }
@@ -9193,6 +9588,8 @@ app.post('/api/orders/:id/discount', async (req, res) => {
     await ensureDirectOrdersTable();
     const rows = await sql`SELECT total,discount_amount,updated_at::text AS updated_at FROM direct_orders WHERE id=${req.params.id} AND mode='table' AND status IN ('saved','held','accepted','preparing','ready') LIMIT 1`;
     if (!rows.length) return res.status(409).json({ error: 'Discounts are available only for active dine-in bills.' });
+    if (req.body?.expectedUpdatedAt && orderTimestampMicros(req.body.expectedUpdatedAt) !== orderTimestampMicros(rows[0].updated_at))
+      return res.status(409).json({ error: 'The bill changed. Refresh before applying the discount.', code: 'order_changed' });
     const before = rows[0], base = Number(before.total) + Number(before.discount_amount || 0);
     const policy = req.employee?.discountLimit || { type: 'fixed', value: base };
     const discount = Staff.discountAmount(policy, req.body, base);
@@ -9570,8 +9967,14 @@ app.post('/api/captain/orders/:id/kots/:kotNumber/served', async (req, res) => {
       return res
         .status(404)
         .json({ error: 'That active table order is not assigned to this Captain.' });
-    const served =
-      await sql`UPDATE order_kot_round_status SET status='served',updated_at=NOW() WHERE order_id=${req.params.id} AND kot_number=${kotNumber} AND status='ready' RETURNING printer_id`;
+    const [, served] = await sql.transaction((tx) => [
+      tx`SELECT id FROM direct_orders WHERE id=${req.params.id} FOR UPDATE`,
+      tx`UPDATE order_kot_round_status SET status='served',updated_at=NOW()
+        WHERE order_id=${req.params.id} AND kot_number=${kotNumber} AND status='ready'
+          AND EXISTS (SELECT 1 FROM direct_orders WHERE id=${req.params.id} AND updated_at=${owner.updated_at}
+            AND mode='table' AND status IN ('accepted','preparing','ready'))
+        RETURNING printer_id`,
+    ]);
     if (!served.length)
       return res.status(409).json({ error: 'This KOT round is not ready to serve.' });
     const round =
@@ -9673,7 +10076,11 @@ app.post('/api/captain/orders/:id/service', async (req, res) => {
       return res
         .status(404)
         .json({ error: 'That active table order is not assigned to this Captain.' });
-    await sql`UPDATE direct_orders SET service_state=${serviceState},service_requested_at=NOW(),updated_at=NOW() WHERE id=${req.params.id}`;
+    const changed = await sql`UPDATE direct_orders SET service_state=${serviceState},service_requested_at=NOW(),updated_at=NOW()
+      WHERE id=${req.params.id} AND mode='table' AND updated_at=${owner.updated_at}
+        AND status IN ('saved','held','accepted','preparing','ready') RETURNING id`;
+    if (!changed.length)
+      return res.status(409).json({ error: 'This table order changed. Refresh before requesting service.', code: 'order_changed' });
     await recordOrderEvent(req.params.id, 'table-service-request', {
       serviceState,
       captainId: captain.id,
@@ -9747,7 +10154,9 @@ app.post('/api/captain/orders/:id/move', async (req, res) => {
       await sql`SELECT id FROM direct_orders WHERE order_day=${orderDay}::date AND mode='table' AND table_area=${tableArea} AND table_number=${tableNumber} AND status IN ('saved','held','accepted','preparing','ready') AND id<>${req.params.id} LIMIT 1`;
     if (occupied.length)
       return res.status(409).json({ error: 'That table already has an active order.' });
-    await sql`UPDATE direct_orders SET table_area=${tableArea},table_number=${tableNumber},updated_at=NOW() WHERE id=${req.params.id} AND order_day=${orderDay}::date`;
+    const changed = await sql`UPDATE direct_orders SET table_area=${tableArea},table_number=${tableNumber},updated_at=NOW() WHERE id=${req.params.id} AND mode='table' AND order_day=${orderDay}::date AND status IN ('saved','held','accepted','preparing','ready') AND updated_at=${owner.updated_at} RETURNING id`;
+    if (!changed.length)
+      return res.status(409).json({ error: 'This table order changed. Refresh before moving it.', code: 'order_changed' });
     await recordOrderEvent(req.params.id, 'table-moved', {
       fromArea: owner.table_area,
       fromNumber: Number(owner.table_number),

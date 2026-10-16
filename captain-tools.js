@@ -7,7 +7,13 @@
   sheet.setAttribute('aria-labelledby', 'captain-tool-title');
   sheet.innerHTML = '<form id="captain-tool-form"><header><h2 id="captain-tool-title"></h2><button type="button" data-close-tool aria-label="Close service tool">×</button></header><div id="captain-tool-content"></div><p id="captain-tool-error" role="status" aria-live="polite"></p><footer><button type="button" data-close-tool>Close</button><button type="submit" id="captain-tool-save">Save</button></footer></form>';
   document.body.append(sheet);
-  let saveAction = null, printerOptions = [], waiterDirectory = [], waiterLoading = false;
+  let saveAction = null, printerOptions = [], waiterDirectory = [], waiterLoading = false,
+    waiterReady = false, waiterSession = '', viewVersion = 0;
+  const toolScope = () => {
+    const scope = { session: captainSessionIdentity(), version: viewVersion };
+    scope.current = () => captainSessionCurrent(scope.session) && sheet.open && scope.version === viewVersion;
+    return scope;
+  };
   const waiterWrap = document.createElement('label');
   waiterWrap.className = 'captain-kot-waiter';
   waiterWrap.hidden = true;
@@ -16,30 +22,43 @@
   async function api(path, method = 'GET', body) {
     if (!state.captain) throw new Error('Sign in to use this tool.');
     if (!navigator.onLine) throw new Error('Connect to the server to use this tool. Offline orders remain in Unsuccessful KOTs.');
+    const session = captainSessionIdentity();
     const response = await fetchWithTimeout(path, { method, cache: 'no-store', headers: { ...captainHeaders(), ...(body ? { 'Content-Type': 'application/json' } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
-    const data = await response.json().catch(() => ({}));
+    const data = await response.json().catch(() => null);
+    if (!captainSessionCurrent(session)) throw new Error('Captain account changed.');
     if (response.status === 401) { signOut('Your session expired. Sign in again.'); throw new Error('Sign in again.'); }
-    if (!response.ok) throw new Error(data.error || 'Unable to complete this action.');
+    if (!response.ok) throw new Error(data?.error || 'Unable to complete this action.');
+    if (!data || typeof data !== 'object') throw new Error('The server did not confirm this action. Retry it once the connection is available.');
     return data;
   }
   function open(title, content, action = null, buttonLabel = 'Save') {
+    viewVersion += 1;
     $('#captain-tool-title').textContent = title;
     $('#captain-tool-content').innerHTML = content;
     $('#captain-tool-error').textContent = '';
     $('#captain-tool-save').hidden = !action;
     $('#captain-tool-save').textContent = buttonLabel;
+    $('#captain-tool-save').disabled = false;
     saveAction = action;
     if (!sheet.open) sheet.showModal();
   }
+  sheet.addEventListener('close', () => { if (!sheet.open) saveAction = null; });
   sheet.querySelectorAll('[data-close-tool]').forEach(button => button.addEventListener('click', () => sheet.close()));
   $('#captain-tool-form').addEventListener('submit', async event => {
     event.preventDefault();
-    if (!saveAction) return;
     const button = $('#captain-tool-save');
+    if (!saveAction || button.disabled || !sheet.open) return;
+    const scope = toolScope(), action = saveAction;
     button.disabled = true;
-    try { await saveAction(new FormData(event.target)); sheet.close(); await load(); showCaptainToast('Changes saved.', 'success'); }
-    catch (error) { $('#captain-tool-error').textContent = error.message; }
-    finally { button.disabled = false; }
+    try {
+      await action(new FormData(event.target));
+      if (!scope.current()) return;
+      sheet.close();
+      await load();
+      if (captainSessionCurrent(scope.session) && scope.version === viewVersion) showCaptainToast('Changes saved.', 'success');
+    }
+    catch (error) { if (scope.current()) $('#captain-tool-error').textContent = error.message; }
+    finally { if (captainSessionCurrent(scope.session) && scope.version === viewVersion) button.disabled = false; }
   });
   const reason = required => `<label>Reason<textarea name="reason" minlength="3" maxlength="240" ${required ? 'required' : ''} placeholder="Explain this change for the audit log"></textarea></label>`;
   const tools = [ ['sync','Sync data','Refresh tables, menu and failed orders'], ['menu','Update menu','Get the latest items, prices and availability'], ['unsuccessful','Unsuccessful KOTs','Review saved orders and retry failed tickets'], ['pending','Pending bills','Generated or requested bills awaiting payment'], ['server','Server connection','Check the server address and connectivity'], ['notifications','Notifications','Enable kitchen alerts on this device'], ['printers','Printer settings','Kitchen queues and paper formats'], ['preferences','App settings','View the settings assigned by your administrator'] ];
@@ -48,18 +67,27 @@
     open('Service tools', `<div class="captain-tool-list">${tools.map(([key,label,detail]) => `<button type="button" data-service-tool="${key}"><b>${label}</b><small>${detail}</small><span>›</span></button>`).join('')}</div>`);
   });
   window.applyCaptainToolsUI = () => {
+    const session = captainSessionIdentity();
+    if (waiterSession !== session) {
+      waiterSession = session; waiterDirectory = []; waiterLoading = false; waiterReady = false; printerOptions = [];
+      $('#captain-kot-waiter').innerHTML = '<option value="">Current captain</option>';
+    }
     $('#captain-voice-search').hidden = !captainSettings().speechSearch;
     waiterWrap.hidden = !captainSettings().waiterAssignment || !captainAllowed('assignTables');
     if (!waiterWrap.hidden && navigator.onLine && !waiterLoading) {
       waiterLoading = true;
-      api('/api/staff/employees').then(data => { waiterDirectory = data.employees || []; updateWaiters(); }).catch(() => {}).finally(() => { waiterLoading = false; });
+      api('/api/staff/employees').then(data => {
+        if (!captainSessionCurrent(session)) return;
+        waiterDirectory = data.employees || []; waiterReady = true; updateWaiters();
+      }).catch(() => {}).finally(() => { if (captainSessionCurrent(session)) waiterLoading = false; });
     }
 
     document.querySelectorAll('[data-captain-table-action="manage"]').forEach(button => { button.textContent = 'Order actions & payments'; });
   };
   function updateWaiters() {
+    if (!waiterReady) return;
     const selected = $('#captain-kot-waiter').dataset.draftWaiter || $('#captain-kot-waiter').value;
-    $('#captain-kot-waiter').innerHTML = '<option value="">Current captain</option>' + waiterDirectory.filter(employee => employee.tableService && (!employee.areas.length || employee.areas.includes(state.table?.area))).map(employee => `<option value="${esc(employee.id)}">${esc(employee.name)}</option>`).join('');
+    $('#captain-kot-waiter').innerHTML = '<option value="">Current captain</option>' + waiterDirectory.filter(employee => employee.active !== false && employee.tableService && (!employee.areas?.length || employee.areas.includes(state.table?.area))).map(employee => `<option value="${esc(employee.id)}">${esc(employee.name)}</option>`).join('');
     if ([...$('#captain-kot-waiter').options].some(option => option.value === selected)) $('#captain-kot-waiter').value = selected;
     delete $('#captain-kot-waiter').dataset.draftWaiter;
   }
@@ -70,7 +98,7 @@
     if (!captainAllowed('addTables')) throw new Error('Adding tables is not enabled for your account.');
     await api('/api/orders/operations/add-table','POST',{area:form.get('area')});
   }, 'Add table');
-  window.openCaptainGuestDetails = () => open('Guest details', '<p>Optional guest details for this order.</p><label>Name<input name="name" maxlength="80" autocomplete="name"></label><label>Mobile<input name="phone" type="tel" maxlength="16" autocomplete="tel"></label>', async form => {
+  window.openCaptainGuestDetails = () => open('Guest details', `<p>Optional guest details for this order.</p><label>Name<input name="name" maxlength="80" autocomplete="name" value="${esc($('#customer-name').value)}"></label><label>Mobile<input name="phone" type="tel" maxlength="16" autocomplete="tel" value="${esc($('#customer-phone').value)}"></label>`, async form => {
     $('#customer-name').value = form.get('name'); $('#customer-phone').value = form.get('phone'); saveDraft();
   }, 'Continue to menu');
   window.openCaptainOrderTools = order => {
@@ -78,8 +106,9 @@
     open(`${order.mode === 'table' ? `${order.table_area} · Table ${order.table_number}` : 'Order'} · ${money(order.total)}`, `<p>Order #${esc(order.daily_order_number || order.id)} · ${esc(order.status)}</p><div class="captain-tool-list">${grants.filter(([key,right]) => captainAllowed(right) && (!['discount','special','assign'].includes(key) || order.mode === 'table') && (key !== 'assign' || captainSettings().waiterAssignment) && (key !== 'priority' || captainSettings().enablePriority)).map(([key,,label]) => `<button type="button" data-native-order-action="${key}" data-native-order="${esc(order.id)}"><b>${label}</b><span>›</span></button>`).join('')}</div>`);
   };
   async function orderAction(order, action) {
+    const scope = toolScope();
     const base = `/api/orders/${encodeURIComponent(order.id)}`;
-    if (action === 'edit') open('Edit KOT items', `<p>Set quantity to zero to remove an item. Already printed tickets remain in the audit history.</p>${(order.items || []).map((item,index) => `<label>${esc(item.name)} ${esc(item.portion || '')}<input type="number" name="q-${index}" min="0" max="20" step="1" value="${Number(item.quantity)}" required></label>`).join('')}${reason(state.captain.requireEditReason !== false)}`, form => api(`${base}/items`, 'PATCH', { quantities: order.items.map((_,index) => Number(form.get(`q-${index}`))), reason: form.get('reason'), expectedUpdatedAt: order.updated_at }));
+    if (action === 'edit') open('Edit KOT items', `<p>Set quantity to zero to remove an item. Already printed tickets remain in the audit history.</p>${(order.items || []).map((item,index) => `<label>${esc(item.name)} ${esc(item.portion || '')}<input type="number" name="q-${index}" min="0" max="20" step="1" value="${Number(item.quantity)}" required></label>`).join('')}${reason(state.captain.requireEditReason !== false)}`, form => api(`${base}/items`, 'PATCH', { quantities: order.items.map((_,index) => Number(form.get(`q-${index}`))), reason: form.get('reason'), expectedUpdatedAt: order.order_version || order.updated_at }));
     if (action === 'cancel') open('Cancel order and KOTs', `<p>This cancels the entire order and its kitchen tickets.</p>${reason(true)}`, form => api(base,'PATCH',{status:'cancelled',reason:form.get('reason')}), 'Confirm cancellation');
     if (action === 'pay') {
       const paymentRequestId = crypto.randomUUID();
@@ -91,45 +120,59 @@
     }
     if (action === 'assign') {
       const directory = (await api('/api/staff/employees')).employees || [];
-      const eligible = directory.filter(employee => employee.tableService && (!employee.areas.length || employee.areas.includes(order.table_area)));
+      if (!scope.current()) return;
+      const eligible = directory.filter(employee => employee.active !== false && employee.tableService && (!employee.areas?.length || employee.areas.includes(order.table_area)));
       if (!eligible.length) throw new Error('No eligible waiter is assigned to this dining area.');
       open('Assign waiter', `<p>This waiter receives the table and its kitchen tickets.</p><label>Waiter<select name="employee">${eligible.map(employee => `<option value="${esc(employee.id)}">${esc(employee.name)}</option>`).join('')}</select></label>`, form => api(`${base}/assignment`, 'POST', {employeeId:form.get('employee')}));
     }
     if (action === 'priority') open('Order priority', '<p>Urgent orders receive higher priority in Smart KDS. Kitchen timing and capacity rules still apply.</p><label>Priority<select name="priority"><option value="normal">Normal</option><option value="urgent">Urgent</option></select></label>', form => api(`${base}/priority`, 'POST', {priority:form.get('priority')}));
   }
   async function serviceTool(key) {
+    const scope = toolScope();
+    try {
     if (['sync','menu'].includes(key)) {
       $('#captain-tool-error').textContent = 'Syncing with the server…';
       await api('/api/staff/session');
-      if (!(await load())) throw new Error('The live menu or table data could not be refreshed. Check the connection and retry.');
+      if (!scope.current()) return;
+      const refreshed = await load();
+      if (!scope.current()) return;
+      if (!refreshed) throw new Error('The live menu or table data could not be refreshed. Check the connection and retry.');
       if (key === 'sync') await flushPending();
+      if (!scope.current()) return;
       $('#captain-tool-error').textContent = state.pendingError || (key === 'menu' ? 'Menu and availability refreshed.' : 'Data synced. Orders needing review remain in Unsuccessful KOTs.');
     }
     if (key === 'unsuccessful') open('Unsuccessful KOTs', `<p>Orders waiting for the server and saved orders whose kitchen ticket failed. Review conflicts before merging.</p><div class="pending-sync-list">${state.pending.map((entry,index) => pendingOrderCard(entry,index)).join('') || '<p>No unsuccessful KOTs or queued orders.</p>'}</div>${state.pending.length ? '<button type="button" data-sync-pending>Retry sync now</button>' : ''}`);
     if (key === 'pending') {
       await load();
+      if (!scope.current()) return;
       const bills = state.orders.filter(order => order.mode === 'table' && order.captain_accessible !== false && Staff.orderAccessible(state.captain,order) && ['saved','held','accepted','preparing','ready'].includes(order.status) && (order.bill_printed_at || order.service_state === 'bill_requested'));
       open('Pending bills', `<p>Unpaid tables with a generated or requested bill.</p><div class="captain-tool-list">${bills.map(order => `<button type="button" data-native-order="${esc(order.id)}"><b>${esc(order.table_area)} · Table ${order.table_number}</b><small>${money(order.total)} · ${order.bill_printed_at ? 'Bill generated' : 'Bill requested'}</small><span>›</span></button>`).join('') || '<p>No pending bills in your assigned access.</p>'}</div>`);
     }
     if (key === 'server') {
       open('Server connection', `<p>Configured server address</p><code>${esc(location.origin)}</code><p>The app uses this server for menu, KOT and payment requests. For a local server, its host appears in this address; hosted installations do not use a restaurant LAN IP.</p><p id="captain-server-result">Checking authenticated connection…</p>`);
+      scope.version = viewVersion;
       const started = performance.now();
       await api('/api/staff/session');
+      if (!scope.current()) return;
       $('#captain-server-result').textContent = `Connected · ${Math.round(performance.now()-started)} ms`;
     }
     if (key === 'notifications') {
       if (!('Notification' in window)) throw new Error('This browser does not support system notifications. Kitchen updates still appear in the app.');
       const permission = await Notification.requestPermission();
+      if (!scope.current()) return;
       open('Kitchen notifications', `<p>Device permission: <b>${esc(permission)}</b></p><p>Restaurant setting: <b>${esc(captainSettings().notifications)}</b>. Item alerts require Smart KDS item readiness; KOT alerts use the kitchen ticket status.</p><p>${permission === 'denied' ? 'Enable notifications in the browser or device settings to receive system alerts.' : 'Keep this app open for live kitchen updates. Notifications follow your assigned order access.'}</p>`);
     }
     if (key === 'preferences') open('Captain App settings', `<p>Configured by your administrator.</p>${Object.entries(Staff.captainSettingGroups).map(([group, settings]) => `<h3>${esc(group)}</h3><dl>${Object.entries(settings).map(([setting,label]) => `<div><dt>${esc(label)}</dt><dd>${captainSettings()[setting] ? 'On' : 'Off'}</dd></div>`).join('')}</dl>`).join('')}<p>Item order: ${captainSettings().itemSort === 'az' ? 'A–Z' : 'Popularity'} · Notifications: ${esc(captainSettings().notifications)}</p>`);
     if (key === 'printers') {
       const data = await api('/api/captain/printers');
+      if (!scope.current()) return;
       printerOptions = data.printers || [];
       open('Kitchen printers', `<p>Bluetooth printers must be paired with the print bridge computer and installed as a system printer queue. Paper and cutter behavior use that printer’s driver.</p>${(data.printers || []).map(printer => `<article class="captain-printer"><b>${esc(printer.name || printer.deviceName)}</b><p>${esc(printer.deviceName)} · ${Number(printer.paperWidth) === 58 ? '2 inch / 58 mm' : '3 inch / 80 mm'}</p><small>${esc(printer.workstationName || 'Print bridge')} · Serial numbers ${printer.showItemSerial ? 'on' : 'off'}</small>${captainAllowed('operationsManage') ? `<button type="button" data-edit-kitchen-printer="${esc(printer.id)}">Edit format</button>` : ''}</article>`).join('') || '<p>No kitchen printer configured. Ask an administrator to configure Orders → Operations.</p>'}<p>Custom forms and automatic cutting are configured in the system printer driver.</p>`);
     }
+    } catch (error) { if (scope.current()) $('#captain-tool-error').textContent = error.message; }
   }
   sheet.addEventListener('click', async event => {
+    const scope = toolScope();
     const tool = event.target.closest('[data-service-tool]');
     const printerButton = event.target.closest('[data-edit-kitchen-printer]');
     const orderButton = event.target.closest('[data-native-order]');
@@ -152,9 +195,9 @@
       if (pendingButton) {
         if (pendingButton.matches('[data-sync-pending], [data-retry-pending-kot]')) await flushPending();
         else { handlePendingAction(event); sheet.close(); }
-        if (sheet.open) serviceTool('unsuccessful');
+        if (scope.current()) await serviceTool('unsuccessful');
       }
-    } catch (error) { $('#captain-tool-error').textContent = error.message; }
+    } catch (error) { if (scope.current()) $('#captain-tool-error').textContent = error.message; }
     finally { if (tool?.isConnected) tool.disabled = false; }
   });
   let recognition;
