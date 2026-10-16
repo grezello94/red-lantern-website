@@ -8,6 +8,28 @@ const os = require('os');
 const path = require('path');
 const { DatabaseSync } = require('node:sqlite');
 
+// Run the real Bridge and supervisor against a virtual operating-system queue.
+// CI has no CUPS scheduler, and this check must never touch a staff printer.
+function installNativePrinterFixture() {
+  const native = require('node:child_process');
+  native.execFile = (command, args, ...rest) => {
+    const done = rest.at(-1);
+    const script = args.join(' ');
+    let output;
+    if (command === 'lpstat' && args.length === 1 && args[0] === '-p')
+      output = 'printer Smoke_queue is idle. enabled since fixture\n';
+    else if (command === 'lpstat' && args.length === 1 && args[0] === '-v')
+      output = 'device for Smoke_queue: usb://smoke-fixture\n';
+    else if (command === 'powershell.exe' && script.includes('$ports=@{}'))
+      output = JSON.stringify([{ Name: 'Smoke_queue', PortName: 'USB001', Host: '', Status: 'Normal' }]);
+    else if (command === 'powershell.exe' && script.includes('Get-Service -Name Spooler'))
+      output = 'running';
+    process.nextTick(() => done(output === undefined
+      ? new Error(`Unexpected native printer command in smoke test: ${command}`)
+      : null, output || '', ''));
+  };
+}
+
 function request(port, pathname, options = {}) {
   return new Promise((resolve, reject) => {
     const body = options.body ? JSON.stringify(options.body) : '';
@@ -55,9 +77,14 @@ async function freePort() {
 async function main() {
   const port = await freePort();
   const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'red-lantern-bridge-test-'));
+  const nativeFixture = path.join(dataDir, 'native-printer-fixture.cjs');
+  await fs.writeFile(nativeFixture, `(${installNativePrinterFixture.toString()})();\n`);
   const child = spawn(process.execPath, ['print-bridge-supervisor.js'], {
     cwd: path.resolve(__dirname, '..'),
-    env: { ...process.env, PRINT_BRIDGE_PORT: String(port), PRINT_BRIDGE_DATA_DIR: dataDir },
+    env: {
+      ...process.env, PRINT_BRIDGE_PORT: String(port), PRINT_BRIDGE_DATA_DIR: dataDir,
+      NODE_OPTIONS: `${process.env.NODE_OPTIONS || ''} --require ${JSON.stringify(nativeFixture)}`.trim(),
+    },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let output = '';
@@ -90,9 +117,11 @@ async function main() {
     const printerDiscovery = await request(port, '/v1/printers');
     if (printerDiscovery.workstation?.id !== health.workstation.id)
       throw new Error('Bridge workstation identity was not stable across endpoints.');
+    if (printerDiscovery.printers?.length !== 1 || printerDiscovery.printers[0].name !== 'Smoke_queue')
+      throw new Error('Bridge did not discover the isolated smoke-test printer.');
     const rememberedPairing = await request(port, '/v1/config', {
       method: 'PUT', body: { revision: '9007199254740993', config: {
-        printers: [{ id: 'smoke-kitchen', name: 'Smoke kitchen', type: 'kot', deviceName: 'Smoke queue',
+        printers: [{ id: 'smoke-kitchen', name: 'Smoke kitchen', type: 'kot', deviceName: 'Smoke_queue',
           workstationId: health.workstation.id }],
         routes: [{ id: 'smoke-route', printerId: 'smoke-kitchen', category: '*' }],
       } },
@@ -184,8 +213,10 @@ async function main() {
       setup.recentPrintFailures[0]?.status !== 'uncertain' ||
       typeof setup.ledgerSummary?.printJobs?.unresolvedIssues !== 'number' ||
       !Array.isArray(setup.printers) ||
-      typeof setup.unavailableConfiguredPrinterCount !== 'number' ||
-      typeof setup.unreachableConfiguredPrinterCount !== 'number' ||
+      setup.printers[0]?.name !== 'Smoke_queue' ||
+      setup.missingConfiguredPrinterCount !== 0 ||
+      setup.unavailableConfiguredPrinterCount !== 0 ||
+      setup.unreachableConfiguredPrinterCount !== 0 ||
       setup.workstation?.id !== health.workstation.id
     )
       throw new Error('Bridge setup status did not expose the durable ledger state.');
