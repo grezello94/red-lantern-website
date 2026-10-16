@@ -20,6 +20,8 @@ jobs:
         with:
           node-version: '22'
           cache: npm
+      - name: Use production npm version
+        run: npm install -g npm@11.6.2
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: npm run lint
