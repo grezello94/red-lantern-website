@@ -4143,6 +4143,11 @@
       .smart-kds-profile-meta { color: #64748b; font-size: .88rem; }
       .smart-kds-profile-course { display: inline-flex; width: max-content; padding: 5px 9px; border-radius: 999px; background: #ecfdf5; color: #047857; font-weight: 800; text-transform: capitalize; }
       .smart-kds-profile-fields { padding: 18px 16px; border-top: 1px solid #e2e8f0; background: #f8fafc; }
+      .smart-kds-menu-understanding { padding: 12px 14px; border: 1px solid #c7dfcf; border-radius: 12px; color: #28543b; background: #f1f9f3; font-size: .87rem; line-height: 1.5; }
+      .smart-kds-profile-knowledge { margin-bottom: 18px; padding: 14px; border: 1px solid #cbdbea; border-radius: 10px; color: #435975; background: #fff; font-size: .86rem; line-height: 1.5; overflow-wrap: anywhere; }
+      .smart-kds-profile-knowledge > strong { color: #263d59; }
+      .smart-kds-profile-knowledge p { margin: 8px 0 0; }
+      .smart-kds-profile-knowledge .smart-kds-profile-preparation { padding: 10px; border-radius: 8px; color: #85520d; background: #fffaeb; }
       .smart-kds-profile-fields .form-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
       .smart-kds-profile-checks { display: flex; flex-wrap: wrap; gap: 12px 20px; margin-top: 8px; }
       .smart-kds-profile-checks label { display: inline-flex; align-items: center; gap: 7px; color: #475569; font-weight: 700; }
@@ -5835,6 +5840,7 @@ Availability may vary. Please ask our team about today’s specials.</textarea>
             <label class="form-group"><span>Find dish</span><input id="smart-kds-profile-search" type="search" placeholder="Dish or category"></label>
             <label class="form-group"><span>Menu category</span><select id="smart-kds-profile-course-filter"><option value="">All menu categories</option></select></label>
           </div>
+          <div id="smart-kds-menu-understanding" class="smart-kds-menu-understanding" aria-live="polite" hidden></div>
           <div class="smart-kds-profile-guide" aria-label="How to set up a dish">
             <div><b>1. Set the cooking plan</b><span>Choose the course, kitchen station, and realistic preparation time.</span></div>
             <div><b>2. Enable batches only when safe</b><span>Turn on batching only for dishes your chefs can cook together; set the exact portion limit.</span></div>
@@ -7526,7 +7532,7 @@ Watch competitors ranking for Colva Beach, seafood, Goan food, Chinese food, fam
     </script>
     <script src="/addons-domain.js?v=1" defer></script>
     <script src="/admin-analytics.js?v=5" defer></script>
-    <script src="/admin-cms.js?v=20261015-40" defer></script>
+    <script src="/admin-cms.js?v=20261022-41" defer></script>
     <script src="/admin-workspace.js?v=2" defer></script>
   </body>
 </html>

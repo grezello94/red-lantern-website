@@ -1,5 +1,6 @@
 const fs = require('fs');
 const Staff = require('./staff-domain');
+const { inferMenuProductionKnowledge } = require('./smart-kds-domain');
 const cms = fs.readFileSync('admin-cms.js', 'utf8');
 const employeeAdminSource = fs.readFileSync('employee-admin.js', 'utf8');
 const functionSource = (name, next) => cms.slice(cms.indexOf(`function ${name}(`), cms.indexOf(`function ${next}(`));
@@ -39,7 +40,8 @@ function profilesMarkup() {
     '<button data-smart-kds-panel-target="profiles" aria-current="page">Profiles</button>' +
     '<div id="smart-kds-profile-list"></div><div id="smart-kds-profile-status"></div>' +
     '<input id="smart-kds-profile-search"><select id="smart-kds-profile-course-filter"></select>' +
-    '<div id="smart-kds-profile-count"></div><button id="smart-kds-load-more-profiles">More</button>';
+    '<div id="smart-kds-profile-count"></div><div id="smart-kds-menu-understanding" hidden></div>' +
+    '<button id="smart-kds-load-more-profiles">More</button>';
 }
 
 describe('Admin kitchen configuration draft integrity', () => {
@@ -199,6 +201,44 @@ describe('Admin kitchen configuration draft integrity', () => {
     save(0); await flush();
     expect(field(0)).toHaveValue(15);
     expect(document.getElementById('smart-kds-profile-status')).toHaveTextContent('did not confirm');
+  });
+  test('menu understanding exposes seafood preparation and batch suggestions without changing saved fields', async () => {
+    const fish = { ...dishes[0], name: 'Fish Fry', category: 'Seafood', profile: {
+      ...dishes[0].profile, batchable: false, maxBatchSize: 1,
+      menuKnowledge: inferMenuProductionKnowledge({ name: 'Fish Fry', category: 'Seafood' }),
+    } };
+    window.fetch.mockResolvedValueOnce(response({ items: [fish], stations, coverage: {},
+      menuKnowledge: { inferred: 1, fallback: 0, seafoodPreparationAlerts: 1 } }));
+    await profiles();
+    const summary = document.getElementById('smart-kds-menu-understanding');
+    expect(summary).not.toHaveAttribute('hidden');
+    expect(summary).toHaveTextContent('1 mapped · 0 need chef review · 1 seafood preparation alerts');
+    const knowledge = document.querySelector('[data-profile-knowledge]');
+    expect(knowledge).toHaveTextContent('Seafood fry · Suggested station: Fryer');
+    expect(knowledge).toHaveTextContent('Chef: calibrate cooking times');
+    expect(document.querySelector('[data-profile-preparation-alert]')).toHaveTextContent('Check seafood portions and chilled/thawed stock now');
+    expect(document.querySelector('[data-profile-batch-suggestion]')).toHaveTextContent('maximum 3');
+    expect(document.querySelector('[data-profile-batch-suggestion]')).toHaveTextContent('enable batching and save');
+    expect(field(0)).toHaveValue(5);
+    expect(field(0, 'maxBatchSize')).toHaveValue(1);
+    expect(field(0, 'batchable')).not.toBeChecked();
+    expect(window.fetch).toHaveBeenCalledTimes(1);
+    change(field(0), 9); save(0); await flush();
+    expect(JSON.parse(window.fetch.mock.calls.at(-1)[1].body).profiles[0]).toMatchObject({ prepTimeEstimate: 9, batchable: false, maxBatchSize: 1 });
+    expect(document.querySelector('[data-profile-knowledge]')).toHaveTextContent('Seafood fry');
+  });
+  test('fallback menu advice is reviewable and escapes ingredient messages', async () => {
+    const item = { ...dishes[0], profile: { ...dishes[0].profile, menuKnowledge: {
+      family: 'unclassified', confidence: 'fallback', suggestedStation: 'kitchen',
+      preparationAlert: '<img src=x onerror=alert(1)>', batchSuggestion: {},
+    } } };
+    window.fetch.mockResolvedValueOnce(response({ items: [item], stations, coverage: {},
+      menuKnowledge: { inferred: 0, fallback: 1, seafoodPreparationAlerts: 0 } }));
+    await profiles();
+    expect(document.querySelector('[data-profile-knowledge]')).toHaveTextContent('Limited menu match; chef review needed.');
+    expect(document.querySelector('[data-profile-preparation-alert]')).toHaveTextContent('<img src=x onerror=alert(1)>');
+    expect(document.querySelector('[data-profile-preparation-alert] img')).toBeNull();
+    expect(field(0)).toHaveValue(5);
   });
 });
 

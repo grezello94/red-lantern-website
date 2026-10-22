@@ -84,8 +84,8 @@ test('normal KDS keeps an action locked when station changes rerender its card',
 
 test('Smart KDS places held and capacity-blocked work in waiting instead of make now', async ({ page }) => {
   await smartKds(page, { tasks: [task('a', { taskState: 'held', capacityState: 'manual-hold' }), task('b', { action: 'wait-capacity', capacityState: 'capacity-wait' })] });
-  await expect(page.locator('#section-hold [data-task-card]')).toHaveCount(2);
-  await expect(page.locator('#section-hold')).not.toContainText('Start this dish now');
+  await expect(page.locator('#board [data-task-card][data-status="waiting"]')).toHaveCount(2);
+  await expect(page.locator('#board')).not.toContainText('Start this dish now');
 });
 
 test('Smart KDS shadow recommendations do not expose manual kitchen actions', async ({ page }) => {
@@ -121,8 +121,9 @@ test('a delayed Smart KDS timeline cannot replace the next order timeline', asyn
 
 test('Smart KDS rejects duplicate override form submissions', async ({ page }) => {
   await smartKds(page);
-  await page.locator('.manager-details summary').click();
+  await page.locator('#manager-toggle').click();
   await page.locator('#kitchen-detail-controls').check();
+  await page.locator('[data-close-dialog="manager-dialog"]').click();
   let release;
   const held = new Promise(resolve => { release = resolve; });
   const requests = [];
@@ -177,17 +178,18 @@ test('Smart KDS keeps a pending action locked after its board refreshes', async 
   const held = new Promise(resolve => { release = resolve; });
   await page.route('**/api/orders/smart-kds/actions', async route => { await held; await route.fulfill({ json: { ok: true } }); });
   const pending = page.waitForRequest('**/api/orders/smart-kds/actions');
-  await page.locator('[data-action][data-task="task-a"]').click();
+  await page.locator('[data-action="start"][data-task="task-a"]').click();
   await pending;
   await page.evaluate(() => render());
-  try { await expect(page.locator('[data-action][data-task="task-a"]')).toBeDisabled(); }
+  try { await expect(page.locator('[data-action="start"][data-task="task-a"]')).toBeDisabled(); }
   finally { release(); }
 });
 
 test('finishing an earlier override cannot close a different task form', async ({ page }) => {
   await smartKds(page);
-  await page.locator('.manager-details summary').click();
+  await page.locator('#manager-toggle').click();
   await page.locator('#kitchen-detail-controls').check();
+  await page.locator('[data-close-dialog="manager-dialog"]').click();
   let release;
   const held = new Promise(resolve => { release = resolve; });
   await page.route('**/api/orders/smart-kds/overrides', async route => { await held; await route.fulfill({ json: { ok: true } }); });

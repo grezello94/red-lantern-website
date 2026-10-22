@@ -1,3 +1,5 @@
+const { inferMenuProductionKnowledge, summarizeMenuProductionKnowledge } = require('./smart-kds-menu-knowledge');
+
 const SMART_KDS_CONFIG_VERSION = 2;
 
 const COURSE_TYPES = ['drink', 'soup', 'starter', 'main', 'side', 'dessert', 'other'];
@@ -62,28 +64,25 @@ function smartKdsMenuItemKey(menuType, category, name) {
 }
 
 function inferDefaultCourse(category, name, menuType = 'food') {
-  const value = `${category || ''} ${name || ''}`.toLowerCase();
-  if (menuType === 'bar' || /beverage|drink|mocktail|cocktail|juice|shake|lassi|tea|coffee|water|soda|beer|wine|whisk|rum|vodka|gin/.test(value)) return 'drink';
-  if (/soup|broth|shorba/.test(value)) return 'soup';
-  if (/dessert|ice.?cream|sweet|brownie|pudding|gulab|kulfi/.test(value)) return 'dessert';
-  if (/bread|naan|roti|paratha|salad|raita|papad|side/.test(value)) return 'side';
-  if (/starter|appetizer|lollipop|wings|fry|finger|tikka|kebab|65|chilli/.test(value)) return 'starter';
-  if (/main|rice|noodle|biryani|sizzler|pasta|curry|gravy|thali/.test(value)) return 'main';
-  return 'other';
+  return inferMenuProductionKnowledge({ category, name, menuType }).course;
 }
 
 function defaultMenuProductionProfile(item = {}, schedulingConfig = {}) {
-  const course = COURSE_TYPES.includes(item.course) ? item.course : inferDefaultCourse(item.category, item.name, item.menuType);
+  const knowledge = inferMenuProductionKnowledge(item);
+  const course = COURSE_TYPES.includes(item.course) ? item.course : knowledge.course;
   const courseTiming = schedulingConfig.courseDefaults?.[course] || { targetMin: 20, targetMax: 30 };
-  const prepEstimate = clampInteger(courseTiming.targetMin, 20, 1, 240);
+  const knownFamily = knowledge.confidence === 'inferred';
+  // A course's service promise is not a recipe's cooking duration. Use the
+  // dish family estimate where available and retain generic legacy fallbacks.
+  const prepEstimate = knownFamily ? knowledge.prepTimeEstimate : clampInteger(courseTiming.targetMin, 20, 1, 240);
   return {
     version: PROFILE_VERSION,
     itemKey: String(item.itemKey || ''),
     course,
     stationId: item.stationId ? String(item.stationId) : '',
     prepTimeEstimate: prepEstimate,
-    minPrepTime: Math.max(1, prepEstimate - 3),
-    maxPrepTime: Math.max(prepEstimate, clampInteger(courseTiming.targetMax, 30, 1, 300)),
+    minPrepTime: knownFamily ? knowledge.minPrepTime : Math.max(1, prepEstimate - 3),
+    maxPrepTime: knownFamily ? knowledge.maxPrepTime : Math.max(prepEstimate, clampInteger(courseTiming.targetMax, 30, 1, 300)),
     platingTime: clampInteger(schedulingConfig.timing?.platingMinutes, 2, 0, 60),
     handoffBuffer: clampInteger(schedulingConfig.timing?.handoffBufferMinutes, 2, 0, 60),
     targetAdjustmentMinutes: 0,
@@ -94,13 +93,17 @@ function defaultMenuProductionProfile(item = {}, schedulingConfig = {}) {
     maxBatchSize: clampInteger(schedulingConfig.batching?.defaultMaxBatchSize, 8, 1, 100),
     optimalBatchSize: clampInteger(schedulingConfig.batching?.defaultMaxBatchSize, 8, 1, 100),
     batchWindowSeconds: clampInteger(schedulingConfig.batching?.defaultWindowSeconds, 180, 0, 3600),
-    parallelCapacityCost: 1,
-    longPrepItem: false,
+    parallelCapacityCost: knowledge.parallelCapacityCost,
+    longPrepItem: knowledge.longPrepItem,
     requiresPreviousCourse: false,
-    canPrePrep: false,
-    canHoldAfterCooking: false,
-    maxHoldTime: 0,
+    canPrePrep: knowledge.canPrePrep,
+    canHoldAfterCooking: knowledge.canHoldAfterCooking,
+    maxHoldTime: knowledge.maxHoldTime,
     priorityModifier: 0,
+    menuKnowledge: knowledge,
+    preparationLeadMinutes: knowledge.preparationLeadMinutes,
+    immediatePreparationAlert: knowledge.immediatePreparationAlert,
+    preparationAlert: knowledge.preparationAlert,
   };
 }
 
@@ -117,7 +120,7 @@ function normalizeMenuProductionProfile(source = {}, item = {}, schedulingConfig
   const optimalBatchSize = batchable
     ? Math.min(maxBatchSize, clampInteger(source.optimalBatchSize, defaults.optimalBatchSize, 1, 100))
     : 1;
-  const canHoldAfterCooking = source.canHoldAfterCooking === true;
+  const canHoldAfterCooking = source.canHoldAfterCooking === undefined ? defaults.canHoldAfterCooking : source.canHoldAfterCooking === true;
   return {
     ...defaults,
     version: PROFILE_VERSION,
@@ -140,9 +143,9 @@ function normalizeMenuProductionProfile(source = {}, item = {}, schedulingConfig
     optimalBatchSize,
     batchWindowSeconds: batchable ? clampInteger(source.batchWindowSeconds, defaults.batchWindowSeconds, 0, 3600) : 0,
     parallelCapacityCost: clampInteger(source.parallelCapacityCost, defaults.parallelCapacityCost, 1, 50),
-    longPrepItem: source.longPrepItem === true,
+    longPrepItem: source.longPrepItem === undefined ? defaults.longPrepItem : source.longPrepItem === true,
     requiresPreviousCourse: source.requiresPreviousCourse === true,
-    canPrePrep: source.canPrePrep === true,
+    canPrePrep: source.canPrePrep === undefined ? defaults.canPrePrep : source.canPrePrep === true,
     canHoldAfterCooking,
     maxHoldTime: canHoldAfterCooking ? clampInteger(source.maxHoldTime, defaults.maxHoldTime, 1, 240) : 0,
     priorityModifier: clampInteger(source.priorityModifier, defaults.priorityModifier, -100, 100),
@@ -223,4 +226,6 @@ module.exports = {
   inferDefaultCourse,
   defaultMenuProductionProfile,
   normalizeMenuProductionProfile,
+  inferMenuProductionKnowledge,
+  summarizeMenuProductionKnowledge,
 };

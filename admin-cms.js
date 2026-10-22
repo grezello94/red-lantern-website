@@ -3572,12 +3572,14 @@ function setupSmartKdsProfiles() {
   const courseFilter = document.getElementById('smart-kds-profile-course-filter');
   const count = document.getElementById('smart-kds-profile-count');
   const more = document.getElementById('smart-kds-load-more-profiles');
+  const understanding = document.getElementById('smart-kds-menu-understanding');
   if (!root || !status || !search || !courseFilter || !count || !more) return;
   const courses = ['drink', 'soup', 'starter', 'main', 'side', 'dessert', 'other'];
   const pageSize = 40;
   let items = [];
   let stations = [];
   let coverage = null;
+  let menuKnowledge = null;
   let page = 1;
   let loading = false;
   const dirtyProfiles = new Set(), savingProfiles = new Set(), profileRevisions = new Map();
@@ -3625,9 +3627,37 @@ function setupSmartKdsProfiles() {
     `<label class="form-group"><span>${esc(label || field)}</span><input data-profile-field="${esc(field)}" type="number" ${min !== undefined ? `min="${min}"` : ''} ${max !== undefined ? `max="${max}"` : ''} value="${esc(value)}"></label>`;
   const check = (field, value, label) =>
     `<label><input data-profile-field="${esc(field)}" type="checkbox" ${value ? 'checked' : ''}> ${esc(label)}</label>`;
+  const knowledgeCard = (profile) => {
+    const knowledge = profile.menuKnowledge;
+    if (!knowledge || typeof knowledge !== 'object') return '';
+    const families = {
+      drink: 'Drink preparation', soup: 'Soup', dessert: 'Dessert', bread: 'Bread', 'cold-side': 'Cold side',
+      biryani: 'Biryani', 'wok-main': 'Wok main', tandoor: 'Tandoor', 'seafood-curry': 'Seafood curry',
+      'seafood-fry': 'Seafood fry', 'seafood-saute': 'Seafood sauté', curry: 'Curry',
+      'fried-chicken': 'Fried chicken', 'fried-starter': 'Fried starter', 'wok-starter': 'Wok starter',
+      starter: 'Starter', main: 'Main course', side: 'Side', unclassified: 'Recipe needs review',
+    };
+    const batch = knowledge.batchSuggestion || {};
+    const family = families[knowledge.family] || 'Recipe needs review';
+    const station = String(knowledge.suggestedStation || 'kitchen').replace(/^./, (character) => character.toUpperCase());
+    const timing = Number(knowledge.minPrepTime) > 0 && Number(knowledge.maxPrepTime) > 0
+      ? ` Suggested cooking window: ${Number(knowledge.minPrepTime)}–${Number(knowledge.maxPrepTime)} minutes.` : '';
+    const batchNote = batch.batchable && Number(batch.maxBatchSize) > 1
+      ? `<p data-profile-batch-suggestion>Suggested identical-item batch: aim for ${esc(batch.optimalBatchSize)} portions, maximum ${esc(batch.maxBatchSize)}. ${profile.batchable ? 'Batching uses the group and limits saved below.' : 'To use this suggestion, enable batching and save the batch group and portion limits below.'}</p>`
+      : '<p>Chef: set a compatible batch group and portion limits before enabling batching.</p>';
+    return `<aside class="smart-kds-profile-knowledge" data-profile-knowledge aria-label="Menu understanding and chef review"><strong>${esc(family)} · Suggested station: ${esc(station)}</strong><p>${knowledge.confidence === 'fallback' ? 'Limited menu match; chef review needed.' : 'Estimated from the dish name and menu category.'}${esc(timing)} Chef: calibrate cooking times for your recipe, portions and equipment. Saved profile values below control scheduling.</p>${knowledge.preparationAlert ? `<p class="smart-kds-profile-preparation" data-profile-preparation-alert><strong>Prepare ingredients on arrival:</strong> ${esc(knowledge.preparationAlert)}</p>` : ''}${batchNote}</aside>`;
+  };
+  const renderUnderstanding = () => {
+    if (!understanding) return;
+    understanding.hidden = !menuKnowledge;
+    if (!menuKnowledge) { understanding.textContent = ''; return; }
+    const amount = (value) => Math.max(0, Number(value) || 0).toLocaleString('en-IN');
+    understanding.textContent = `Menu understanding: ${amount(menuKnowledge.inferred)} mapped · ${amount(menuKnowledge.fallback)} need chef review · ${amount(menuKnowledge.seafoodPreparationAlerts)} seafood preparation alerts. Review the suggestions inside each dish; batching requires saved chef settings.`;
+  };
   const showLoading = () => {
     count.textContent = 'Loading menu…';
     status.textContent = '';
+    if (understanding) understanding.hidden = true;
     root.innerHTML = Array.from(
       { length: 5 },
       () =>
@@ -3642,6 +3672,7 @@ function setupSmartKdsProfiles() {
       ? ` · ${Number(coverage.stationUnassigned).toLocaleString('en-IN')} need station`
       : ' · stations assigned';
     count.textContent = `${rows.length.toLocaleString('en-IN')} of ${items.length.toLocaleString('en-IN')} Air Menu dishes${stationNote}`;
+    renderUnderstanding();
     more.hidden = visible.length >= rows.length;
     more.textContent = `Show ${Math.min(pageSize, rows.length - visible.length)} more dishes`;
     root.innerHTML = visible.length
@@ -3655,7 +3686,7 @@ function setupSmartKdsProfiles() {
                 label: station.station_name,
               })),
             ];
-            return `<details class="smart-kds-profile" data-profile-key="${esc(item.itemKey)}" ${expanded.has(item.itemKey) ? 'open' : ''}><summary><div><strong>${esc(item.name)}</strong><div class="smart-kds-profile-meta">Air Menu category: ${esc(item.category)} · ${esc(item.menuType === 'bar' ? 'Bar menu' : 'Food menu')}</div></div><span class="smart-kds-profile-course">${esc(item.category || 'Menu')}</span><span class="smart-kds-profile-meta">${esc(stations.find((station) => station.station_id === profile.stationId)?.station_name || 'Station not assigned')}</span><span class="smart-kds-profile-meta">${esc(profile.prepTimeEstimate || '—')} min prep</span></summary><div class="smart-kds-profile-fields"><div class="form-grid"><label class="form-group"><span>Serving timing pattern</span><select data-profile-field="course">${optionList(
+            return `<details class="smart-kds-profile" data-profile-key="${esc(item.itemKey)}" ${expanded.has(item.itemKey) ? 'open' : ''}><summary><div><strong>${esc(item.name)}</strong><div class="smart-kds-profile-meta">Air Menu category: ${esc(item.category)} · ${esc(item.menuType === 'bar' ? 'Bar menu' : 'Food menu')}</div></div><span class="smart-kds-profile-course">${esc(item.category || 'Menu')}</span><span class="smart-kds-profile-meta">${esc(stations.find((station) => station.station_id === profile.stationId)?.station_name || 'Station not assigned')}</span><span class="smart-kds-profile-meta">${esc(profile.prepTimeEstimate || '—')} min prep</span></summary><div class="smart-kds-profile-fields">${knowledgeCard(profile)}<div class="form-grid"><label class="form-group"><span>Serving timing pattern</span><select data-profile-field="course">${optionList(
               profile.course,
               courses.map((course) => ({
                 value: course,
@@ -3680,6 +3711,7 @@ function setupSmartKdsProfiles() {
       items = Array.isArray(data.items) ? data.items : [];
       stations = Array.isArray(data.stations) ? data.stations : [];
       coverage = data.coverage && typeof data.coverage === 'object' ? data.coverage : null;
+      menuKnowledge = data.menuKnowledge && typeof data.menuKnowledge === 'object' ? data.menuKnowledge : null;
       renderMenuCategoryFilter();
       page = 1;
       render();
@@ -3740,7 +3772,7 @@ function setupSmartKdsProfiles() {
       const saved = data.saved?.[0]?.profile;
       if (!saved) throw new Error('The server did not confirm the saved production profile. Retry before leaving.');
       if (revision === (profileRevisions.get(item.itemKey) || 0)) {
-        item.profile = saved; dirtyProfiles.delete(item.itemKey);
+        item.profile = { ...item.profile, ...saved }; dirtyProfiles.delete(item.itemKey);
       }
       render();
       setStatus(`${item.name} production profile saved.${revision !== (profileRevisions.get(item.itemKey) || 0) ? ' Newer edits remain unsaved.' : ' KOT flow is still unchanged.'}`);

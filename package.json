@@ -8,7 +8,7 @@
   },
   "scripts": {
     "minify:css": "cleancss -o style.min.css style.css",
-    "check": "node --check server.js && node --check auth-cache.js && node --check order-request.js && node --check staff-access.js && node --check admin-cms.js && node --check admin-workspace.js && node --check air-menu.js && node --check captain.js && node --check captain-sw.js && node --check orders.js && node --check kds.js && node --check smart-kds.js && node --check smart-kds-controls.js && node --check print-bridge.js && node --check orders-sw.js && node --check staff-domain.js && node --check employee-admin.js && node --check captain-tools.js && node --check register.js && node --check register-theme.js",
+    "check": "node --check server.js && node --check auth-cache.js && node --check order-request.js && node --check staff-access.js && node --check admin-cms.js && node --check admin-workspace.js && node --check air-menu.js && node --check captain.js && node --check captain-sw.js && node --check orders.js && node --check kds.js && node --check smart-kds.js && node --check smart-kds-controls.js && node --check print-bridge.js && node --check orders-sw.js && node --check staff-domain.js && node --check employee-admin.js && node --check captain-tools.js && node --check register.js && node --check register-theme.js && node --check smart-kds-domain.js && node --check smart-kds-menu-knowledge.js && node --check smart-kds-expediter.js && node --check smart-kds-preparation.js && node --check smart-kds-scheduler.js && node --check smart-kds-workflow.js && node --check smart-kds-board.js",
     "bundle:print-bridge": "node scripts/build-print-bridge-bundles.js",
     "package:bridge:macos": "bash scripts/package-print-bridge-macos.sh",
     "package:bridge:windows": "powershell -ExecutionPolicy Bypass -File scripts/package-print-bridge-windows.ps1",
@@ -26,7 +26,8 @@
     "e2e": "playwright test",
     "release:check": "npm run lint && npm run typecheck && npm test && npm run test:load && npx playwright test --retries=0",
     "release:tag": "node scripts/release-tag.js",
-    "release:prepare": "npm run release:check && npm run release:tag"
+    "release:prepare": "npm run release:check && npm run release:tag",
+    "test:kds": "jest --runInBand --testPathPatterns=smart-kds"
   },
   "repository": {
     "type": "git",

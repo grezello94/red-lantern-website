@@ -71,11 +71,11 @@ describe('Smart KDS Phase 1 configuration', () => {
       config
     );
     expect(profile).toMatchObject({
-      course: 'soup', stationId: '', prepTimeEstimate: 12, minPrepTime: 9,
-      maxPrepTime: 16, platingTime: 2, handoffBuffer: 2, batchable: false,
+      course: 'soup', stationId: '', prepTimeEstimate: 8, minPrepTime: 6,
+      maxPrepTime: 12, platingTime: 2, handoffBuffer: 2, batchable: false,
       maxBatchSize: 8, optimalBatchSize: 8, batchWindowSeconds: 180,
       parallelCapacityCost: 1, longPrepItem: false, requiresPreviousCourse: false,
-      canPrePrep: false, canHoldAfterCooking: false, maxHoldTime: 0, priorityModifier: 0,
+      canPrePrep: false, canHoldAfterCooking: true, maxHoldTime: 5, priorityModifier: 0,
     });
   });
 

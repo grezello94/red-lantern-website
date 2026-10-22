@@ -8,7 +8,9 @@ const ACTION_TRANSITIONS = {
   schedule: { from: ['ordered', 'eligible'], to: 'scheduled' },
   fire: { from: ['ordered', 'eligible', 'scheduled'], to: 'fired' },
   start: { from: ['ordered', 'eligible', 'scheduled', 'fired'], to: 'preparing' },
-  ready: { from: 'preparing', to: 'ready' },
+  // Staff may confirm finished food even when its start was not acknowledged.
+  // Completion never fabricates preparation timestamps or releases a hold.
+  ready: { from: ['ordered', 'eligible', 'scheduled', 'fired', 'preparing'], to: 'ready' },
   expo: { from: 'ready', to: 'expo' },
   serve: { from: ['ready', 'expo'], to: 'served' },
   cancel: { from: ['ordered', 'held', 'eligible', 'scheduled', 'fired', 'preparing', 'ready', 'expo'], to: 'cancelled' },

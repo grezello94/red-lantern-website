@@ -31,6 +31,8 @@ This project powers the restaurant's website, staff console, and Captain mobile 
    - `/captain.html`
    - `/index.html`
 
+For the kitchen caller, open `/smart-kds`. See [SMART_KDS_OPERATIONS.md](SMART_KDS_OPERATIONS.md) for signals, fish preparation alerts, bulk preparation, station capacity, and chef calibration.
+
 ## Useful commands
 
 ```bash

@@ -27,23 +27,43 @@ let loadSequence = 0;
 let loadInFlight = null;
 let reloadRequested = false;
 let updateCheckInFlight = false;
+let kitchenSnapshotFresh = false;
+let kitchenCallerEnabled = false;
+const seenKitchenCalls = new Set();
+let kitchenVoiceQueue = [];
+let kitchenSpeaking = null;
+let kitchenSpeechGeneration = 0;
+let kitchenAudioContext = null;
+let lastKitchenChimeAt = 0;
 let selectedStation = localStorage.getItem('redLanternSmartKdsStation') || 'all';
 // Kitchen staff should always see the complete priority list. Category is
 // retained as a manager-only diagnostic control, never as a remembered filter
 // that could accidentally hide urgent work at the start of a shift.
 let selectedCategory = 'all';
+let selectedBoardStatus = 'all';
+let boardQuery = '';
+let boardPage = 1;
+const boardPageSize = 6;
+let lastBoardView = null;
 const Addons = window.RedLanternAddons;
 const pendingKitchenActions = new Set();
 const kitchenActionKey = (orderId, taskKey) => JSON.stringify([String(orderId), String(taskKey)]);
 const kitchenCanAct = () => data.schedulingMode === 'manual' && (!window.employeeCan || window.employeeCan('updateKitchen'));
 const taskIsPending = (task) => pendingKitchenActions.has(kitchenActionKey(task.orderId, task.taskKey));
+const taskCanMarkReady = state => ['ordered', 'eligible', 'scheduled', 'fired', 'preparing'].includes(state);
+const taskHasStation = task => Boolean(String(task?.stationId || '').trim());
 let timelineSequence = 0;
 function syncKitchenPending() {
-  document.querySelectorAll('#board button[data-task][data-order]').forEach(button => {
-    button.disabled = !kitchenCanAct() || pendingKitchenActions.has(kitchenActionKey(button.dataset.order, button.dataset.task));
+  const states = taskStateMap();
+  document.querySelectorAll('#board button[data-task][data-order], #batch-list button[data-task][data-order]').forEach(button => {
+    const task = (data.recommendations || []).find(entry => String(entry.taskKey) === String(button.dataset.task) && String(entry.orderId) === String(button.dataset.order));
+    const readyUnavailable = button.hasAttribute('data-ready-control') && (!task || !taskHasStation(task) || !taskCanMarkReady(states.get(task.taskKey) || task.taskState || 'ordered'));
+    const startUnavailable = button.hasAttribute('data-start-control') && (!task || !taskStartAllowed(task, states.get(task.taskKey) || task.taskState || 'ordered'));
+    button.disabled = !kitchenCanAct() || readyUnavailable || startUnavailable || pendingKitchenActions.has(kitchenActionKey(button.dataset.order, button.dataset.task));
   });
-  document.querySelectorAll('#board [data-batch-action]').forEach(button => {
-    button.disabled = !kitchenCanAct() || pendingKitchenActions.has(`batch:${button.dataset.batch}`);
+  document.querySelectorAll('#batch-list [data-batch-action]').forEach(button => {
+    const batch = (data.batches || []).find(entry => String(entry.batchId) === String(button.dataset.batch));
+    button.disabled = !kitchenCanAct() || !batchHasCapacity(batch, data.recommendations || []) || batchIsPending(batch);
   });
 }
 async function smartKdsJson(path, options = {}) {
@@ -91,7 +111,8 @@ function menuCategory(task) {
 }
 function taskDish(task) {
   const extras = Addons.modifierText(task.modifiers);
-  return `${task.quantity}× ${task.itemName}${task.portion ? ` · ${task.portion}` : ''}${extras ? ` + ${extras}` : ''}`;
+  const style = String(task.style || '').trim(), note = String(task.note || '').trim();
+  return `${task.quantity}× ${task.itemName}${task.portion ? ` · ${task.portion}` : ''}${style ? ` · Style: ${style}` : ''}${extras ? ` + ${extras}` : ''}${note ? ` · Note: ${note}` : ''}`;
 }
 function filteredTasks() {
   const tasks = Array.isArray(data.recommendations) ? data.recommendations : [];
@@ -101,7 +122,15 @@ function filteredTasks() {
       !['served', 'cancelled', 'superseded'].includes(states.get(task.taskKey) || task.taskState) &&
       (selectedStation === 'all' || String(task.stationId || '') === selectedStation) &&
       (selectedCategory === 'all' || menuCategory(task) === selectedCategory)
-  );
+  ).map(task => {
+    const recordedState = states.get(task.taskKey);
+    // State acknowledgements can be newer than the scheduler's advice when
+    // another kitchen screen acts during snapshot generation. Use the saved
+    // workflow state until the next forecast catches up.
+    return recordedState && recordedState !== (task.taskState || 'ordered')
+      ? { ...task, expediter: null, expediterStale: true, action: ['fired', 'preparing', 'ready', 'expo'].includes(recordedState) ? 'monitor' : task.action }
+      : task;
+  });
 }
 function timeUntil(date) {
   const target = new Date(date).getTime();
@@ -110,6 +139,7 @@ function timeUntil(date) {
   return minutes <= 0 ? `Start overdue by ${Math.abs(minutes)} min` : `Start within ${minutes} min`;
 }
 function kitchenTime(value) {
+  if (value == null || value === '') return '';
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) return '';
   const time = new Intl.DateTimeFormat('en-IN', {
@@ -130,6 +160,7 @@ function taskLocation(task) {
     : title(task.fulfillmentType || task.mode || 'order');
 }
 function taskInstruction(task, state) {
+  if (task.expediter?.instruction) return task.expediter.instruction;
   const dish = taskDish(task);
   const location = taskLocation(task);
   const target = kitchenTime(task.targetServeAt);
@@ -181,6 +212,7 @@ function kitchenCommand(task, state) {
   return 'Start this dish now';
 }
 function taskAction(task, state) {
+  if (task.expediter?.signal === 'yellow' && ['ordered', 'eligible', 'scheduled'].includes(state)) return null;
   if (['ordered', 'eligible', 'scheduled'].includes(state) && task.capacityState === 'allocated')
     return ['start', 'Start preparation'];
   if (state === 'fired') return ['start', 'Start preparation'];
@@ -191,8 +223,11 @@ function taskAction(task, state) {
 }
 function taskGroup(task, state) {
   if (state === 'ready' || state === 'expo') return 'ready';
-  if (state === 'fired' || state === 'preparing') return 'now';
   if (state === 'held' || ['manual-hold', 'wait-capacity', 'hold-for-course', 'assign-station'].includes(task.action)) return 'hold';
+  if (task.expediter?.signal === 'red') return 'risk';
+  if (state === 'fired' || state === 'preparing') return 'now';
+  if (task.expediter?.signal === 'green') return 'now';
+  if (task.expediter?.signal === 'yellow') return 'next';
   // "Overdue" means the kitchen should look at the item now. It is not, by
   // itself, proof that a guest's table is at risk. Keep that distinction clear
   // so the board does not turn every delayed item into a service-risk alert.
@@ -202,49 +237,284 @@ function taskGroup(task, state) {
   if (task.baseAction === 'prepare-next' || task.action === 'prepare-next') return 'next';
   return 'hold';
 }
+function taskSignal(task, state) {
+  const signal = task.expediter?.signal;
+  if (['green', 'yellow', 'red', 'neutral'].includes(signal)) return signal;
+  if (['ready', 'expo', 'preparing'].includes(state)) return 'neutral';
+  if (state === 'held' || ['manual-hold', 'wait-capacity', 'hold-for-course', 'assign-station'].includes(task.action)) return 'yellow';
+  if (taskGroup(task, state) === 'risk' || ['critical', 'overdue'].includes(task.state)) return 'red';
+  return taskGroup(task, state) === 'now' ? 'green' : 'yellow';
+}
+function signalLabel(signal) {
+  return { green: 'Start now', yellow: 'Get ready / wait', red: 'Needs attention', neutral: 'In progress / ready' }[signal] || 'Review';
+}
+function markReadyControl(task, state, primary = false) {
+  if (!taskCanMarkReady(state)) return '';
+  const missingStation = !taskHasStation(task);
+  const disabled = !kitchenCanAct() || missingStation || taskIsPending(task);
+  return `<button type="button" class="ready mark-ready ${primary ? 'primary' : 'physical-ready'}" data-ready-control data-action="ready" data-task="${esc(task.taskKey)}" data-order="${esc(task.orderId)}" data-station="${esc(task.stationId)}" ${disabled ? 'disabled' : ''}${missingStation ? ' title="Assign a kitchen station before marking this item ready."' : ''}>Mark ready</button>`;
+}
+function renderKitchenModeNotice() {
+  const root = $('#kitchen-mode-notice');
+  if (!root) return;
+  const mode = !data.schedulingMode ? 'loading' : data.schedulingMode !== 'manual' ? 'shadow' : !kitchenCanAct() ? 'readonly' : 'manual';
+  root.hidden = ['loading', 'manual'].includes(mode);
+  if (root.dataset.mode === mode) return;
+  root.dataset.mode = mode;
+  root.innerHTML = mode === 'shadow'
+    ? '<b>Shadow mode · kitchen buttons are view only</b><p>To record preparation and ready items, an administrator must enable Manual kitchen actions in <a href="/admin#tab-smart-kds" data-kds-setup-link>Admin → Smart KDS → Setup</a>.</p>'
+    : mode === 'readonly'
+      ? '<b>View only · your staff account cannot update kitchen items</b><p>Ask an administrator to enable your Update kitchen permission. Kitchen mode is managed in <a href="/admin#tab-smart-kds" data-kds-setup-link>Admin → Smart KDS → Setup</a>.</p>'
+      : '';
+}
+function taskStartAllowed(task, state) {
+  const view = task.boardStatus || window.RedLanternKdsBoard?.getTaskView({ ...task, taskState: state });
+  return taskHasStation(task) && (state === 'fired' ||
+    (['ordered', 'eligible', 'scheduled'].includes(state) && view !== 'waiting' && taskAction(task, state)?.[0] === 'start'));
+}
+function startControl(task, state) {
+  const available = kitchenCanAct() && taskStartAllowed(task, state) && !taskIsPending(task);
+  const reason = !taskHasStation(task) ? 'Assign a station first' : !kitchenCanAct() ? 'Kitchen actions are view only' : 'Waiting for the preparation window or station capacity';
+  return `<button type="button" class="primary start start-control" data-start-control data-action="start" data-task="${esc(task.taskKey)}" data-order="${esc(task.orderId)}" data-station="${esc(task.stationId)}" ${available ? '' : 'disabled'} title="${esc(available ? 'Start preparation' : reason)}">Start</button>`;
+}
 function taskCard(task, state) {
-  const primary = taskAction(task, state);
-  const unavailable =
-    state === 'ordered' && task.capacityState !== 'allocated'
-      ? 'Waiting for capacity'
-      : state === 'held'
-        ? 'Held by kitchen'
-        : 'Action unavailable';
-  const control = primary && kitchenCanAct()
-    ? `<button class="primary ${esc(primary[0])}" data-action="${esc(primary[0])}" data-task="${esc(task.taskKey)}" data-order="${esc(task.orderId)}" data-station="${esc(task.stationId)}" ${taskIsPending(task) ? 'disabled' : ''}>${esc(primary[1])}</button>`
-    : primary ? `<button class="primary" disabled>${data.schedulingMode !== 'manual' ? 'Shadow mode · view only' : 'View only'}</button>`
-    : `<button disabled>${esc(unavailable)}</button>`;
-  const table = taskLocation(task);
+  const pending = ['ordered', 'eligible', 'scheduled', 'fired'].includes(state);
+  const signal = taskSignal(task, state);
+  const status = task.boardStatus || (['ready', 'expo'].includes(state) ? 'ready' : state === 'preparing' ? 'cooking' : taskStartAllowed(task, state) ? 'start' : 'waiting');
+  const label = task.expediter?.label || ({ preparing: 'Cooking', ready: 'Ready for expo', expo: 'At expo', held: 'Held' }[state]) || (status === 'start' ? 'Start now' : 'Waiting');
   const target = kitchenTime(task.targetServeAt);
-  const actionLabel = kitchenActionLabel(task, state);
-  return `<article class="card" data-task-card data-task="${esc(task.taskKey)}" data-order="${esc(task.orderId)}">
-    <header><div><small class="card-category">${esc(menuCategory(task))}</small><b>${esc(taskDish(task))}</b><small>${esc(`${table} · Order #${String(task.orderNumber || '—').padStart(2, '0')}`)}</small></div>${target ? `<span class="ready-by"><small>READY BY</small><b>${esc(target)}</b></span>` : `<span class="station">${esc(stationLabel(task.stationId))}</span>`}</header>
-    <div class="body"><div class="task-command"><span>${esc(actionLabel)}</span><b>${esc(kitchenCommand(task, state))}</b></div>
-      <div class="actions">${control}<button class="secondary" type="button" data-timeline-order="${esc(task.orderId)}">View timeline</button></div>
-    </div>
+  const forecast = kitchenTime(task.expediter?.readyAt);
+  const start = kitchenTime(task.expediter ? task.expediter.startAt : task.plannedStartAt || task.latestSafeStartAt);
+  const extras = [task.portion, task.style ? `Style: ${task.style}` : '', Addons.modifierText(task.modifiers), task.note ? `Note: ${task.note}` : ''].filter(Boolean).join(' · ');
+  let controls = pending ? startControl(task, state) + markReadyControl(task, state)
+    : state === 'preparing' ? markReadyControl(task, state, true)
+    : ['ready', 'expo'].includes(state) ? `<button type="button" class="primary ${state === 'ready' ? 'expo' : 'serve'}" data-action="${state === 'ready' ? 'expo' : 'serve'}" data-task="${esc(task.taskKey)}" data-order="${esc(task.orderId)}" data-station="${esc(task.stationId)}" ${!kitchenCanAct() || taskIsPending(task) ? 'disabled' : ''}>${state === 'ready' ? 'Send to expo' : 'Mark served'}</button>`
+    : '<button type="button" class="held-control" disabled>Held</button>';
+  return `<article class="card kds-item signal-${signal}" data-task-card data-task="${esc(task.taskKey)}" data-order="${esc(task.orderId)}" data-state="${esc(state)}" data-status="${esc(status)}" data-signal="${signal}">
+    <div class="item-heading"><b><span class="item-quantity">${esc(task.quantity)}×</span> ${esc(task.itemName)}</b><span class="item-status">${esc(label)}</span></div>
+    ${extras ? `<p class="item-note">${esc(extras)}</p>` : ''}
+    <div class="item-bottom"><div class="item-times task-schedule"><span class="item-station">${esc(stationLabel(task.stationId))}</span>${target ? `<span>Due ${esc(target)}</span>` : ''}${forecast ? `<span class="ready-by">Est. ready ${esc(forecast)}</span>` : ''}${status === 'waiting' && start ? `<span>Start ${esc(start)}</span>` : ''}${Number(task.expediter?.delayMinutes) > 0 ? `<span class="forecast-delay">+${Math.ceil(Number(task.expediter.delayMinutes))} min late</span>` : ''}</div><div class="actions">${controls}</div></div>
+    ${task.expediter?.prepAlert ? `<p class="ingredient-alert" title="${esc(task.expediter.prepAlert)}"><b>Prep alert</b> ${esc(task.expediter.prepAlert)}</p>` : ''}
+    ${taskCanMarkReady(state) && !taskHasStation(task) ? '<p class="station-required">Assign a kitchen station before marking this item ready.</p>' : ''}
+    <div class="item-detail"><p class="task-command">${esc(task.expediter?.instruction || kitchenCommand(task, state))}</p>${task.expediter?.reason ? `<p class="expediter-reason">${esc(task.expediter.reason)}</p>` : ''}<button class="secondary" type="button" data-timeline-order="${esc(task.orderId)}">View timeline</button></div>
   </article>`;
 }
-function renderKitchenBriefing(tasks, states) {
-  const root = $('#kitchen-briefing');
-  if (!root) return;
-  const current = tasks
-    .map((task) => ({ task, state: states.get(task.taskKey) || task.taskState || 'ordered' }))
-    .filter(({ state }) => !['held', 'served', 'cancelled', 'superseded'].includes(state));
-  const commands = current
-    .filter(({ task }) => task.action !== 'fairness-protected' || task.baseAction === 'start-now')
-    .filter(({ task, state }) => taskGroup(task, state) !== 'hold')
-    .slice(0, 4);
-  if (!commands.length) {
-    root.innerHTML = `<div class="briefing-heading"><div><span>CHEF BRIEFING</span><h2>No current cooking instruction</h2><p>There is no live work to call to the kitchen for this display.</p></div></div>`;
-    return;
+function orderTicket(order) {
+  const signal = order.tasks.some(task => taskSignal(task, task.taskState) === 'red') ? 'red' : order.tasks.some(task => task.boardStatus === 'start') ? 'green' : order.tasks.every(task => ['ready', 'expo'].includes(task.taskState)) ? 'ready' : 'neutral';
+  return `<article class="order-ticket ticket-${signal}" data-order-ticket data-order="${esc(order.orderId)}"><header class="ticket-head"><h2>${esc(order.location || taskLocation(order.tasks[0]))}</h2><span class="ticket-order">#${esc(String(order.orderNumber || '—').padStart(2, '0'))}</span><small>${order.tasks.length} item${order.tasks.length === 1 ? '' : 's'}</small></header><div class="ticket-items" tabindex="0" aria-label="Items for order ${esc(order.orderNumber || order.orderId)}">${order.tasks.map(task => taskCard(task, task.taskState || 'ordered')).join('')}</div></article>`;
+}
+function visibleBatches(tasks, states) {
+  return (data.batches || []).filter(batch =>
+    ['fire-batch', 'wait-for-batch'].includes(batch.action) && batch.batchId &&
+    (selectedStation === 'all' || String(batch.stationId) === selectedStation) &&
+    batch.allocations?.length && batch.allocations.every(allocation => tasks.some(task =>
+      String(task.taskKey) === String(allocation.taskKey) &&
+      ['ordered', 'eligible', 'scheduled'].includes(states.get(task.taskKey) || task.taskState || 'ordered') &&
+      !['manual-hold', 'hold-for-course'].includes(task.action) &&
+      !['manual-hold', 'hold-for-course'].includes(task.pacingState) &&
+      !['hold', 'defer'].includes(task.manualOverride?.action) &&
+      Number(allocation.quantity) === Number(task.quantity)
+    ))
+  );
+}
+function batchHasCapacity(batch, tasks) {
+  return Boolean(batch?.action === 'fire-batch' && batch.allocations?.length && batch.allocations.every(allocation => {
+    const task = tasks.find(entry => String(entry.taskKey) === String(allocation.taskKey));
+    const state = taskStateMap().get(task?.taskKey) || task?.taskState || 'ordered';
+    return task && task.capacityState === 'allocated' && ['ordered', 'eligible', 'scheduled'].includes(state) && task.expediter?.signal !== 'yellow';
+  }));
+}
+function batchIsPending(batch) {
+  return Boolean(batch && (pendingKitchenActions.has(`batch:${batch.batchId}`) || (batch.allocations || []).some(allocation => {
+    const task = (data.recommendations || []).find(entry => String(entry.taskKey) === String(allocation.taskKey)) || allocation;
+    return taskIsPending(task);
+  })));
+}
+function batchCard(batch, tasks, calls) {
+  const members = batch.allocations.map(allocation => tasks.find(task => String(task.taskKey) === String(allocation.taskKey)));
+  const call = calls.find(entry => String(entry.batchId) === String(batch.batchId));
+  const canStart = batchHasCapacity(batch, tasks);
+  const signal = members.some(task => task?.expediter?.signal === 'red') ? 'red' : canStart ? 'green' : 'yellow';
+  const label = canStart ? 'Start' : signal === 'red' ? 'Check overdue batch' : 'Get ready for';
+  return `<article class="batch-card signal-${signal}" data-signal="${signal}"><div><b>${label} ${Number(batch.totalQuantity || 0)} portions together · ${esc(batch.batchGroupId || 'Kitchen')}</b><small>${esc(stationLabel(batch.stationId))} · ${esc(batch.reason)}</small>${call?.instruction ? `<p class="expediter-instruction">${esc(call.instruction)}</p>` : ''}<div class="task-schedule">${call?.startAt ? `<span>Start ${esc(kitchenTime(call.startAt))}</span>` : ''}${call?.readyAt ? `<span>Est. ready ${esc(kitchenTime(call.readyAt))}</span>` : ''}</div>${!canStart ? '<p class="batch-wait">Wait for the planned batch window and an available station slot.</p>' : ''}<div class="batch-orders">${batch.allocations.map((item, index) => {
+    const task = members[index];
+    const state = taskStateMap().get(task?.taskKey) || task?.taskState || 'ordered';
+    return `<div class="batch-allocation"><span>${esc(`${task ? `${taskLocation(task)} · ` : ''}${item.orderNumber ? `Order #${String(item.orderNumber).padStart(2, '0')} · ` : ''}${taskDish({ ...task, ...item })}${task?.targetServeAt ? ` · service target ${kitchenTime(task.targetServeAt)}` : ''}`)}</span>${task ? markReadyControl(task, state) : ''}${task && !taskHasStation(task) ? '<small>Assign a kitchen station before marking this item ready.</small>' : ''}</div>`;
+  }).join('')}</div><p class="ready-help">Mark ready confirms only that order's item is finished.</p></div><button data-batch-action data-batch="${esc(batch.batchId)}" ${!canStart || !kitchenCanAct() || batchIsPending(batch) ? 'disabled' : ''}>${canStart ? 'Start batch' : 'Waiting for station / window'}</button></article>`;
+}
+function visibleExpediter(tasks, states) {
+  const keys = new Set(tasks.filter(task => !task.expediterStale).map(task => String(task.taskKey)));
+  const safeBatches = new Set(visibleBatches(tasks, states).map(batch => String(batch.batchId)));
+  const stationMatches = entry => selectedStation === 'all' || String(entry.stationId || '') === selectedStation;
+  const result = {
+    alerts: (Array.isArray(data.expediter?.alerts) ? data.expediter.alerts : []).filter(alert =>
+      stationMatches(alert) && (!alert.taskKey || keys.has(String(alert.taskKey)))
+    ),
+    calls: (Array.isArray(data.expediter?.calls) ? data.expediter.calls : []).filter(call =>
+      stationMatches(call) && Array.isArray(call.taskKeys) && call.taskKeys.length &&
+      call.taskKeys.every(key => keys.has(String(key))) &&
+      (!call.batchId || safeBatches.has(String(call.batchId)))
+    ),
+  };
+  const byKey = new Map(tasks.map(task => [String(task.taskKey), task]));
+  const priority = call => {
+    const members = (call.taskKeys || []).map(key => byKey.get(String(key))).filter(Boolean);
+    if (members.some(task => window.RedLanternKdsBoard.getTaskView({ ...task, taskState: states.get(task.taskKey) || task.taskState || 'ordered' }) === 'start')) return 0;
+    if (call.type === 'prep') return 1;
+    if (members.some(task => (states.get(task.taskKey) || task.taskState) === 'preparing')) return 2;
+    return call.type === 'expo' ? 4 : 3;
+  };
+  result.calls.sort((left, right) => priority(left) - priority(right) || Number(left.priority || 0) - Number(right.priority || 0));
+  return result;
+}
+function renderKitchenLoad() {
+  const root = $('#kitchen-load');
+  const load = data.expediter?.load;
+  root.hidden = !load;
+  if (!load) { root.innerHTML = ''; return; }
+  const stations = (Array.isArray(data.expediter?.stations) ? data.expediter.stations : [])
+    .filter(station => selectedStation === 'all' || String(station.stationId) === selectedStation);
+  const count = value => Math.max(0, Math.round(Number(value) || 0));
+  root.dataset.level = ['quiet', 'steady', 'busy', 'surge'].includes(load.level) ? load.level : 'steady';
+  root.innerHTML = `<div class="load-overview"><div><small>KITCHEN LOAD</small><b>${esc(load.label || title(load.level))}</b></div><span>${count(load.activeOrders)} active orders</span><span>${count(load.activePortions)} portions cooking</span><span>${count(load.queuedPortions)} portions queued</span><span>${count(load.atRiskTasks)} need attention</span><strong>Queue forecast · ${count(load.estimatedClearMinutes)} min</strong></div><div class="station-loads">${stations.map(station => `<div class="station-load" data-level="${esc(station.level)}"><b>${esc(station.stationName || stationLabel(station.stationId))}${station.enabled === false ? ' · unavailable' : ''}</b><span>${count(station.occupiedCapacity)} / ${count(station.totalCapacity)} capacity · ${count(station.queuedPortions)} queued</span><small>${station.enabled === false ? 'Reassign waiting work' : `Estimated clear in ${count(station.estimatedClearMinutes)} min`}</small></div>`).join('')}</div><p class="forecast-note">Forecast uses configured prep times and station capacity. Confirm each start and ready action to keep it current.</p>`;
+}
+function renderKitchenAlerts(alerts) {
+  const root = $('#kitchen-alerts');
+  const expanded = Boolean(root.querySelector('.additional-alerts[open]'));
+  root.hidden = !alerts.length;
+  const priority = alert => String(alert.type).includes('prep') && alert.urgent ? 0 : alert.severity === 'critical' ? 1 : 2;
+  const sorted = [...alerts].sort((left, right) => priority(left) - priority(right));
+  const alertItem = alert => `<li class="kitchen-alert ${alert.severity === 'critical' ? 'signal-red' : 'signal-yellow'}" data-alert-id="${esc(alert.id)}"><b>${esc(alert.type === 'prep' || String(alert.type).includes('prep') ? 'Ingredient readiness' : alert.severity === 'critical' ? 'Needs attention' : 'Kitchen notice')}</b><span>${esc(alert.message)}</span>${alert.stationId ? `<small>${esc(stationLabel(alert.stationId))}</small>` : ''}</li>`;
+  root.innerHTML = alerts.length ? `<h2>Kitchen alerts <span>${alerts.length} total · ${alerts.filter(alert => alert.severity === 'critical').length} need attention</span></h2><ul>${sorted.slice(0, 6).map(alertItem).join('')}</ul>${alerts.length > 6 ? `<details class="additional-alerts"><summary>Show ${alerts.length - 6} more alerts · item warnings also remain on the board</summary><ul>${sorted.slice(6).map(alertItem).join('')}</ul></details>` : ''}` : '';
+  if (expanded && root.querySelector('.additional-alerts')) root.querySelector('.additional-alerts').open = true;
+}
+function kitchenSpeechSupported() {
+  return Boolean(window.speechSynthesis?.speak && window.SpeechSynthesisUtterance);
+}
+function kitchenSoundSupported() {
+  return Boolean(window.AudioContext || window.webkitAudioContext);
+}
+function kitchenCallerAllowed() {
+  return kitchenSnapshotFresh && data.schedulingMode === 'manual' && Boolean(data.expediter) &&
+    (!window.employeeCan || window.employeeCan('kitchenDisplay')) && !document.hidden;
+}
+function pauseKitchenCaller() {
+  kitchenSpeechGeneration += 1;
+  kitchenVoiceQueue = [];
+  kitchenSpeaking = null;
+  try { window.speechSynthesis?.cancel(); } catch (_) {}
+}
+function syncKitchenCallerControls() {
+  const button = $('#caller-toggle'), status = $('#caller-status');
+  const supported = kitchenSpeechSupported() || kitchenSoundSupported();
+  button.disabled = !supported || (!kitchenCallerEnabled && (!kitchenSnapshotFresh || data.schedulingMode !== 'manual' || !data.expediter ||
+    Boolean(window.employeeCan && !window.employeeCan('kitchenDisplay'))));
+  button.setAttribute('aria-pressed', String(kitchenCallerEnabled));
+  button.textContent = `${kitchenSpeechSupported() ? 'Voice' : 'Sounds'} ${kitchenCallerEnabled ? 'on' : 'off'}`;
+  status.textContent = !supported ? 'Voice and alert sounds are unavailable in this browser.'
+    : !kitchenSnapshotFresh ? 'Caller paused until live kitchen data returns.'
+    : data.schedulingMode !== 'manual' ? 'Shadow preview · voice caller is paused.'
+    : window.employeeCan && !window.employeeCan('kitchenDisplay') ? 'Sign in to restore the kitchen caller.'
+    : !data.expediter ? 'Caller is waiting for the kitchen schedule.'
+    : !kitchenCallerEnabled ? 'Caller is off. Instructions stay on screen.'
+    : document.hidden ? 'Caller paused while this display is hidden.'
+    : kitchenSpeechSupported() ? 'Caller on · new priority calls and ingredient alerts for this display.'
+    : 'Alert chime on · follow the instructions on screen.';
+  button.title = status.textContent;
+}
+function playKitchenChime() {
+  if (!kitchenAudioContext || Date.now() - lastKitchenChimeAt < 1000) return;
+  try {
+    const oscillator = kitchenAudioContext.createOscillator();
+    const gain = kitchenAudioContext.createGain();
+    const now = kitchenAudioContext.currentTime;
+    oscillator.frequency.setValueAtTime(740, now);
+    oscillator.frequency.setValueAtTime(990, now + 0.13);
+    gain.gain.setValueAtTime(0.12, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+    oscillator.connect(gain); gain.connect(kitchenAudioContext.destination);
+    oscillator.start(now); oscillator.stop(now + 0.31);
+    oscillator.onended = () => { oscillator.disconnect(); gain.disconnect(); };
+    lastKitchenChimeAt = Date.now();
+  } catch (_) { /* The visible alerts remain available if device audio fails. */ }
+}
+function speakNextKitchenCall() {
+  if (!kitchenCallerEnabled || !kitchenCallerAllowed() || kitchenSpeaking || !kitchenSpeechSupported()) return;
+  const entry = kitchenVoiceQueue.shift();
+  if (!entry) return;
+  const generation = kitchenSpeechGeneration;
+  const utterance = new window.SpeechSynthesisUtterance(entry.message);
+  utterance.lang = 'en-IN';
+  utterance.rate = 0.95;
+  kitchenSpeaking = entry;
+  const finish = () => {
+    if (generation !== kitchenSpeechGeneration) return;
+    kitchenSpeaking = null;
+    speakNextKitchenCall();
+  };
+  utterance.onend = finish;
+  utterance.onerror = finish;
+  try { window.speechSynthesis.speak(utterance); }
+  catch (_) { kitchenSpeaking = null; $('#caller-status').textContent = 'Voice could not play. Follow the calls on screen.'; }
+}
+function syncKitchenCaller(expediter) {
+  syncKitchenCallerControls();
+  if (!kitchenCallerEnabled || !kitchenCallerAllowed()) { pauseKitchenCaller(); return; }
+  const calls = expediter.calls;
+  const calledTasks = new Set(calls.flatMap(call => call.taskKeys || []));
+  const entries = [
+    ...expediter.alerts.filter(alert => (alert.urgent || alert.severity === 'critical' || String(alert.type).includes('prep')) &&
+      (!alert.taskKey || !calledTasks.has(alert.taskKey))).map(alert => ({
+      key: `alert:${alert.id}:${alert.severity}`, message: alert.message, urgent: true, priority: String(alert.type).includes('prep') ? 0 : 1,
+    })),
+    ...calls.map(call => ({ key: `call:${call.id}:${call.signal}`, message: `${call.instruction}${call.startAt ? ` Planned start ${kitchenTime(call.startAt)}.` : ''}${call.readyAt ? ` Estimated ready ${kitchenTime(call.readyAt)}.` : ''}`,
+      urgent: call.urgent || call.signal === 'red' || call.type === 'prep',
+      priority: call.type === 'prep' ? 0 : call.signal === 'red' ? 1 : 2 })),
+  ].filter(entry => entry.message && entry.key).sort((left, right) => left.priority - right.priority);
+  const current = new Set(entries.map(entry => entry.key));
+  kitchenVoiceQueue = kitchenVoiceQueue.filter(entry => current.has(entry.key));
+  if (kitchenSpeaking && !current.has(kitchenSpeaking.key)) {
+    const waiting = kitchenVoiceQueue;
+    pauseKitchenCaller();
+    kitchenVoiceQueue = waiting;
   }
-  root.innerHTML = `<div class="briefing-heading"><div><span>KITCHEN CALLS</span><h2>Make these dishes first</h2><p>Follow the list from 1 onwards. Update each dish when it is ready.</p></div><b>${commands.length} to make</b></div><ol class="briefing-list">${commands.map(({ task, state }, index) => `<li><span>${index + 1}</span><div><small>${esc(`${menuCategory(task)} · ${kitchenActionLabel(task, state)}`)}</small><b>${esc(taskInstruction(task, state))}</b><p>${esc(taskLocation(task))}</p></div></li>`).join('')}</ol>`;
+  const incoming = entries.slice(0, 12).filter(entry => !seenKitchenCalls.has(entry.key));
+  if (incoming.some(entry => entry.urgent)) playKitchenChime();
+  // A new urgent call interrupts an ordinary call. It is put back in the queue
+  // only if its instruction still exists in the latest authoritative snapshot.
+  if (incoming.some(entry => entry.urgent) && kitchenSpeaking && !kitchenSpeaking.urgent) {
+    const interrupted = kitchenSpeaking;
+    const waiting = kitchenVoiceQueue;
+    pauseKitchenCaller();
+    kitchenVoiceQueue = [interrupted, ...waiting];
+  }
+  incoming.forEach(entry => { seenKitchenCalls.add(entry.key); kitchenVoiceQueue.push(entry); });
+  kitchenVoiceQueue.sort((left, right) => left.priority - right.priority);
+  // Cap speech waiting on a busy shift. Unspoken calls can be selected again
+  // at the next snapshot instead of building an obsolete speech backlog.
+  kitchenVoiceQueue.splice(12).forEach(entry => seenKitchenCalls.delete(entry.key));
+  if (seenKitchenCalls.size > 1000) {
+    for (const key of seenKitchenCalls) {
+      if (!current.has(key)) seenKitchenCalls.delete(key);
+      if (seenKitchenCalls.size <= 1000) break;
+    }
+  }
+  if (kitchenSpeechSupported()) speakNextKitchenCall();
+  else kitchenVoiceQueue = [];
+}
+function renderKitchenBriefing(tasks, states, calls) {
+  const root = $('#kitchen-briefing');
+  const next = calls[0];
+  root.dataset.signal = next?.signal || 'neutral';
+  root.innerHTML = `<span>${next ? 'NEXT CALL' : 'KITCHEN'}</span><b>${esc(next?.instruction || (tasks.length ? 'Follow each item’s status and confirm when finished.' : 'No current kitchen work.'))}</b><small>${calls.length ? `${calls.length} calls ›` : ''}</small>`;
+  const shown = calls.slice(0, 8);
+  $('#caller-calls-list').innerHTML = `<p class="drawer-intro">${calls.length ? `Showing the next ${shown.length} of ${calls.length} calls. All orders remain on the board.` : 'No current cooking instruction.'}</p><ol class="briefing-list">${shown.map((call, index) => `<li class="signal-${['green', 'yellow', 'red', 'neutral'].includes(call.signal) ? call.signal : 'neutral'}" data-call-id="${esc(call.id)}"><span>${index + 1}</span><div><small>${esc(`${stationLabel(call.stationId)} · ${signalLabel(call.signal)}`)}</small><b>${esc(call.instruction)}</b><p>${call.startAt ? `Start ${esc(kitchenTime(call.startAt))}` : ''}${call.readyAt ? ` · est. ready ${esc(kitchenTime(call.readyAt))}` : ''}</p></div></li>`).join('')}</ol>`;
 }
 function groupSection(group, tasks, states) {
   const labels = {
     now: ['🔥 Make now', 'Start these dishes first.'],
-    risk: ['🚨 Make first', 'These tables need food first.'],
-    next: ['🟡 Make next', 'Prepare these after the work above.'],
+    risk: ['🚨 Needs attention', 'Check these dishes now; follow each instruction.'],
+    next: ['🟡 Get ready', 'Prepare ingredients and follow the planned start time.'],
     hold: ['⏸ Waiting', 'Do not start these yet.'],
     ready: ['✅ Ready to send', 'Take this food to expo or the table.'],
   };
@@ -306,78 +576,45 @@ function renderCategoryFilter() {
   select.value = selectedCategory;
 }
 function render() {
+  renderKitchenModeNotice();
   renderStaleOrders();
   renderStationFilter();
   renderCategoryFilter();
   const tasks = filteredTasks();
   const states = taskStateMap();
-  renderKitchenBriefing(tasks, states);
-  const visible = tasks.map((task) => ({
-    task,
-    state: states.get(task.taskKey) || task.taskState || 'ordered',
-  }));
-  const totals = {
-    startNow: visible.filter(
-      ({ task, state }) => taskGroup(task, state) !== 'hold' && (task.baseAction === 'start-now' || task.action === 'start-now')
-    ).length,
-    serviceRisk: visible.filter(
-      ({ task }) => task.action === 'service-risk' || task.serviceRiskSeverity === 'critical'
-    ).length,
-    waitingCapacity: visible.filter(({ task }) =>
-      ['capacity-wait', 'capacity-too-large'].includes(task.capacityState)
-    ).length,
-    ready: visible.filter(({ state }) => ['ready', 'expo'].includes(state)).length,
-  };
-  const batches = (data.batches || []).filter(
-    (batch) =>
-      batch.action === 'fire-batch' &&
-      batch.batchId &&
-      (selectedStation === 'all' || String(batch.stationId) === selectedStation) &&
-      batch.allocations?.length && batch.allocations.every(allocation => visible.some(({ task, state }) => String(task.taskKey) === String(allocation.taskKey) && ['ordered', 'eligible', 'scheduled'].includes(state)))
-  );
-  $('#summary').innerHTML = [
-    ['startNow', 'Start now', 'now'],
-    ['serviceRisk', 'Table risk', 'risk'],
-    ['waitingCapacity', 'Capacity queue', 'hold'],
-    ['ready', 'Ready / expo', 'ready'],
-  ]
-    .map(
-      ([key, label, section]) =>
-        `<button type="button" data-jump-section="${section}"><b>${Number(totals[key] || 0)}</b><span>${label}</span></button>`
-    )
-    .join('');
-  const batchTaskKeys = new Set(
-    batches.flatMap((batch) =>
-      (batch.allocations || []).map((allocation) => String(allocation.taskKey || ''))
-    )
-  );
-  const batchCards = batches.length
-    ? `<section id="section-batches" class="action-section now"><header><div><h2>🍳 Ready batches</h2><p>Start one batch action; its individual items are intentionally kept out of the list below.</p></div><b>${batches.length}</b></header><div class="batch-grid">${batches
-        .map(
-          (batch) =>
-            `<article class="batch-card"><div><b>Batch · ${esc(batch.batchGroupId || 'Kitchen')}</b><small>${esc(stationLabel(batch.stationId))} · ${Number(batch.totalQuantity || 0)} portions · ${esc(batch.reason)}</small><div class="batch-orders">${(
-              batch.allocations || []
-            )
-              .map((item) => {
-                const dish = taskDish(item);
-                return `<span>${esc(item.orderNumber ? `Order #${String(item.orderNumber).padStart(2, '0')} · ${dish}` : dish)}</span>`;
-              })
-              .join(
-                ''
-              )}</div></div><button data-batch-action data-batch="${esc(batch.batchId)}" ${!kitchenCanAct() || pendingKitchenActions.has(`batch:${batch.batchId}`) ? 'disabled' : ''}>Start batch</button></article>`
-        )
-        .join('')}</div></section>`
-    : '';
-  const groups = { now: [], risk: [], next: [], hold: [], ready: [] };
-  visible
-    .filter(({ task }) => !batchTaskKeys.has(String(task.taskKey)))
-    .forEach(({ task, state }) => groups[taskGroup(task, state)].push(task));
-  const sections = ['now', 'risk', 'next', 'hold', 'ready']
-    .map((group) => groupSection(group, groups[group], states))
-    .join('');
-  $('#board').innerHTML =
-    batchCards + sections ||
-    '<div class="empty"><b>No current kitchen work for this display.</b><br>Earlier unresolved orders, if any, are shown above for review in Normal KDS.</div>';
+  const expediter = visibleExpediter(tasks, states);
+  renderKitchenLoad();
+  renderKitchenAlerts(expediter.alerts);
+  renderKitchenBriefing(tasks, states, expediter.calls);
+  const view = window.RedLanternKdsBoard.buildBoardView({ recommendations: tasks, taskStates: data.taskStates || [], query: boardQuery, view: selectedBoardStatus, page: boardPage, pageSize: boardPageSize, batches: data.batches || [] });
+  lastBoardView = view;
+  boardPage = view.page;
+  const scrollPositions = new Map([...document.querySelectorAll('[data-order-ticket]')].map(ticket => [ticket.dataset.order, ticket.querySelector('.ticket-items')?.scrollTop || 0]));
+  $('#board').innerHTML = view.orders.length ? view.orders.map(orderTicket).join('') : `<div class="empty"><b>${tasks.length ? 'No items match this view.' : 'Kitchen clear'}</b><p>${tasks.length ? 'Try another status or search.' : 'New orders will appear here.'}</p></div>`;
+  document.querySelectorAll('[data-order-ticket]').forEach(ticket => { ticket.querySelector('.ticket-items').scrollTop = scrollPositions.get(ticket.dataset.order) || 0; });
+  document.querySelectorAll('[data-board-status]').forEach(button => {
+    button.setAttribute('aria-pressed', String(button.dataset.boardStatus === selectedBoardStatus));
+    const label = { all: 'All', start: 'Start now', cooking: 'Cooking', waiting: 'Waiting', ready: 'Ready' }[button.dataset.boardStatus];
+    button.innerHTML = `${label} <b>${Number(view.counts[button.dataset.boardStatus] || 0)}</b>`;
+  });
+  $('#board-total').innerHTML = `<b>${view.totalOrders}</b> orders · ${view.totalItems} items${view.totalOrders ? ` <span>· showing ${(view.page - 1) * view.pageSize + 1}–${Math.min(view.page * view.pageSize, view.totalOrders)}</span>` : ''}`;
+  $('#board-page-label').textContent = `Page ${view.page} / ${view.pageCount}`;
+  $('#board-prev').disabled = view.page <= 1;
+  $('#board-next').disabled = view.page >= view.pageCount;
+  $('#alerts-count').textContent = String(expediter.alerts.length);
+  const prepCount = expediter.alerts.filter(alert => String(alert.type).includes('prep')).length;
+  $('#alerts-toggle').querySelector('.prep-alert-count')?.remove();
+  if (prepCount) $('#alerts-toggle').insertAdjacentHTML('beforeend', `<small class="prep-alert-count">${prepCount} prep</small>`);
+  $('#alerts-toggle').dataset.urgent = String(expediter.alerts.some(alert => alert.severity === 'critical' || alert.urgent));
+  $('#alerts-toggle').title = `${expediter.alerts.length} kitchen alerts, including ${expediter.alerts.filter(alert => alert.severity === 'critical').length} urgent`;
+  const batches = visibleBatches(tasks, states);
+  $('#batches-count').textContent = String(batches.length);
+  $('#batch-list').innerHTML = batches.length ? batches.map(batch => batchCard(batch, tasks, expediter.calls)).join('') : '<p class="drawer-intro">No approved bulk cooking at this station.</p>';
+  const load = data.expediter?.load;
+  $('#load-toggle').textContent = load ? `${load.label || 'Kitchen'} · ${Number(load.queuedPortions || 0)} queued` : `${tasks.length} live items`;
+  $('#summary').innerHTML = `<p>${view.allOrders || view.totalOrders} orders at this display · ${view.counts.all} live items</p>`;
+  syncKitchenPending();
+  syncKitchenCaller(expediter);
 }
 function load() {
   // The live recommendation endpoint performs a full scheduling snapshot.
@@ -404,6 +641,7 @@ async function refreshSmartKds() {
     if (['taskStates', 'stations', 'batches', 'staleOrders'].some(key => payload[key] != null && !Array.isArray(payload[key]))) throw new Error('Kitchen recommendations were incomplete. Retaining the last display.');
     if (request !== loadSequence) return;
     data = payload;
+    kitchenSnapshotFresh = true;
     const operatorInput = $('#operator');
     if (operatorInput && !operatorInput.value)
       operatorInput.value = localStorage.getItem('redLanternKitchenOperator') || '';
@@ -423,13 +661,18 @@ async function refreshSmartKds() {
     render();
   } catch (error) {
     if (request === loadSequence) {
+      kitchenSnapshotFresh = false;
+      pauseKitchenCaller();
       setLiveStatus(error.message);
       const denied = [401, 403].includes(error.status);
       if (denied) {
+        kitchenCallerEnabled = false;
+        seenKitchenCalls.clear();
         data = { recommendations: [], taskStates: [], batches: [], stations: [], staleOrders: [], summary: {}, schedulingMode: 'shadow' };
-        $('#timeline-dialog').close(); $('#override-dialog').close();
+        document.querySelectorAll('dialog[open]').forEach(dialog => dialog.close());
         render();
       }
+      syncKitchenCallerControls();
       $('#live').textContent = denied ? 'Sign in to view kitchen work' : 'Connection problem · last board';
       $('#live').className = 'live-state stale';
     }
@@ -450,6 +693,7 @@ async function pollForUpdates() {
   }
 }
 function formatTime(value) {
+  if (value == null || value === '') return '—';
   const date = new Date(value);
   return Number.isFinite(date.getTime())
     ? new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true }).format(
@@ -491,13 +735,28 @@ async function showTimeline(orderId) {
   }
 }
 document.addEventListener('click', async (event) => {
+  if (event.target.closest('[data-kds-setup-link]')) {
+    localStorage.setItem('redLanternSmartKdsAdminPanel', 'setup');
+    return;
+  }
   const timeline = event.target.closest('[data-timeline-order]');
   if (timeline) return showTimeline(timeline.dataset.timelineOrder);
   const batch = event.target.closest('[data-batch-action]');
   const action = event.target.closest('[data-action]');
   if (!batch && !action) return;
   if (!kitchenCanAct()) return;
+  if (action?.dataset.action === 'start') {
+    const task = (data.recommendations || []).find(entry => String(entry.taskKey) === String(action.dataset.task) && String(entry.orderId) === String(action.dataset.order));
+    const state = taskStateMap().get(task?.taskKey) || task?.taskState || 'ordered';
+    if (!task || !taskStartAllowed(task, state)) return;
+  }
+  if (action?.dataset.action === 'ready') {
+    const task = (data.recommendations || []).find(entry => String(entry.taskKey) === String(action.dataset.task) && String(entry.orderId) === String(action.dataset.order));
+    const state = taskStateMap().get(task?.taskKey) || task?.taskState || 'ordered';
+    if (!task || !taskHasStation(task) || !taskCanMarkReady(state)) return;
+  }
   const button = batch || action;
+  if (batch && !batchHasCapacity((data.batches || []).find(entry => String(entry.batchId) === String(batch.dataset.batch)), data.recommendations || [])) return;
   const keys = batch
     ? [`batch:${batch.dataset.batch}`, ...((data.batches || []).find(entry => String(entry.batchId) === String(batch.dataset.batch))?.allocations || []).map(task => kitchenActionKey(task.orderId, task.taskKey))]
     : [kitchenActionKey(action.dataset.order, action.dataset.task)];
@@ -543,15 +802,84 @@ document.addEventListener('click', async (event) => {
   }
 });
 $('#station-filter').addEventListener('change', (event) => {
+  pauseKitchenCaller();
   selectedStation = event.target.value || 'all';
+  boardPage = 1;
   localStorage.setItem('redLanternSmartKdsStation', selectedStation);
   render();
 });
 $('#category-filter').addEventListener('change', (event) => {
+  pauseKitchenCaller();
   selectedCategory = event.target.value || 'all';
+  boardPage = 1;
   render();
 });
 $('#operator').addEventListener('change', () => operator());
+$('#board-search').addEventListener('input', event => {
+  boardQuery = event.target.value;
+  boardPage = 1;
+  render();
+});
+$('#board-status').addEventListener('click', event => {
+  const button = event.target.closest('[data-board-status]');
+  if (!button) return;
+  selectedBoardStatus = button.dataset.boardStatus;
+  boardPage = 1;
+  render();
+});
+$('#board-prev').addEventListener('click', () => { if (boardPage > 1) { boardPage -= 1; render(); } });
+$('#board-next').addEventListener('click', () => { if (boardPage < (lastBoardView?.pageCount || 1)) { boardPage += 1; render(); } });
+const kitchenDrawers = { 'kitchen-briefing': 'calls-dialog', 'alerts-toggle': 'alerts-dialog', 'batches-toggle': 'batches-dialog', 'load-toggle': 'load-dialog', 'manager-toggle': 'manager-dialog' };
+Object.entries(kitchenDrawers).forEach(([button, dialog]) => {
+  document.getElementById(button).addEventListener('click', () => document.getElementById(dialog).showModal());
+});
+document.addEventListener('click', event => {
+  const close = event.target.closest('[data-close-dialog]');
+  if (close) document.getElementById(close.dataset.closeDialog)?.close();
+});
+document.querySelectorAll('.kitchen-dialog').forEach(dialog => dialog.addEventListener('click', event => {
+  if (event.target === dialog) {
+    const bounds = dialog.getBoundingClientRect();
+    if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) dialog.close();
+  }
+}));
+$('#caller-toggle').addEventListener('click', () => {
+  if (kitchenCallerEnabled) {
+    kitchenCallerEnabled = false;
+    pauseKitchenCaller();
+    syncKitchenCallerControls();
+    return;
+  }
+  if (!kitchenCallerAllowed()) return;
+  kitchenCallerEnabled = true;
+  seenKitchenCalls.clear();
+  if (kitchenSoundSupported()) {
+    try {
+      const Audio = window.AudioContext || window.webkitAudioContext;
+      kitchenAudioContext ||= new Audio();
+      kitchenAudioContext.resume?.().catch(() => {});
+    } catch (_) {}
+  }
+  syncKitchenCaller(visibleExpediter(filteredTasks(), taskStateMap()));
+});
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) pauseKitchenCaller();
+  syncKitchenCallerControls();
+  if (!document.hidden) void load();
+});
+window.addEventListener('red-lantern-auth-changed', () => {
+  kitchenCallerEnabled = false;
+  pauseKitchenCaller();
+  syncKitchenCallerControls();
+});
+window.addEventListener('pagehide', pauseKitchenCaller);
+window.addEventListener('storage', event => {
+  if (event.key === 'red-lantern-staff-access-profile-v1' || event.key === null) {
+    kitchenCallerEnabled = false;
+    pauseKitchenCaller();
+    syncKitchenCallerControls();
+  }
+});
 $('#kitchen-detail-controls')?.addEventListener('change', event => {
   document.body.classList.toggle('show-kitchen-controls', event.target.checked);
 });
@@ -595,6 +923,13 @@ function connectLiveUpdates() {
     setLiveStatus('Live board · reconnecting · staff actions only');
   };
 }
+// Staff access can finish verifying after the first board snapshot. Keep the
+// completion control visible and disabled when that verification is read only.
+const kitchenAccessObserver = new MutationObserver(() => {
+  syncKitchenPending();
+  renderKitchenModeNotice();
+});
+['#board', '#batch-list'].forEach(selector => kitchenAccessObserver.observe($(selector), { attributes: true, subtree: true, attributeFilter: ['data-employee-denied'] }));
 load();
 pollForUpdates();
 connectLiveUpdates();

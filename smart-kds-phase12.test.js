@@ -131,12 +131,17 @@ describe('Smart KDS Phase 12 mandatory simulations', () => {
     expect(result.summary.duplicateStarts).toBe(0);
   });
 
-  test('rejects duplicate, cancelled, and out-of-order kitchen commands deterministically', () => {
+  test('allows staff to confirm finished food without a start while rejecting duplicate and held commands', () => {
     const first = applyTaskAction('ordered', 'start');
     expect(first).toMatchObject({ applied: true, state: 'preparing' });
     expect(applyTaskAction(first.state, 'start')).toMatchObject({ applied: false, reason: 'state-conflict' });
     expect(applyTaskAction('cancelled', 'ready')).toMatchObject({ applied: false, reason: 'state-conflict' });
-    expect(applyTaskAction('ordered', 'ready')).toMatchObject({ applied: false, expected: ['preparing'] });
+    for (const state of ['ordered', 'eligible', 'scheduled', 'fired', 'preparing']) {
+      expect(applyTaskAction(state, 'ready')).toMatchObject({ applied: true, state: 'ready' });
+    }
+    for (const state of ['held', 'ready', 'expo', 'served', 'superseded']) {
+      expect(applyTaskAction(state, 'ready')).toMatchObject({ applied: false, reason: 'state-conflict' });
+    }
   });
 
   test('validates the complete persisted task lifecycle from scheduling through service', () => {
