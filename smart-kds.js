@@ -590,6 +590,7 @@ function render() {
   lastBoardView = view;
   boardPage = view.page;
   const scrollPositions = new Map([...document.querySelectorAll('[data-order-ticket]')].map(ticket => [ticket.dataset.order, ticket.querySelector('.ticket-items')?.scrollTop || 0]));
+  $('#board').dataset.ticketCount = String(view.orders.length);
   $('#board').innerHTML = view.orders.length ? view.orders.map(orderTicket).join('') : `<div class="empty"><b>${tasks.length ? 'No items match this view.' : 'Kitchen clear'}</b><p>${tasks.length ? 'Try another status or search.' : 'New orders will appear here.'}</p></div>`;
   document.querySelectorAll('[data-order-ticket]').forEach(ticket => { ticket.querySelector('.ticket-items').scrollTop = scrollPositions.get(ticket.dataset.order) || 0; });
   document.querySelectorAll('[data-board-status]').forEach(button => {

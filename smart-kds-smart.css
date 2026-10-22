@@ -45,6 +45,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .pulse-alerts[data-urgent="true"] { border-color: #e0a14e; color: #92510d; background: #fff2d8; }
 #load-toggle { max-width: 210px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: #536a7d; }
 .ticket-grid { display: grid; flex: 1 1 auto; min-height: 0; gap: 10px; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); align-items: stretch; }
+.ticket-grid[data-ticket-count="1"], .ticket-grid[data-ticket-count="2"], .ticket-grid[data-ticket-count="3"] { grid-template-rows: minmax(0, 1fr); }
 .order-ticket { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; border: 1px solid #d0dbe5; border-top: 4px solid #90a5b8; border-radius: 11px; background: #fff; box-shadow: 0 3px 8px #223d5610; }
 .order-ticket.ticket-red { border-top-color: #c83b4d; }
 .order-ticket.ticket-green { border-top-color: #299666; }
@@ -175,6 +176,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .override-actions button { min-width: 110px; }
 @media (max-width: 1000px) {
   .ticket-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(3, minmax(0, 1fr)); }
+  .ticket-grid[data-ticket-count="1"], .ticket-grid[data-ticket-count="2"] { grid-template-rows: minmax(0, 1fr); }
+  .ticket-grid[data-ticket-count="3"], .ticket-grid[data-ticket-count="4"] { grid-template-rows: repeat(2, minmax(0, 1fr)); }
   .kds-brand { flex-basis: 118px; }
   .kds-brand b { font-size: 17px; }
   .header-tools { gap: 5px; }
@@ -206,6 +209,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .next-call > small { display: none; }
   #load-toggle { display: none; }
   .ticket-grid { grid-template-columns: 1fr; grid-template-rows: repeat(2, minmax(0, 1fr)); overflow-y: auto; }
+  .ticket-grid[data-ticket-count="2"], .ticket-grid[data-ticket-count="3"], .ticket-grid[data-ticket-count="4"] { grid-template-rows: repeat(2, minmax(0, 1fr)); }
   .order-ticket { min-height: 200px; }
   .board-pagination { flex-wrap: wrap; flex-basis: auto; justify-content: center; gap: 5px; }
   .board-pagination p { flex-basis: 100%; text-align: center; font-size: 11px; }

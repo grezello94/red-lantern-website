@@ -122,6 +122,52 @@ test('landscape tablet exposes six ticket cards with touch-sized completion acti
   await page.screenshot({ path: '/tmp/red-lantern-kds-tablet-1024.png' });
 });
 
+test('quiet service uses the full board height so all five completion buttons fit without inner scrolling', async ({ page }) => {
+  const snapshot = rushSnapshot(2, 3);
+  snapshot.recommendations = snapshot.recommendations.filter(task => task.taskKey !== 'order-1:line-3');
+  snapshot.taskStates = snapshot.taskStates.filter(task => task.task_id !== 'order-1:line-3');
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await openBoard(page, snapshot);
+  for (const viewport of [{ width: 1024, height: 768 }, { width: 810, height: 1080 }]) {
+    await page.setViewportSize(viewport);
+    await expect(page.locator('#board')).toHaveAttribute('data-ticket-count', '2');
+    await expect(page.locator('#board [data-action="ready"]')).toHaveCount(5);
+    const layout = await page.locator('#board').evaluate(board => ({
+      rows: getComputedStyle(board).gridTemplateRows.split(' ').length,
+      cards: [...board.querySelectorAll('[data-order-ticket]')].map(card => ({
+        height: card.getBoundingClientRect().height,
+        boardHeight: board.getBoundingClientRect().height,
+        scrollHeight: card.querySelector('.ticket-items').scrollHeight,
+        visibleHeight: card.querySelector('.ticket-items').clientHeight,
+      })),
+      buttons: [...board.querySelectorAll('[data-action="ready"]')].map(button => {
+        const bounds = button.getBoundingClientRect();
+        return { bottom: bounds.bottom, unblocked: button.contains(document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)) };
+      }),
+    }));
+    expect(layout.rows).toBe(1);
+    for (const card of layout.cards) {
+      expect(card.height).toBeGreaterThanOrEqual(card.boardHeight - 1);
+      expect(card.scrollHeight).toBeLessThanOrEqual(card.visibleHeight + 1);
+    }
+    for (const button of layout.buttons) {
+      expect(button.unblocked).toBe(true);
+      expect(button.bottom).toBeLessThanOrEqual(viewport.height);
+    }
+  }
+});
+
+test('four portrait tickets use two occupied rows while the six-card page stays unchanged', async ({ page }) => {
+  await page.setViewportSize({ width: 810, height: 1080 });
+  const state = await openBoard(page, rushSnapshot(4));
+  await expect(page.locator('[data-order-ticket]')).toHaveCount(4);
+  expect(await page.locator('#board').evaluate(board => getComputedStyle(board).gridTemplateRows.split(' ').length)).toBe(2);
+  state.snapshot = rushSnapshot(6);
+  await page.evaluate(() => load());
+  await expect(page.locator('[data-order-ticket]')).toHaveCount(6);
+  expect(await page.locator('#board').evaluate(board => getComputedStyle(board).gridTemplateRows.split(' ').length)).toBe(3);
+});
+
 test('search and status tabs locate one order without losing chef notes or the queue totals', async ({ page }) => {
   await page.setViewportSize({ width: 810, height: 1080 });
   await openBoard(page);
