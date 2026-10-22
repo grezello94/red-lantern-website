@@ -4,6 +4,8 @@ function time(value, fallback = Number.POSITIVE_INFINITY) {
 }
 
 function compareTasks(left, right) {
+  const priority = compareKitchenPriority(left, right);
+  if (priority) return priority;
   const rank = Number(left.rank || Number.MAX_SAFE_INTEGER) - Number(right.rank || Number.MAX_SAFE_INTEGER);
   if (rank) return rank;
   const safeStart = time(left.latestSafeStartAt) - time(right.latestSafeStartAt);
@@ -35,12 +37,14 @@ function batchCompatibilityKey(task = {}) {
   return [String(profile.batchGroupId).trim().toLowerCase(), String(task.stationId), modifierFingerprint(task)].join('|');
 }
 
-function decideBatch({ earliest, now, batchWindowSeconds, totalQuantity, maxBatchSize, optimalBatchSize }) {
+function decideBatch({ earliest, now, batchWindowSeconds, totalQuantity, maxBatchSize, optimalBatchSize, runningOrder = false }) {
   const current = time(now, Date.now());
   const safeStart = time(earliest.latestSafeStartAt);
   const windowClosesAt = time(earliest.orderedAt, current) + Math.max(0, Number(batchWindowSeconds || 0)) * 1000;
   if (current >= safeStart)
     return { action: 'fire-batch', reason: 'Latest safe start time reached', windowClosesAt: new Date(windowClosesAt).toISOString() };
+  if (runningOrder || isRunningOrderEligible(earliest))
+    return { action: 'fire-batch', reason: 'Running order / additional portion, priority; do not wait for more portions', windowClosesAt: new Date(windowClosesAt).toISOString() };
   if (totalQuantity >= maxBatchSize)
     return { action: 'fire-batch', reason: 'Maximum compatible batch size reached', windowClosesAt: new Date(windowClosesAt).toISOString() };
   if (totalQuantity >= optimalBatchSize)
@@ -52,11 +56,12 @@ function decideBatch({ earliest, now, batchWindowSeconds, totalQuantity, maxBatc
 
 function buildBatches({ now = new Date(), recommendations = [], atomicTasks = false } = {}) {
   const grouped = new Map();
-  recommendations.forEach((task) => {
+  recommendations.map(annotateRunningOrder).forEach((task) => {
     // A monitor task can still be a useful member of a safely-open batch. It
     // must not disappear simply because it is not individually urgent yet.
     if (task.taskState && !['ordered', 'eligible', 'scheduled'].includes(String(task.taskState))) return;
     if (['hold-for-course', 'manual-hold', 'served'].includes(String(task.pacingState || ''))) return;
+    if (['hold', 'defer'].includes(task.manualOverride?.action)) return;
     const key = batchCompatibilityKey(task);
     if (!key) return;
     if (!grouped.has(key)) grouped.set(key, []);
@@ -97,7 +102,10 @@ function buildBatches({ now = new Date(), recommendations = [], atomicTasks = fa
         .map((entry) => entry.task)
         .find((task) => allocations.some((allocation) => allocation.taskKey === task.taskKey));
       const totalQuantity = allocations.reduce((sum, allocation) => sum + allocation.quantity, 0);
-      const decision = decideBatch({ earliest, now, batchWindowSeconds, totalQuantity, maxBatchSize, optimalBatchSize });
+      const members = ordered.filter((task) => allocations.some((allocation) => allocation.taskKey === task.taskKey));
+      const runningOrder = members.some(isRunningOrderEligible);
+      const priority = Math.min(...members.map(kitchenPriorityTier));
+      const decision = decideBatch({ earliest, now, batchWindowSeconds, totalQuantity, maxBatchSize, optimalBatchSize, runningOrder });
       batches.push({
         batchKey: `${key}#${++batchIndex}`,
         batchGroupId: earliest.profile.batchGroupId,
@@ -107,6 +115,9 @@ function buildBatches({ now = new Date(), recommendations = [], atomicTasks = fa
         maxBatchSize,
         optimalBatchSize,
         batchWindowSeconds,
+        runningOrder,
+        runningOrderReason: runningOrder ? members.find(isRunningOrderEligible).runningOrderReason : '',
+        priorityClass: priority === 0 ? 'critical' : priority === 1 ? 'manual-rush' : runningOrder ? 'running' : 'normal',
         parallelCapacityCost: Math.max(1, ...allocations.map((allocation) => Number(ordered.find((task) => task.taskKey === allocation.taskKey)?.profile?.parallelCapacityCost || 1))),
         latestSafeStartAt: earliest.latestSafeStartAt,
         targetServeAt: earliest.targetServeAt,
@@ -124,3 +135,4 @@ function buildBatches({ now = new Date(), recommendations = [], atomicTasks = fa
 }
 
 module.exports = { buildBatches, batchCompatibilityKey, modifierFingerprint, decideBatch };
+const { annotateRunningOrder, isRunningOrderEligible, kitchenPriorityTier, compareKitchenPriority } = require('./smart-kds-priority');

@@ -67,6 +67,43 @@ describe('tablet kitchen board model', () => {
     expect(view.attentionCounts.blocked).toBe(12);
   });
 
+  test('honors backend critical and running ranks ahead of older ordinary waiting deadlines', () => {
+    const waiting = { capacityState: 'capacity-wait', action: 'wait-capacity', expediter: { signal: 'yellow', phase: 'next' } };
+    const recommendations = [
+      task('ordinary:item', { ...waiting, finalRank: 3, latestSafeStartAt: '2026-10-22T10:00:00Z' }),
+      task('running:item', { ...waiting, finalRank: 2, runningOrder: true, runningOrderReason: 'Customer is already eating.', note: 'No onion', orderNote: 'RUNNING extra portion', latestSafeStartAt: '2026-10-22T12:30:00Z' }),
+      task('critical:item', { ...waiting, finalRank: 1, expediter: { signal: 'red', phase: 'blocked' } }),
+      task('actionable:item', { finalRank: 100 }),
+    ];
+    const view = buildBoardView({ recommendations });
+    expect(view.orders.map(order => order.orderId)).toEqual(['actionable', 'critical', 'running', 'ordinary']);
+    const running = view.orders.find(order => order.orderId === 'running');
+    expect(running.runningCount).toBe(1);
+    expect(running.tasks[0]).toMatchObject({ runningOrder: true, boardStatus: 'waiting', note: 'No onion', orderNote: 'RUNNING extra portion' });
+    expect(getTaskView(running.tasks[0])).toBe('waiting');
+    expect(buildBoardView({ recommendations, query: 'extra portion' }).orders[0].orderId).toBe('running');
+  });
+
+  test('uses running as a waiting fallback when ranks are absent without displacing starts or cooking', () => {
+    const waiting = { capacityState: 'capacity-wait', action: 'wait-capacity', finalRank: undefined, rank: undefined, expediter: { signal: 'yellow', phase: 'next' } };
+    const recommendations = [
+      task('normal:item', { ...waiting, latestSafeStartAt: '2026-10-22T09:00:00Z' }),
+      task('running:item', { ...waiting, runningOrder: true, latestSafeStartAt: '2026-10-22T12:30:00Z' }),
+      task('cooking:item', { taskState: 'preparing' }), task('start:item'),
+    ];
+    expect(buildBoardView({ recommendations }).orders.map(order => order.orderId)).toEqual(['start', 'cooking', 'running', 'normal']);
+  });
+
+  test('keeps running metadata through recorded completion and never infers it from notes in the browser', () => {
+    const recommendations = [task('running:item', { runningOrder: true, runningOrderReason: 'Additional portion', note: 'No onion', orderNote: 'RUNNING' }), task('ordinary:item', { runningOrder: false, note: 'running' })];
+    const result = buildBoardView({ recommendations, taskStates: [{ task_id: 'running:item', task_state: 'ready' }] });
+    const finished = result.orders.find(order => order.orderId === 'running');
+    expect(finished.runningCount).toBe(1);
+    expect(finished.tasks[0]).toMatchObject({ runningOrder: true, taskState: 'ready', boardStatus: 'ready', orderNote: 'RUNNING' });
+    expect(result.orders.find(order => order.orderId === 'ordinary').runningCount).toBe(0);
+    expect(JSON.stringify(recommendations)).toContain('"runningOrder":false');
+  });
+
   test('one mixed-status order contributes matching rows to each tab without duplicate tickets', () => {
     const recommendations = [
       task('one:start'), task('one:cooking', { taskState: 'preparing' }),

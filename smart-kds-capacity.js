@@ -4,6 +4,8 @@ function asTime(value, fallback = Number.POSITIVE_INFINITY) {
 }
 
 function compareWork(left, right) {
+  const priority = compareKitchenPriority(left.task || left, right.task || right);
+  if (priority) return priority;
   const leftRank = Number(left.rank || Number.MAX_SAFE_INTEGER);
   const rightRank = Number(right.rank || Number.MAX_SAFE_INTEGER);
   if (leftRank !== rightRank) return leftRank - rightRank;
@@ -52,6 +54,9 @@ function toCapacityWork({ recommendations = [], batches = [] } = {}) {
       work.push({
         workKey: batch.batchKey,
         kind: 'batch',
+        runningOrder: batch.runningOrder === true,
+        runningOrderReason: batch.runningOrderReason || '',
+        priorityClass: batch.priorityClass || 'normal',
         action: 'start-now',
         rank,
         stationId: batch.stationId,
@@ -158,3 +163,4 @@ function allocateStationCapacity({ stations = [], recommendations = [], batches 
 }
 
 module.exports = { allocateStationCapacity, capacityForStation, occupiedCapacityForStation, toCapacityWork };
+const { compareKitchenPriority } = require('./smart-kds-priority');

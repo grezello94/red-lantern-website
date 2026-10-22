@@ -24,6 +24,8 @@ function isFairnessEligible(task = {}) {
 }
 
 function compareFairness(left, right) {
+  const priority = compareKitchenPriority(left, right);
+  if (priority) return priority;
   const urgency = urgencyBucket(left) - urgencyBucket(right);
   if (urgency) return urgency;
   if (left.fairnessPriorityTier !== right.fairnessPriorityTier)
@@ -77,3 +79,4 @@ function applyFairness({ recommendations = [], starvationAfterMinutes = 25, now 
 }
 
 module.exports = { waitMinutes, isFairnessEligible, applyFairness, compareFairness };
+const { compareKitchenPriority } = require('./smart-kds-priority');

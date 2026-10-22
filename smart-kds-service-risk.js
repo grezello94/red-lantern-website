@@ -65,6 +65,8 @@ function applyServiceRiskPriority({ recommendations = [], risks = [] } = {}) {
       };
     })
     .sort((left, right) => {
+      const priority = compareKitchenPriority(left, right);
+      if (priority) return priority;
       const urgency = (left.action === 'start-now' ? 0 : left.action === 'prepare-next' ? 1 : 2) - (right.action === 'start-now' ? 0 : right.action === 'prepare-next' ? 1 : 2);
       if (urgency) return urgency;
       if (left.serviceRiskPriority !== right.serviceRiskPriority) return right.serviceRiskPriority - left.serviceRiskPriority;
@@ -76,3 +78,4 @@ function applyServiceRiskPriority({ recommendations = [], risks = [] } = {}) {
 }
 
 module.exports = { evaluateServiceRisk, serviceRiskPriority, isServiceRiskEligible, applyServiceRiskPriority };
+const { compareKitchenPriority } = require('./smart-kds-priority');

@@ -23,6 +23,14 @@ An ordered item is not automatically red merely because it has not started. Its 
 
 The kitchen caller lists quantities, destinations, portions, cooking styles, add-ons, chef notes and estimated start/ready times in priority order. The optional **Enable voice + chime** button reads new calls and sounds urgent alerts on supported browsers. It must be enabled on the kitchen device. Repeated refreshes do not repeat the same call. The caller pauses when the board loses its live snapshot, the session expires, the display is hidden, or it is in shadow mode.
 
+## Running orders
+
+Put **running** in the dish's chef note or the current round's order note when guests are already eating and need another portion. Detection ignores case and matches the whole word: `RUNNING - extra portion` qualifies; `overrunning` does not. The dish keeps its original notes and shows **RUNNING · Priority top-up** on the board. The caller identifies the additional portion explicitly.
+
+An eligible running item is called to start immediately and receives the next available station slot ahead of ordinary waiting work. Critical overdue work and explicit rush overrides retain precedence. The request does not interrupt food already cooking, bypass a course or staff hold, or invent a preparation/ready acknowledgement. A blocked running item stays visible as a priority top-up with its capacity or hold reason. It is not delayed to wait for a larger batch.
+
+New rounds save their own order note so marking one round running does not automatically prioritize later rounds. Older lines without a round-note snapshot use the existing order note. A running request never changes the saved service deadline or marks food served.
+
 ## Fish and seafood
 
 Every pending fish/seafood item produces an immediate ingredient readiness alert, including an item whose cooking is held for a later course. Helpers should check portions and chilled/thawed stock and use the kitchen-approved thawing process when necessary. The caller does not infer a thaw duration, confirm stock availability, or count an ingredient check as the start of cooking. Tell expo when stock cannot meet the order's timing.

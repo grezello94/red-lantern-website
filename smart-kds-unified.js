@@ -40,6 +40,8 @@ function buildUnifiedRecommendations({ fairness = {}, capacity = {}, serviceRisk
     }
     return { ...task, baseAction, action, finalReason: reason, capacityState, stationCapacityVersion: capacityWork?.stationCapacityVersion ?? null, serviceRisk: risk?.riskType || 'on-track', serviceRiskSeverity: risk?.severity || 'on-track' };
   }).sort((left, right) => {
+    const priority = compareKitchenPriority(left, right);
+    if (priority) return priority;
     const urgency = (left.baseAction === 'start-now' ? 0 : left.baseAction === 'prepare-next' ? 1 : 2) - (right.baseAction === 'start-now' ? 0 : right.baseAction === 'prepare-next' ? 1 : 2);
     if (urgency) return urgency;
     const risk = (right.serviceRiskSeverity === 'critical' ? 2 : right.serviceRiskSeverity === 'watch' ? 1 : 0) - (left.serviceRiskSeverity === 'critical' ? 2 : left.serviceRiskSeverity === 'watch' ? 1 : 0);
@@ -59,3 +61,4 @@ function buildUnifiedRecommendations({ fairness = {}, capacity = {}, serviceRisk
 }
 
 module.exports = { buildUnifiedRecommendations, capacityByTask };
+const { compareKitchenPriority } = require('./smart-kds-priority');

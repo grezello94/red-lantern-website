@@ -36,6 +36,8 @@ function taskUrgency(task, now) {
     return { bucket: 0, action: 'start-now', reason: 'Maximum service window passed' };
   if (['rush', 'fire-now'].includes(manualAction))
     return { bucket: 1, action: 'start-now', reason: 'Manual priority override' };
+  if (isRunningOrderEligible(task))
+    return { bucket: 1.5, action: 'start-now', reason: 'Running order / additional portion, priority for a table already eating' };
   if (current >= target) return { bucket: 2, action: 'start-now', reason: 'Target serve time passed' };
   if (current >= latestSafeStart)
     return { bucket: 3, action: 'start-now', reason: 'Latest safe start time reached' };
@@ -67,6 +69,7 @@ function compareCandidates(left, right) {
 
 function scheduleKitchen({ now = new Date(), tasks = [] } = {}) {
   const candidates = tasks
+    .map(annotateRunningOrder)
     .filter(isSchedulableTask)
     .map((task) => ({ task, urgency: taskUrgency(task, now) }))
     .sort(compareCandidates);
@@ -79,6 +82,7 @@ function scheduleKitchen({ now = new Date(), tasks = [] } = {}) {
     return {
       ...task,
       rank: index + 1,
+      priorityClass: urgency.bucket === 0 ? 'critical' : urgency.bucket === 1 ? 'manual-rush' : urgency.bucket === 1.5 ? 'running' : 'normal',
       action: urgency.action,
       priorityReason: reasons[0],
       reasons,
@@ -87,3 +91,4 @@ function scheduleKitchen({ now = new Date(), tasks = [] } = {}) {
 }
 
 module.exports = { SCHEDULABLE_TASK_STATES, isSchedulableTask, scheduleKitchen, taskUrgency, compareCandidates };
+const { annotateRunningOrder, isRunningOrderEligible } = require('./smart-kds-priority');

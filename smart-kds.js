@@ -285,13 +285,15 @@ function taskCard(task, state) {
   const target = kitchenTime(task.targetServeAt);
   const forecast = kitchenTime(task.expediter?.readyAt);
   const start = kitchenTime(task.expediter ? task.expediter.startAt : task.plannedStartAt || task.latestSafeStartAt);
-  const extras = [task.portion, task.style ? `Style: ${task.style}` : '', Addons.modifierText(task.modifiers), task.note ? `Note: ${task.note}` : ''].filter(Boolean).join(' · ');
+  const separateOrderNote = String(task.orderNote || '').trim() && String(task.orderNote).trim() !== String(task.note || '').trim();
+  const extras = [task.portion, task.style ? `Style: ${task.style}` : '', Addons.modifierText(task.modifiers), task.note ? `Note: ${task.note}` : '', separateOrderNote ? `Order note: ${task.orderNote}` : ''].filter(Boolean).join(' · ');
   let controls = pending ? startControl(task, state) + markReadyControl(task, state)
     : state === 'preparing' ? markReadyControl(task, state, true)
     : ['ready', 'expo'].includes(state) ? `<button type="button" class="primary ${state === 'ready' ? 'expo' : 'serve'}" data-action="${state === 'ready' ? 'expo' : 'serve'}" data-task="${esc(task.taskKey)}" data-order="${esc(task.orderId)}" data-station="${esc(task.stationId)}" ${!kitchenCanAct() || taskIsPending(task) ? 'disabled' : ''}>${state === 'ready' ? 'Send to expo' : 'Mark served'}</button>`
     : '<button type="button" class="held-control" disabled>Held</button>';
-  return `<article class="card kds-item signal-${signal}" data-task-card data-task="${esc(task.taskKey)}" data-order="${esc(task.orderId)}" data-state="${esc(state)}" data-status="${esc(status)}" data-signal="${signal}">
+  return `<article class="card kds-item signal-${signal}" data-task-card data-task="${esc(task.taskKey)}" data-order="${esc(task.orderId)}" data-state="${esc(state)}" data-status="${esc(status)}" data-signal="${signal}" data-running-order="${task.runningOrder === true}">
     <div class="item-heading"><b><span class="item-quantity">${esc(task.quantity)}×</span> ${esc(task.itemName)}</b><span class="item-status">${esc(label)}</span></div>
+    ${task.runningOrder === true ? `<span class="running-order-badge" title="${esc(task.runningOrderReason || 'Priority top-up for a customer who is already eating.')}">RUNNING · Priority top-up</span>` : ''}
     ${extras ? `<p class="item-note">${esc(extras)}</p>` : ''}
     <div class="item-bottom"><div class="item-times task-schedule"><span class="item-station">${esc(stationLabel(task.stationId))}</span>${target ? `<span>Due ${esc(target)}</span>` : ''}${forecast ? `<span class="ready-by">Est. ready ${esc(forecast)}</span>` : ''}${status === 'waiting' && start ? `<span>Start ${esc(start)}</span>` : ''}${Number(task.expediter?.delayMinutes) > 0 ? `<span class="forecast-delay">+${Math.ceil(Number(task.expediter.delayMinutes))} min late</span>` : ''}</div><div class="actions">${controls}</div></div>
     ${task.expediter?.prepAlert ? `<p class="ingredient-alert" title="${esc(task.expediter.prepAlert)}"><b>Prep alert</b> ${esc(task.expediter.prepAlert)}</p>` : ''}
@@ -301,7 +303,8 @@ function taskCard(task, state) {
 }
 function orderTicket(order) {
   const signal = order.tasks.some(task => taskSignal(task, task.taskState) === 'red') ? 'red' : order.tasks.some(task => task.boardStatus === 'start') ? 'green' : order.tasks.every(task => ['ready', 'expo'].includes(task.taskState)) ? 'ready' : 'neutral';
-  return `<article class="order-ticket ticket-${signal}" data-order-ticket data-order="${esc(order.orderId)}"><header class="ticket-head"><h2>${esc(order.location || taskLocation(order.tasks[0]))}</h2><span class="ticket-order">#${esc(String(order.orderNumber || '—').padStart(2, '0'))}</span><small>${order.tasks.length} item${order.tasks.length === 1 ? '' : 's'}</small></header><div class="ticket-items" tabindex="0" aria-label="Items for order ${esc(order.orderNumber || order.orderId)}">${order.tasks.map(task => taskCard(task, task.taskState || 'ordered')).join('')}</div></article>`;
+  const runningCount = order.tasks.filter(task => task.runningOrder === true).length;
+  return `<article class="order-ticket ticket-${signal}" data-order-ticket data-order="${esc(order.orderId)}" data-running-count="${runningCount}"><header class="ticket-head"><h2>${esc(order.location || taskLocation(order.tasks[0]))}</h2>${runningCount ? `<span class="ticket-running-cue" title="${runningCount} priority top-up item${runningCount === 1 ? '' : 's'}" aria-label="${runningCount} running priority top-up item${runningCount === 1 ? '' : 's'}">RUN ${runningCount}</span>` : ''}<span class="ticket-order">#${esc(String(order.orderNumber || '—').padStart(2, '0'))}</span><small>${order.tasks.length} item${order.tasks.length === 1 ? '' : 's'}</small></header><div class="ticket-items" tabindex="0" aria-label="Items for order ${esc(order.orderNumber || order.orderId)}">${order.tasks.map(task => taskCard(task, task.taskState || 'ordered')).join('')}</div></article>`;
 }
 function visibleBatches(tasks, states) {
   return (data.batches || []).filter(batch =>
@@ -461,14 +464,16 @@ function syncKitchenCaller(expediter) {
   syncKitchenCallerControls();
   if (!kitchenCallerEnabled || !kitchenCallerAllowed()) { pauseKitchenCaller(); return; }
   const calls = expediter.calls;
+  const runningKeys = new Set((data.recommendations || []).filter(task => task.runningOrder === true).map(task => String(task.taskKey)));
+  const runningCall = call => call.runningOrder === true || (call.taskKeys || []).some(key => runningKeys.has(String(key)));
   const calledTasks = new Set(calls.flatMap(call => call.taskKeys || []));
   const entries = [
     ...expediter.alerts.filter(alert => (alert.urgent || alert.severity === 'critical' || String(alert.type).includes('prep')) &&
       (!alert.taskKey || !calledTasks.has(alert.taskKey))).map(alert => ({
       key: `alert:${alert.id}:${alert.severity}`, message: alert.message, urgent: true, priority: String(alert.type).includes('prep') ? 0 : 1,
     })),
-    ...calls.map(call => ({ key: `call:${call.id}:${call.signal}`, message: `${call.instruction}${call.startAt ? ` Planned start ${kitchenTime(call.startAt)}.` : ''}${call.readyAt ? ` Estimated ready ${kitchenTime(call.readyAt)}.` : ''}`,
-      urgent: call.urgent || call.signal === 'red' || call.type === 'prep',
+    ...calls.map(call => ({ key: `call:${call.id}:${call.signal}${runningCall(call) ? ':running' : ''}`, message: `${call.instruction}${call.startAt ? ` Planned start ${kitchenTime(call.startAt)}.` : ''}${call.readyAt ? ` Estimated ready ${kitchenTime(call.readyAt)}.` : ''}`,
+      urgent: call.urgent || call.signal === 'red' || call.type === 'prep' || runningCall(call),
       priority: call.type === 'prep' ? 0 : call.signal === 'red' ? 1 : 2 })),
   ].filter(entry => entry.message && entry.key).sort((left, right) => left.priority - right.priority);
   const current = new Set(entries.map(entry => entry.key));

@@ -75,7 +75,10 @@
     if (priority) return priority;
     const rank = finite(left.finalRank ?? left.rank) - finite(right.finalRank ?? right.rank);
     const deadline = time(left.latestSafeStartAt ?? left.plannedStartAt) - time(right.latestSafeStartAt ?? right.plannedStartAt);
-    return (getTaskView(left) === 'start' ? rank || deadline : deadline || rank)
+    const running = getTaskView(left) === 'waiting' ? Number(right.runningOrder === true) - Number(left.runningOrder === true) : 0;
+    // The scheduler's rank already accounts for critical work and running
+    // top-ups. Do not undo that decision by sorting an older deadline first.
+    return rank || running || deadline
       || time(left.orderedAt) - time(right.orderedAt);
   }
 
@@ -153,7 +156,7 @@
     const text = searchWords([
       task.orderId, task.orderNumber, `order ${order}`, `order${order}`, task.tableArea, location(task),
       table ? `table${table} table ${table} table ${table.padStart(2, '0')}` : '',
-      task.itemName, task.name, task.category, task.note, task.notes, task.specialRequest,
+      task.itemName, task.name, task.category, task.note, task.orderNote, task.notes, task.specialRequest,
       task.portion, task.style, modifierText(task.modifiers),
     ].join(' '));
     const tokens = new Set(text.split(' '));
@@ -181,6 +184,7 @@
         priority: taskPriority(first), boardStatus: first.boardStatus, statusCounts: counts,
         earliestTarget: targets.length ? new Date(Math.min(...targets)).toISOString() : null,
         earliestStart: starts.length ? new Date(Math.min(...starts)).toISOString() : null,
+        runningCount: ordered.filter((task) => task.runningOrder === true).length,
         totalItems: ordered.length, totalPortions: ordered.reduce((sum, task) => sum + quantity(task), 0),
       };
     }).sort((left, right) => comparePriority(left.tasks[0], right.tasks[0]) || lexical(left.orderId, right.orderId));

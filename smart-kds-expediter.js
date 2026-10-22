@@ -1,5 +1,6 @@
 const { batchCompatibilityKey } = require('./smart-kds-batching');
 const { modifierText } = require('./addons-domain');
+const { annotateRunningOrder, isRunningOrderEligible, kitchenPriorityTier, compareKitchenPriority } = require('./smart-kds-priority');
 const {
   cookingWaves: waves,
   conservativePreparationMilliseconds: duration,
@@ -83,6 +84,7 @@ function earliestSlot(bookings, capacity, required, release, milliseconds) {
 
 function compareTasks(left, right) {
   return (
+    compareKitchenPriority(left, right) ||
     number(left.finalRank || left.rank, Number.MAX_SAFE_INTEGER) -
       number(right.finalRank || right.rank, Number.MAX_SAFE_INTEGER) ||
     timestamp(left.effectiveLatestSafeStartAt || left.latestSafeStartAt, Infinity) -
@@ -94,6 +96,7 @@ function compareTasks(left, right) {
 function cookRelease(task, now) {
   if (
     (task.baseAction || task.action) === 'start-now' ||
+    isRunningOrderEligible(task) ||
     ['rush', 'fire-now'].includes(task.manualOverride?.action)
   )
     return now;
@@ -172,6 +175,7 @@ function makeWork(tasks, batches, now) {
       cost: Math.max(...members.map(cost)),
       duration: Math.max(...members.map(duration)),
       release,
+      priorityTask: [...members].sort(compareKitchenPriority)[0],
       rank: Math.min(
         ...members.map((task) => number(task.finalRank || task.rank, Number.MAX_SAFE_INTEGER))
       ),
@@ -189,11 +193,12 @@ function makeWork(tasks, batches, now) {
         cost: cost(task),
         duration: duration(task),
         release: cookRelease(task, now),
+        priorityTask: task,
         rank: number(task.finalRank || task.rank, Number.MAX_SAFE_INTEGER),
       });
     });
   return work.sort(
-    (a, b) => a.rank - b.rank || a.release - b.release || String(a.id).localeCompare(String(b.id))
+    (a, b) => compareKitchenPriority(a.priorityTask, b.priorityTask) || a.rank - b.rank || a.release - b.release || String(a.id).localeCompare(String(b.id))
   );
 }
 
@@ -232,7 +237,7 @@ function buildKitchenExpediter({
       (task) =>
         task?.taskKey && !COMPLETE.has(task.taskState) && !staleOrderIds.has(String(task.orderId))
     )
-    .map((task) => ({ ...task, ...buildPreparationPlan(task) }))
+    .map((task) => ({ ...annotateRunningOrder(task), ...buildPreparationPlan(task) }))
     .sort(compareTasks);
   const alerts = [];
   const calls = [];
@@ -461,6 +466,16 @@ function buildKitchenExpediter({
     }
     if (waves(task) > 1 && !held(task) && PENDING.has(state))
       instruction += ` Plan ${waves(task)} conservative cooking waves; chef must confirm any larger batch size.`;
+    if (task.runningOrder) {
+      instruction = `Running order / additional portion, priority: ${instruction}`;
+      if (isRunningOrderEligible(task)) {
+        const tier = kitchenPriorityTier(task);
+        priority = Math.min(priority, tier === 0 ? 0 : tier === 1 ? 6 : 7);
+        if (forecast.start > current || forecast.blockedReason) {
+          instruction += ' Expo, prioritize this top-up for the next eligible station slot; do not interrupt cooking already in progress.';
+        }
+      }
+    }
     const details = {
       signal,
       label: status,
@@ -508,6 +523,8 @@ function buildKitchenExpediter({
         taskKeys: [task.taskKey],
         stationId: task.stationId,
         itemName: task.itemName,
+        runningOrder: task.runningOrder,
+        runningOrderReason: task.runningOrderReason,
         quantity: quantity(task),
         startAt: details.startAt,
         readyAt: details.readyAt,
@@ -533,6 +550,8 @@ function buildKitchenExpediter({
         taskKeys: [task.taskKey],
         stationId: task.stationId,
         itemName: task.itemName,
+        runningOrder: task.runningOrder,
+        runningOrderReason: task.runningOrderReason,
         quantity: quantity(task),
         startAt: null,
         readyAt: null,
@@ -560,7 +579,8 @@ function buildKitchenExpediter({
         .filter((name, index, list) => list.indexOf(name) === index)
         .join(', ')
     );
-    const instruction = `${signal === 'green' ? 'Start' : signal === 'red' ? 'Expedite' : 'Stage'} approved batch: ${portions} portions of ${sharedLabel} for ${members
+    const runningOrder = members.some((task) => task.runningOrder);
+    const instruction = `${runningOrder ? 'Running order / additional portion, priority: ' : ''}${signal === 'green' ? 'Start' : signal === 'red' ? 'Expedite' : 'Stage'} approved batch: ${portions} portions of ${sharedLabel} for ${members
       .map(destination)
       .filter((name, index, list) => list.indexOf(name) === index)
       .join(
@@ -568,7 +588,7 @@ function buildKitchenExpediter({
       )}. ${signal === 'green' ? 'Use Start batch to acknowledge all allocations.' : signal === 'red' ? 'Expo, confirm the next free station slot.' : 'Wait for the displayed start time; keep order portions separate.'}`;
     calls.push({
       id: `batch:${unit.id}:${phase}`,
-      priority: signal === 'red' ? 1 : signal === 'green' ? 9 : 45,
+      priority: signal === 'red' ? 1 : runningOrder ? 7 : signal === 'green' ? 9 : 45,
       type: 'batch',
       urgent: signal === 'red',
       signal,
@@ -576,6 +596,8 @@ function buildKitchenExpediter({
       taskKeys: members.map((task) => task.taskKey),
       batchId: unit.batch.batchId || null,
       stationId: unit.stationId,
+      runningOrder,
+      runningOrderReason: runningOrder ? members.find((task) => task.runningOrder).runningOrderReason : '',
       quantity: portions,
       startAt: first?.expediter.startAt || null,
       readyAt: first?.expediter.readyAt || null,

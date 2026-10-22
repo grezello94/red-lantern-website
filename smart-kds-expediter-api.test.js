@@ -1,6 +1,7 @@
 /** @jest-environment node */
 const http = require('http');
 const fs = require('fs');
+const crypto = require('crypto');
 const nativeRequire = process.getBuiltinModule('module').createRequire(__filename);
 const { PGlite } = nativeRequire('@electric-sql/pglite');
 
@@ -65,7 +66,7 @@ describe('Kitchen caller with real order, profile and workflow SQL', () => {
       ADMIN_USERNAME: 'caller-test', ADMIN_PASSWORD: 'isolated-password',
       ORDERS_USERNAME: 'caller-test', ORDERS_PASSWORD: 'isolated-password',
       PUBLIC_CONTENT_CACHE_MS: '0', SECTION_CONTENT_CACHE_MS: '0', SMART_KDS_READ_CACHE_MS: '0',
-      SLOW_REQUEST_MS: '600000' });
+      CAPTAIN_SESSION_SECRET: 'isolated-caller-captain-session', SLOW_REQUEST_MS: '600000' });
     const originalExists = fs.existsSync, originalRead = fs.readFileSync;
     existsSpy = jest.spyOn(fs, 'existsSync').mockImplementation((filename) =>
       String(filename).endsWith('/.env') ? false : originalExists(filename));
@@ -82,9 +83,14 @@ describe('Kitchen caller with real order, profile and workflow SQL', () => {
     await mockDatabase.query('INSERT INTO website_content (id,data) VALUES ($1,$2)', [
       'air_menu_content', JSON.stringify({ items: [fish, rice] }),
     ]);
+    await mockDatabase.query('INSERT INTO website_content (id,data) VALUES ($1,$2)', [
+      'captain_content', JSON.stringify({ captains: [{ id: 'caller-captain', name: 'Caller Captain',
+        role: 'captain', active: true, areas: ['AC'], tableScope: 'all',
+        pinHash: crypto.scryptSync('123456', 'captain:caller-captain', 64).toString('hex') }], settings: {} }),
+    ]);
     await mockDatabase.query("INSERT INTO order_operations_config (config_key,config) VALUES ('default',$1) ON CONFLICT(config_key) DO UPDATE SET config=EXCLUDED.config", [
       JSON.stringify({ printers: [{ id: 'kitchen', name: 'Kitchen', type: 'kot' }],
-        routes: [{ category: '*', printerId: 'kitchen' }] }),
+        routes: [{ category: '*', printerId: 'kitchen' }], tableAreas: [{ name: 'AC', from: 1, to: 20 }] }),
     ]);
     server = http.createServer(app);
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -93,7 +99,7 @@ describe('Kitchen caller with real order, profile and workflow SQL', () => {
   beforeEach(async () => {
     await mockDatabase.exec(`TRUNCATE direct_orders,order_events,kitchen_order_courses,kitchen_production_tasks,
       kitchen_task_events,kitchen_service_events,kitchen_batches,kitchen_batch_allocations,
-      kitchen_scheduler_decisions,kitchen_manual_overrides,menu_production_profiles CASCADE`);
+      kitchen_scheduler_decisions,kitchen_manual_overrides,menu_production_profiles,captain_order_requests CASCADE`);
     const config = await request('/api/admin/smart-kds/config', 'PUT', { config: { mode: 'manual', displayMode: 'smart' } });
     expect(config.status).toBe(200);
     expect((await request('/api/admin/smart-kds/menu-profiles')).status).toBe(200);
@@ -339,5 +345,121 @@ describe('Kitchen caller with real order, profile and workflow SQL', () => {
     expect(response.data.recommendations).toHaveLength(1);
     expect(response.data.recommendations[0]).toMatchObject({ taskState: 'preparing' });
     expect(response.data.expediter.load.activePortions).toBe(1);
+  });
+
+  test('a newly submitted RUNNING item note gets the one free slot ahead of ordinary work and retains its chef note', async () => {
+    await saveProfile(riceKey, { prepTimeEstimate: 8, minPrepTime: 6, maxPrepTime: 10 });
+    await seed('order-1', [rice], 15);
+    const note = 'RUNNING - extra portion';
+    const created = await request('/api/orders/counter', 'POST', {
+      clientRequestId: 'running-item-note-checkout', action: 'submit', mode: 'parcel', fulfillmentType: 'takeaway',
+      customerName: 'Additional Portion', customerPhone: '9876543210', items: [{ ...rice, note }],
+    });
+    expect(created.status).toBe(201);
+    const response = await board();
+    expect(response.status).toBe(200);
+    const running = response.data.recommendations.find((task) => task.orderId === created.data.id);
+    const regular = response.data.recommendations.find((task) => task.orderId === 'order-1');
+    expect(running).toMatchObject({ note, runningOrder: true, baseAction: 'start-now', capacityState: 'allocated', taskState: 'ordered' });
+    expect(running.runningOrderReason).toMatch(/running|additional portion/i);
+    expect(running.expediter.signal).toBe('green');
+    expect(Date.parse(running.latestSafeStartAt)).toBeGreaterThan(Date.now());
+    expect(response.data.recommendations.indexOf(running)).toBeLessThan(response.data.recommendations.indexOf(regular));
+    expect(regular.capacityState).toBe('capacity-wait');
+    expect(response.data.expediter.calls.find((call) => call.taskKeys?.includes(running.taskKey)).instruction).toContain(note);
+    expect((await mockDatabase.query('SELECT items FROM direct_orders WHERE id=$1', [created.data.id])).rows[0].items[0].note).toBe(note);
+    expect((await mockDatabase.query('SELECT preparing_at FROM kitchen_production_tasks WHERE task_id=$1', [running.taskKey])).rows[0].preparing_at).toBeNull();
+  });
+
+  test('legacy order special requests recognize case-insensitive standalone running without matching overrunning or runninglate', async () => {
+    await saveProfile(riceKey, { prepTimeEstimate: 8, minPrepTime: 6, maxPrepTime: 10 });
+    await seed('order-1', [{ ...rice, note: 'Overrunning delivery window' }]);
+    await seed('order-2', [{ ...rice, note: 'runninglate' }]);
+    await seed('order-3', [{ ...rice, note: '' }]);
+    await mockDatabase.query('UPDATE direct_orders SET special_request=$1 WHERE id=$2', ['rUnNiNg, extra portion for this guest', 'order-3']);
+    const response = await board();
+    expect(response.status).toBe(200);
+    expect(response.data.recommendations.find((task) => task.orderId === 'order-3'))
+      .toMatchObject({ runningOrder: true, capacityState: 'allocated' });
+    expect(response.data.recommendations.filter((task) => task.orderId !== 'order-3').every((task) => task.runningOrder === false)).toBe(true);
+  });
+
+  test('running priority waits for physically occupied capacity and never starts food automatically', async () => {
+    await saveProfile(riceKey, { prepTimeEstimate: 8, minPrepTime: 6, maxPrepTime: 10 });
+    await seed('order-1', [rice], 15);
+    const active = (await board()).data.recommendations[0];
+    expect((await request('/api/orders/smart-kds/actions', 'POST', {
+      taskKey: active.taskKey, orderId: active.orderId, stationId: active.stationId, action: 'start',
+    })).status).toBe(200);
+    await seed('order-2', [{ ...rice, note: 'RUNNING - extra portion' }]);
+    const response = await board();
+    expect(response.status).toBe(200);
+    const running = response.data.recommendations.find((task) => task.orderId === 'order-2');
+    expect(running).toMatchObject({ runningOrder: true, taskState: 'ordered', capacityState: 'capacity-wait' });
+    expect(running.expediter.signal).not.toBe('green');
+    expect(Date.parse(running.expediter.startAt)).toBeGreaterThan(Date.now());
+    expect((await request('/api/orders/smart-kds/actions', 'POST', {
+      taskKey: running.taskKey, orderId: running.orderId, stationId: running.stationId, action: 'start',
+    })).status).toBe(409);
+    expect((await mockDatabase.query('SELECT task_state,preparing_at FROM kitchen_production_tasks WHERE task_id=$1', [running.taskKey])).rows[0])
+      .toEqual({ task_state: 'ordered', preparing_at: null });
+  });
+
+  test('running chef notes respect manual course holds and are excluded after service', async () => {
+    await seed('order-1', [{ ...rice, note: 'running - guest wants an additional portion' }]);
+    await mockDatabase.exec("UPDATE direct_orders SET mode='table',course_mode='manual_fire'");
+    const response = await board();
+    expect(response.status).toBe(200);
+    const running = response.data.recommendations[0];
+    expect(running).toMatchObject({ runningOrder: true, capacityState: 'manual-hold', taskState: 'ordered' });
+    expect(running.expediter.signal).not.toBe('green');
+    expect(running.expediter.startAt).toBeNull();
+    expect((await request('/api/orders/smart-kds/actions', 'POST', {
+      taskKey: running.taskKey, orderId: running.orderId, stationId: running.stationId, action: 'start',
+    })).status).toBe(409);
+    await mockDatabase.query("UPDATE kitchen_production_tasks SET task_state='served',served_at=NOW() WHERE task_id=$1", [running.taskKey]);
+    const served = await board();
+    expect(served.status).toBe(200);
+    expect(served.data.recommendations).toEqual([]);
+    expect(served.data.expediter.calls).toEqual([]);
+  });
+
+  test('critical overdue work still receives the free slot before a running additional portion', async () => {
+    await saveProfile(riceKey, { prepTimeEstimate: 8, minPrepTime: 6, maxPrepTime: 10 });
+    await seed('order-1', [rice], 40);
+    await seed('order-2', [{ ...rice, note: 'Running - extra portion' }]);
+    const response = await board();
+    expect(response.status).toBe(200);
+    expect(response.data.recommendations.find((task) => task.orderId === 'order-1').capacityState).toBe('allocated');
+    expect(response.data.recommendations.find((task) => task.orderId === 'order-2')).toMatchObject({ runningOrder: true, capacityState: 'capacity-wait' });
+  });
+
+  test('Captain running round notes apply only to their added lines, including a later round with an empty note', async () => {
+    await saveProfile(riceKey, { prepTimeEstimate: 8, minPrepTime: 6, maxPrepTime: 10 });
+    const login = await request('/api/captain/login', 'POST', { id: 'caller-captain', pin: '123456' });
+    expect(login.status).toBe(200);
+    const captainRequest = async (body) => {
+      const response = await fetch(origin + '/api/orders/counter', { method: 'POST',
+        headers: { 'X-Captain-Session': login.data.token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source: 'captain', tableArea: 'AC', tableNumber: 1, action: 'submit', courseMode: 'as_ready', ...body }) });
+      return { status: response.status, data: await response.json() };
+    };
+    const first = await captainRequest({ clientRequestId: 'running-round-original', specialRequest: 'No onion', items: [{ ...rice, note: '' }] });
+    expect(first.status).toBe(201);
+    const second = await captainRequest({ clientRequestId: 'running-round-additional', tableOrderId: first.data.id,
+      specialRequest: 'RUNNING - extra portion', items: [{ ...rice, note: 'Extra chilli' }] });
+    expect(second).toMatchObject({ status: 201, data: { continued: true, id: first.data.id } });
+    const third = await captainRequest({ clientRequestId: 'running-round-later', tableOrderId: first.data.id,
+      specialRequest: '', items: [{ ...rice, note: 'No salt' }] });
+    expect(third.status).toBe(201);
+    const stored = (await mockDatabase.query('SELECT items,special_request FROM direct_orders WHERE id=$1', [first.data.id])).rows[0];
+    expect(stored.special_request).toContain('RUNNING');
+    expect(stored.items.map((item) => item.orderNote)).toEqual(['No onion', 'RUNNING - extra portion', '']);
+    const response = await board();
+    expect(response.status).toBe(200);
+    expect(response.data.recommendations).toHaveLength(3);
+    const running = response.data.recommendations.find((task) => task.sourceLineId === stored.items[1].lineId);
+    expect(running).toMatchObject({ runningOrder: true, orderNote: 'RUNNING - extra portion', note: 'Extra chilli', capacityState: 'allocated' });
+    expect(response.data.recommendations.filter((task) => task !== running).every((task) => task.runningOrder === false)).toBe(true);
   });
 });

@@ -27,6 +27,7 @@ const { applyFairness } = require('./smart-kds-fairness');
 const { buildUnifiedRecommendations } = require('./smart-kds-unified');
 const { buildKitchenExpediter } = require('./smart-kds-expediter');
 const { buildPreparationPlan } = require('./smart-kds-preparation');
+const { runningOrderMetadata } = require('./smart-kds-priority');
 const { evaluateServiceRisk, applyServiceRiskPriority } = require('./smart-kds-service-risk');
 const { transitionForAction } = require('./smart-kds-workflow');
 const { reasonCodesForRecommendation } = require('./smart-kds-reasons');
@@ -2068,8 +2069,8 @@ async function buildSmartKdsTimingPreview({ orderId = null } = {}) {
   const [profileData, savedOrders] = await Promise.all([
     getSmartKdsMenuProfiles(),
     orderId
-      ? sql`SELECT id,daily_order_number,mode,fulfillment_type,course_mode,service_priority,table_area,table_number,customer_name,status,items,created_at,updated_at FROM direct_orders WHERE id=${orderId} AND status IN ('accepted','preparing','ready') ORDER BY created_at ASC`
-      : sql`SELECT id,daily_order_number,mode,fulfillment_type,course_mode,service_priority,table_area,table_number,customer_name,status,items,created_at,updated_at FROM direct_orders WHERE status IN ('accepted','preparing','ready') ORDER BY created_at ASC`,
+      ? sql`SELECT id,daily_order_number,mode,fulfillment_type,course_mode,service_priority,table_area,table_number,customer_name,special_request,status,items,created_at,updated_at FROM direct_orders WHERE id=${orderId} AND status IN ('accepted','preparing','ready') ORDER BY created_at ASC`
+      : sql`SELECT id,daily_order_number,mode,fulfillment_type,course_mode,service_priority,table_area,table_number,customer_name,special_request,status,items,created_at,updated_at FROM direct_orders WHERE status IN ('accepted','preparing','ready') ORDER BY created_at ASC`,
   ]);
   const now = new Date();
   // An order left open from a previous shift must never be treated as food to
@@ -2145,6 +2146,11 @@ async function buildSmartKdsTimingPreview({ orderId = null } = {}) {
           style: String(line.style || ''),
           modifiers: Array.isArray(line.modifiers) ? line.modifiers : [],
           note: String(line.note || ''),
+          // New rounds keep their own note, including an explicit empty one,
+          // so a previous round's running request cannot promote later food.
+          orderNote: Object.prototype.hasOwnProperty.call(line, 'orderNote')
+            ? String(line.orderNote || '')
+            : String(order.special_request || ''),
           orderedAt: line.orderedAt || order.created_at,
           quantity: Math.max(1, Number(line.quantity) || 1),
           profile,
@@ -2210,6 +2216,8 @@ async function buildSmartKdsTimingPreview({ orderId = null } = {}) {
           style: line.style,
           modifiers: line.modifiers,
           note: line.note,
+          orderNote: line.orderNote,
+          ...runningOrderMetadata(line),
           quantity,
           course,
           stationId: stationId || '',
@@ -5521,6 +5529,7 @@ app.post('/api/direct-orders', async (req, res) => {
           menuType: source.menuType,
           portion: String(item.portion || '').slice(0, 40),
           style,
+          orderNote: String(specialRequest || '').trim().slice(0, 240),
           quantity: Math.min(20, Number(item.quantity) || 0),
           price: `₹${priceNumber(price)}`,
           modifiers: modifierResult.modifiers,
@@ -5873,6 +5882,7 @@ app.post('/api/orders/counter', async (req, res) => {
           note: String(item.note || '')
             .trim()
             .slice(0, 80),
+          orderNote: String(specialRequest || '').trim().slice(0, 240),
           ...(courseOverride ? { courseOverride } : {}),
           quantity: Math.min(20, Number(item.quantity) || 0),
           price: `₹${priceNumber(price)}`,
@@ -5936,7 +5946,8 @@ app.post('/api/orders/counter', async (req, res) => {
       // Extra units start their own production task. Reusing a ready/served
       // source line would incorrectly inherit the earlier kitchen state.
       return [{ ...item, quantity: soldQuantity }, { ...item, lineId: crypto.randomUUID(),
-        orderedAt: new Date().toISOString(), quantity: item.quantity - soldQuantity }];
+        orderedAt: new Date().toISOString(), orderNote: String(specialRequest || '').trim().slice(0, 240),
+        quantity: item.quantity - soldQuantity }];
     });
     if (savedLines.length > 200)
       return res.status(400).json({ error: 'This bill has too many separate kitchen lines. Save fewer additions at once.' });
