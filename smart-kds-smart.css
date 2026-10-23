@@ -17,6 +17,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .header-tools select { width: 175px; max-width: 22vw; height: 48px; padding: 0 10px; border: 1px solid #cbd5df; border-radius: 9px; background: #f6f8fa; color: #263b52; font-size: 12px; font-weight: 800; }
 .header-tools button { min-height: 48px; padding: 8px 11px; font-size: 12px; white-space: nowrap; }
 .header-tools time { color: #64768a; font-size: 11px; white-space: nowrap; }
+.older-order-count { margin-left: 5px; padding: 3px 4px; border-radius: 4px; background: #fff0cf; color: #825c1a; font-size: 9px; }
 .live-state { display: inline-flex; align-items: center; min-height: 29px; max-width: 160px; padding: 5px 8px; border-radius: 7px; color: #566b7e; background: #eef3f7; font-size: 10px; font-weight: 800; line-height: 1.25; }
 .live-state.manual { color: #1a6443; background: #e7f5ed; }
 .live-state.shadow, .live-state.stale { color: #8a4b11; background: #fff1d6; }

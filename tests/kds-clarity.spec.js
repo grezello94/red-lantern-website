@@ -87,6 +87,19 @@ test('an entirely blocked queue gives an explicit check instruction without an i
   await expect(page.locator('#next-action-button')).toHaveCount(0);
 });
 
+test('earlier-shift cleanup remains in Settings without inflating current cooking alerts', async ({ page }) => {
+  const state = await openBoard(page, []);
+  state.snapshot.staleOrders = [{ id: 'old-order', orderNumber: 81, tableArea: 'AC', tableNumber: 4 }];
+  state.snapshot.expediter.alerts = [{ id: 'stale:old-order', type: 'stale-order', severity: 'warning', message: 'Earlier shift needs manager review' }];
+  await page.evaluate(() => load());
+  await expect(page.locator('#alerts-count')).toHaveText('0');
+  await expect(page.locator('#manager-toggle')).toContainText('1 older');
+  await expect(page.locator('#next-action-title')).toHaveText('No orders waiting');
+  await page.locator('#manager-toggle').click();
+  await expect(page.locator('#stale-orders')).toBeVisible();
+  await expect(page.locator('#stale-orders')).toContainText('81');
+});
+
 test('stale refresh blocks every copied action and successful reconnection restores the current queue', async ({ page }) => {
   const state = await openBoard(page);
   state.status = 503;

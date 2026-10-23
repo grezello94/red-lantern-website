@@ -375,7 +375,7 @@ function visibleExpediter(tasks, states) {
   const stationMatches = entry => selectedStation === 'all' || String(entry.stationId || '') === selectedStation;
   const result = {
     alerts: (Array.isArray(data.expediter?.alerts) ? data.expediter.alerts : []).filter(alert =>
-      stationMatches(alert) && (!alert.taskKey || keys.has(String(alert.taskKey)))
+      alert.type !== 'stale-order' && stationMatches(alert) && (!alert.taskKey || keys.has(String(alert.taskKey)))
     ),
     calls: (Array.isArray(data.expediter?.calls) ? data.expediter.calls : []).filter(call =>
       stationMatches(call) && Array.isArray(call.taskKeys) && call.taskKeys.length &&
@@ -603,6 +603,10 @@ function renderStaleOrders() {
   const root = $('#stale-orders');
   if (!root) return;
   const stale = Array.isArray(data.staleOrders) ? data.staleOrders : [];
+  const settings = $('#manager-toggle');
+  settings.querySelector('.older-order-count')?.remove();
+  if (stale.length) settings.insertAdjacentHTML('beforeend', `<small class="older-order-count">${stale.length} older</small>`);
+  settings.title = stale.length ? `${stale.length} earlier-shift orders need manager review` : 'Kitchen settings and details';
   root.hidden = !stale.length;
   if (!stale.length) {
     root.innerHTML = '';

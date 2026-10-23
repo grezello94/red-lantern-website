@@ -14,6 +14,8 @@ Each dish row has its own clear kitchen action and **Mark ready** control. Compa
 
 The main ticket shows its next timing and original chef notes. Service targets, station diagnostics, learned-time details and timelines stay in the optional extra details. If a refresh fails, the last board remains visible and every copied kitchen action stays disabled until the current queue is confirmed. The primary instruction and ticket copies share the same pending operation, preventing duplicate starts or acknowledgements.
 
+Earlier-shift order cleanup appears in **Settings** with an older-order count. It does not inflate **Check** or the current cooking queue; managers can still review and resolve those orders there.
+
 ## What the board tells the kitchen
 
 | Signal | Meaning | Staff response |
