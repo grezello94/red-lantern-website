@@ -548,7 +548,7 @@ function renderKitchenBriefing(tasks, states, calls) {
       : `${taskLocation(task)} · Order #${String(task.orderNumber || '—').padStart(2, '0')}`;
     const separateNote = task.orderNote && task.orderNote !== task.note ? `Round note: ${task.orderNote}` : '';
     const recipe = [task.portion, task.style, Addons.modifierText(task.modifiers), task.note ? `Note: ${task.note}` : '', separateNote].filter(Boolean).join(' · ');
-    context = [destination, recipe].filter(Boolean).join(' · ');
+    context = [stationLabel(task.stationId), destination, recipe].filter(Boolean).join(' · ');
     signal = taskSignal(task, task.taskState || 'ordered');
     const dish = `${focus.remainingPortions || task.quantity}× ${task.itemName}`;
     if (focus.action === 'start-batch') {
