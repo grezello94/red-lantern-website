@@ -277,6 +277,16 @@ function startControl(task, state) {
   const reason = !taskHasStation(task) ? 'Assign a station first' : !kitchenCanAct() ? 'Kitchen actions are view only' : 'Waiting for the preparation window or station capacity';
   return `<button type="button" class="primary start start-control" data-start-control data-action="start" data-task="${esc(task.taskKey)}" data-order="${esc(task.orderId)}" data-station="${esc(task.stationId)}" ${available ? '' : 'disabled'} title="${esc(available ? 'Start preparation' : reason)}">Start</button>`;
 }
+function learnedTimingLabel(task) {
+  const learning = task.learning;
+  const estimate = Number(learning?.estimateMinutes), samples = Number(learning?.sampleCount);
+  if (data.learning?.enabled === false || learning?.applied !== true || !Number.isFinite(estimate) || estimate <= 0 || !Number.isFinite(samples) || samples < 1) return '';
+  const band = ['quiet', 'busy', 'surge'].includes(learning.loadBand) ? learning.loadBand : '';
+  const minutes = Math.round(estimate * 10) / 10;
+  const baseline = Number(learning.baselineMinutes);
+  const reason = `${Math.floor(samples)} recorded kitchen timings${band ? ` during ${band} service` : ''}.${Number.isFinite(baseline) && baseline > 0 ? ` Configured estimate: ${Math.round(baseline * 10) / 10} min.` : ''}${learning.reason ? ` ${learning.reason}` : ''}`;
+  return `<span class="learned-timing" title="${esc(reason)}">Learned ${minutes} min${band ? ` · ${band}` : ''}</span>`;
+}
 function taskCard(task, state) {
   const pending = ['ordered', 'eligible', 'scheduled', 'fired'].includes(state);
   const signal = taskSignal(task, state);
@@ -295,7 +305,7 @@ function taskCard(task, state) {
     <div class="item-heading"><b><span class="item-quantity">${esc(task.quantity)}×</span> ${esc(task.itemName)}</b><span class="item-status">${esc(label)}</span></div>
     ${task.runningOrder === true ? `<span class="running-order-badge" title="${esc(task.runningOrderReason || 'Priority top-up for a customer who is already eating.')}">RUNNING · Priority top-up</span>` : ''}
     ${extras ? `<p class="item-note">${esc(extras)}</p>` : ''}
-    <div class="item-bottom"><div class="item-times task-schedule"><span class="item-station">${esc(stationLabel(task.stationId))}</span>${target ? `<span>Due ${esc(target)}</span>` : ''}${forecast ? `<span class="ready-by">Est. ready ${esc(forecast)}</span>` : ''}${status === 'waiting' && start ? `<span>Start ${esc(start)}</span>` : ''}${Number(task.expediter?.delayMinutes) > 0 ? `<span class="forecast-delay">+${Math.ceil(Number(task.expediter.delayMinutes))} min late</span>` : ''}</div><div class="actions">${controls}</div></div>
+    <div class="item-bottom"><div class="item-times task-schedule"><span class="item-station">${esc(stationLabel(task.stationId))}</span>${target ? `<span>Due ${esc(target)}</span>` : ''}${forecast ? `<span class="ready-by">Est. ready ${esc(forecast)}</span>` : ''}${status === 'waiting' && start ? `<span>Start ${esc(start)}</span>` : ''}${Number(task.expediter?.delayMinutes) > 0 ? `<span class="forecast-delay">+${Math.ceil(Number(task.expediter.delayMinutes))} min late</span>` : ''}${learnedTimingLabel(task)}</div><div class="actions">${controls}</div></div>
     ${task.expediter?.prepAlert ? `<p class="ingredient-alert" title="${esc(task.expediter.prepAlert)}"><b>Prep alert</b> ${esc(task.expediter.prepAlert)}</p>` : ''}
     ${taskCanMarkReady(state) && !taskHasStation(task) ? '<p class="station-required">Assign a kitchen station before marking this item ready.</p>' : ''}
     <div class="item-detail"><p class="task-command">${esc(task.expediter?.instruction || kitchenCommand(task, state))}</p>${task.expediter?.reason ? `<p class="expediter-reason">${esc(task.expediter.reason)}</p>` : ''}<button class="secondary" type="button" data-timeline-order="${esc(task.orderId)}">View timeline</button></div>
@@ -333,16 +343,26 @@ function batchIsPending(batch) {
     return taskIsPending(task);
   })));
 }
+function batchWindowNote(batch) {
+  if (batch.action !== 'wait-for-batch') return '';
+  const times = [batch.holdUntilAt, batch.windowClosesAt, batch.latestSafeStartAt].filter(value => value != null && value !== '').map(value => new Date(value).getTime()).filter(Number.isFinite);
+  if (!times.length) return '';
+  const closesAt = Math.min(...times), remaining = Math.ceil((closesAt - Date.now()) / 60_000);
+  return `<p class="batch-window" data-hold-until="${esc(new Date(closesAt).toISOString())}">${remaining > 0 ? `Safe grouping closes ${esc(kitchenTime(closesAt))} · ${remaining} min remaining` : 'Grouping window reached · refresh checks preparation and capacity'}</p>`;
+}
 function batchCard(batch, tasks, calls) {
   const members = batch.allocations.map(allocation => tasks.find(task => String(task.taskKey) === String(allocation.taskKey)));
   const call = calls.find(entry => String(entry.batchId) === String(batch.batchId));
   const canStart = batchHasCapacity(batch, tasks);
   const signal = members.some(task => task?.expediter?.signal === 'red') ? 'red' : canStart ? 'green' : 'yellow';
   const label = canStart ? 'Start' : signal === 'red' ? 'Check overdue batch' : 'Get ready for';
-  return `<article class="batch-card signal-${signal}" data-signal="${signal}"><div><b>${label} ${Number(batch.totalQuantity || 0)} portions together · ${esc(batch.batchGroupId || 'Kitchen')}</b><small>${esc(stationLabel(batch.stationId))} · ${esc(batch.reason)}</small>${call?.instruction ? `<p class="expediter-instruction">${esc(call.instruction)}</p>` : ''}<div class="task-schedule">${call?.startAt ? `<span>Start ${esc(kitchenTime(call.startAt))}</span>` : ''}${call?.readyAt ? `<span>Est. ready ${esc(kitchenTime(call.readyAt))}</span>` : ''}</div>${!canStart ? '<p class="batch-wait">Wait for the planned batch window and an available station slot.</p>' : ''}<div class="batch-orders">${batch.allocations.map((item, index) => {
+  return `<article class="batch-card signal-${signal}" data-signal="${signal}"><div><b>${label} ${Number(batch.totalQuantity || 0)} portions together · ${esc(batch.batchGroupId || 'Kitchen')}</b><small>${esc(stationLabel(batch.stationId))} · ${esc(batch.reason)}</small>${call?.instruction ? `<p class="expediter-instruction">${esc(call.instruction)}</p>` : ''}<div class="task-schedule">${call?.startAt ? `<span>Start ${esc(kitchenTime(call.startAt))}</span>` : ''}${call?.readyAt ? `<span>Est. ready ${esc(kitchenTime(call.readyAt))}</span>` : ''}</div>${batchWindowNote(batch)}${!canStart ? '<p class="batch-wait">Wait for the planned batch window and an available station slot.</p>' : ''}<small class="batch-allocation-heading">Table / order allocations · keep portions separate</small><div class="batch-orders">${batch.allocations.map((item, index) => {
     const task = members[index];
     const state = taskStateMap().get(task?.taskKey) || task?.taskState || 'ordered';
-    return `<div class="batch-allocation"><span>${esc(`${task ? `${taskLocation(task)} · ` : ''}${item.orderNumber ? `Order #${String(item.orderNumber).padStart(2, '0')} · ` : ''}${taskDish({ ...task, ...item })}${task?.targetServeAt ? ` · service target ${kitchenTime(task.targetServeAt)}` : ''}`)}</span>${task ? markReadyControl(task, state) : ''}${task && !taskHasStation(task) ? '<small>Assign a kitchen station before marking this item ready.</small>' : ''}</div>`;
+    const allocation = { ...task, ...item };
+    const course = allocation.course ? title(allocation.course) : '';
+    const courseMode = allocation.courseMode ? title(allocation.courseMode) : '';
+    return `<div class="batch-allocation"><span>${esc(`${task ? `${taskLocation(allocation)} · ` : ''}${allocation.orderNumber ? `Order #${String(allocation.orderNumber).padStart(2, '0')} · ` : ''}${taskDish(allocation)}${task?.targetServeAt ? ` · service target ${kitchenTime(task.targetServeAt)}` : ''}`)}${course || courseMode ? `<small class="batch-course-context">${esc([course, courseMode].filter(Boolean).join(' · '))}</small>` : ''}</span>${task ? markReadyControl(task, state) : ''}${task && !taskHasStation(task) ? '<small>Assign a kitchen station before marking this item ready.</small>' : ''}</div>`;
   }).join('')}</div><p class="ready-help">Mark ready confirms only that order's item is finished.</p></div><button data-batch-action data-batch="${esc(batch.batchId)}" ${!canStart || !kitchenCanAct() || batchIsPending(batch) ? 'disabled' : ''}>${canStart ? 'Start batch' : 'Waiting for station / window'}</button></article>`;
 }
 function visibleExpediter(tasks, states) {
@@ -379,7 +399,10 @@ function renderKitchenLoad() {
     .filter(station => selectedStation === 'all' || String(station.stationId) === selectedStation);
   const count = value => Math.max(0, Math.round(Number(value) || 0));
   root.dataset.level = ['quiet', 'steady', 'busy', 'surge'].includes(load.level) ? load.level : 'steady';
-  root.innerHTML = `<div class="load-overview"><div><small>KITCHEN LOAD</small><b>${esc(load.label || title(load.level))}</b></div><span>${count(load.activeOrders)} active orders</span><span>${count(load.activePortions)} portions cooking</span><span>${count(load.queuedPortions)} portions queued</span><span>${count(load.atRiskTasks)} need attention</span><strong>Queue forecast · ${count(load.estimatedClearMinutes)} min</strong></div><div class="station-loads">${stations.map(station => `<div class="station-load" data-level="${esc(station.level)}"><b>${esc(station.stationName || stationLabel(station.stationId))}${station.enabled === false ? ' · unavailable' : ''}</b><span>${count(station.occupiedCapacity)} / ${count(station.totalCapacity)} capacity · ${count(station.queuedPortions)} queued</span><small>${station.enabled === false ? 'Reassign waiting work' : `Estimated clear in ${count(station.estimatedClearMinutes)} min`}</small></div>`).join('')}</div><p class="forecast-note">Forecast uses configured prep times and station capacity. Confirm each start and ready action to keep it current.</p>`;
+  const learning = data.learning;
+  const samples = count(learning?.qualifyingSamples), learnedTasks = count(learning?.learnedTasks);
+  const learningSummary = learning ? `<div class="learning-summary"><b>Recorded kitchen timings</b><span>${samples} qualifying timing${samples === 1 ? '' : 's'} · ${count(learning.trackedDishes)} dishes tracked · ${learnedTasks} active learned estimate${learnedTasks === 1 ? '' : 's'}</span><p>${learning.enabled === false ? 'Timing learning is off. Configured estimates are in use.' : learnedTasks > 0 && samples > 0 ? 'Applied estimates use recorded start and ready confirmations for the current kitchen load.' : 'Configured estimates remain in use until there is enough recorded history for the current kitchen load.'}</p></div>` : '';
+  root.innerHTML = `<div class="load-overview"><div><small>KITCHEN LOAD</small><b>${esc(load.label || title(load.level))}</b></div><span>${count(load.activeOrders)} active orders</span><span>${count(load.activePortions)} portions cooking</span><span>${count(load.queuedPortions)} portions queued</span><span>${count(load.atRiskTasks)} need attention</span><strong>Queue forecast · ${count(load.estimatedClearMinutes)} min</strong></div><div class="station-loads">${stations.map(station => `<div class="station-load" data-level="${esc(station.level)}"><b>${esc(station.stationName || stationLabel(station.stationId))}${station.enabled === false ? ' · unavailable' : ''}</b><span>${count(station.occupiedCapacity)} / ${count(station.totalCapacity)} capacity · ${count(station.queuedPortions)} queued</span><small>${station.enabled === false ? 'Reassign waiting work' : `Estimated clear in ${count(station.estimatedClearMinutes)} min`}</small></div>`).join('')}</div>${learningSummary}<p class="forecast-note">Forecast uses configured prep times, qualified kitchen timings when available, and station capacity. Confirm each start and ready action to keep it current.</p>`;
 }
 function renderKitchenAlerts(alerts) {
   const root = $('#kitchen-alerts');
@@ -615,7 +638,7 @@ function render() {
   $('#alerts-toggle').title = `${expediter.alerts.length} kitchen alerts, including ${expediter.alerts.filter(alert => alert.severity === 'critical').length} urgent`;
   const batches = visibleBatches(tasks, states);
   $('#batches-count').textContent = String(batches.length);
-  $('#batch-list').innerHTML = batches.length ? batches.map(batch => batchCard(batch, tasks, expediter.calls)).join('') : '<p class="drawer-intro">No approved bulk cooking at this station.</p>';
+  $('#batch-list').innerHTML = batches.length ? batches.map(batch => batchCard(batch, tasks, expediter.calls)).join('') : '<p class="drawer-intro">No approved batches at this station.</p><p class="drawer-intro">Enable compatible soup/rice batches and set portions per batch in <a href="/admin#tab-smart-kds" data-kds-setup-link data-kds-panel="profiles">Smart KDS menu setup</a>.</p>';
   const load = data.expediter?.load;
   $('#load-toggle').textContent = load ? `${load.label || 'Kitchen'} · ${Number(load.queuedPortions || 0)} queued` : `${tasks.length} live items`;
   $('#summary').innerHTML = `<p>${view.allOrders || view.totalOrders} orders at this display · ${view.counts.all} live items</p>`;
@@ -741,8 +764,9 @@ async function showTimeline(orderId) {
   }
 }
 document.addEventListener('click', async (event) => {
-  if (event.target.closest('[data-kds-setup-link]')) {
-    localStorage.setItem('redLanternSmartKdsAdminPanel', 'setup');
+  const setupLink = event.target.closest('[data-kds-setup-link]');
+  if (setupLink) {
+    localStorage.setItem('redLanternSmartKdsAdminPanel', setupLink.dataset.kdsPanel === 'profiles' ? 'profiles' : 'setup');
     return;
   }
   const timeline = event.target.closest('[data-timeline-order]');

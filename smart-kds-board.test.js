@@ -104,6 +104,16 @@ describe('tablet kitchen board model', () => {
     expect(JSON.stringify(recommendations)).toContain('"runningOrder":false');
   });
 
+  test('recorded timing estimates preserve course holds and never qualify held work for a batch', () => {
+    const learning = { applied: true, sampleCount: 8, loadBand: 'busy', estimateMinutes: 9, baselineMinutes: 12, confidence: 0.8, reason: 'Recorded preparation timings.' };
+    const held = task('main:one', { itemName: 'Chicken Biryani', course: 'main', courseMode: 'serve-together', action: 'hold-for-course', pacingState: 'hold-for-course', capacityState: 'hold-for-course', learning });
+    const batch = { batchId: 'held', action: 'fire-batch', stationId: held.stationId, allocations: [{ taskKey: held.taskKey, quantity: held.quantity }] };
+    const view = buildBoardView({ recommendations: [held], batches: [batch] });
+    expect(view.orders[0].tasks[0]).toMatchObject({ boardStatus: 'waiting', learning, courseMode: 'serve-together' });
+    expect(view.matchingBatches).toEqual([]);
+    expect(view.counts.start).toBe(0);
+  });
+
   test('one mixed-status order contributes matching rows to each tab without duplicate tickets', () => {
     const recommendations = [
       task('one:start'), task('one:cooking', { taskState: 'preparing' }),

@@ -19,14 +19,19 @@ function annotateRunningOrder(task = {}) {
 }
 
 function isPriorityEligible(task = {}) {
-  return PENDING.has(String(task.taskState || 'ordered'))
-    && (!task.workflowState || PENDING.has(String(task.workflowState)))
-    && !HOLDS.has(String(task.pacingState || ''))
-    && !['hold', 'defer'].includes(task.manualOverride?.action);
+  return (
+    PENDING.has(String(task.taskState || 'ordered')) &&
+    (!task.workflowState || PENDING.has(String(task.workflowState))) &&
+    !HOLDS.has(String(task.pacingState || '')) &&
+    !['hold', 'defer'].includes(task.manualOverride?.action)
+  );
 }
 
 function isRunningOrderEligible(task = {}) {
-  return isPriorityEligible(task) && (task.runningOrder === true || runningOrderMetadata(task).runningOrder);
+  return (
+    isPriorityEligible(task) &&
+    (task.runningOrder === true || runningOrderMetadata(task).runningOrder)
+  );
 }
 
 // Carry the scheduler's safety classes through later independent re-sorts.
@@ -34,9 +39,17 @@ function isRunningOrderEligible(task = {}) {
 function kitchenPriorityTier(task = {}) {
   if (!isPriorityEligible(task)) return 3;
   const action = task.baseAction || task.action;
-  if (task.priorityClass === 'critical' || ['critical', 'overdue'].includes(task.state)
-    || (task.serviceRiskSeverity === 'critical' && ['start-now', 'prepare-next'].includes(action))) return 0;
-  if (task.priorityClass === 'manual-rush' || ['rush', 'fire-now'].includes(task.manualOverride?.action)) return 1;
+  if (
+    task.priorityClass === 'critical' ||
+    ['critical', 'overdue'].includes(task.state) ||
+    (task.serviceRiskSeverity === 'critical' && ['start-now', 'prepare-next'].includes(action))
+  )
+    return 0;
+  if (
+    task.priorityClass === 'manual-rush' ||
+    ['rush', 'fire-now'].includes(task.manualOverride?.action)
+  )
+    return 1;
   return isRunningOrderEligible(task) ? 2 : 3;
 }
 
@@ -44,4 +57,11 @@ function compareKitchenPriority(left, right) {
   return kitchenPriorityTier(left) - kitchenPriorityTier(right);
 }
 
-module.exports = { hasRunningNote, runningOrderMetadata, annotateRunningOrder, isRunningOrderEligible, kitchenPriorityTier, compareKitchenPriority };
+module.exports = {
+  hasRunningNote,
+  runningOrderMetadata,
+  annotateRunningOrder,
+  isRunningOrderEligible,
+  kitchenPriorityTier,
+  compareKitchenPriority,
+};

@@ -121,7 +121,8 @@ function inferMenuProductionKnowledge(item = {}) {
       : '',
     batchSuggestion: {
       batchable: batch[0] > 1,
-      maxBatchSize: batch[0], optimalBatchSize: batch[1], batchWindowSeconds: 90,
+      maxBatchSize: batch[0], optimalBatchSize: batch[1],
+      batchWindowSeconds: ['soup', 'wok-main', 'biryani'].includes(family) ? 300 : 90,
       sameDishOnly: true, requiresChefConfirmation: true,
     },
   };

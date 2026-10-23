@@ -11,6 +11,9 @@ function cookingWaves(task = {}) {
 }
 
 function conservativePreparationMilliseconds(task = {}) {
+  const learnedMinutes = Number(task.learning?.estimateMinutes);
+  if (task.learning?.applied === true && Number.isFinite(learnedMinutes) && learnedMinutes > 0)
+    return learnedMinutes * cookingWaves(task) * MINUTE;
   const profile = task.profile || {};
   const cookMinutes = Math.max(positive(profile.prepTimeEstimate), positive(profile.maxPrepTime));
   const overhead =
@@ -30,13 +33,17 @@ function buildPreparationPlan(task = {}) {
     task.latestSafeStartAt == null ? NaN : new Date(task.latestSafeStartAt).getTime();
   const bulkStart =
     waves > 1 && Number.isFinite(target) ? target - conservativePreparationMilliseconds(task) : NaN;
+  const learningStart = task.learning?.applied === true && Number.isFinite(target)
+    ? target - conservativePreparationMilliseconds(task) : NaN;
   const effectiveStart = Math.min(
     Number.isFinite(originalStart) ? originalStart : Infinity,
-    Number.isFinite(bulkStart) ? bulkStart : Infinity
+    Number.isFinite(bulkStart) ? bulkStart : Infinity,
+    Number.isFinite(learningStart) ? learningStart : Infinity
   );
   return {
     cookingWaves: waves,
     bulkLatestSafeStartAt: Number.isFinite(bulkStart) ? new Date(bulkStart).toISOString() : null,
+    learningLatestSafeStartAt: Number.isFinite(learningStart) ? new Date(learningStart).toISOString() : null,
     effectiveLatestSafeStartAt: Number.isFinite(effectiveStart)
       ? new Date(effectiveStart).toISOString()
       : null,

@@ -73,7 +73,7 @@ describe('Smart KDS Phase 1 configuration', () => {
     expect(profile).toMatchObject({
       course: 'soup', stationId: '', prepTimeEstimate: 8, minPrepTime: 6,
       maxPrepTime: 12, platingTime: 2, handoffBuffer: 2, batchable: false,
-      maxBatchSize: 8, optimalBatchSize: 8, batchWindowSeconds: 180,
+      maxBatchSize: 8, optimalBatchSize: 8, batchWindowSeconds: 300,
       parallelCapacityCost: 1, longPrepItem: false, requiresPreviousCourse: false,
       canPrePrep: false, canHoldAfterCooking: true, maxHoldTime: 5, priorityModifier: 0,
     });
@@ -310,7 +310,9 @@ describe('Smart KDS Phase 1 configuration', () => {
         { taskKey: 'B', rank: 2, quantity: 1, orderedAt: '2026-08-27T12:00:00.000Z', latestSafeStartAt: '2026-08-27T12:10:00.000Z', targetServeAt: '2026-08-27T12:20:00.000Z', stationId: 'wok', style: 'semi-gravy', action: 'prepare-next', profile: { batchable: true, batchGroupId: 'RICE', maxBatchSize: 5, batchWindowSeconds: 300 } },
       ],
     });
-    expect(batches).toEqual([]);
+    expect(batches).toHaveLength(2);
+    expect(batches.every((batch) => batch.allocations.length === 1)).toBe(true);
+    expect(batches.map((batch) => batch.allocations[0].taskKey).sort()).toEqual(['A', 'B']);
   });
 
   test('allocates station capacity to the highest-priority work first', () => {

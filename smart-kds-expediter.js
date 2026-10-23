@@ -1,6 +1,11 @@
-const { batchCompatibilityKey } = require('./smart-kds-batching');
+const { batchCompatibilityKey, batchPreparationMilliseconds } = require('./smart-kds-batching');
 const { modifierText } = require('./addons-domain');
-const { annotateRunningOrder, isRunningOrderEligible, kitchenPriorityTier, compareKitchenPriority } = require('./smart-kds-priority');
+const {
+  annotateRunningOrder,
+  isRunningOrderEligible,
+  kitchenPriorityTier,
+  compareKitchenPriority,
+} = require('./smart-kds-priority');
 const {
   cookingWaves: waves,
   conservativePreparationMilliseconds: duration,
@@ -42,6 +47,7 @@ function cookingLabel(task, name = task.itemName || 'item') {
     ['Style', boundedText(task.style, 80)],
     ['Add-ons', boundedText(modifierText(task.modifiers), 240)],
     ['Chef note', boundedText(task.note, 240)],
+    ['Round note', boundedText(task.orderNote, 240)],
   ]
     .filter(([, value]) => value)
     .map(([label, value]) => `${label}: ${value}`);
@@ -94,20 +100,25 @@ function compareTasks(left, right) {
 }
 
 function cookRelease(task, now) {
+  const holdAllowance = task.profile?.canHoldAfterCooking
+    ? Math.max(0, number(task.profile.maxHoldTime)) * MINUTE
+    : 0;
+  const synchronized =
+    task.courseMode === 'serve_together' || ['sync-watch', 'sync-start'].includes(task.pacingState);
+  const target = timestamp(task.pacingTargetServeAt || task.targetServeAt);
+  const synchronizedFloor =
+    synchronized && target != null ? target - duration(task) - holdAllowance : now;
   if (
     (task.baseAction || task.action) === 'start-now' ||
     isRunningOrderEligible(task) ||
     ['rush', 'fire-now'].includes(task.manualOverride?.action)
   )
-    return now;
+    return Math.max(now, synchronizedFloor);
   const planned = Math.min(
     timestamp(task.plannedStartAt, Infinity),
     timestamp(task.effectiveLatestSafeStartAt || task.latestSafeStartAt, Infinity)
   );
-  const holdAllowance = task.profile?.canHoldAfterCooking
-    ? Math.max(0, number(task.profile.maxHoldTime)) * MINUTE
-    : 0;
-  return Math.max(now, Number.isFinite(planned) ? planned - holdAllowance : now);
+  return Math.max(now, synchronizedFloor, Number.isFinite(planned) ? planned - holdAllowance : now);
 }
 
 function stationLevel(station) {
@@ -160,12 +171,19 @@ function makeWork(tasks, batches, now) {
     )
       continue;
     const safeStart = Math.min(
-      ...members.map((task) => timestamp(task.latestSafeStartAt, Infinity))
+      ...members.map((task) =>
+        timestamp(task.effectiveLatestSafeStartAt || task.latestSafeStartAt, Infinity)
+      )
     );
-    const release =
+    const fallbackRelease =
       batch.action === 'fire-batch'
         ? now
-        : Math.max(now, Math.min(timestamp(batch.windowClosesAt, safeStart), safeStart));
+        : Math.min(timestamp(batch.holdUntilAt || batch.windowClosesAt, safeStart), safeStart);
+    const release = Math.max(
+      now,
+      timestamp(batch.plannedFireAt, fallbackRelease),
+      timestamp(batch.earliestStartAt, now)
+    );
     members.forEach((task) => used.add(task.taskKey));
     work.push({
       id: batch.batchId || batch.batchKey,
@@ -173,7 +191,7 @@ function makeWork(tasks, batches, now) {
       tasks: members,
       stationId: batch.stationId,
       cost: Math.max(...members.map(cost)),
-      duration: Math.max(...members.map(duration)),
+      duration: Math.max(...members.map(batchPreparationMilliseconds)),
       release,
       priorityTask: [...members].sort(compareKitchenPriority)[0],
       rank: Math.min(
@@ -198,7 +216,11 @@ function makeWork(tasks, batches, now) {
       });
     });
   return work.sort(
-    (a, b) => compareKitchenPriority(a.priorityTask, b.priorityTask) || a.rank - b.rank || a.release - b.release || String(a.id).localeCompare(String(b.id))
+    (a, b) =>
+      compareKitchenPriority(a.priorityTask, b.priorityTask) ||
+      a.rank - b.rank ||
+      a.release - b.release ||
+      String(a.id).localeCompare(String(b.id))
   );
 }
 
@@ -279,12 +301,16 @@ function buildKitchenExpediter({
     const required = Math.max(...members.map(cost));
     knownOccupied.set(station?.stationId, (knownOccupied.get(station?.stationId) || 0) + required);
     const ends = members.map((task) => {
+      const preparationDuration = task.activeBatchId
+        ? batchPreparationMilliseconds(task)
+        : duration(task);
       const started = timestamp(task.preparingAt || task.preparing_at);
-      const expected = started == null ? current + duration(task) : started + duration(task);
+      const expected =
+        started == null ? current + preparationDuration : started + preparationDuration;
       // Past estimates need staff confirmation. Reserve a small conservative
       // continuation rather than pretending the occupied station is free.
       return Math.max(
-        current + (expected <= current ? Math.max(2 * MINUTE, duration(task) / 4) : 0),
+        current + (expected <= current ? Math.max(2 * MINUTE, preparationDuration / 4) : 0),
         expected
       );
     });
@@ -400,7 +426,10 @@ function buildKitchenExpediter({
       instruction = `${label}: ${state === 'expo' ? 'send from expo' : 'collect for expo'} for ${destination(task)}.`;
     } else if (state === 'preparing') {
       const started = timestamp(task.preparingAt || task.preparing_at);
-      const overdue = started != null && current >= started + duration(task) + missedGrace;
+      const preparationDuration = task.activeBatchId
+        ? batchPreparationMilliseconds(task)
+        : duration(task);
+      const overdue = started != null && current >= started + preparationDuration + missedGrace;
       phase = overdue ? 'cook-overdue' : 'cooking';
       signal = overdue ? 'red' : 'neutral';
       status = overdue ? 'Check cooking' : 'Cooking';
@@ -443,6 +472,10 @@ function buildKitchenExpediter({
         forecast.start > current || task.capacityState !== 'allocated'
           ? `${label} for ${destination(task)}: start is overdue. Expo, clear capacity${forecast.queue ? `; next estimated slot is in ${Math.ceil(forecast.queue)} min` : ''}.`
           : `Start ${label} now for ${destination(task)}; acknowledge Preparing.`;
+      if (forecast.unit?.batch?.timingConflict) {
+        reason = 'The synchronized cooking window conflicts with the saved safe start';
+        instruction = `${label} for ${destination(task)}: the saved start is overdue but the serve-together cooking window is not open. Expo, resolve this timing conflict; do not cook the batch early.`;
+      }
     } else if (
       forecast.start != null &&
       forecast.start <= current &&
@@ -471,8 +504,13 @@ function buildKitchenExpediter({
       if (isRunningOrderEligible(task)) {
         const tier = kitchenPriorityTier(task);
         priority = Math.min(priority, tier === 0 ? 0 : tier === 1 ? 6 : 7);
-        if (forecast.start > current || forecast.blockedReason) {
-          instruction += ' Expo, prioritize this top-up for the next eligible station slot; do not interrupt cooking already in progress.';
+        if (
+          forecast.start > current ||
+          forecast.blockedReason ||
+          task.capacityState !== 'allocated'
+        ) {
+          instruction +=
+            ' Expo, prioritize this top-up for the next eligible station slot; do not interrupt cooking already in progress.';
         }
       }
     }
@@ -597,7 +635,9 @@ function buildKitchenExpediter({
       batchId: unit.batch.batchId || null,
       stationId: unit.stationId,
       runningOrder,
-      runningOrderReason: runningOrder ? members.find((task) => task.runningOrder).runningOrderReason : '',
+      runningOrderReason: runningOrder
+        ? members.find((task) => task.runningOrder).runningOrderReason
+        : '',
       quantity: portions,
       startAt: first?.expediter.startAt || null,
       readyAt: first?.expediter.readyAt || null,

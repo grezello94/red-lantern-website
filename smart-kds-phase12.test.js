@@ -55,7 +55,9 @@ describe('Smart KDS Phase 12 mandatory simulations', () => {
       itemName: 'Chicken Fried Rice', course: 'main', stationId: 'wok', latestSafeStartAt: now,
       profile: { batchable: true, batchGroupId: 'food::rice::chicken fried rice', maxBatchSize: 10, optimalBatchSize: 10 },
     });
-    expect(buildBatches({ now, recommendations: [rice] })).toEqual([]);
+    expect(buildBatches({ now, recommendations: [rice] })).toEqual([
+      expect.objectContaining({ action: 'fire-batch', totalQuantity: 1, allocations: [expect.objectContaining({ taskKey: 'single-rice', quantity: 1 })] }),
+    ]);
     expect(require('./smart-kds-scheduler').scheduleKitchen({ now, tasks: [rice] })[0]).toMatchObject({ taskKey: 'single-rice', action: 'start-now' });
   });
 

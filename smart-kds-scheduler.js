@@ -1,3 +1,5 @@
+const { annotateRunningOrder, isRunningOrderEligible } = require('./smart-kds-priority');
+
 function asTime(value, fallback = Number.POSITIVE_INFINITY) {
   const time = value instanceof Date ? value.getTime() : new Date(value).getTime();
   return Number.isFinite(time) ? time : fallback;
@@ -91,4 +93,3 @@ function scheduleKitchen({ now = new Date(), tasks = [] } = {}) {
 }
 
 module.exports = { SCHEDULABLE_TASK_STATES, isSchedulableTask, scheduleKitchen, taskUrgency, compareCandidates };
-const { annotateRunningOrder, isRunningOrderEligible } = require('./smart-kds-priority');

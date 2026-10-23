@@ -1,3 +1,5 @@
+const { compareKitchenPriority } = require('./smart-kds-priority');
+
 function asTime(value, fallback = Date.now()) {
   const time = value instanceof Date ? value.getTime() : new Date(value).getTime();
   return Number.isFinite(time) ? time : fallback;
@@ -78,4 +80,3 @@ function applyServiceRiskPriority({ recommendations = [], risks = [] } = {}) {
 }
 
 module.exports = { evaluateServiceRisk, serviceRiskPriority, isServiceRiskEligible, applyServiceRiskPriority };
-const { compareKitchenPriority } = require('./smart-kds-priority');

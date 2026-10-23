@@ -376,3 +376,143 @@ test('Mark ready requires a station and excludes held or already completed workf
   await expect(page.locator('#board [data-action="expo"][data-task="task-ready"]')).toBeEnabled();
   await expect(page.locator('#board [data-action="serve"][data-task="task-expo"]')).toBeEnabled();
 });
+
+test('running top-ups retain their badge and escaped notes through start and ready actions', async ({ page }) => {
+  const orderNote = 'RUNNING extra portion <img src=x onerror="window.kdsUnsafeOrderNote = true">';
+  const instruction = 'Running order / additional portion, priority: Start 2 Fried Rice for AC table 2 now.';
+  const running = task('running', { orderNumber: 2, tableNumber: 2, finalRank: 1, runningOrder: true, runningOrderReason: 'Customer is already eating.', note: 'No onion', orderNote,
+    expediter: { signal: 'green', phase: 'start', label: 'Start now', instruction, startAt, readyAt } });
+  const ordinary = task('ordinary', { orderNumber: 1, finalRank: 2 });
+  const initial = snapshot([ordinary, running]);
+  initial.expediter.calls = [{ id: 'ordinary:start', type: 'start', priority: 10, signal: 'green', instruction: 'Start the ordinary Fried Rice.', taskKeys: ['task-ordinary'], stationId: 'wok' }, { id: 'running:start', type: 'start', priority: 1, signal: 'green', runningOrder: true, instruction, taskKeys: ['task-running'], stationId: 'wok' }];
+  const state = await openKitchen(page, initial, { onAction(action, current) {
+    const entry = current.snapshot.recommendations.find(item => item.taskKey === action.taskKey);
+    entry.taskState = action.action === 'start' ? 'preparing' : 'ready';
+    entry.expediter = { signal: 'neutral', phase: entry.taskState === 'ready' ? 'ready' : 'cooking', label: entry.taskState === 'ready' ? 'Ready for expo' : 'Cooking', instruction: 'Running order / additional portion, priority: confirm progress.' };
+    current.snapshot.taskStates = [{ task_id: entry.taskKey, task_state: entry.taskState }];
+    current.snapshot.expediter.calls = current.snapshot.expediter.calls.filter(call => !call.taskKeys.includes(entry.taskKey));
+  } });
+  await expect(page.locator('[data-order-ticket]').first()).toHaveAttribute('data-order', 'running');
+  const row = page.locator('#board [data-task-card][data-task="task-running"]');
+  await expect(row.locator('.running-order-badge')).toHaveText('RUNNING · Priority top-up');
+  await expect(row).toHaveAttribute('data-signal', 'green');
+  await expect(row).toContainText('Note: No onion');
+  await expect(row).toContainText(`Order note: ${orderNote}`);
+  await expect(row.locator('img')).toHaveCount(0);
+  expect(await page.evaluate(() => window.kdsUnsafeOrderNote)).toBeUndefined();
+  await expect(page.locator('[data-order-ticket][data-order="running"] .ticket-running-cue')).toHaveText('RUN 1');
+  await expect(page.locator('#kitchen-briefing')).toContainText(instruction);
+  await row.locator('[data-action="start"]').click();
+  await expect(row).toHaveAttribute('data-state', 'preparing');
+  await expect(row.locator('.running-order-badge')).toBeVisible();
+  await row.locator('[data-action="ready"]').click();
+  await expect(row).toHaveAttribute('data-state', 'ready');
+  await expect(row.locator('.running-order-badge')).toBeVisible();
+  expect(state.actions.map(action => action.action)).toEqual(['start', 'ready']);
+});
+
+test('blocked running top-ups stay behind actionable starts and ahead of ordinary waiting work', async ({ page }) => {
+  const blockedInstruction = 'Running order / additional portion, priority: Expo, prioritize the next available station slot.';
+  const running = task('running', { finalRank: 1, runningOrder: true, runningOrderReason: 'Additional portion for an occupied table.', note: 'rUnNiNg', orderNote: 'rUnNiNg', capacityState: 'capacity-wait', action: 'wait-capacity',
+    expediter: { signal: 'red', phase: 'blocked', label: 'Needs expo', instruction: blockedInstruction } });
+  const ordinary = task('ordinary', { finalRank: 2, capacityState: 'capacity-wait', action: 'wait-capacity', latestSafeStartAt: '2020-01-01T00:00:00Z', expediter: { signal: 'yellow', phase: 'next', label: 'Prepare next', instruction: 'Wait for capacity.' } });
+  const actionable = task('start', { finalRank: 20 });
+  const initial = snapshot([ordinary, running, actionable]);
+  initial.expediter.calls = [{ id: 'running:blocked', type: 'check', priority: 1, signal: 'red', runningOrder: true, instruction: blockedInstruction, taskKeys: ['task-running'], stationId: 'wok' }, { id: 'start:start', type: 'start', priority: 20, signal: 'green', instruction: 'Start the allocated Fried Rice now.', taskKeys: ['task-start'], stationId: 'wok' }];
+  await openKitchen(page, initial);
+  expect(await page.locator('[data-order-ticket]').evaluateAll(tickets => tickets.map(ticket => ticket.dataset.order))).toEqual(['start', 'running', 'ordinary']);
+  const row = page.locator('#board [data-task-card][data-task="task-running"]');
+  await expect(row).toHaveAttribute('data-status', 'waiting');
+  await expect(row).toHaveAttribute('data-signal', 'red');
+  await expect(row.locator('.running-order-badge')).toBeVisible();
+  await expect(row.locator('[data-action="start"]')).toBeDisabled();
+  await page.evaluate(() => syncKitchenPending());
+  await expect(row.locator('[data-action="start"]')).toBeDisabled();
+  await expect(row.locator('[data-action="ready"]')).toBeEnabled();
+  await expect(row.locator('.item-note')).toHaveText('Note: rUnNiNg');
+  await expect(page.locator('#kitchen-briefing')).toContainText('Start the allocated Fried Rice now.');
+  await expect(page.locator('#caller-calls-list')).toContainText(blockedInstruction);
+});
+
+test('learned timing labels show only applied recorded estimates and explain sparse history in the load panel', async ({ page }) => {
+  const learned = { applied: true, sampleCount: 6, loadBand: 'busy', estimateMinutes: 9, baselineMinutes: 12, confidence: 0.8, reason: 'Measured from confirmed preparation starts and ready items.' };
+  const initial = snapshot([task('learned', { learning: learned }), task('sparse', { learning: { ...learned, applied: false, sampleCount: 2 } }), task('empty', { learning: { ...learned, sampleCount: 0 } })]);
+  initial.learning = { enabled: true, qualifyingSamples: 8, learnedTasks: 1, trackedDishes: 2 };
+  const state = await openKitchen(page, initial);
+  await expect(page.locator('#board .learned-timing')).toHaveCount(1);
+  const label = page.locator('[data-task="task-learned"][data-task-card] .learned-timing');
+  await expect(label).toHaveText('Learned 9 min · busy');
+  await expect(label).toHaveAttribute('title', /6 recorded kitchen timings.*Configured estimate: 12 min/);
+  await expect(page.locator('#board [data-action="start"][data-task="task-learned"]')).toBeEnabled();
+  await page.locator('#load-toggle').click();
+  await expect(page.locator('.learning-summary')).toContainText('8 qualifying timings');
+  await expect(page.locator('.learning-summary')).toContainText('1 active learned estimate');
+  await expect(page.locator('.learning-summary')).toContainText('recorded start and ready confirmations');
+  state.snapshot.learning = { enabled: true, qualifyingSamples: 2, learnedTasks: 0, trackedDishes: 1 };
+  state.snapshot.recommendations[0].learning = { ...learned, applied: false, sampleCount: 2 };
+  await page.evaluate(() => load());
+  await expect(page.locator('#board .learned-timing')).toHaveCount(0);
+  await expect(page.locator('.learning-summary')).toContainText('Configured estimates remain in use');
+  state.snapshot.learning = { enabled: true, qualifyingSamples: 0, learnedTasks: 0, trackedDishes: 0 };
+  await page.evaluate(() => load());
+  await expect(page.locator('.learning-summary')).toContainText('0 qualifying timings');
+  await expect(page.locator('#board .learned-timing')).toHaveCount(0);
+});
+
+test('cross-table soup batches show every allocation and the earliest safe grouping deadline', async ({ page }) => {
+  const first = task('a', { itemName: 'Chicken Clear Soup', category: 'Soup', quantity: 2, course: 'soup', courseMode: 'course-wise', action: 'prepare-next',
+    expediter: { signal: 'yellow', phase: 'next', label: 'Prepare next', instruction: 'Keep soup portions ready for the safe batch window.' } });
+  const second = { ...first, taskKey: 'task-b', orderId: 'b', orderNumber: 2, tableArea: 'Garden', tableNumber: 8, quantity: 3 };
+  const close = new Date(Date.now() + 2 * 60_000).toISOString();
+  const initial = snapshot([first, second]);
+  initial.batches = [{ batchId: 'soup-tables', batchGroupId: 'Chicken Clear Soup', action: 'wait-for-batch', waitingForMore: true, stationId: 'wok', totalQuantity: 5,
+    holdUntilAt: close, windowClosesAt: new Date(Date.now() + 6 * 60_000).toISOString(), latestSafeStartAt: new Date(Date.now() + 3 * 60_000).toISOString(), allocations: [first, second] }];
+  const state = await openKitchen(page, initial);
+  await page.locator('#batches-toggle').click();
+  await expect(page.locator('#batches-dialog h2')).toContainText('Cook together');
+  await expect(page.locator('.batch-card')).toContainText('5 portions together');
+  await expect(page.locator('.batch-allocation-heading')).toContainText('Table / order allocations');
+  await expect(page.locator('.batch-orders')).toContainText('AC 01');
+  await expect(page.locator('.batch-orders')).toContainText('Garden 08');
+  await expect(page.locator('.batch-orders')).toContainText('2× Chicken Clear Soup');
+  await expect(page.locator('.batch-orders')).toContainText('3× Chicken Clear Soup');
+  await expect(page.locator('.batch-course-context').first()).toContainText('soup · course wise');
+  await expect(page.locator('.batch-window')).toHaveAttribute('data-hold-until', close);
+  await expect(page.locator('.batch-window')).toContainText('2 min remaining');
+  await expect(page.locator('[data-batch-action]')).toBeDisabled();
+  state.snapshot.batches[0].holdUntilAt = new Date(Date.now() - 60_000).toISOString();
+  await page.evaluate(() => load());
+  await expect(page.locator('.batch-window')).toContainText('Grouping window reached');
+  await expect(page.locator('[data-batch-action]')).toBeDisabled();
+  expect(state.actions).toEqual([]);
+});
+
+test('an empty cook-together drawer points to existing menu batch setup without inventing batch limits', async ({ page }) => {
+  await openKitchen(page, snapshot());
+  await page.locator('#batches-toggle').click();
+  await expect(page.locator('#batch-list')).toContainText('Enable compatible soup/rice batches and set portions per batch');
+  await expect(page.locator('#batch-list a')).toHaveAttribute('href', '/admin#tab-smart-kds');
+  await expect(page.locator('#batch-list a')).toHaveAttribute('data-kds-panel', 'profiles');
+  await expect(page.locator('#batch-list [data-batch-action]')).toHaveCount(0);
+});
+
+test('learned timings and bulk suggestions never start a held serve-together main course', async ({ page }) => {
+  const main = task('main', { orderId: 'a', itemName: 'Chicken Biryani', category: 'Main', course: 'main', courseMode: 'serve-together', action: 'hold-for-course', pacingState: 'hold-for-course', capacityState: 'hold-for-course',
+    learning: { applied: true, sampleCount: 8, loadBand: 'quiet', estimateMinutes: 8, baselineMinutes: 12 },
+    expediter: { signal: 'yellow', phase: 'hold', label: 'Hold for table', instruction: 'Keep this main course held until the table is ready to receive its food together.', startAt: null, readyAt: null } });
+  const starter = task('starter', { orderId: 'a', itemName: 'Chicken Lollipop', course: 'starter' });
+  const initial = snapshot([main, starter]);
+  initial.learning = { enabled: true, qualifyingSamples: 8, learnedTasks: 1, trackedDishes: 1 };
+  initial.batches = [{ batchId: 'held-main', batchGroupId: 'Biryani', action: 'fire-batch', stationId: 'wok', totalQuantity: 2, allocations: [main] }];
+  const state = await openKitchen(page, initial);
+  const row = page.locator('#board [data-task-card][data-task="task-main"]');
+  await expect(row).toHaveAttribute('data-status', 'waiting');
+  await expect(row.locator('.learned-timing')).toHaveText('Learned 8 min · quiet');
+  await expect(row.locator('[data-action="start"]')).toBeDisabled();
+  await expect(row.locator('[data-action="ready"]')).toBeEnabled();
+  await expect(page.locator('#board [data-action="start"][data-task="task-starter"]')).toBeEnabled();
+  await expect(page.locator('#batches-count')).toHaveText('0');
+  await page.evaluate(() => { syncKitchenPending(); document.querySelector('#board [data-action="start"][data-task="task-main"]').click(); });
+  await expect(row.locator('[data-action="start"]')).toBeDisabled();
+  expect(state.actions).toEqual([]);
+});

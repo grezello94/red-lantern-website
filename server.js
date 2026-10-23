@@ -28,6 +28,7 @@ const { buildUnifiedRecommendations } = require('./smart-kds-unified');
 const { buildKitchenExpediter } = require('./smart-kds-expediter');
 const { buildPreparationPlan } = require('./smart-kds-preparation');
 const { runningOrderMetadata } = require('./smart-kds-priority');
+const { learnKitchenPatterns, applyKitchenLearning, calculateLoadBands } = require('./smart-kds-learning');
 const { evaluateServiceRisk, applyServiceRiskPriority } = require('./smart-kds-service-risk');
 const { transitionForAction } = require('./smart-kds-workflow');
 const { reasonCodesForRecommendation } = require('./smart-kds-reasons');
@@ -1459,6 +1460,7 @@ let smartKdsTablesReady = null;
 const smartKdsReadCacheMs = Number(process.env.SMART_KDS_READ_CACHE_MS || 5000);
 let smartKdsFoundationCache = null;
 let smartKdsMenuProfilesCache = null;
+let smartKdsLearningCache = null;
 
 function clearSmartKdsReadCaches({ foundation = true, profiles = true } = {}) {
   if (foundation) smartKdsFoundationCache = null;
@@ -2209,6 +2211,7 @@ async function buildSmartKdsTimingPreview({ orderId = null } = {}) {
         return {
           taskKey,
           sourceLineId: line.sourceLineId,
+          itemKey: smartKdsMenuItemKey(line.menuType, line.category, line.name),
           orderedAt: line.orderedAt || order.created_at,
           itemName: line.name,
           category: line.category,
@@ -2385,7 +2388,48 @@ async function getSmartKdsPacingPreview(providedTiming = null) {
   });
   return { generatedAt: timing.generatedAt, ...pacing };
 }
-async function getSmartKdsSchedulerPreview({ pacing: providedPacing = null } = {}) {
+async function getSmartKdsLearningModel(now) {
+  const current = Date.now();
+  if (smartKdsLearningCache?.value && smartKdsLearningCache.expiresAt > current)
+    return smartKdsLearningCache.value;
+  if (smartKdsLearningCache?.promise) return smartKdsLearningCache.promise;
+  const promise = (async () => {
+    const since = new Date(new Date(now).getTime() - 30 * 24 * 60 * 60_000);
+    const rows = await sql`SELECT event_id,details->'learningSample' AS sample FROM kitchen_task_events WHERE event_type='manual-ready' AND created_at>=${since} AND details ? 'learningSample' ORDER BY created_at DESC,event_id DESC LIMIT 2000`;
+    return learnKitchenPatterns({ samples: rows.map(row => ({ ...row.sample, sampleId: `event:${row.event_id}` })), now });
+  })();
+  smartKdsLearningCache = { promise, expiresAt: 0 };
+  try {
+    const value = await promise;
+    smartKdsLearningCache = { value, expiresAt: Date.now() + (smartKdsReadCacheMs === 0 ? 0 : Math.max(15_000, smartKdsReadCacheMs)) };
+    return value;
+  } catch (error) {
+    smartKdsLearningCache = null;
+    throw error;
+  }
+}
+function smartKdsLearningContext(task, preparingAt, batchId = null, batchTaskCount = null) {
+  return {
+    version: 1, itemKey: task.itemKey || task.profile?.itemKey || '',
+    itemName: task.itemName, category: task.category, stationId: task.stationId, course: task.course,
+    portion: task.portion || '', style: task.style || '', modifiers: task.modifiers || [],
+    note: task.note || '', orderNote: task.orderNote || '',
+    quantity: task.quantity, cookingWaves: task.cookingWaves || 1,
+    batchable: task.profile?.batchable === true, maxBatchSize: task.profile?.maxBatchSize || 1,
+    profile: task.profile || {}, prepWindowMinutes: task.prepWindowMinutes,
+    loadBand: task.learning?.loadBand || 'unknown', preparingAt, batchId, batchTaskCount,
+  };
+}
+async function smartKdsCompletedLearningSample(taskKey, preparingAt, readyAt) {
+  if (!preparingAt || !readyAt) return null;
+  const rows = await sql`SELECT details FROM kitchen_task_events WHERE task_id=${taskKey} AND event_type IN ('manual-start','batch-start','override-fire-now','override-hold','override-defer','override-resume','override-refire','override-move-station','override-change-course','learning-context-invalidated') ORDER BY created_at DESC,event_id DESC LIMIT 1`;
+  const context = rows[0]?.details?.learningContext;
+  // A refire starts a different cooking attempt. Never attach an old start
+  // context or an inferred start to a later physical completion.
+  if (!context || new Date(context.preparingAt).getTime() !== new Date(preparingAt).getTime()) return null;
+  return { ...context, taskKey, preparingAt, readyAt };
+}
+async function getSmartKdsSchedulerPreview({ pacing: providedPacing = null, foundation: providedFoundation = null } = {}) {
   const pacing = providedPacing || (await getSmartKdsPacingPreview());
   const taskKeys = pacing.orders.flatMap((order) => order.tasks.map((task) => task.taskKey));
   const [stateRows, overrides] = await Promise.all([
@@ -2393,7 +2437,7 @@ async function getSmartKdsSchedulerPreview({ pacing: providedPacing = null } = {
     getSmartKdsActiveOverrides(taskKeys),
   ]);
   const taskStates = new Map(stateRows.map((task) => [task.task_id, task]));
-  const allTasks = pacing.orders
+  const baseTasks = pacing.orders
     .flatMap((order) =>
       order.tasks.map((task) => {
         const override = overrides.get(task.taskKey);
@@ -2425,6 +2469,7 @@ async function getSmartKdsSchedulerPreview({ pacing: providedPacing = null } = {
           orderNumber: order.orderNumber,
           orderedAt: task.orderedAt || order.orderedAt,
           mode: order.mode,
+          courseMode: order.courseMode,
           fulfillmentType: order.fulfillmentType,
           tableArea: order.tableArea,
           tableNumber: order.tableNumber,
@@ -2444,8 +2489,21 @@ async function getSmartKdsSchedulerPreview({ pacing: providedPacing = null } = {
         };
       })
     )
-    .map((task) => ({ ...task, ...buildPreparationPlan(task) }))
     .filter((task) => !['served', 'cancelled', 'superseded'].includes(task.taskState));
+  const foundation = providedFoundation || (await getSmartKdsFoundation());
+  const [learningModel, liveStationState] = await Promise.all([
+    getSmartKdsLearningModel(pacing.generatedAt),
+    sql`SELECT station_id,enabled,available_capacity FROM kitchen_station_state`,
+  ]);
+  const stationState = new Map(liveStationState.map(station => [station.station_id, station]));
+  const learningStations = foundation.stations.map(station => ({ ...station,
+    enabled: stationState.get(station.station_id)?.enabled ?? station.enabled,
+    available_capacity: stationState.get(station.station_id)?.available_capacity ?? station.max_concurrent_tasks,
+  }));
+  const learning = applyKitchenLearning({ recommendations: baseTasks, model: learningModel,
+    loadByStation: calculateLoadBands({ recommendations: baseTasks, stations: learningStations }),
+    stations: learningStations, now: pacing.generatedAt });
+  const allTasks = learning.recommendations.map(task => ({ ...task, ...buildPreparationPlan(task) }));
   // getSmartKdsTimingPreview has already materialized these tasks before
   // pacing is calculated. Keeping this calculation read-only avoids a second
   // full set of database writes on every board refresh.
@@ -2521,7 +2579,7 @@ async function getSmartKdsSchedulerPreview({ pacing: providedPacing = null } = {
     (result, task) => ({ ...result, [task.action]: Number(result[task.action] || 0) + 1 }),
     { tasks: recommendations.length, 'start-now': 0, 'prepare-next': 0, monitor: 0 }
   );
-  return { generatedAt: pacing.generatedAt, recommendations, summary };
+  return { generatedAt: pacing.generatedAt, recommendations, summary, learning: learning.summary };
 }
 async function getSmartKdsFairnessPreview({
   scheduler: providedScheduler = null,
@@ -2546,7 +2604,7 @@ async function getSmartKdsUnifiedPreview() {
   const pacing = await getSmartKdsPacingPreview(timing);
   const foundation = await getSmartKdsFoundation();
   const [scheduler, serviceRisk] = await Promise.all([
-    getSmartKdsSchedulerPreview({ pacing }),
+    getSmartKdsSchedulerPreview({ pacing, foundation }),
     getSmartKdsServiceRiskPreview({ timing }),
   ]);
   const fairness = await getSmartKdsFairnessPreview({ scheduler, foundation });
@@ -2602,6 +2660,7 @@ async function getSmartKdsUnifiedPreview() {
     ...unified,
     recommendations,
     expediter,
+    learning: scheduler.learning,
   };
 }
 async function persistSmartKdsSchedulerDecisions(recommendations = []) {
@@ -2616,6 +2675,7 @@ async function persistSmartKdsSchedulerDecisions(recommendations = []) {
       serviceRisk: task.serviceRisk,
       serviceRiskSeverity: task.serviceRiskSeverity,
       taskState: task.taskState,
+      learning: task.learning || null,
       reasonCodes: task.reasonCodes || [],
       orderedAt: task.orderedAt || null,
       targetServeAt: task.targetServeAt || null,
@@ -7487,7 +7547,12 @@ app.post('/api/orders/smart-kds/actions', async (req, res) => {
     const completionDetails = action === 'ready'
       ? { readyConfirmedWithoutRecordedStart: !updated[0].preparing_at, confirmedReadyAt: updated[0].ready_at }
       : {};
-    await sql`INSERT INTO kitchen_task_events (task_id,order_id,event_type,details,actor_type,actor_id) VALUES (${taskKey},${orderId},${`manual-${action}`},${JSON.stringify({ stationId, source: 'smart-kds', ...completionDetails })},'kitchen',${operator})`;
+    const learningContext = action === 'start'
+      ? smartKdsLearningContext(recommendation, updated[0].preparing_at) : null;
+    const learningSample = action === 'ready'
+      ? await smartKdsCompletedLearningSample(taskKey, updated[0].preparing_at, updated[0].ready_at) : null;
+    await sql`INSERT INTO kitchen_task_events (task_id,order_id,event_type,details,actor_type,actor_id) VALUES (${taskKey},${orderId},${`manual-${action}`},${JSON.stringify({ stationId, source: 'smart-kds', ...completionDetails,
+      ...(learningContext ? { learningContext } : {}), ...(learningSample ? { learningSample } : {}) })},'kitchen',${operator})`;
     await recordOrderEvent(orderId, 'smart-kds-action', { taskKey, stationId, action, operator, ...completionDetails });
     res.json({ ok: true, status });
   } catch (error) {
@@ -7511,7 +7576,10 @@ app.post('/api/orders/smart-kds/batches/:batchId/start', async (req, res) => {
       await sql`SELECT batch_id,station_id,batch_state,config_snapshot FROM kitchen_batches WHERE batch_id=${batchId} LIMIT 1`;
     if (!batches.length || !['planned', 'ready-to-fire'].includes(batches[0].batch_state))
       return res.status(409).json({ error: 'This batch is no longer available to start.' });
-    const liveCapacity = await getSmartKdsCapacityPreview();
+    const livePreview = await getSmartKdsUnifiedPreview();
+    const liveCapacity = await getSmartKdsCapacityPreview({ scheduler: {
+      generatedAt: livePreview.generatedAt, recommendations: livePreview.recommendations.map(task => ({ ...task,
+        action: task.baseAction || task.action, rank: task.finalRank || task.rank })) } });
     await persistSmartKdsBatches(liveCapacity.batches || []);
     const currentBatch = (liveCapacity.batches || []).find((batch) => batch.batchId === batchId);
     const currentAllocation = (liveCapacity.allocated || []).find(
@@ -7553,14 +7621,17 @@ app.post('/api/orders/smart-kds/batches/:batchId/start', async (req, res) => {
       });
     const taskIds = allocations.map((row) => row.task_id);
     const updated =
-      await sql`UPDATE kitchen_production_tasks SET task_state='preparing',active_batch_id=${batchId},eligible_at=COALESCE(eligible_at,NOW()),scheduled_at=COALESCE(scheduled_at,NOW()),fired_at=NOW(),preparing_at=NOW(),version=version+1,updated_at=NOW() WHERE task_id = ANY(${taskIds}) AND task_state IN ('ordered','eligible','scheduled') RETURNING task_id,order_id`;
+      await sql`UPDATE kitchen_production_tasks SET task_state='preparing',active_batch_id=${batchId},eligible_at=COALESCE(eligible_at,NOW()),scheduled_at=COALESCE(scheduled_at,NOW()),fired_at=NOW(),preparing_at=NOW(),version=version+1,updated_at=NOW() WHERE task_id = ANY(${taskIds}) AND task_state IN ('ordered','eligible','scheduled') RETURNING task_id,order_id,preparing_at`;
     if (updated.length !== allocations.length)
       return res.status(409).json({
         error: 'A batch item was changed by another kitchen screen. Refresh and try again.',
       });
     await sql`UPDATE kitchen_batches SET batch_state='fired',fired_at=NOW(),version=version+1,updated_at=NOW() WHERE batch_id=${batchId}`;
     for (const row of updated) {
-      await sql`INSERT INTO kitchen_task_events (task_id,order_id,event_type,details,actor_type,actor_id) VALUES (${row.task_id},${row.order_id},'batch-start',${JSON.stringify({ batchId, reason, stationId: batches[0].station_id })},'kitchen',${operator})`;
+      const task = livePreview.recommendations.find(entry => entry.taskKey === row.task_id);
+      const learningContext = task ? smartKdsLearningContext(task, row.preparing_at, batchId, updated.length) : null;
+      await sql`INSERT INTO kitchen_task_events (task_id,order_id,event_type,details,actor_type,actor_id) VALUES (${row.task_id},${row.order_id},'batch-start',${JSON.stringify({ batchId, reason, stationId: batches[0].station_id,
+        ...(learningContext ? { learningContext } : {}) })},'kitchen',${operator})`;
       await recordOrderEvent(row.order_id, 'smart-kds-batch-start', {
         batchId,
         taskKey: row.task_id,
@@ -7638,7 +7709,9 @@ app.post('/api/orders/smart-kds/overrides', async (req, res) => {
       if (!COURSE_TYPES.includes(course))
         return res.status(400).json({ error: 'Choose a valid course.' });
       details.course = course;
-      await sql`UPDATE kitchen_production_tasks SET course_type=${course},target_serve_at=NULL,latest_acceptable_serve_at=NULL,latest_safe_start_at=NULL,version=version+1,updated_at=NOW() WHERE order_id=${orderId} AND source_line_id=${rows[0].source_line_id}`;
+      await sql`WITH changed AS (UPDATE kitchen_production_tasks SET course_type=${course},target_serve_at=NULL,latest_acceptable_serve_at=NULL,latest_safe_start_at=NULL,version=version+1,updated_at=NOW() WHERE order_id=${orderId} AND source_line_id=${rows[0].source_line_id} RETURNING task_id)
+        INSERT INTO kitchen_task_events (task_id,order_id,event_type,details,actor_type,actor_id)
+        SELECT task_id,${orderId},'learning-context-invalidated',${JSON.stringify({ action, course })}::jsonb,'kitchen',${operator} FROM changed`;
       const order = await sql`SELECT items FROM direct_orders WHERE id=${orderId} LIMIT 1`;
       if (order.length) {
         const items = Array.isArray(order[0].items) ? order[0].items : [];
@@ -7659,7 +7732,9 @@ app.post('/api/orders/smart-kds/overrides', async (req, res) => {
       if (!station.length)
         return res.status(400).json({ error: 'Choose an available kitchen station.' });
       details.stationId = stationId;
-      await sql`UPDATE kitchen_production_tasks SET station_id=${stationId},target_serve_at=NULL,latest_acceptable_serve_at=NULL,latest_safe_start_at=NULL,version=version+1,updated_at=NOW() WHERE order_id=${orderId} AND source_line_id=${rows[0].source_line_id}`;
+      await sql`WITH changed AS (UPDATE kitchen_production_tasks SET station_id=${stationId},target_serve_at=NULL,latest_acceptable_serve_at=NULL,latest_safe_start_at=NULL,version=version+1,updated_at=NOW() WHERE order_id=${orderId} AND source_line_id=${rows[0].source_line_id} RETURNING task_id)
+        INSERT INTO kitchen_task_events (task_id,order_id,event_type,details,actor_type,actor_id)
+        SELECT task_id,${orderId},'learning-context-invalidated',${JSON.stringify({ action, stationId })}::jsonb,'kitchen',${operator} FROM changed`;
     }
     if (['hold', 'defer'].includes(action))
       await sql`UPDATE kitchen_production_tasks SET task_state='held',active_batch_id=NULL,version=version+1,updated_at=NOW() WHERE task_id=${taskKey} AND task_state NOT IN ('served','cancelled','superseded')`;
@@ -7686,7 +7761,9 @@ app.post('/api/orders/smart-kds/overrides', async (req, res) => {
         return res.status(409).json({
           error: 'Station capacity changed on another kitchen screen. Refresh and try again.',
         });
-      await sql`UPDATE kitchen_production_tasks SET task_state='preparing',active_batch_id=NULL,eligible_at=COALESCE(eligible_at,NOW()),scheduled_at=COALESCE(scheduled_at,NOW()),fired_at=NOW(),preparing_at=NOW(),version=version+1,updated_at=NOW() WHERE task_id=${taskKey} AND task_state IN ('ordered','eligible','scheduled')`;
+      const started = await sql`UPDATE kitchen_production_tasks SET task_state='preparing',active_batch_id=NULL,eligible_at=COALESCE(eligible_at,NOW()),scheduled_at=COALESCE(scheduled_at,NOW()),fired_at=NOW(),preparing_at=NOW(),version=version+1,updated_at=NOW() WHERE task_id=${taskKey} AND task_state IN ('ordered','eligible','scheduled') RETURNING preparing_at`;
+      if (!started.length) return res.status(409).json({ error: 'This item changed before it could start. Refresh the board.' });
+      details.learningContext = smartKdsLearningContext(recommendation, started[0].preparing_at);
     }
     if (action === 'refire')
       await sql`UPDATE kitchen_production_tasks SET task_state='ordered',active_batch_id=NULL,preparing_at=NULL,ready_at=NULL,served_at=NULL,cancelled_at=NULL,version=version+1,updated_at=NOW() WHERE task_id=${taskKey} AND task_state IN ('ready','served','held')`;

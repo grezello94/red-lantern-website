@@ -299,7 +299,9 @@ describe('Kitchen caller with real order, profile and workflow SQL', () => {
     const response = await board();
     expect(response.status).toBe(200);
     expect(response.data.recommendations.every((task) => task.note)).toBe(true);
-    expect(response.data.batches).toHaveLength(sameNote ? 1 : 0);
+    expect(response.data.batches).toHaveLength(sameNote ? 1 : 2);
+    expect(response.data.batches.every((batch) => new Set(batch.allocations.map((allocation) => allocation.note)).size === 1)).toBe(true);
+    if (!sameNote) expect(response.data.batches.map((batch) => batch.totalQuantity)).toEqual([1, 1]);
     expect(response.data.expediter.calls.map((call) => call.instruction).join(' ')).toContain('No onion');
     if (sameNote) expect(response.data.batches[0].totalQuantity).toBe(2);
   });
@@ -461,5 +463,155 @@ describe('Kitchen caller with real order, profile and workflow SQL', () => {
     const running = response.data.recommendations.find((task) => task.sourceLineId === stored.items[1].lineId);
     expect(running).toMatchObject({ runningOrder: true, orderNote: 'RUNNING - extra portion', note: 'Extra chilli', capacityState: 'allocated' });
     expect(response.data.recommendations.filter((task) => task !== running).every((task) => task.runningOrder === false)).toBe(true);
+  });
+
+  test('actual start and ready acknowledgements record one learning sample with the original recorded station load', async () => {
+    await saveProfile(riceKey, { prepTimeEstimate: 8, minPrepTime: 6, maxPrepTime: 10 });
+    await seed('order-1', [rice], 15);
+    const task = (await board()).data.recommendations[0];
+    const identity = { taskKey: task.taskKey, orderId: task.orderId, stationId: task.stationId };
+    expect((await request('/api/orders/smart-kds/actions', 'POST', { ...identity, action: 'start' })).status).toBe(200);
+    const startedEvent = (await mockDatabase.query("SELECT details FROM kitchen_task_events WHERE task_id=$1 AND event_type='manual-start'", [task.taskKey])).rows[0];
+    expect(startedEvent.details.learningContext).toMatchObject({ itemKey: riceKey, quantity: 1, loadBand: 'quiet' });
+    const startedAt = new Date(Date.now() - 10 * 60_000).toISOString();
+    // Advance the physical observation, without sleeping or fabricating a
+    // missing start. The saved context must match this exact cooking attempt.
+    await mockDatabase.query('UPDATE kitchen_production_tasks SET preparing_at=$2 WHERE task_id=$1', [task.taskKey, startedAt]);
+    await mockDatabase.query("UPDATE kitchen_task_events SET details=jsonb_set(details,'{learningContext,preparingAt}',to_jsonb($2::text)) WHERE task_id=$1 AND event_type='manual-start'", [task.taskKey, startedAt]);
+    expect((await request('/api/orders/smart-kds/actions', 'POST', { ...identity, action: 'ready' })).status).toBe(200);
+    const readyEvent = (await mockDatabase.query("SELECT details FROM kitchen_task_events WHERE task_id=$1 AND event_type='manual-ready'", [task.taskKey])).rows[0];
+    expect(readyEvent.details.learningSample).toMatchObject({ itemKey: riceKey, quantity: 1, preparingAt: startedAt, loadBand: 'quiet' });
+    expect(Date.parse(readyEvent.details.learningSample.readyAt) - Date.parse(startedAt)).toBeGreaterThanOrEqual(10 * 60_000);
+    const response = await board();
+    expect(response.status).toBe(200);
+    expect(response.data.learning).toMatchObject({ qualifyingSamples: 1, learnedTasks: 0 });
+    expect(response.data.recommendations[0].taskState).toBe('ready');
+  });
+
+  test('ready feedback without an actual recorded start never creates a learning sample', async () => {
+    await seed('order-1', [rice]);
+    const task = (await board()).data.recommendations[0];
+    expect((await request('/api/orders/smart-kds/actions', 'POST', {
+      taskKey: task.taskKey, orderId: task.orderId, stationId: task.stationId, action: 'ready',
+    })).status).toBe(200);
+    const event = (await mockDatabase.query("SELECT details FROM kitchen_task_events WHERE task_id=$1 AND event_type='manual-ready'", [task.taskKey])).rows[0];
+    expect(event.details.readyConfirmedWithoutRecordedStart).toBe(true);
+    expect(event.details.learningSample).toBeUndefined();
+    expect((await board()).data.learning.qualifyingSamples).toBe(0);
+  });
+
+  test('holding and resuming cooking does not reuse its interrupted start as a learning sample', async () => {
+    await saveProfile(riceKey, { prepTimeEstimate: 8, minPrepTime: 6, maxPrepTime: 10 });
+    await seed('order-1', [rice], 15);
+    const task = (await board()).data.recommendations[0];
+    const identity = { taskKey: task.taskKey, orderId: task.orderId, stationId: task.stationId };
+    expect((await request('/api/orders/smart-kds/actions', 'POST', { ...identity, action: 'start' })).status).toBe(200);
+    const startedAt = new Date(Date.now() - 10 * 60_000).toISOString();
+    await mockDatabase.query('UPDATE kitchen_production_tasks SET preparing_at=$2 WHERE task_id=$1', [task.taskKey, startedAt]);
+    await mockDatabase.query("UPDATE kitchen_task_events SET details=jsonb_set(details,'{learningContext,preparingAt}',to_jsonb($2::text)) WHERE task_id=$1 AND event_type='manual-start'", [task.taskKey, startedAt]);
+    for (const action of ['hold', 'resume']) {
+      expect((await request('/api/orders/smart-kds/overrides', 'POST', { ...identity, action, reason: 'Guest pauses then resumes this dish' })).status).toBe(200);
+    }
+    expect((await request('/api/orders/smart-kds/actions', 'POST', { ...identity, action: 'ready' })).status).toBe(200);
+    const event = (await mockDatabase.query("SELECT details FROM kitchen_task_events WHERE task_id=$1 AND event_type='manual-ready'", [task.taskKey])).rows[0];
+    expect(event.details.learningSample).toBeUndefined();
+    expect((await board()).data.learning.qualifyingSamples).toBe(0);
+  });
+
+  test('one approved Cook together task records an independent single-wave learning observation', async () => {
+    await saveProfile(riceKey, { prepTimeEstimate: 8, minPrepTime: 6, maxPrepTime: 10,
+      batchable: true, batchGroupId: riceKey, maxBatchSize: 4, optimalBatchSize: 4, batchWindowSeconds: 0 });
+    await seed('order-1', [{ ...rice, quantity: 4 }], 20);
+    const response = await board();
+    expect(response.status).toBe(200);
+    const task = response.data.recommendations[0];
+    const batch = response.data.batches.find((entry) => entry.allocations.some((allocation) => allocation.taskKey === task.taskKey));
+    expect(batch.allocations).toHaveLength(1);
+    expect((await request(`/api/orders/smart-kds/batches/${batch.batchId}/start`, 'POST', { reason: 'Chef begins one approved cooking wave' })).status).toBe(200);
+    const context = (await mockDatabase.query("SELECT details FROM kitchen_task_events WHERE task_id=$1 AND event_type='batch-start'", [task.taskKey])).rows[0].details.learningContext;
+    expect(context).toMatchObject({ batchId: batch.batchId, batchTaskCount: 1, quantity: 4, cookingWaves: 1 });
+    const startedAt = new Date(Date.now() - 10 * 60_000).toISOString();
+    await mockDatabase.query('UPDATE kitchen_production_tasks SET preparing_at=$2 WHERE task_id=$1', [task.taskKey, startedAt]);
+    await mockDatabase.query("UPDATE kitchen_task_events SET details=jsonb_set(details,'{learningContext,preparingAt}',to_jsonb($2::text)) WHERE task_id=$1 AND event_type='batch-start'", [task.taskKey, startedAt]);
+    expect((await request('/api/orders/smart-kds/actions', 'POST', { taskKey: task.taskKey, orderId: task.orderId,
+      stationId: task.stationId, action: 'ready' })).status).toBe(200);
+    const completed = (await mockDatabase.query("SELECT details FROM kitchen_task_events WHERE task_id=$1 AND event_type='manual-ready'", [task.taskKey])).rows[0].details.learningSample;
+    expect(completed).toMatchObject({ batchId: batch.batchId, batchTaskCount: 1, preparingAt: startedAt });
+    expect((await board()).data.learning.qualifyingSamples).toBe(1);
+  });
+
+  test.each(['change-course', 'move-station'])('%s invalidates recorded starts for every sibling production chunk', async (action) => {
+    await saveProfile(riceKey, { prepTimeEstimate: 8, minPrepTime: 6, maxPrepTime: 10,
+      batchable: true, batchGroupId: riceKey, maxBatchSize: 2, optimalBatchSize: 2, batchWindowSeconds: 0 });
+    await mockDatabase.exec("UPDATE kitchen_stations SET max_concurrent_tasks=2; UPDATE kitchen_station_state SET available_capacity=2");
+    if (action === 'move-station') {
+      await mockDatabase.exec("INSERT INTO kitchen_stations(station_id,station_name,enabled,max_concurrent_tasks) VALUES('wok','Wok',true,2) ON CONFLICT(station_id) DO UPDATE SET enabled=true,max_concurrent_tasks=2; INSERT INTO kitchen_station_state(station_id,available_capacity) VALUES('wok',2) ON CONFLICT(station_id) DO UPDATE SET available_capacity=2");
+    }
+    await seed('order-1', [{ ...rice, quantity: 3 }], 20);
+    const initial = await board();
+    expect(initial.status).toBe(200);
+    expect(initial.data.recommendations).toHaveLength(2);
+    const selected = initial.data.recommendations.find((task) => task.quantity === 2);
+    const sibling = initial.data.recommendations.find((task) => task.quantity === 1);
+    expect(selected.sourceLineId).toBe(sibling.sourceLineId);
+    expect((await request('/api/orders/smart-kds/actions', 'POST', { taskKey: sibling.taskKey,
+      orderId: sibling.orderId, stationId: sibling.stationId, action: 'start' })).status).toBe(200);
+    const startedAt = new Date(Date.now() - 10 * 60_000).toISOString();
+    await mockDatabase.query('UPDATE kitchen_production_tasks SET preparing_at=$2 WHERE task_id=$1', [sibling.taskKey, startedAt]);
+    await mockDatabase.query("UPDATE kitchen_task_events SET details=jsonb_set(details,'{learningContext,preparingAt}',to_jsonb($2::text)) WHERE task_id=$1 AND event_type='manual-start'", [sibling.taskKey, startedAt]);
+    const changed = await request('/api/orders/smart-kds/overrides', 'POST', {
+      taskKey: selected.taskKey, orderId: selected.orderId, action, reason: 'Chef changes this split production line',
+      ...(action === 'change-course' ? { course: 'starter' } : { stationId: 'wok' }),
+    });
+    expect(changed.status).toBe(200);
+    const barriers = (await mockDatabase.query("SELECT task_id FROM kitchen_task_events WHERE order_id=$1 AND event_type='learning-context-invalidated'", [selected.orderId])).rows;
+    expect(barriers.map((event) => event.task_id).sort()).toEqual([selected.taskKey, sibling.taskKey].sort());
+    const current = (await board()).data.recommendations.find((task) => task.taskKey === sibling.taskKey);
+    expect(current.taskState).toBe('preparing');
+    expect(action === 'change-course' ? current.course : current.stationId).toBe(action === 'change-course' ? 'starter' : 'wok');
+    expect((await request('/api/orders/smart-kds/actions', 'POST', { taskKey: current.taskKey,
+      orderId: current.orderId, stationId: current.stationId, action: 'ready' })).status).toBe(200);
+    const completed = (await mockDatabase.query("SELECT details FROM kitchen_task_events WHERE task_id=$1 AND event_type='manual-ready'", [sibling.taskKey])).rows[0];
+    expect(completed.details.learningSample).toBeUndefined();
+    expect((await board()).data.learning.qualifyingSamples).toBe(0);
+  });
+
+  test('five recorded samples per load band adapt the live forecast without changing chef profiles or saved service promises', async () => {
+    await saveProfile(riceKey, { prepTimeEstimate: 8, minPrepTime: 6, maxPrepTime: 10 });
+    for (const loadBand of ['quiet', 'busy']) {
+      for (let index = 0; index < 5; index += 1) {
+        const preparingAt = new Date(Date.now() - (120 + index * 30) * 60_000).toISOString();
+        const readyAt = new Date(Date.parse(preparingAt) + (loadBand === 'quiet' ? 8 + index : 18 + index) * 60_000).toISOString();
+        const learningSample = { itemKey: riceKey, itemName: rice.name, category: rice.category, stationId: 'kitchen',
+          portion: '', style: '', modifiers: [], note: '', orderNote: '', quantity: 1, cookingWaves: 1,
+          profile: { prepTimeEstimate: 8, minPrepTime: 6, maxPrepTime: 10, platingTime: 2, handoffBuffer: 2, batchable: false },
+          loadBand, preparingAt, readyAt };
+        await mockDatabase.query("INSERT INTO kitchen_task_events(task_id,order_id,event_type,details) VALUES($1,$2,'manual-ready',$3)",
+          [`history-${loadBand}-${index}`, `history-${loadBand}-${index}`, JSON.stringify({ learningSample })]);
+      }
+    }
+    await seed('order-1', [rice]);
+    const quiet = await board();
+    expect(quiet.status).toBe(200);
+    const quietTask = quiet.data.recommendations[0];
+    expect(quietTask.learning).toMatchObject({ applied: true, sampleCount: 5, loadBand: 'quiet' });
+    for (let index = 2; index <= 3; index += 1) {
+      const created = await request('/api/orders/counter', 'POST', { clientRequestId: `learning-load-order-${index}`,
+        action: 'submit', mode: 'parcel', fulfillmentType: 'takeaway', customerName: 'Load Test Guest',
+        customerPhone: '9876543210', items: [rice] });
+      expect(created.status).toBe(201);
+    }
+    const busy = await board();
+    expect(busy.status).toBe(200);
+    const busyTask = busy.data.recommendations.find((task) => task.orderId === 'order-1');
+    expect(busy.data.recommendations).toHaveLength(3);
+    expect(busyTask.learning).toMatchObject({ applied: true, sampleCount: 5, loadBand: 'busy' });
+    expect(busyTask.learning.estimateMinutes).toBeGreaterThan(quietTask.learning.estimateMinutes);
+    expect(busyTask.targetServeAt).toBe(quietTask.targetServeAt);
+    expect(busyTask.latestSafeStartAt).toBe(quietTask.latestSafeStartAt);
+    expect(Date.parse(busyTask.effectiveLatestSafeStartAt)).toBeLessThan(Date.parse(quietTask.effectiveLatestSafeStartAt));
+    expect(busyTask.profile).toMatchObject({ prepTimeEstimate: 8, minPrepTime: 6, maxPrepTime: 10 });
+    expect((await mockDatabase.query("SELECT COUNT(*)::int AS count FROM kitchen_production_tasks WHERE preparing_at IS NOT NULL")).rows[0].count).toBe(0);
+    expect(busy.data.learning).toMatchObject({ qualifyingSamples: 10, learnedTasks: 3 });
   });
 });

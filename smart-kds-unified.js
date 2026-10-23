@@ -1,6 +1,8 @@
+const { compareKitchenPriority } = require('./smart-kds-priority');
+
 function capacityByTask(capacity = {}) {
   const map = new Map();
-  [...(capacity.allocated || []), ...(capacity.capacityWait || []), ...(capacity.unassigned || [])].forEach((work) => {
+  [...(capacity.batchWindowWait || []), ...(capacity.allocated || []), ...(capacity.capacityWait || []), ...(capacity.unassigned || [])].forEach((work) => {
     const taskKeys = work.kind === 'batch' ? (work.allocations || []).map((item) => item.taskKey) : [work.workKey];
     taskKeys.forEach((key) => map.set(key, work));
   });
@@ -28,6 +30,9 @@ function buildUnifiedRecommendations({ fairness = {}, capacity = {}, serviceRisk
     } else if (['capacity-wait', 'capacity-too-large'].includes(capacityState)) {
       action = 'wait-capacity';
       reason = capacityWork.capacityReason;
+    } else if (capacityState === 'batch-window-wait') {
+      action = 'wait-for-batch';
+      reason = capacityWork.capacityReason;
     } else if (capacityState === 'unassigned') {
       action = 'assign-station';
       reason = capacityWork?.capacityReason || 'No kitchen station assigned';
@@ -38,7 +43,10 @@ function buildUnifiedRecommendations({ fairness = {}, capacity = {}, serviceRisk
       action = 'fairness-protected';
       reason = task.fairnessReason;
     }
-    return { ...task, baseAction, action, finalReason: reason, capacityState, stationCapacityVersion: capacityWork?.stationCapacityVersion ?? null, serviceRisk: risk?.riskType || 'on-track', serviceRiskSeverity: risk?.severity || 'on-track' };
+    return { ...task, baseAction, action, finalReason: reason, capacityState,
+      batchHoldUntilAt: capacityWork?.holdUntilAt || null, batchPlannedFireAt: capacityWork?.plannedFireAt || null,
+      batchCollectionStartedAt: capacityWork?.collectionStartedAt || null, batchTableCount: capacityWork?.tableCount || 0,
+      stationCapacityVersion: capacityWork?.stationCapacityVersion ?? null, serviceRisk: risk?.riskType || 'on-track', serviceRiskSeverity: risk?.severity || 'on-track' };
   }).sort((left, right) => {
     const priority = compareKitchenPriority(left, right);
     if (priority) return priority;
@@ -61,4 +69,3 @@ function buildUnifiedRecommendations({ fairness = {}, capacity = {}, serviceRisk
 }
 
 module.exports = { buildUnifiedRecommendations, capacityByTask };
-const { compareKitchenPriority } = require('./smart-kds-priority');

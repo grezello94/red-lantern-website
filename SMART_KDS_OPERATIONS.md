@@ -39,11 +39,27 @@ Every pending fish/seafood item produces an immediate ingredient readiness alert
 
 The server reads the active food and bar Air Menu and assigns a production family to each dish. Families cover soups, wok dishes, tandoor, fish/seafood preparations, curry, biryani, bread, cold sides, desserts and drinks. Unrecognized dishes use an explicit fallback. Admin shows family coverage and preparation suggestions so the chef can review the entire current menu.
 
-Menu-name estimates are initial estimates, not measured recipes. They distinguish cooking duration from a course's service target. The chef should save each dish's realistic minimum/typical/maximum preparation time, station, plating and handoff time, portion capacity, course dependencies, and any permitted holding time. Use the existing Kitchen performance reports to compare those settings with recorded starts and ready times. The caller does not automatically train or rewrite chef settings from historical durations.
+Menu-name estimates are initial estimates, not measured recipes. They distinguish cooking duration from a course's service target. The chef should save each dish's realistic minimum/typical/maximum preparation time, station, plating and handoff time, portion capacity, course dependencies, and any permitted holding time. Use the Kitchen performance reports and learned timing information to compare those settings with recorded starts and ready times. Learning adjusts the live forecast; it never rewrites the chef's saved profile.
 
 Saved chef profiles override inferred times. Demonstrably untouched old generic profiles gain menu-specific estimates at read time. Production profile snapshots and saved service deadlines for orders already sold remain authoritative; refreshing the screen does not move their deadlines forward. Menu suggestions never create a station or change printer routing.
 
-## Bulk orders and busy periods
+## Learning from quiet and peak service
+
+The KDS records the station's load when a cook actually starts an item and measures the elapsed time until **Mark ready**. Quiet, busy and surge samples remain separate, as do different stations, dishes, portions, quantities, styles, add-ons and recipe notes. The operational word **running** does not create a different recipe. The load panel shows how many usable samples and dishes have been recorded and how many current estimates use learning.
+
+At least five compatible samples are required before an estimate changes. The model uses recent observations from the last 30 days, rejects invalid timestamps and isolated outliers, and blends a conservative observed percentile with the configured duration. Adjustments stay between the chef's minimum duration with buffers and twice the configured maximum with buffers. With insufficient data, the configured estimate remains in use.
+
+Only actual start and ready acknowledgements qualify. Marking ready without a recorded start, an interrupted or reclassified cooking attempt, correlated shared-batch records and unknown multiple cooking waves do not teach an invented preparation time. A confirmed batch containing one independent production task can teach its exact quantity variant. Existing historical records without a captured load are not labelled quiet or busy after the fact. Saved service deadlines, chef profiles and actual kitchen states stay unchanged. A slower learned estimate can bring the preparation call forward; a faster estimate does not move an already-saved safe start later.
+
+## Cross-table batching during busy periods
+
+Bulk coordination includes matching orders arriving from different tables, as well as large individual orders. For example, two identical soups arriving within a five-minute collection window can form one cooking batch with a separate allocation for each table. Soup, fried-rice and biryani setup suggestions use a five-minute window. An explicit chef-set window is preserved. Fried rice and biryani, different soup recipes, portions, recipe notes and add-ons are not combined into the same cooking batch.
+
+The oldest order anchors the collection window. A new arrival never resets it. During quiet service, the KDS calls eligible food immediately rather than waiting for another table. During busy service, collection closes at the window or the first dish's safe start, whichever comes first; a full batch, running order or urgent work can close it sooner. The system does not add newly arrived orders to a batch that is already cooking. A single item proceeds when its safe collection period ends even if no matching order arrives.
+
+Course and service preferences still apply. A held main course stays out of a cooking batch until its prerequisite is released. A **Serve together** item can join only when the batch's cooking time fits its synchronized completion window and permitted holding time. Otherwise it forms a separate plan. The batch panel lists table allocations, course preferences and the remaining safe collection time.
+
+## Batch sizes and large individual orders
 
 Batching requires the chef to enable **Can be batched**, assign a compatibility group and set the maximum/optimal portions and waiting window. Keep incompatible dishes, portions, cooking styles, notes and add-ons in separate groups. The scheduler preserves modifier compatibility, station allocation, course holds and the earliest safe start. It does not hold an urgent dish to wait for more portions.
 

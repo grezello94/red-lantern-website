@@ -1,3 +1,5 @@
+const { compareKitchenPriority } = require('./smart-kds-priority');
+
 function asTime(value, fallback = Number.POSITIVE_INFINITY) {
   const time = value instanceof Date ? value.getTime() : new Date(value).getTime();
   return Number.isFinite(time) ? time : fallback;
@@ -110,6 +112,18 @@ function allocateStationCapacity({ stations = [], recommendations = [], batches 
   const unassigned = [];
   const capacityWait = [];
   const allocated = [];
+  const batchWindowWait = (Array.isArray(batches) ? batches : [])
+    .filter((batch) => batch.action === 'wait-for-batch')
+    .map((batch) => ({
+      workKey: batch.batchKey, kind: 'batch', stationId: batch.stationId,
+      allocations: batch.allocations || [], capacityState: 'batch-window-wait',
+      capacityReason: batch.reason || 'Collecting compatible portions before the safe start',
+      stationCapacityVersion: states.get(String(batch.stationId || ''))?.capacityVersion ?? null,
+      holdUntilAt: batch.holdUntilAt || batch.windowClosesAt || null,
+      plannedFireAt: batch.plannedFireAt || null,
+      collectionStartedAt: batch.collectionStartedAt || null,
+      tableCount: batch.tableCount || 0,
+    }));
   toCapacityWork({ recommendations, batches }).forEach((work) => {
     const station = states.get(String(work.stationId || ''));
     if (!station) {
@@ -155,6 +169,7 @@ function allocateStationCapacity({ stations = [], recommendations = [], batches 
   return {
     stationPlans,
     allocated,
+    batchWindowWait,
     capacityWait,
     unassigned,
     overCapacity: stationPlans.reduce((total, station) => total + Number(station.overCapacity || 0), 0),
@@ -163,4 +178,3 @@ function allocateStationCapacity({ stations = [], recommendations = [], batches 
 }
 
 module.exports = { allocateStationCapacity, capacityForStation, occupiedCapacityForStation, toCapacityWork };
-const { compareKitchenPriority } = require('./smart-kds-priority');
