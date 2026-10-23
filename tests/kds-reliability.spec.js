@@ -42,7 +42,7 @@ async function smartKds(page, options = {}) {
     await route.fulfill({ json: path.endsWith('/recommendations') ? snapshot : path.endsWith('/updates') ? { cursor: 0, events: [] } : { ok: true } });
   });
   await page.goto('/smart-kds.html');
-  await expect(page.locator('#live')).toHaveText(options.mode === 'shadow' ? 'Shadow recommendations' : 'Manual kitchen actions');
+  await expect(page.locator('#live')).toHaveText(options.mode === 'shadow' ? 'View only' : 'Live');
 }
 
 test('normal KDS preserves separate KOT rounds and their saved quantities', async ({ page }) => {
@@ -178,10 +178,10 @@ test('Smart KDS keeps a pending action locked after its board refreshes', async 
   const held = new Promise(resolve => { release = resolve; });
   await page.route('**/api/orders/smart-kds/actions', async route => { await held; await route.fulfill({ json: { ok: true } }); });
   const pending = page.waitForRequest('**/api/orders/smart-kds/actions');
-  await page.locator('[data-action="start"][data-task="task-a"]').click();
+  await page.locator('#board [data-action="start"][data-task="task-a"]').click();
   await pending;
   await page.evaluate(() => render());
-  try { await expect(page.locator('[data-action="start"][data-task="task-a"]')).toBeDisabled(); }
+  try { await expect(page.locator('#board [data-action="start"][data-task="task-a"]')).toBeDisabled(); }
   finally { release(); }
 });
 
@@ -231,7 +231,7 @@ test('Smart KDS tells staff to start a fired dish instead of assuming cooking al
   await smartKds(page, { tasks: [task('a', { taskState: 'fired', capacityState: 'fired' })] });
   await expect(page.locator('#board')).toContainText('Start preparation for this dish');
   await expect(page.locator('#board')).not.toContainText('Keep cooking');
-  await expect(page.locator('[data-action="start"]')).toBeEnabled();
+  await expect(page.locator('#board [data-action="start"]')).toBeEnabled();
 });
 
 test('normal KDS clears private orders after its session expires', async ({ page }) => {

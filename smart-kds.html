@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta name="theme-color" content="#ffffff" />
     <title>Red Lantern Smart KDS</title>
-    <link rel="stylesheet" href="/smart-kds-smart.css?v=20261023.1" />
+    <link rel="stylesheet" href="/smart-kds-smart.css?v=20261023.2" />
     <script src="/addons-domain.js?v=1"></script>
   </head>
   <body>
@@ -27,16 +27,21 @@
           <button type="button" data-board-status="all" aria-pressed="true">All <b>0</b></button>
           <button type="button" data-board-status="start" aria-pressed="false">Start now <b>0</b></button>
           <button type="button" data-board-status="cooking" aria-pressed="false">Cooking <b>0</b></button>
-          <button type="button" data-board-status="waiting" aria-pressed="false">Waiting <b>0</b></button>
+          <button type="button" data-board-status="waiting" aria-pressed="false">Get ready <b>0</b></button>
           <button type="button" data-board-status="ready" aria-pressed="false">Ready <b>0</b></button>
+          <button type="button" data-board-status="attention" aria-pressed="false">Needs attention <b>0</b></button>
         </nav>
-        <label class="board-search"><span class="sr-only">Search order, table or dish</span><input id="board-search" type="search" autocomplete="off" placeholder="Order, table, dish…" aria-label="Search order, table or dish" /></label>
       </div>
+      <section id="kitchen-briefing" class="next-action" aria-label="What to cook next" aria-live="polite">
+        <div class="next-action-copy"><span id="next-action-label">Do this next</span><h2 id="next-action-title">Loading kitchen…</h2><p id="next-action-context"></p></div>
+        <div class="next-action-controls"><button type="button" data-open-calls>All instructions</button></div>
+      </section>
       <div class="kitchen-pulse">
-        <button id="kitchen-briefing" class="next-call" type="button" aria-label="Open current chef instructions"><span>Next call</span><b>Loading kitchen…</b></button>
-        <button id="alerts-toggle" type="button" class="pulse-alerts">Alerts <b id="alerts-count">0</b></button>
-        <button id="batches-toggle" type="button">Bulk <b id="batches-count">0</b></button>
-        <button id="load-toggle" type="button">Kitchen load</button>
+        <label class="board-search"><span class="sr-only">Search order, table or dish</span><input id="board-search" type="search" autocomplete="off" placeholder="Find order, table, dish…" aria-label="Search order, table or dish" /></label>
+        <button id="alerts-toggle" type="button" class="pulse-alerts">Check <b id="alerts-count">0</b></button>
+        <button id="batches-toggle" type="button">Cook together <b id="batches-count">0</b></button>
+        <button id="load-toggle" type="button">Workload</button>
+        <div class="signal-legend" aria-label="Kitchen color guide"><span class="legend-green">Green: start</span><span class="legend-yellow">Yellow: wait</span><span class="legend-red">Red: check</span></div>
       </div>
       <section id="board" class="board ticket-grid" aria-label="Kitchen order tickets" aria-live="polite"></section>
       <nav id="board-pagination" class="board-pagination" aria-label="Kitchen ticket pages">
@@ -72,7 +77,7 @@
         <section id="stale-orders" class="stale-orders" hidden aria-live="polite"></section>
         <section id="summary" class="summary" aria-label="Kitchen action summary"></section>
         <p id="status" role="status">Loading kitchen recommendations…</p>
-        <p class="build-version">Kitchen board · v20261023.1</p>
+        <p class="build-version">Kitchen board · v20261023.2</p>
         <a class="normal" href="/kds">Normal KDS</a>
       </div>
     </dialog>
@@ -128,8 +133,8 @@
     </dialog>
     <script src="/staff-domain.js?v=1"></script>
     <script src="/staff-access.js?v=2"></script>
-    <script src="/smart-kds-board.js?v=20261023.1"></script>
-    <script src="/smart-kds.js?v=20261023.1"></script>
+    <script src="/smart-kds-board.js?v=20261023.2"></script>
+    <script src="/smart-kds.js?v=20261023.2"></script>
     <script src="/smart-kds-controls.js?v=4"></script>
   </body>
 </html>

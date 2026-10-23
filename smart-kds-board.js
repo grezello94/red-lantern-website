@@ -8,7 +8,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
-  const VIEWS = ['all', 'start', 'cooking', 'waiting', 'ready'];
+  const VIEWS = ['all', 'start', 'cooking', 'waiting', 'ready', 'attention'];
   const STATES = new Set(['ordered', 'held', 'eligible', 'scheduled', 'fired', 'preparing', 'ready', 'expo', 'served', 'cancelled', 'superseded']);
   const TERMINAL = new Set(['served', 'cancelled', 'superseded']);
   const PENDING = new Set(['ordered', 'eligible', 'scheduled']);
@@ -63,6 +63,12 @@
     return 'waiting';
   }
 
+  function isAttentionTask(task = {}) {
+    if (!getTaskView(task) || task.boardStateChanged) return false;
+    return task.expediter?.signal === 'red'
+      || (!task.expediter && PENDING.has(stateOf(task)) && ['critical', 'overdue'].includes(task.state));
+  }
+
   function taskPriority(task) {
     const view = getTaskView(task);
     // A capacity-blocked warning must not displace the next work that cooks
@@ -109,6 +115,8 @@
       task.orderId = String(source.orderId ?? source.order_id ?? `task:${key}`);
       task.taskState = state;
       task.quantity = quantity(source);
+      const completed = recorded?.completed_quantity ?? recorded?.completedQuantity ?? source.completedQuantity ?? source.completed_quantity;
+      if (completed != null) task.completedQuantity = Math.max(0, finite(completed, 0));
       // An acknowledgement can arrive after the scheduling snapshot. Never
       // label a recorded ready item "Start now" using its earlier advice.
       if (recorded && sourceState !== state) {
@@ -116,6 +124,7 @@
         task.boardStateChanged = true;
       }
       task.boardStatus = getTaskView(task);
+      task.boardAttention = isAttentionTask(task);
       return [task];
     }).sort(compareTasks);
   }
@@ -185,6 +194,7 @@
         earliestTarget: targets.length ? new Date(Math.min(...targets)).toISOString() : null,
         earliestStart: starts.length ? new Date(Math.min(...starts)).toISOString() : null,
         runningCount: ordered.filter((task) => task.runningOrder === true).length,
+        attentionCount: ordered.filter(isAttentionTask).length,
         totalItems: ordered.length, totalPortions: ordered.reduce((sum, task) => sum + quantity(task), 0),
       };
     }).sort((left, right) => comparePriority(left.tasks[0], right.tasks[0]) || lexical(left.orderId, right.orderId));
@@ -216,14 +226,15 @@
     const query = searchWords(options.query).split(' ').filter(Boolean);
     const view = VIEWS.includes(options.view ?? options.status) ? options.view ?? options.status : 'all';
     const matchingTasks = allTasks.filter((task) => (station === 'all' || station === '*' || String(task.stationId || '') === station) && matchesQuery(task, query));
-    const counts = { all: matchingTasks.length, start: 0, cooking: 0, waiting: 0, ready: 0 };
+    const counts = { all: matchingTasks.length, start: 0, cooking: 0, waiting: 0, ready: 0, attention: 0 };
     const orderSets = Object.fromEntries(VIEWS.map((name) => [name, new Set()]));
     matchingTasks.forEach((task) => {
       counts[task.boardStatus] += 1;
       orderSets.all.add(task.orderId);
       orderSets[task.boardStatus].add(task.orderId);
+      if (isAttentionTask(task)) { counts.attention += 1; orderSets.attention.add(task.orderId); }
     });
-    const filteredTasks = matchingTasks.filter((task) => view === 'all' || task.boardStatus === view);
+    const filteredTasks = matchingTasks.filter((task) => view === 'all' || (view === 'attention' ? isAttentionTask(task) : task.boardStatus === view));
     const orders = groupOrders(filteredTasks);
     const pageSize = Math.max(1, Math.min(100, Math.floor(finite(options.pageSize, 6))));
     const pageCount = Math.max(1, Math.ceil(orders.length / pageSize));
@@ -232,8 +243,8 @@
       orders: orders.slice((page - 1) * pageSize, page * pageSize), counts,
       taskCounts: { ...counts }, orderCounts: Object.fromEntries(VIEWS.map((name) => [name, orderSets[name].size])),
       attentionCounts: {
-        red: matchingTasks.filter((task) => task.expediter?.signal === 'red').length,
-        blocked: matchingTasks.filter((task) => task.expediter?.signal === 'red' && task.boardStatus === 'waiting').length,
+        red: counts.attention,
+        blocked: matchingTasks.filter((task) => isAttentionTask(task) && task.boardStatus === 'waiting').length,
       },
       allOrders: orderSets.all.size, totalOrders: orders.length,
       totalItems: filteredTasks.length, totalPortions: filteredTasks.reduce((sum, task) => sum + quantity(task), 0),
@@ -242,5 +253,77 @@
     };
   }
 
-  return { buildBoardView, buildKitchenBoard: buildBoardView, normalizeTasks, getTaskView, compareTasks };
+  function remainingPortions(task) {
+    return Math.max(0, quantity(task) - Math.max(0, finite(task.completedQuantity ?? task.completed_quantity, 0)));
+  }
+
+  function canStartTask(task, current) {
+    const state = stateOf(task);
+    if (isHeld(task) || !remainingPortions(task)) return false;
+    if (state === 'fired') return true;
+    if (!PENDING.has(state) || task.capacityState !== 'allocated' || getTaskView(task) !== 'start') return false;
+    if (task.expediter?.phase === 'blocked') return false;
+    const forecast = time(task.expediter?.startAt);
+    return !Number.isFinite(forecast) || forecast <= current;
+  }
+
+  function buildKitchenFocus(options = {}) {
+    // Focus is independent of the current tab and pagination. The caller may
+    // scope its input to a station; every task remains on the normal board.
+    const board = buildBoardView({ ...options, view: 'all', status: 'all', page: 1 });
+    const tasks = board.matchingTasks;
+    const byKey = new Map(tasks.map((task) => [task.taskKey, task]));
+    const current = Number.isFinite(time(options.now)) ? time(options.now) : Date.now();
+    const membersOfBatch = new Set();
+    (Array.isArray(options.batches) ? options.batches : []).forEach((batch) => {
+      if (!batch?.batchId || !['fire-batch', 'wait-for-batch'].includes(batch.action)) return;
+      (batch.allocations || []).forEach((allocation) => {
+        if (PENDING.has(stateOf(byKey.get(keyOf(allocation))))) membersOfBatch.add(keyOf(allocation));
+      });
+    });
+    const candidates = [];
+    board.matchingBatches.forEach((batch) => {
+      if (!batch.batchId || batch.action !== 'fire-batch') return;
+      const members = batch.taskKeys.map((key) => byKey.get(key)).sort(compareTasks);
+      if (!members.every((task) => canStartTask(task, current) && remainingPortions(task) === quantity(task))) return;
+      const release = time(batch.earliestStartAt);
+      if (Number.isFinite(release) && release > current) return;
+      candidates.push({ kind: 'batch', batchId: batch.batchId, taskKeys: batch.taskKeys,
+        batch, tasks: members, anchor: members[0], status: 'start', action: 'start-batch',
+        remainingPortions: members.reduce((sum, task) => sum + remainingPortions(task), 0),
+        reason: 'Approved batch is released and all of its station allocations are available' });
+    });
+    tasks.forEach((task) => {
+      if (!canStartTask(task, current) || (PENDING.has(stateOf(task)) && membersOfBatch.has(task.taskKey))) return;
+      candidates.push({ kind: 'task', taskKey: task.taskKey, taskKeys: [task.taskKey], task, anchor: task,
+        status: stateOf(task) === 'fired' ? 'confirm-start' : 'start', action: 'start', remainingPortions: remainingPortions(task),
+        reason: stateOf(task) === 'fired' ? 'Confirm preparation for this already-fired item' : 'Station allocation and the preparation window permit this start' });
+    });
+    candidates.sort((left, right) => compareTasks(left.anchor, right.anchor) || lexical(left.batchId || left.taskKey, right.batchId || right.taskKey));
+    let chosen = candidates[0];
+    const preferred = candidates.find((candidate) => candidate.taskKeys.includes(String(options.preferredTaskKey || '')));
+    // Retain an existing focus only for an exact priority/rank tie. A newly
+    // urgent or higher-ranked item always receives the next focus instead.
+    if (chosen && preferred && !comparePriority(chosen.anchor, preferred.anchor)) chosen = preferred;
+    if (!chosen && tasks.length) {
+      const fallback = [...tasks].sort((left, right) => Number(isAttentionTask(right)) - Number(isAttentionTask(left)) || compareTasks(left, right))[0];
+      const status = getTaskView(fallback);
+      const reason = status === 'cooking'
+        ? fallback.expediter?.reason || 'Preparation is recorded; confirm Ready when the food is finished'
+        : status === 'ready' ? 'Food is recorded ready; collect it for expo or service'
+          : isHeld(fallback) ? fallback.pacingReason || 'Cooking remains on hold until an authorised release'
+            : membersOfBatch.has(fallback.taskKey) ? 'Wait for the complete approved batch and its station capacity'
+              : fallback.capacityState !== 'allocated' ? 'Expo must clear or assign station capacity before this item starts'
+                : 'Wait for the planned preparation window or a refreshed kitchen allocation';
+      chosen = { kind: 'task', taskKey: fallback.taskKey, taskKeys: [fallback.taskKey], task: fallback,
+        status: status === 'start' ? 'waiting' : status, action: null, remainingPortions: status === 'ready' ? 0 : remainingPortions(fallback), reason };
+    }
+    const { anchor, ...result } = chosen || { kind: 'none', taskKeys: [], status: 'none', action: null, remainingPortions: 0,
+      reason: 'No active kitchen work for this display' };
+    return { ...result, attentionCount: board.counts.attention,
+      blockedTasks: board.attentionCounts.blocked,
+      totalRemainingPortions: tasks.filter((task) => task.boardStatus !== 'ready').reduce((sum, task) => sum + remainingPortions(task), 0) };
+  }
+
+  return { buildBoardView, buildKitchenBoard: buildBoardView, buildKitchenFocus, normalizeTasks, getTaskView, isAttentionTask, compareTasks };
 });

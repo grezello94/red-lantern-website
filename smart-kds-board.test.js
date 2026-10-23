@@ -1,6 +1,6 @@
 const fs = require('node:fs');
 const vm = require('node:vm');
-const { buildBoardView, buildKitchenBoard, normalizeTasks, getTaskView } = require('./smart-kds-board');
+const { buildBoardView, buildKitchenBoard, normalizeTasks, getTaskView, buildKitchenFocus } = require('./smart-kds-board');
 
 const task = (key, changes = {}) => ({
   taskKey: key, orderId: key.split(':')[0], orderNumber: 12, mode: 'table', tableArea: 'Garden', tableNumber: 4,
@@ -9,6 +9,46 @@ const task = (key, changes = {}) => ({
   latestSafeStartAt: '2026-10-22T12:00:00.000Z', targetServeAt: '2026-10-22T12:20:00.000Z',
   orderedAt: '2026-10-22T11:55:00.000Z', expediter: { signal: 'green', phase: 'start', instruction: 'Start Fish Fry now.' },
   ...changes,
+});
+
+describe('Clear kitchen focus and overlapping attention view', () => {
+  const { buildKitchenFocus } = require('./smart-kds-board');
+  const current = '2026-10-23T12:00:00.000Z';
+  const item = (key, changes = {}) => ({ taskKey: key, orderId: key, quantity: 1, stationId: 'wok',
+    taskState: 'ordered', capacityState: 'allocated', finalRank: 1,
+    action: 'start-now', expediter: { signal: 'green', phase: 'start', startAt: current }, ...changes });
+
+  test('actionable work stays ahead of numerous impossible red starts, with no loss in attention filtering', () => {
+    const blocked = Array.from({ length: 30 }, (_, index) => item(`blocked-${index}`, { finalRank: index + 1,
+      capacityState: 'capacity-wait', expediter: { signal: 'red', phase: 'blocked' } }));
+    const recommendations = [...blocked, item('cook', { finalRank: 40 })];
+    expect(buildKitchenFocus({ recommendations, now: current })).toMatchObject({ taskKey: 'cook', action: 'start', attentionCount: 30 });
+    const view = buildBoardView({ recommendations, view: 'attention' });
+    expect(view.totalItems).toBe(30);
+    expect(view.counts.all).toBe(31);
+    expect(view.pageCount).toBe(5);
+  });
+
+  test('newer Ready and Held records suppress stale starts and stale red attention', () => {
+    const recommendations = [item('done', { expediter: { signal: 'red', phase: 'missed-start' } }), item('held')];
+    const taskStates = [{ task_id: 'done', task_state: 'ready' }, { task_id: 'held', task_state: 'held' }];
+    expect(buildKitchenFocus({ recommendations, taskStates, now: current }).action).toBeNull();
+    expect(buildBoardView({ recommendations, taskStates, view: 'attention' }).totalItems).toBe(0);
+  });
+
+  test('a valid released batch replaces its members and waiting batches never yield an individual Start', () => {
+    const recommendations = [item('a'), item('b', { finalRank: 2 })];
+    const batch = { batchId: 'rice', stationId: 'wok', action: 'fire-batch', allocations: recommendations.map(task => ({ taskKey: task.taskKey, quantity: 1 })) };
+    expect(buildKitchenFocus({ recommendations, batches: [batch], now: current })).toMatchObject({ kind: 'batch', action: 'start-batch', batchId: 'rice', remainingPortions: 2 });
+    expect(buildKitchenFocus({ recommendations, batches: [{ ...batch, action: 'wait-for-batch' }], now: current }).action).toBeNull();
+  });
+
+  test('a future synchronized start is not offered early, and a higher priority arrival replaces prior focus', () => {
+    const future = item('future', { expediter: { signal: 'green', phase: 'start', startAt: '2026-10-23T12:10:00.000Z' } });
+    expect(buildKitchenFocus({ recommendations: [future], now: current }).action).toBeNull();
+    const recommendations = [item('old', { finalRank: 2 }), item('urgent', { finalRank: 1 })];
+    expect(buildKitchenFocus({ recommendations, now: current, preferredTaskKey: 'old' }).taskKey).toBe('urgent');
+  });
 });
 const freeze = (value) => {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
@@ -38,7 +78,7 @@ describe('tablet kitchen board model', () => {
     expect(view.totalPortions).toBe(3);
     expect(view.orders[0].tasks[0]).toMatchObject({ taskState: 'ready', boardStatus: 'ready', boardStateChanged: true });
     expect(view.orders[0].tasks[0].expediter).toBeUndefined();
-    expect(view.counts).toEqual({ all: 1, start: 0, cooking: 0, waiting: 0, ready: 1 });
+    expect(view.counts).toEqual({ all: 1, start: 0, cooking: 0, waiting: 0, ready: 1, attention: 0 });
   });
 
   test('uses updated time when recorded versions tie and never resurrects a terminal task', () => {
@@ -63,7 +103,7 @@ describe('tablet kitchen board model', () => {
     ]);
     const view = buildBoardView({ recommendations, pageSize: 6 });
     expect(view.orders.slice(0, 4).map((order) => order.orderId)).toEqual(['start-later-deadline', 'start-earlier-deadline', 'fired', 'cooking']);
-    expect(view.counts).toEqual({ all: 17, start: 3, cooking: 1, waiting: 12, ready: 1 });
+    expect(view.counts).toEqual({ all: 17, start: 3, cooking: 1, waiting: 12, ready: 1, attention: 12 });
     expect(view.attentionCounts.blocked).toBe(12);
   });
 
@@ -123,8 +163,8 @@ describe('tablet kitchen board model', () => {
     const all = buildBoardView({ recommendations });
     expect(all.totalOrders).toBe(1);
     expect(all.orders[0].tasks).toHaveLength(5);
-    expect(all.counts).toEqual({ all: 5, start: 1, cooking: 1, waiting: 1, ready: 2 });
-    expect(all.orderCounts).toEqual({ all: 1, start: 1, cooking: 1, waiting: 1, ready: 1 });
+    expect(all.counts).toEqual({ all: 5, start: 1, cooking: 1, waiting: 1, ready: 2, attention: 0 });
+    expect(all.orderCounts).toEqual({ all: 1, start: 1, cooking: 1, waiting: 1, ready: 1, attention: 0 });
     for (const view of ['start', 'cooking', 'waiting', 'ready']) {
       const filtered = buildBoardView({ recommendations, view });
       expect(filtered.totalItems).toBe(all.counts[view]);
@@ -160,7 +200,7 @@ describe('tablet kitchen board model', () => {
   test('station and search scope full tab counts before selecting a tab', () => {
     const recommendations = [task('one:fish'), task('two:fish', { taskState: 'preparing' }), task('three:rice', { stationId: 'wok', itemName: 'Rice' })];
     const result = buildBoardView({ recommendations, stationId: 'fish', query: 'fish', view: 'cooking' });
-    expect(result.counts).toEqual({ all: 2, start: 1, cooking: 1, waiting: 0, ready: 0 });
+    expect(result.counts).toEqual({ all: 2, start: 1, cooking: 1, waiting: 0, ready: 0, attention: 0 });
     expect(result.totalOrders).toBe(1);
     expect(result.allOrders).toBe(2);
     expect(result.orders[0].orderId).toBe('two');

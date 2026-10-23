@@ -60,7 +60,7 @@ async function openKitchen(page, initial, options = {}) {
       json: path.endsWith('/recommendations') ? state.snapshot : { cursor: 0, events: [] } });
   });
   await page.goto('/smart-kds.html');
-  await expect(page.locator('#live')).toHaveText(initial.schedulingMode === 'manual' ? 'Manual kitchen actions' : 'Shadow recommendations');
+  await expect(page.locator('#live')).toHaveText(initial.schedulingMode === 'manual' ? 'Live' : 'View only');
   return state;
 }
 
@@ -166,7 +166,7 @@ test('safe bulk call preserves portions and table allocations with one start act
   await expect(page.locator('.batch-card')).toContainText('Start 5 portions together');
   await expect(page.locator('.batch-orders')).toContainText('AC 01');
   await expect(page.locator('.batch-orders')).toContainText('AC 02');
-  await expect(page.locator('[data-batch-action]')).toHaveCount(1);
+  await expect(page.locator('#batch-list [data-batch-action]')).toHaveCount(1);
   await expect(page.locator('#board [data-task-card]')).toHaveCount(2);
   state.snapshot.taskStates = [{ task_id: 'task-b', task_state: 'served' }];
   await page.evaluate(() => load());
@@ -182,13 +182,16 @@ test('queued bulk quantities remain visible and capacity locks survive a control
   const state = await openKitchen(page, initial);
   await expect(page.locator('.batch-card')).toHaveAttribute('data-signal', 'yellow');
   await expect(page.locator('.batch-card')).toContainText('2 portions together');
-  await expect(page.locator('[data-batch-action]')).toBeDisabled();
+  await expect(page.locator('#batch-list [data-batch-action]')).toBeDisabled();
+  await expect(page.locator('#next-action-button:not(:disabled)')).toHaveCount(0);
   await page.evaluate(() => syncKitchenPending());
-  await expect(page.locator('[data-batch-action]')).toBeDisabled();
+  await expect(page.locator('#batch-list [data-batch-action]')).toBeDisabled();
+  await expect(page.locator('#next-action-button:not(:disabled)')).toHaveCount(0);
   state.snapshot.recommendations[0].expediter.signal = 'red';
   await page.evaluate(() => load());
   await expect(page.locator('.batch-card')).toHaveAttribute('data-signal', 'red');
-  await expect(page.locator('[data-batch-action]')).toBeDisabled();
+  await expect(page.locator('#batch-list [data-batch-action]')).toBeDisabled();
+  await expect(page.locator('#next-action-button:not(:disabled)')).toHaveCount(0);
 });
 
 test('forecast ready time stays separate from service target and yellow never commands an immediate start', async ({ page }) => {
@@ -357,7 +360,8 @@ test('batch allocations expose individual Mark ready controls and lock batch sta
   try {
     await page.evaluate(() => { render(); syncKitchenPending(); document.querySelector('[data-action="ready"][data-task="task-a"]').click(); });
     await expect(page.locator('#board [data-action="ready"][data-task="task-a"]')).toBeDisabled();
-    await expect(page.locator('[data-batch-action]')).toBeDisabled();
+    await expect(page.locator('#batch-list [data-batch-action]')).toBeDisabled();
+    await expect(page.locator('#next-action-button:not(:disabled)')).toHaveCount(0);
     await expect(page.locator('#board [data-action="ready"][data-task="task-b"]')).toBeEnabled();
     expect(actions).toEqual([{ action: 'ready', taskKey: 'task-a', orderId: 'a', stationId: 'wok' }]);
   } finally { release(); }
@@ -401,7 +405,8 @@ test('running top-ups retain their badge and escaped notes through start and rea
   await expect(row.locator('img')).toHaveCount(0);
   expect(await page.evaluate(() => window.kdsUnsafeOrderNote)).toBeUndefined();
   await expect(page.locator('[data-order-ticket][data-order="running"] .ticket-running-cue')).toHaveText('RUN 1');
-  await expect(page.locator('#kitchen-briefing')).toContainText(instruction);
+  await expect(page.locator('#kitchen-briefing')).toContainText('Running top-up');
+  await expect(page.locator('#caller-calls-list')).toContainText(instruction);
   await row.locator('[data-action="start"]').click();
   await expect(row).toHaveAttribute('data-state', 'preparing');
   await expect(row.locator('.running-order-badge')).toBeVisible();
@@ -430,7 +435,8 @@ test('blocked running top-ups stay behind actionable starts and ahead of ordinar
   await expect(row.locator('[data-action="start"]')).toBeDisabled();
   await expect(row.locator('[data-action="ready"]')).toBeEnabled();
   await expect(row.locator('.item-note')).toHaveText('Note: rUnNiNg');
-  await expect(page.locator('#kitchen-briefing')).toContainText('Start the allocated Fried Rice now.');
+  await expect(page.locator('#kitchen-briefing')).toHaveAttribute('data-task', 'task-start');
+  await expect(page.locator('#next-action-button')).toBeEnabled();
   await expect(page.locator('#caller-calls-list')).toContainText(blockedInstruction);
 });
 
@@ -479,11 +485,13 @@ test('cross-table soup batches show every allocation and the earliest safe group
   await expect(page.locator('.batch-course-context').first()).toContainText('soup · course wise');
   await expect(page.locator('.batch-window')).toHaveAttribute('data-hold-until', close);
   await expect(page.locator('.batch-window')).toContainText('2 min remaining');
-  await expect(page.locator('[data-batch-action]')).toBeDisabled();
+  await expect(page.locator('#batch-list [data-batch-action]')).toBeDisabled();
+  await expect(page.locator('#next-action-button:not(:disabled)')).toHaveCount(0);
   state.snapshot.batches[0].holdUntilAt = new Date(Date.now() - 60_000).toISOString();
   await page.evaluate(() => load());
   await expect(page.locator('.batch-window')).toContainText('Grouping window reached');
-  await expect(page.locator('[data-batch-action]')).toBeDisabled();
+  await expect(page.locator('#batch-list [data-batch-action]')).toBeDisabled();
+  await expect(page.locator('#next-action-button:not(:disabled)')).toHaveCount(0);
   expect(state.actions).toEqual([]);
 });
 

@@ -45,23 +45,25 @@ let boardQuery = '';
 let boardPage = 1;
 const boardPageSize = 6;
 let lastBoardView = null;
+let lastKitchenFocus = null;
 const Addons = window.RedLanternAddons;
 const pendingKitchenActions = new Set();
 const kitchenActionKey = (orderId, taskKey) => JSON.stringify([String(orderId), String(taskKey)]);
-const kitchenCanAct = () => data.schedulingMode === 'manual' && (!window.employeeCan || window.employeeCan('updateKitchen'));
+const kitchenHasPermission = () => !window.employeeCan || window.employeeCan('updateKitchen');
+const kitchenCanAct = () => kitchenSnapshotFresh && data.schedulingMode === 'manual' && kitchenHasPermission();
 const taskIsPending = (task) => pendingKitchenActions.has(kitchenActionKey(task.orderId, task.taskKey));
 const taskCanMarkReady = state => ['ordered', 'eligible', 'scheduled', 'fired', 'preparing'].includes(state);
 const taskHasStation = task => Boolean(String(task?.stationId || '').trim());
 let timelineSequence = 0;
 function syncKitchenPending() {
   const states = taskStateMap();
-  document.querySelectorAll('#board button[data-task][data-order], #batch-list button[data-task][data-order]').forEach(button => {
+  document.querySelectorAll('#board button[data-task][data-order], #batch-list button[data-task][data-order], #kitchen-briefing button[data-task][data-order]').forEach(button => {
     const task = (data.recommendations || []).find(entry => String(entry.taskKey) === String(button.dataset.task) && String(entry.orderId) === String(button.dataset.order));
     const readyUnavailable = button.hasAttribute('data-ready-control') && (!task || !taskHasStation(task) || !taskCanMarkReady(states.get(task.taskKey) || task.taskState || 'ordered'));
     const startUnavailable = button.hasAttribute('data-start-control') && (!task || !taskStartAllowed(task, states.get(task.taskKey) || task.taskState || 'ordered'));
     button.disabled = !kitchenCanAct() || readyUnavailable || startUnavailable || pendingKitchenActions.has(kitchenActionKey(button.dataset.order, button.dataset.task));
   });
-  document.querySelectorAll('#batch-list [data-batch-action]').forEach(button => {
+  document.querySelectorAll('#batch-list [data-batch-action], #kitchen-briefing [data-batch-action]').forEach(button => {
     const batch = (data.batches || []).find(entry => String(entry.batchId) === String(button.dataset.batch));
     button.disabled = !kitchenCanAct() || !batchHasCapacity(batch, data.recommendations || []) || batchIsPending(batch);
   });
@@ -257,12 +259,14 @@ function markReadyControl(task, state, primary = false) {
 function renderKitchenModeNotice() {
   const root = $('#kitchen-mode-notice');
   if (!root) return;
-  const mode = !data.schedulingMode ? 'loading' : data.schedulingMode !== 'manual' ? 'shadow' : !kitchenCanAct() ? 'readonly' : 'manual';
+  const mode = !data.schedulingMode ? 'loading' : data.schedulingMode !== 'manual' ? 'shadow' : !kitchenSnapshotFresh ? 'stale' : !kitchenHasPermission() ? 'readonly' : 'manual';
   root.hidden = ['loading', 'manual'].includes(mode);
   if (root.dataset.mode === mode) return;
   root.dataset.mode = mode;
   root.innerHTML = mode === 'shadow'
     ? '<b>Shadow mode · kitchen buttons are view only</b><p>To record preparation and ready items, an administrator must enable Manual kitchen actions in <a href="/admin#tab-smart-kds" data-kds-setup-link>Admin → Smart KDS → Setup</a>.</p>'
+    : mode === 'stale'
+      ? '<b>Reconnecting · last kitchen board</b><p>Actions resume when the current queue is confirmed. Food already cooking remains on screen.</p>'
     : mode === 'readonly'
       ? '<b>View only · your staff account cannot update kitchen items</b><p>Ask an administrator to enable your Update kitchen permission. Kitchen mode is managed in <a href="/admin#tab-smart-kds" data-kds-setup-link>Admin → Smart KDS → Setup</a>.</p>'
       : '';
@@ -301,11 +305,11 @@ function taskCard(task, state) {
     : state === 'preparing' ? markReadyControl(task, state, true)
     : ['ready', 'expo'].includes(state) ? `<button type="button" class="primary ${state === 'ready' ? 'expo' : 'serve'}" data-action="${state === 'ready' ? 'expo' : 'serve'}" data-task="${esc(task.taskKey)}" data-order="${esc(task.orderId)}" data-station="${esc(task.stationId)}" ${!kitchenCanAct() || taskIsPending(task) ? 'disabled' : ''}>${state === 'ready' ? 'Send to expo' : 'Mark served'}</button>`
     : '<button type="button" class="held-control" disabled>Held</button>';
-  return `<article class="card kds-item signal-${signal}" data-task-card data-task="${esc(task.taskKey)}" data-order="${esc(task.orderId)}" data-state="${esc(state)}" data-status="${esc(status)}" data-signal="${signal}" data-running-order="${task.runningOrder === true}">
+  return `<article class="card kds-item signal-${signal}" data-task-card data-task="${esc(task.taskKey)}" data-order="${esc(task.orderId)}" data-state="${esc(state)}" data-status="${esc(status)}" data-signal="${signal}" data-running-order="${task.runningOrder === true}" data-next="${lastKitchenFocus?.taskKeys?.includes(task.taskKey) === true}">
     <div class="item-heading"><b><span class="item-quantity">${esc(task.quantity)}×</span> ${esc(task.itemName)}</b><span class="item-status">${esc(label)}</span></div>
     ${task.runningOrder === true ? `<span class="running-order-badge" title="${esc(task.runningOrderReason || 'Priority top-up for a customer who is already eating.')}">RUNNING · Priority top-up</span>` : ''}
     ${extras ? `<p class="item-note">${esc(extras)}</p>` : ''}
-    <div class="item-bottom"><div class="item-times task-schedule"><span class="item-station">${esc(stationLabel(task.stationId))}</span>${target ? `<span>Due ${esc(target)}</span>` : ''}${forecast ? `<span class="ready-by">Est. ready ${esc(forecast)}</span>` : ''}${status === 'waiting' && start ? `<span>Start ${esc(start)}</span>` : ''}${Number(task.expediter?.delayMinutes) > 0 ? `<span class="forecast-delay">+${Math.ceil(Number(task.expediter.delayMinutes))} min late</span>` : ''}${learnedTimingLabel(task)}</div><div class="actions">${controls}</div></div>
+    <div class="item-bottom"><div class="item-times task-schedule">${status === 'waiting' && start ? `<span>Start ${esc(start)}</span>` : forecast ? `<span class="ready-by">Est. ready ${esc(forecast)}</span>` : `<span>${esc(label)}</span>`}${Number(task.expediter?.delayMinutes) > 0 ? `<span class="forecast-delay">+${Math.ceil(Number(task.expediter.delayMinutes))} min late</span>` : ''}<span class="item-detail item-secondary-times">${esc(stationLabel(task.stationId))}${target ? ` · Due ${esc(target)}` : ''}${forecast && status === 'waiting' ? `<span class="ready-by"> · Est. ready ${esc(forecast)}</span>` : ''}${learnedTimingLabel(task)}</span></div><div class="actions">${controls}</div></div>
     ${task.expediter?.prepAlert ? `<p class="ingredient-alert" title="${esc(task.expediter.prepAlert)}"><b>Prep alert</b> ${esc(task.expediter.prepAlert)}</p>` : ''}
     ${taskCanMarkReady(state) && !taskHasStation(task) ? '<p class="station-required">Assign a kitchen station before marking this item ready.</p>' : ''}
     <div class="item-detail"><p class="task-command">${esc(task.expediter?.instruction || kitchenCommand(task, state))}</p>${task.expediter?.reason ? `<p class="expediter-reason">${esc(task.expediter.reason)}</p>` : ''}<button class="secondary" type="button" data-timeline-order="${esc(task.orderId)}">View timeline</button></div>
@@ -532,12 +536,52 @@ function syncKitchenCaller(expediter) {
 }
 function renderKitchenBriefing(tasks, states, calls) {
   const root = $('#kitchen-briefing');
-  const next = calls[0];
-  root.dataset.signal = next?.signal || 'neutral';
-  root.innerHTML = `<span>${next ? 'NEXT CALL' : 'KITCHEN'}</span><b>${esc(next?.instruction || (tasks.length ? 'Follow each item’s status and confirm when finished.' : 'No current kitchen work.'))}</b><small>${calls.length ? `${calls.length} calls ›` : ''}</small>`;
+  const focus = window.RedLanternKdsBoard.buildKitchenFocus({ recommendations: tasks,
+    taskStates: data.taskStates || [], batches: data.batches || [], preferredTaskKey: lastKitchenFocus?.taskKeys?.[0] });
+  lastKitchenFocus = focus;
+  const task = focus.task || focus.tasks?.[0];
+  const scope = selectedStation === 'all' ? 'All stations' : stationLabel(selectedStation);
+  let label = 'Kitchen clear', heading = 'No orders waiting', context = 'New orders will appear here.', signal = 'neutral', control = '';
+  if (task) {
+    const destination = focus.kind === 'batch'
+      ? focus.batch.allocations.map(item => `${taskLocation({ ...task, ...item })}: ${item.quantity}×`).join(' · ')
+      : `${taskLocation(task)} · Order #${String(task.orderNumber || '—').padStart(2, '0')}`;
+    const separateNote = task.orderNote && task.orderNote !== task.note ? `Round note: ${task.orderNote}` : '';
+    const recipe = [task.portion, task.style, Addons.modifierText(task.modifiers), task.note ? `Note: ${task.note}` : '', separateNote].filter(Boolean).join(' · ');
+    context = [destination, recipe].filter(Boolean).join(' · ');
+    signal = taskSignal(task, task.taskState || 'ordered');
+    const dish = `${focus.remainingPortions || task.quantity}× ${task.itemName}`;
+    if (focus.action === 'start-batch') {
+      label = 'Cook together now'; heading = `Prepare ${dish}`;
+      control = `<button id="next-action-button" type="button" data-batch-action data-batch="${esc(focus.batchId)}" ${!kitchenCanAct() || batchIsPending(focus.batch) ? 'disabled' : ''}>Start batch</button>`;
+    } else if (focus.action === 'start') {
+      label = task.runningOrder ? 'Running top-up · start now' : focus.status === 'confirm-start' ? 'Confirm preparation' : 'Do this next · start now';
+      heading = `Prepare ${dish}`;
+      control = `<button id="next-action-button" class="start-control" data-start-control type="button" data-action="start" data-task="${esc(task.taskKey)}" data-order="${esc(task.orderId)}" data-station="${esc(task.stationId)}" ${!kitchenCanAct() || taskIsPending(task) ? 'disabled' : ''}>${focus.status === 'confirm-start' ? 'Confirm start' : 'Start cooking'}</button>`;
+    } else {
+      const prep = calls.find(call => call.type === 'prep' && call.taskKeys?.includes(task.taskKey));
+      const state = task.taskState || 'ordered';
+      const red = signal === 'red';
+      label = red ? 'Needs attention · check now' : prep ? 'Get ingredients ready' : focus.status === 'ready' ? 'Ready for collection' : focus.status === 'cooking' ? 'Cooking in progress' : 'Get ready · wait to start';
+      heading = `${red ? 'Check' : prep ? 'Prepare ingredients for' : focus.status === 'ready' ? 'Collect' : focus.status === 'cooking' ? 'Cooking' : 'Next'} ${dish}`;
+      const explanation = prep?.instruction || task.expediter?.reason || focus.reason;
+      context += explanation ? ` · ${explanation}` : '';
+      if (focus.status === 'waiting' && task.expediter?.startAt && !['held'].includes(state)) context += ` · Planned start ${kitchenTime(task.expediter.startAt)}`;
+    }
+  } else if (tasks.length) {
+    label = 'Review the queue'; heading = 'Follow the item instructions'; context = 'Check the current cooking and waiting items below.';
+  }
+  if (!kitchenSnapshotFresh && data.schedulingMode) {
+    label = 'Reconnecting'; heading = 'Checking the current kitchen queue';
+    context = 'Last board is retained. Actions resume with live confirmation.'; signal = 'yellow';
+  }
+  root.dataset.signal = signal;
+  root.dataset.task = task?.taskKey || '';
+  root.innerHTML = `<div class="next-action-copy"><span id="next-action-label">${esc(label)} <small>· ${esc(scope)} · all orders</small></span><h2 id="next-action-title">${esc(heading)}</h2><p id="next-action-context">${esc(context)}</p></div><div class="next-action-controls">${control}<button type="button" data-open-calls>All instructions${calls.length ? ` (${calls.length})` : ''}</button></div>`;
   const shown = calls.slice(0, 8);
   $('#caller-calls-list').innerHTML = `<p class="drawer-intro">${calls.length ? `Showing the next ${shown.length} of ${calls.length} calls. All orders remain on the board.` : 'No current cooking instruction.'}</p><ol class="briefing-list">${shown.map((call, index) => `<li class="signal-${['green', 'yellow', 'red', 'neutral'].includes(call.signal) ? call.signal : 'neutral'}" data-call-id="${esc(call.id)}"><span>${index + 1}</span><div><small>${esc(`${stationLabel(call.stationId)} · ${signalLabel(call.signal)}`)}</small><b>${esc(call.instruction)}</b><p>${call.startAt ? `Start ${esc(kitchenTime(call.startAt))}` : ''}${call.readyAt ? ` · est. ready ${esc(kitchenTime(call.readyAt))}` : ''}</p></div></li>`).join('')}</ol>`;
 }
+
 function groupSection(group, tasks, states) {
   const labels = {
     now: ['🔥 Make now', 'Start these dishes first.'],
@@ -585,7 +629,7 @@ function renderStationFilter() {
       });
   });
   if (selectedStation !== 'all' && !known.has(selectedStation)) selectedStation = 'all';
-  select.innerHTML = `<option value="all">Global expediter · all stations</option>${[...known.values()].map((station) => `<option value="${esc(station.id)}">${esc(station.name || station.id)}${station.enabled === false ? ' · unavailable' : ''}</option>`).join('')}`;
+  select.innerHTML = `<option value="all">All kitchen stations</option>${[...known.values()].map((station) => `<option value="${esc(station.id)}">${esc(station.name || station.id)}${station.enabled === false ? ' · unavailable' : ''}</option>`).join('')}`;
   select.value = selectedStation;
   $('#display-mode-copy').textContent =
     selectedStation === 'all'
@@ -623,7 +667,7 @@ function render() {
   document.querySelectorAll('[data-order-ticket]').forEach(ticket => { ticket.querySelector('.ticket-items').scrollTop = scrollPositions.get(ticket.dataset.order) || 0; });
   document.querySelectorAll('[data-board-status]').forEach(button => {
     button.setAttribute('aria-pressed', String(button.dataset.boardStatus === selectedBoardStatus));
-    const label = { all: 'All', start: 'Start now', cooking: 'Cooking', waiting: 'Waiting', ready: 'Ready' }[button.dataset.boardStatus];
+    const label = { all: 'All', start: 'Start now', cooking: 'Cooking', waiting: 'Get ready', ready: 'Ready', attention: 'Needs attention' }[button.dataset.boardStatus];
     button.innerHTML = `${label} <b>${Number(view.counts[button.dataset.boardStatus] || 0)}</b>`;
   });
   $('#board-total').innerHTML = `<b>${view.totalOrders}</b> orders · ${view.totalItems} items${view.totalOrders ? ` <span>· showing ${(view.page - 1) * view.pageSize + 1}–${Math.min(view.page * view.pageSize, view.totalOrders)}</span>` : ''}`;
@@ -640,7 +684,7 @@ function render() {
   $('#batches-count').textContent = String(batches.length);
   $('#batch-list').innerHTML = batches.length ? batches.map(batch => batchCard(batch, tasks, expediter.calls)).join('') : '<p class="drawer-intro">No approved batches at this station.</p><p class="drawer-intro">Enable compatible soup/rice batches and set portions per batch in <a href="/admin#tab-smart-kds" data-kds-setup-link data-kds-panel="profiles">Smart KDS menu setup</a>.</p>';
   const load = data.expediter?.load;
-  $('#load-toggle').textContent = load ? `${load.label || 'Kitchen'} · ${Number(load.queuedPortions || 0)} queued` : `${tasks.length} live items`;
+  $('#load-toggle').textContent = load ? `Workload · ${Number(load.queuedPortions || 0)} queued` : `${tasks.length} live items`;
   $('#summary').innerHTML = `<p>${view.allOrders || view.totalOrders} orders at this display · ${view.counts.all} live items</p>`;
   syncKitchenPending();
   syncKitchenCaller(expediter);
@@ -675,7 +719,8 @@ async function refreshSmartKds() {
     if (operatorInput && !operatorInput.value)
       operatorInput.value = localStorage.getItem('redLanternKitchenOperator') || '';
     const manual = payload.schedulingMode === 'manual';
-    $('#live').textContent = manual ? 'Manual kitchen actions' : 'Shadow recommendations';
+    $('#live').textContent = manual ? 'Live' : 'View only';
+    $('#live').title = manual ? 'Live kitchen · confirm each start and completion' : 'Shadow recommendations · kitchen actions are view only';
     $('#live').className = `live-state ${manual ? 'manual' : 'shadow'}`;
     const snapshotCursor = Number(payload.realtimeCursor);
     if (Number.isInteger(snapshotCursor) && snapshotCursor >= 0)
@@ -701,6 +746,7 @@ async function refreshSmartKds() {
         document.querySelectorAll('dialog[open]').forEach(dialog => dialog.close());
         render();
       }
+      render();
       syncKitchenCallerControls();
       $('#live').textContent = denied ? 'Sign in to view kitchen work' : 'Connection problem · last board';
       $('#live').className = 'live-state stale';
@@ -797,10 +843,7 @@ document.addEventListener('click', async (event) => {
   try {
     let payload;
     if (batch) {
-      const reason = String(window.prompt('Why are you starting this batch?') || '').trim();
-      if (reason.length < 3) {
-        return;
-      }
+      const reason = 'Kitchen confirmed the compatible cooking batch';
       payload = await smartKdsJson(
         `/api/orders/smart-kds/batches/${encodeURIComponent(batch.dataset.batch)}/start`,
         {
@@ -859,11 +902,12 @@ $('#board-status').addEventListener('click', event => {
 });
 $('#board-prev').addEventListener('click', () => { if (boardPage > 1) { boardPage -= 1; render(); } });
 $('#board-next').addEventListener('click', () => { if (boardPage < (lastBoardView?.pageCount || 1)) { boardPage += 1; render(); } });
-const kitchenDrawers = { 'kitchen-briefing': 'calls-dialog', 'alerts-toggle': 'alerts-dialog', 'batches-toggle': 'batches-dialog', 'load-toggle': 'load-dialog', 'manager-toggle': 'manager-dialog' };
+const kitchenDrawers = { 'alerts-toggle': 'alerts-dialog', 'batches-toggle': 'batches-dialog', 'load-toggle': 'load-dialog', 'manager-toggle': 'manager-dialog' };
 Object.entries(kitchenDrawers).forEach(([button, dialog]) => {
   document.getElementById(button).addEventListener('click', () => document.getElementById(dialog).showModal());
 });
 document.addEventListener('click', event => {
+  if (event.target.closest('[data-open-calls]')) document.getElementById('calls-dialog').showModal();
   const close = event.target.closest('[data-close-dialog]');
   if (close) document.getElementById(close.dataset.closeDialog)?.close();
 });
@@ -901,6 +945,8 @@ window.addEventListener('red-lantern-auth-changed', () => {
   kitchenCallerEnabled = false;
   pauseKitchenCaller();
   syncKitchenCallerControls();
+  syncKitchenPending();
+  renderKitchenModeNotice();
 });
 window.addEventListener('pagehide', pauseKitchenCaller);
 window.addEventListener('storage', event => {
@@ -908,6 +954,8 @@ window.addEventListener('storage', event => {
     kitchenCallerEnabled = false;
     pauseKitchenCaller();
     syncKitchenCallerControls();
+    syncKitchenPending();
+    renderKitchenModeNotice();
   }
 });
 $('#kitchen-detail-controls')?.addEventListener('change', event => {
@@ -959,7 +1007,7 @@ const kitchenAccessObserver = new MutationObserver(() => {
   syncKitchenPending();
   renderKitchenModeNotice();
 });
-['#board', '#batch-list'].forEach(selector => kitchenAccessObserver.observe($(selector), { attributes: true, subtree: true, attributeFilter: ['data-employee-denied'] }));
+['#board', '#batch-list', '#kitchen-briefing'].forEach(selector => kitchenAccessObserver.observe($(selector), { attributes: true, subtree: true, attributeFilter: ['data-employee-denied'] }));
 load();
 pollForUpdates();
 connectLiveUpdates();
