@@ -61,7 +61,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .pulse-alerts { white-space: nowrap; }
 .prep-alert-count { margin-left: 5px; padding: 3px 4px; border-radius: 4px; color: #8a560a; background: #ffe2a1; font-size: 9px; }
 .pulse-alerts[data-urgent="true"] { border-color: #e0a14e; color: #92510d; background: #fff2d8; }
-#load-toggle { max-width: 150px; white-space: nowrap; color: #536a7d; }
+#load-toggle { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #536a7d; }
 .ticket-grid { display: grid; flex: 1 1 auto; min-height: 0; gap: 8px; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); align-items: stretch; }
 .ticket-grid[data-ticket-count="1"], .ticket-grid[data-ticket-count="2"], .ticket-grid[data-ticket-count="3"] { grid-template-rows: minmax(0, 1fr); }
 .order-ticket { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; border: 1px solid #d0dbe5; border-top: 4px solid #90a5b8; border-radius: 11px; background: #fff; box-shadow: 0 3px 8px #223d5610; }
@@ -209,6 +209,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .override-actions { display: flex; justify-content: flex-end; gap: 9px; }
 .override-actions button { min-width: 110px; }
 @media (max-width: 1000px) {
+  .signal-legend { display: none; }
   .ticket-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(3, minmax(0, 1fr)); }
   .ticket-grid[data-ticket-count="1"], .ticket-grid[data-ticket-count="2"] { grid-template-rows: minmax(0, 1fr); }
   .ticket-grid[data-ticket-count="3"], .ticket-grid[data-ticket-count="4"] { grid-template-rows: repeat(2, minmax(0, 1fr)); }

@@ -80,6 +80,19 @@ test('attention filter exposes blocked work while station-wide next instruction 
   await expect(page.locator('#next-action-button')).toBeEnabled();
 });
 
+test('portrait controls fit with wider fallback font metrics as well as the device system font', async ({ page }) => {
+  await page.setViewportSize({ width: 810, height: 1080 });
+  await openBoard(page);
+  await page.addStyleTag({ content: ':root { font-family: Arial, sans-serif; }' });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(810);
+  for (const selector of ['#board-search', '#alerts-toggle', '#batches-toggle', '#load-toggle', '#next-action-button']) {
+    const bounds = await page.locator(selector).boundingBox();
+    expect(bounds.x).toBeGreaterThanOrEqual(0);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(810);
+    expect(bounds.height).toBeGreaterThanOrEqual(44);
+  }
+});
+
 test('an entirely blocked queue gives an explicit check instruction without an impossible Start button', async ({ page }) => {
   await openBoard(page, [dish(1)]);
   await expect(page.locator('#next-action-label')).toContainText('Needs attention');
