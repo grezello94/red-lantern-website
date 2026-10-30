@@ -914,6 +914,158 @@ body.admin-workspace :is(.remove-review-btn, .remove-dish-btn, .remove-blog-btn)
   background: #fff3f6 !important;
   font-size: 12px !important;
 }
+body.admin-workspace .home-review-count {
+  margin: 18px 0 10px;
+  color: var(--admin-muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+body.admin-workspace #reviews-container:not(:has(.is-editing)) {
+  max-height: 440px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+body.admin-workspace #reviews-container .review-entry {
+  margin: 0;
+  padding: 14px 0;
+  border: 0;
+  border-bottom: 1px solid var(--admin-border);
+  border-radius: 0;
+  background: transparent;
+}
+body.admin-workspace #reviews-container .review-entry > .review-summary {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+}
+body.admin-workspace .review-summary-copy {
+  flex: 1;
+  min-width: 0;
+}
+body.admin-workspace .review-summary-heading {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+body.admin-workspace .review-summary-name {
+  color: var(--admin-ink);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+body.admin-workspace .review-summary-stars {
+  color: #a96608;
+  font-size: 13px;
+  letter-spacing: 1px;
+}
+body.admin-workspace .review-summary-preview {
+  overflow: hidden;
+  margin: 3px 0 0;
+  color: var(--admin-muted);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+body.admin-workspace .review-row-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+body.admin-workspace .review-row-actions :is(.edit-review-btn, .remove-review-btn) {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  min-height: 40px;
+  padding: 10px;
+  border: 1px solid var(--admin-border) !important;
+  border-radius: 9px;
+  color: #506680 !important;
+  background: #fff !important;
+  cursor: pointer;
+}
+body.admin-workspace .review-row-actions svg {
+  width: 18px;
+  height: 18px;
+}
+body.admin-workspace .review-row-actions .edit-review-btn:hover {
+  color: var(--admin-brand) !important;
+  border-color: #e1a8b5 !important;
+  background: var(--admin-soft) !important;
+}
+body.admin-workspace .review-row-actions .remove-review-btn:hover {
+  color: #ad2d46 !important;
+  background: #fff3f6 !important;
+}
+body.admin-workspace #reviews-container .review-entry.is-editing {
+  margin: 10px 0;
+  padding: 20px;
+  border: 1px solid #dfe7f1;
+  border-radius: 12px;
+  background: #f9fbfe;
+}
+body.admin-workspace .review-editor-title {
+  margin: 0 0 16px;
+}
+body.admin-workspace .review-editor .form-grid {
+  margin-bottom: 16px;
+}
+body.admin-workspace .review-editor .form-group {
+  margin-bottom: 0;
+}
+body.admin-workspace .review-editor-actions,
+body.admin-workspace .home-review-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+body.admin-workspace .review-publish-note {
+  margin: 10px 0 0;
+  color: var(--admin-muted);
+  font-size: 11px;
+}
+body.admin-workspace .home-review-actions {
+  margin-top: 18px;
+}
+body.admin-workspace :is(.publish-review-btn, .cancel-review-btn, #add-review-btn, #sync-google-reviews) {
+  width: auto;
+  min-height: 42px;
+  margin: 0;
+  padding: 10px 16px;
+  border: 1px solid var(--admin-border);
+  border-radius: 9px;
+  background: #fff;
+  color: #405570;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+body.admin-workspace :is(.publish-review-btn, #sync-google-reviews) {
+  border-color: var(--admin-brand);
+  background: var(--admin-brand);
+  color: #fff;
+  box-shadow: none;
+}
+body.admin-workspace #add-review-btn {
+  border-style: dashed;
+}
+body.admin-workspace .home-reviews-empty {
+  margin: 0;
+  padding: 20px 0;
+  color: var(--admin-muted);
+  font-size: 13px;
+}
+body.admin-workspace #google-reviews-sync-status:empty {
+  display: none;
+}
+body.admin-workspace :is(.review-row-actions, .review-editor-actions, .home-review-actions) button:focus-visible {
+  outline: 3px solid #95afdb;
+  outline-offset: 3px;
+}
 body.admin-workspace .generate-blog-description-btn {
   border-radius: 11px !important;
   background: #2b4163 !important;

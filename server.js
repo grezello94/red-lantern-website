@@ -3384,6 +3384,12 @@ function normalizeHome(body, files) {
   const reviewNames = asArray(body.reviewName);
   const reviewStars = asArray(body.reviewStars);
   const reviewTexts = asArray(body.reviewText);
+  const reviewGoogleMetadata = Object.fromEntries(
+    ['googleReviewName', 'googleReviewId', 'googleCreateTime', 'googleUpdateTime'].map((field) => [
+      field,
+      asArray(body[field]),
+    ])
+  );
 
   return {
     heroTitle: body.heroTitle,
@@ -3405,6 +3411,11 @@ function normalizeHome(body, files) {
         name,
         stars: reviewStars[index] || '★★★★★',
         text: reviewTexts[index] || '',
+        ...Object.fromEntries(
+          Object.entries(reviewGoogleMetadata)
+            .map(([field, values]) => [field, values[index]])
+            .filter(([, value]) => value)
+        ),
       }))
       .filter((review) => review.name || review.text),
   };
@@ -3970,6 +3981,7 @@ function blogMetaFromSchedule(publishAt, content) {
 }
 
 function googleBusinessConfig() {
+  const requestedLimit = Number(process.env.GOOGLE_REVIEWS_SYNC_LIMIT || 0);
   const resourceId = (value, prefix) =>
     String(value || '')
       .trim()
@@ -3980,7 +3992,7 @@ function googleBusinessConfig() {
     clientId: String(process.env.GOOGLE_BUSINESS_OAUTH_CLIENT_ID || '').trim(),
     clientSecret: String(process.env.GOOGLE_BUSINESS_OAUTH_CLIENT_SECRET || '').trim(),
     refreshToken: String(process.env.GOOGLE_BUSINESS_OAUTH_REFRESH_TOKEN || '').trim(),
-    syncLimit: Math.min(Math.max(Number(process.env.GOOGLE_REVIEWS_SYNC_LIMIT || 30), 1), 100),
+    syncLimit: Number.isSafeInteger(requestedLimit) && requestedLimit > 0 ? requestedLimit : 0,
   };
 }
 
@@ -4014,8 +4026,14 @@ async function googleBusinessAccessToken(config) {
       refresh_token: config.refreshToken,
       grant_type: 'refresh_token',
     }),
+    signal: AbortSignal.timeout(20000),
   });
   const data = await response.json();
+  if (!response.ok && data.error === 'invalid_grant') {
+    throw new Error(
+      'Your Google connection needs to be renewed. Reconnect the Google account that owns or manages this restaurant.'
+    );
+  }
   if (!response.ok)
     throw new Error(data.error_description || data.error || 'Google OAuth token refresh failed.');
   return data.access_token;
@@ -4040,6 +4058,7 @@ async function fetchFiveStarGoogleReviews() {
   assertGoogleBusinessConfig(config);
   const accessToken = await googleBusinessAccessToken(config);
   const reviews = [];
+  const pageTokens = new Set();
   let pageToken = '';
 
   do {
@@ -4051,6 +4070,7 @@ async function fetchFiveStarGoogleReviews() {
 
     const response = await fetch(url, {
       headers: { Authorization: `Bearer ${accessToken}` },
+      signal: AbortSignal.timeout(20000),
     });
     const data = await response.json();
     if (!response.ok)
@@ -4063,9 +4083,13 @@ async function fetchFiveStarGoogleReviews() {
         .filter((review) => review.text)
     );
     pageToken = data.nextPageToken || '';
-  } while (pageToken && reviews.length < config.syncLimit);
+    if (pageToken && pageTokens.has(pageToken)) {
+      throw new Error('Google returned a repeated review page. No reviews were imported. Try syncing again.');
+    }
+    if (pageToken) pageTokens.add(pageToken);
+  } while (pageToken && (!config.syncLimit || reviews.length < config.syncLimit));
 
-  return reviews.slice(0, config.syncLimit);
+  return config.syncLimit ? reviews.slice(0, config.syncLimit) : reviews;
 }
 
 function mergeReviews(existingReviews = [], googleReviews = []) {

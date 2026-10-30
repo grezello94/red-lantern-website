@@ -309,28 +309,86 @@ function fillHome(home = {}) {
   renderHomeReviewEntries(home.reviews);
 }
 
-function reviewEntryMarkup(review = {}, index = 0) {
+let homeReviewEditorId = 0;
+const googleReviewFields = [
+  'googleReviewName',
+  'googleReviewId',
+  'googleCreateTime',
+  'googleUpdateTime',
+];
+const savedHomeReviews = new WeakMap();
+let savedHomeReviewSignature = '[]';
+let homeReviewSyncing = false;
+
+function reviewEntryValues(entry) {
+  return {
+    name: entry.querySelector('[name="reviewName[]"]').value,
+    stars: entry.querySelector('[name="reviewStars[]"]').value,
+    text: entry.querySelector('[name="reviewText[]"]').value,
+  };
+}
+
+function homeReviewSignature() {
+  return JSON.stringify(
+    [...document.querySelectorAll('#reviews-container .review-entry')].map(reviewEntryValues)
+  );
+}
+
+function hasHomeReviewDraft() {
+  const container = document.getElementById('reviews-container');
+  return (
+    container?.closest('form')?.dataset.adminSaving === 'true' ||
+    !!container?.querySelector('.review-editor:not([hidden])') ||
+    homeReviewSignature() !== savedHomeReviewSignature
+  );
+}
+
+function reviewEntryMarkup(review = {}, editing = false) {
+  const editorId = `home-review-editor-${++homeReviewEditorId}`;
+  const name = escapeHtml(review.name || 'Guest');
   return `
-    <div class="review-entry">
-      <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #f3f4f6; margin: 10px 0 16px; padding-bottom: 8px;">
-        <h3 style="font-size: 16px; color: #d62828; margin: 0;">Review ${index + 1}</h3>
-        <button type="button" class="remove-review-btn" style="color: #ef4444; background: none; border: none; cursor: pointer; font-size: 14px; font-weight: 700;">Remove</button>
+    <div class="review-entry" data-review-new="${editing}">
+      <div class="review-summary" ${editing ? 'hidden' : ''}>
+        <div class="review-summary-copy">
+          <div class="review-summary-heading">
+            <strong class="review-summary-name">${name}</strong>
+            <span class="review-summary-stars">${escapeHtml(review.stars || '★★★★★')}</span>
+          </div>
+          <p class="review-summary-preview">${escapeHtml(review.text || '')}</p>
+        </div>
+        <div class="review-row-actions">
+          <button type="button" class="edit-review-btn" aria-label="Edit review by ${name}" aria-controls="${editorId}" aria-expanded="false" title="Edit review">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m16 3 5 5-12 12-6 1 1-6zM13 6l5 5"/></svg>
+          </button>
+          <button type="button" class="remove-review-btn" aria-label="Remove review by ${name}" title="Remove review">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg>
+          </button>
+        </div>
       </div>
-      <div class="form-grid">
-        <div class="form-group">
-          <label>Reviewer Name</label>
-          <input type="text" name="reviewName[]" value="${escapeHtml(review.name || '')}" placeholder="e.g. John Doe">
+      <div class="review-editor" id="${editorId}" ${editing ? '' : 'hidden'}>
+        <h3 class="review-editor-title">${editing ? 'New review' : 'Edit review'}</h3>
+        ${googleReviewFields.map((field) => `<input type="hidden" name="${field}[]" value="${escapeHtml(review[field] || '')}">`).join('')}
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="${editorId}-name">Reviewer Name</label>
+            <input id="${editorId}-name" type="text" name="reviewName[]" value="${escapeHtml(review.name || '')}" placeholder="e.g. John Doe">
+          </div>
+          <div class="form-group">
+            <label for="${editorId}-stars">Star Rating</label>
+            <input id="${editorId}-stars" type="text" name="reviewStars[]" value="${escapeHtml(review.stars || '★★★★★')}">
+          </div>
         </div>
-        <div class="form-group">
-          <label>Star Rating</label>
-          <input type="text" name="reviewStars[]" value="${escapeHtml(review.stars || '★★★★★')}">
+        <div class="form-grid full">
+          <div class="form-group">
+            <label for="${editorId}-text">Review Text</label>
+            <textarea id="${editorId}-text" name="reviewText[]" rows="3" placeholder="Paste the Google review here...">${escapeHtml(review.text || '')}</textarea>
+          </div>
         </div>
-      </div>
-      <div class="form-grid full" style="margin-bottom: 30px;">
-        <div class="form-group">
-          <label>Review Text</label>
-          <textarea name="reviewText[]" rows="3" placeholder="Paste the glowing Google review here...">${escapeHtml(review.text || '')}</textarea>
+        <div class="review-editor-actions">
+          <button type="button" class="publish-review-btn">Publish review</button>
+          <button type="button" class="cancel-review-btn">Cancel</button>
         </div>
+        <p class="review-publish-note">Publishing also saves other Home Page changes.</p>
       </div>
     </div>
   `;
@@ -338,10 +396,145 @@ function reviewEntryMarkup(review = {}, index = 0) {
 
 function renderHomeReviewEntries(reviews = []) {
   const reviewsContainer = document.getElementById('reviews-container');
-  if (!reviewsContainer || !Array.isArray(reviews) || !reviews.length) return;
-  reviewsContainer.innerHTML = reviews
-    .map((review, index) => reviewEntryMarkup(review, index))
-    .join('');
+  if (!reviewsContainer || !Array.isArray(reviews)) return;
+  reviewsContainer.innerHTML = reviews.map((review) => reviewEntryMarkup(review)).join('');
+  reviewsContainer.querySelectorAll('.review-entry').forEach((entry) => {
+    savedHomeReviews.set(entry, reviewEntryValues(entry));
+  });
+  savedHomeReviewSignature = homeReviewSignature();
+  updateHomeReviewCount();
+}
+
+function updateHomeReviewCount() {
+  const entries = [...document.querySelectorAll('#reviews-container .review-entry')];
+  const count = document.getElementById('home-review-count');
+  const empty = document.getElementById('home-reviews-empty');
+  const drafts = entries.filter((entry) => entry.dataset.reviewNew === 'true').length;
+  const saved = entries.length - drafts;
+  if (count) {
+    count.textContent = `${saved} published review${saved === 1 ? '' : 's'}${drafts ? ` · ${drafts} new` : ''}`;
+  }
+  if (empty) empty.hidden = entries.length > 0;
+}
+
+function updateHomeReviewSummary(entry) {
+  const review = reviewEntryValues(entry);
+  const name = review.name.trim() || 'Guest';
+  entry.querySelector('.review-summary-name').textContent = name;
+  entry.querySelector('.review-summary-stars').textContent = review.stars || '★★★★★';
+  entry.querySelector('.review-summary-preview').textContent = review.text.replace(/\s+/g, ' ').trim();
+  entry.querySelector('.edit-review-btn').setAttribute('aria-label', `Edit review by ${name}`);
+  entry.querySelector('.remove-review-btn').setAttribute('aria-label', `Remove review by ${name}`);
+}
+
+function setHomeReviewEditing(entry, editing) {
+  entry.querySelector('.review-summary').hidden = editing;
+  entry.querySelector('.review-editor').hidden = !editing;
+  entry.querySelector('.edit-review-btn').setAttribute('aria-expanded', String(editing));
+  entry.classList.toggle('is-editing', editing);
+  if (editing) entry.querySelector('[name="reviewName[]"]').focus();
+}
+
+function setupHomeReviewEditor() {
+  const container = document.getElementById('reviews-container');
+  const addButton = document.getElementById('add-review-btn');
+  const form = container?.closest('form');
+  if (!container || !addButton || !form) return;
+  let submittedReviews = [];
+
+  const markDraft = () =>
+    document.dispatchEvent(new CustomEvent('admin-content-draft', { detail: { form } }));
+  addButton.addEventListener('click', () => {
+    container.insertAdjacentHTML('beforeend', reviewEntryMarkup({}, true));
+    setHomeReviewEditing(container.lastElementChild, true);
+    updateHomeReviewCount();
+  });
+  container.addEventListener('click', (event) => {
+    const button = event.target.closest('button');
+    const entry = button?.closest('.review-entry');
+    if (!entry) return;
+    if (button.matches('.edit-review-btn')) {
+      setHomeReviewEditing(entry, true);
+    } else if (button.matches('.cancel-review-btn')) {
+      const saved = savedHomeReviews.get(entry);
+      if (saved) {
+        const changed = JSON.stringify(saved) !== JSON.stringify(reviewEntryValues(entry));
+        entry.querySelector('[name="reviewName[]"]').value = saved.name;
+        entry.querySelector('[name="reviewStars[]"]').value = saved.stars;
+        entry.querySelector('[name="reviewText[]"]').value = saved.text;
+        entry.querySelector('[name="reviewText[]"]').setCustomValidity('');
+        updateHomeReviewSummary(entry);
+        setHomeReviewEditing(entry, false);
+        entry.querySelector('.edit-review-btn').focus();
+        if (changed) markDraft();
+      } else {
+        entry.remove();
+        addButton.focus();
+        markDraft();
+      }
+      updateHomeReviewCount();
+    } else if (button.matches('.remove-review-btn')) {
+      const next = entry.nextElementSibling || entry.previousElementSibling;
+      entry.remove();
+      (next?.querySelector('.edit-review-btn') || addButton).focus();
+      updateHomeReviewCount();
+    } else if (button.matches('.publish-review-btn')) {
+      const text = entry.querySelector('[name="reviewText[]"]');
+      text.setCustomValidity(text.value.trim() ? '' : 'Enter the review text before publishing.');
+      if (!text.reportValidity()) return;
+      form.requestSubmit();
+    }
+  });
+  container.addEventListener('input', (event) => {
+    if (event.target.matches('[name="reviewText[]"]')) event.target.setCustomValidity('');
+  });
+  form.addEventListener('submit', (event) => {
+    if (homeReviewSyncing) {
+      event.preventDefault();
+      document.getElementById('google-reviews-sync-status').textContent =
+        'Wait for Google review sync to finish before publishing.';
+      return;
+    }
+    const incomplete = [...container.querySelectorAll('.review-entry')].find((entry) => {
+      const values = reviewEntryValues(entry);
+      return !entry.querySelector('.review-editor').hidden && values.name.trim() && !values.text.trim();
+    });
+    if (!incomplete) return;
+    event.preventDefault();
+    const text = incomplete.querySelector('[name="reviewText[]"]');
+    text.setCustomValidity('Enter the review text before publishing.');
+    text.reportValidity();
+  }, { capture: true });
+  document.addEventListener('admin-content-save-start', (event) => {
+    if (event.detail.form !== form) return;
+    submittedReviews = [...container.querySelectorAll('.review-entry')].map((entry) => ({
+      entry,
+      values: reviewEntryValues(entry),
+    }));
+  });
+  document.addEventListener('admin-content-saved', (event) => {
+    if (event.detail.form !== form) return;
+    savedHomeReviewSignature = JSON.stringify(
+      submittedReviews.map(({ values }) => values).filter((review) => review.name || review.text)
+    );
+    submittedReviews.forEach(({ entry, values }) => {
+      if (!container.contains(entry)) return;
+      const unchanged = JSON.stringify(values) === JSON.stringify(reviewEntryValues(entry));
+      if (!values.name && !values.text) {
+        if (unchanged) entry.remove();
+        return;
+      }
+      savedHomeReviews.set(entry, values);
+      entry.dataset.reviewNew = 'false';
+      entry.querySelector('.review-editor-title').textContent = 'Edit review';
+      if (!unchanged) return;
+      const focusInEditor = entry.querySelector('.review-editor').contains(document.activeElement);
+      updateHomeReviewSummary(entry);
+      setHomeReviewEditing(entry, false);
+      if (focusInEditor) entry.querySelector('.edit-review-btn').focus();
+    });
+    updateHomeReviewCount();
+  });
 }
 
 function dishEntryMarkup(dish = {}, index = 0) {
@@ -2713,7 +2906,15 @@ function setupGoogleReviewsSync() {
   if (!button) return;
 
   button.addEventListener('click', async () => {
+    if (hasHomeReviewDraft()) {
+      if (status) {
+        status.textContent = 'Publish or cancel your review edits before syncing Google reviews.';
+        status.style.color = '#9a5b08';
+      }
+      return;
+    }
     button.disabled = true;
+    homeReviewSyncing = true;
     if (status) {
       status.textContent = 'Fetching 5-star Google reviews...';
       status.style.color = '#6b7280';
@@ -2724,6 +2925,13 @@ function setupGoogleReviewsSync() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Unable to sync Google reviews.');
 
+      if (hasHomeReviewDraft()) {
+        if (status) {
+          status.textContent = 'Google reviews synced. Your review draft was kept. Publish or cancel it, then sync again to refresh the list.';
+          status.style.color = '#9a5b08';
+        }
+        return;
+      }
       renderHomeReviewEntries(data.reviews || []);
       if (status) {
         status.textContent = `Synced ${data.importedCount} new 5-star review${data.importedCount === 1 ? '' : 's'} (${data.totalFiveStar} total 5-star saved). Click Publish Changes to Home Page if you edit them.`;
@@ -2735,6 +2943,7 @@ function setupGoogleReviewsSync() {
         status.style.color = '#b91c1c';
       }
     } finally {
+      homeReviewSyncing = false;
       button.disabled = false;
     }
   });
@@ -4671,6 +4880,7 @@ setupAiGrowthButton();
 setupGrowthRefreshButton();
 setupDiagnosticsDashboard();
 setupQrScanDashboard();
+setupHomeReviewEditor();
 setupGoogleReviewsSync();
 setupRichTextToolbar();
 setupBlogDescriptionGenerator();

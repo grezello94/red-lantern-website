@@ -16,6 +16,7 @@
     "start": "node --env-file-if-exists=.env server.js",
     "db:prepare": "node --env-file-if-exists=.env init-db.js",
     "dev": "node --env-file-if-exists=.env server.js",
+    "connect:google": "node --env-file-if-exists=.env scripts/connect-google-business.js",
     "print-bridge": "node print-bridge.js",
     "test": "npm run test:unit && npm run build && node scripts/test-print-bridge.js",
     "test:unit": "jest --runInBand",

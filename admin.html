@@ -4559,7 +4559,7 @@
         }
       }
     </style>
-    <link rel="stylesheet" href="/admin-workspace.css?v=2" />
+    <link rel="stylesheet" href="/admin-workspace.css?v=3" />
     <link rel="stylesheet" href="/admin-air-menu.css?v=2" />
   </head>
   <body class="admin-workspace">
@@ -4701,86 +4701,16 @@ High-quality food at prices that won't break the bank.</textarea>
 
           <div class="card">
             <h2>Curated Google Reviews (Testimonials)</h2>
-            <span class="help-text" style="margin-bottom: 24px; font-size: 14px"
-              >Manually add your favorite 5-star Google Reviews here. This ensures only the best,
-              positive reviews are displayed on your website!</span
-            >
-
-            <div id="reviews-container">
-              <!-- Review 1 -->
-              <div class="review-entry">
-                <div
-                  style="
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                    border-bottom: 1px solid #f3f4f6;
-                    margin: 10px 0 16px;
-                    padding-bottom: 8px;
-                  "
-                >
-                  <h3 style="font-size: 16px; color: #d62828; margin: 0">Review 1</h3>
-                  <button
-                    type="button"
-                    class="remove-review-btn"
-                    style="
-                      color: #ef4444;
-                      background: none;
-                      border: none;
-                      cursor: pointer;
-                      font-size: 14px;
-                      font-weight: 700;
-                    "
-                  >
-                    Remove
-                  </button>
-                </div>
-                <div class="form-grid">
-                  <div class="form-group">
-                    <label>Reviewer Name</label>
-                    <input type="text" name="reviewName[]" value="Happy Customer" />
-                  </div>
-                  <div class="form-group">
-                    <label>Star Rating</label>
-                    <input type="text" name="reviewStars[]" value="★★★★★" />
-                  </div>
-                </div>
-                <div class="form-grid full" style="margin-bottom: 30px">
-                  <div class="form-group">
-                    <label>Review Text</label>
-                    <textarea name="reviewText[]" rows="3">
-“Finally decided to give it a try and was blown away. The food is excellent... Easily one of the best budget-friendly Chinese spots in the area.”</textarea>
-                  </div>
-                </div>
-              </div>
+            <span class="help-text">Publish your favorite Google reviews. Use the pencil to edit a published review.</span>
+            <p id="home-review-count" class="home-review-count" role="status" aria-live="polite"></p>
+            <div id="reviews-container"></div>
+            <p id="home-reviews-empty" class="home-reviews-empty" hidden>No reviews yet. Add your first review or sync from Google.</p>
+            <div class="home-review-actions">
+              <button type="button" id="add-review-btn">+ Add Review</button>
+              <button type="button" id="sync-google-reviews" class="growth-ai-button">
+                Sync 5-Star Google Reviews
+              </button>
             </div>
-
-            <button
-              type="button"
-              id="add-review-btn"
-              style="
-                background: #f9fafb;
-                color: #374151;
-                border: 2px dashed #d1d5db;
-                padding: 14px;
-                width: 100%;
-                border-radius: 8px;
-                font-weight: 700;
-                cursor: pointer;
-                margin-bottom: 20px;
-                transition: all 0.2s;
-              "
-            >
-              + Add Another Review
-            </button>
-            <button
-              type="button"
-              id="sync-google-reviews"
-              class="growth-ai-button"
-              style="width: 100%"
-            >
-              Sync 5-Star Google Reviews
-            </button>
             <p id="google-reviews-sync-status" class="growth-ai-status"></p>
           </div>
 
@@ -7484,55 +7414,10 @@ Watch competitors ranking for Colva Beach, seafood, Goan food, Chinese food, fam
         });
       }
 
-      // Dynamic Reviews Logic
-      const addReviewBtn = document.getElementById('add-review-btn');
-      const reviewsContainer = document.getElementById('reviews-container');
-
-      if (addReviewBtn && reviewsContainer) {
-        addReviewBtn.addEventListener('click', () => {
-          const reviewCount = reviewsContainer.querySelectorAll('.review-entry').length + 1;
-          const newReview = document.createElement('div');
-          newReview.className = 'review-entry';
-          newReview.innerHTML = `
-            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #f3f4f6; margin: 10px 0 16px; padding-bottom: 8px;">
-              <h3 style="font-size: 16px; color: #d62828; margin: 0;">Review ${reviewCount}</h3>
-              <button type="button" class="remove-review-btn" style="color: #ef4444; background: none; border: none; cursor: pointer; font-size: 14px; font-weight: 700;">Remove</button>
-            </div>
-            <div class="form-grid">
-              <div class="form-group">
-                <label>Reviewer Name</label>
-                <input type="text" name="reviewName[]" placeholder="e.g. John Doe">
-              </div>
-              <div class="form-group">
-                <label>Star Rating</label>
-                <input type="text" name="reviewStars[]" value="★★★★★">
-              </div>
-            </div>
-            <div class="form-grid full" style="margin-bottom: 30px;">
-              <div class="form-group">
-                <label>Review Text</label>
-                <textarea name="reviewText[]" rows="3" placeholder="Paste the glowing Google review here..."></textarea>
-              </div>
-            </div>
-          `;
-          reviewsContainer.appendChild(newReview);
-        });
-
-        reviewsContainer.addEventListener('click', (e) => {
-          if (e.target.classList.contains('remove-review-btn')) {
-            e.target.closest('.review-entry').remove();
-            const entries = reviewsContainer.querySelectorAll('.review-entry');
-            entries.forEach((entry, index) => {
-              const heading = entry.querySelector('h3');
-              if (heading) heading.textContent = 'Review ' + (index + 1);
-            });
-          }
-        });
-      }
     </script>
     <script src="/addons-domain.js?v=1" defer></script>
     <script src="/admin-analytics.js?v=5" defer></script>
-    <script src="/admin-cms.js?v=20261022-41" defer></script>
+    <script src="/admin-cms.js?v=20261030-1" defer></script>
     <script src="/admin-workspace.js?v=2" defer></script>
   </body>
 </html>

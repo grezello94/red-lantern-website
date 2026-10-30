@@ -612,6 +612,246 @@ test('section shortcuts preserve website fields and submit the complete existing
   expect(fieldValues(saved, 'reviewName[]')).toEqual(['Guest']);
 });
 
+test('saved reviews use compact rows and every review remains in the home publish form', async ({
+  page,
+}) => {
+  const content = fixture();
+  content.home.reviews = Array.from({ length: 40 }, (_, index) => ({
+    name: `Guest ${index + 1}`,
+    stars: '★★★★★',
+    text: `Wonderful dinner ${index + 1}. Fresh food, friendly service, and a lovely garden.`,
+  }));
+  const requests = await mockAdmin(page, { content });
+  await page.goto('/admin.html');
+  const entries = page.locator('#reviews-container .review-entry');
+  await expect(entries).toHaveCount(40);
+  await expect(entries.first().locator('.review-summary')).toContainText('Guest 1');
+  await expect(entries.first().locator('.review-summary')).toContainText('★★★★★');
+  await expect(entries.first().locator('.review-summary')).toContainText('Wonderful dinner 1.');
+  await expect(entries.first().getByRole('button', { name: 'Edit review by Guest 1', exact: true })).toBeVisible();
+  await expect(entries.first().getByRole('button', { name: 'Remove review by Guest 1', exact: true })).toBeVisible();
+  await expect(page.locator('#reviews-container .review-editor:visible')).toHaveCount(0);
+  const listSize = await page.locator('#reviews-container').evaluate((list) => ({
+    height: list.clientHeight,
+    contentHeight: list.scrollHeight,
+  }));
+  expect(listSize.height).toBeLessThanOrEqual(440);
+  expect(listSize.contentHeight).toBeGreaterThan(listSize.height);
+  await expect(entries.first().locator('[name="reviewName[]"]')).toBeEnabled();
+  await expect(entries.first().locator('[name="reviewText[]"]')).toHaveValue(content.home.reviews[0].text);
+  await publish(page, '/api/update-home');
+  const saved = requests.find((request) => new URL(request.url()).pathname === '/api/update-home');
+  expect(fieldValues(saved, 'reviewName[]')).toEqual(content.home.reviews.map((review) => review.name));
+  expect(fieldValues(saved, 'reviewText[]')).toEqual(content.home.reviews.map((review) => review.text));
+});
+
+test('review editing can be cancelled or published while retaining Google review metadata', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const content = fixture();
+  const googleMetadata = {
+    googleReviewName: 'accounts/restaurant/locations/garden/reviews/guest-review',
+    googleReviewId: 'guest-review',
+    googleCreateTime: '2026-10-01T12:00:00Z',
+    googleUpdateTime: '2026-10-02T12:00:00Z',
+  };
+  Object.assign(content.home.reviews[0], googleMetadata);
+  const requests = await mockAdmin(page, { content });
+  await page.goto('/admin.html');
+  const entry = page.locator('#reviews-container .review-entry').first();
+  await expect(entry.locator('.review-summary')).toBeVisible();
+  await entry.getByRole('button', { name: 'Edit review by Guest', exact: true }).click();
+  await expect(entry.locator('.review-editor')).toBeVisible();
+  await entry.locator('[name="reviewName[]"]').fill('Discard this edit');
+  await entry.locator('[name="reviewText[]"]').fill('');
+  await entry.locator('.publish-review-btn').click();
+  expect(await entry.locator('[name="reviewText[]"]').evaluate((field) => field.validity.valid)).toBe(false);
+  await entry.locator('.cancel-review-btn').click();
+  await expect(entry.locator('.review-editor')).toBeHidden();
+  await expect(entry.locator('[name="reviewName[]"]')).toHaveValue('Guest');
+  await expect(entry.locator('[name="reviewText[]"]')).toHaveValue('A wonderful dinner');
+  expect(await page.locator('form[action="/api/update-home"]').evaluate((form) => form.checkValidity())).toBe(true);
+  expect(requests.filter((request) => new URL(request.url()).pathname === '/api/update-home')).toHaveLength(0);
+
+  await entry.getByRole('button', { name: 'Edit review by Guest', exact: true }).click();
+  await entry.locator('[name="reviewName[]"]').fill('Garden guest');
+  await entry.locator('[name="reviewStars[]"]').fill('★★★★☆');
+  await entry.locator('[name="reviewText[]"]').fill('Fresh seafood and friendly service in the garden.');
+  await expectNoOverflow(page, 'review editor');
+  await entry.locator('.publish-review-btn').click();
+  await expect(page.locator('#admin-save-toast')).toHaveClass(/is-visible/);
+  await expect(entry.locator('.review-editor')).toBeHidden();
+  await expect(entry.locator('.review-summary')).toContainText('Garden guest');
+  await expect(entry.locator('.review-summary')).toContainText('★★★★☆');
+  await expect(entry.locator('.review-summary')).toContainText('Fresh seafood and friendly service');
+  await expect(entry.getByRole('button', { name: 'Edit review by Garden guest', exact: true })).toBeVisible();
+  await expectNoOverflow(page, 'saved review');
+  const saved = requests.find((request) => new URL(request.url()).pathname === '/api/update-home');
+  expect(fieldValues(saved, 'reviewName[]')).toEqual(['Garden guest']);
+  expect(fieldValues(saved, 'reviewStars[]')).toEqual(['★★★★☆']);
+  expect(fieldValues(saved, 'reviewText[]')).toEqual(['Fresh seafood and friendly service in the garden.']);
+  for (const [name, value] of Object.entries(googleMetadata)) {
+    expect(fieldValues(saved, `${name}[]`)).toEqual([value]);
+  }
+});
+
+test('new reviews publish into the list and removing every review leaves an empty list', async ({
+  page,
+}) => {
+  const content = fixture();
+  content.home.reviews = [];
+  const requests = await mockAdmin(page, { content });
+  await page.goto('/admin.html');
+  await expect(page.locator('#heroTitle')).toHaveValue('Welcome to Red Lantern');
+  const entries = page.locator('#reviews-container .review-entry');
+  await expect(entries).toHaveCount(0);
+  await page.locator('#add-review-btn').click();
+  await expect(entries).toHaveCount(1);
+  await expect(entries.first().locator('.review-editor')).toBeVisible();
+  await expect(entries.first().locator('[name="reviewName[]"]')).toHaveValue('');
+  await expect(entries.first().locator('[name="reviewStars[]"]')).toHaveValue('★★★★★');
+  await entries.first().locator('.cancel-review-btn').click();
+  await expect(entries).toHaveCount(0);
+
+  await page.locator('#add-review-btn').click();
+  await entries.first().locator('[name="reviewName[]"]').fill('First guest');
+  await entries.first().locator('[name="reviewText[]"]').fill('Excellent dinner and service.');
+  await page.locator('#add-review-btn').click();
+  await entries.last().locator('[name="reviewName[]"]').fill('Second guest');
+  await entries.first().locator('.publish-review-btn').click();
+  await expect(entries.last().locator('.review-editor')).toBeVisible();
+  expect(await entries.last().locator('[name="reviewText[]"]').evaluate((field) => field.validity.valid)).toBe(false);
+  expect(requests.filter((request) => new URL(request.url()).pathname === '/api/update-home')).toHaveLength(0);
+  await entries.last().locator('[name="reviewText[]"]').fill('Our family enjoyed every dish.');
+  await page.locator('#add-review-btn').click();
+  await expect(entries).toHaveCount(3);
+  await entries.nth(1).locator('.publish-review-btn').click();
+  await expect(page.locator('#admin-save-toast')).toHaveClass(/is-visible/);
+  await expect(page.locator('#reviews-container .review-editor:visible')).toHaveCount(0);
+  await expect(entries).toHaveCount(2);
+  await expect(page.locator('#home-review-count')).toHaveText('2 published reviews');
+  const firstSave = requests.find((request) => new URL(request.url()).pathname === '/api/update-home');
+  expect(fieldValues(firstSave, 'reviewName[]').filter(Boolean)).toEqual(['First guest', 'Second guest']);
+  await entries.first().getByRole('button', { name: 'Remove review by First guest', exact: true }).click();
+  await entries.first().getByRole('button', { name: 'Remove review by Second guest', exact: true }).click();
+  await expect(entries).toHaveCount(0);
+  await Promise.all([
+    page.waitForResponse((response) => new URL(response.url()).pathname === '/api/update-home'),
+    publish(page, '/api/update-home'),
+  ]);
+  const saves = requests.filter((request) => new URL(request.url()).pathname === '/api/update-home');
+  expect(saves).toHaveLength(2);
+  expect(fieldValues(saves[1], 'reviewName[]')).toEqual([]);
+  expect(fieldValues(saves[1], 'reviewText[]')).toEqual([]);
+  await page.reload();
+  await expect(page.locator('#heroTitle')).toHaveValue('Welcome to Red Lantern');
+  await expect(entries).toHaveCount(0);
+});
+
+test('failed review publishing keeps the editor and draft available for retry', async ({ page }) => {
+  let fail = true;
+  const requests = await mockAdmin(page, { failSave: () => fail });
+  await page.goto('/admin.html');
+  const entry = page.locator('#reviews-container .review-entry').first();
+  await entry.getByRole('button', { name: 'Edit review by Guest', exact: true }).click();
+  await entry.locator('[name="reviewText[]"]').fill('A draft review waiting to be published.');
+  await entry.locator('.publish-review-btn').click();
+  const form = page.locator('form[action="/api/update-home"]');
+  await expect(form.locator('.save-status')).toContainText('Save service temporarily unavailable');
+  await expect(entry.locator('.review-editor')).toBeVisible();
+  await expect(entry.locator('[name="reviewText[]"]')).toHaveValue('A draft review waiting to be published.');
+  await expect(entry.locator('.publish-review-btn')).toBeEnabled();
+  await expect(form).toHaveClass(/has-admin-draft/);
+  fail = false;
+  await entry.locator('.publish-review-btn').click();
+  await expect(page.locator('#admin-save-toast')).toHaveClass(/is-visible/);
+  await expect(entry.locator('.review-editor')).toBeHidden();
+  await expect(entry.locator('.review-summary')).toContainText('A draft review waiting to be published.');
+  const saves = requests.filter((request) => new URL(request.url()).pathname === '/api/update-home');
+  expect(saves).toHaveLength(2);
+  expect(fieldValues(saves[1], 'reviewText[]')).toEqual(['A draft review waiting to be published.']);
+});
+
+test('Google review sync asks for review drafts to be published or cancelled before fetching', async ({
+  page,
+}) => {
+  const syncRequests = [];
+  await mockAdmin(page);
+  await page.route('**/api/admin/google-reviews/sync', async (route) => {
+    syncRequests.push(route.request());
+    await route.fulfill({
+      json: { importedCount: 0, totalFiveStar: 1, reviews: fixture().home.reviews },
+    });
+  });
+  await page.goto('/admin.html');
+  const entries = page.locator('#reviews-container .review-entry');
+  await entries.first().getByRole('button', { name: 'Edit review by Guest', exact: true }).click();
+  await entries.first().locator('[name="reviewText[]"]').fill('An unpublished review edit.');
+  await page.locator('#sync-google-reviews').click();
+  const status = page.locator('#google-reviews-sync-status');
+  await expect(status).toContainText(/publish/i);
+  await expect(status).toContainText(/cancel/i);
+  await expect(entries.first().locator('[name="reviewText[]"]')).toHaveValue('An unpublished review edit.');
+  expect(syncRequests).toHaveLength(0);
+
+  await entries.first().locator('.cancel-review-btn').click();
+  await page.locator('#add-review-btn').click();
+  await entries.last().locator('[name="reviewName[]"]').fill('Unpublished guest');
+  await page.locator('#sync-google-reviews').click();
+  await expect(status).toContainText(/publish/i);
+  await expect(status).toContainText(/cancel/i);
+  await expect(entries).toHaveCount(2);
+  await expect(entries.last().locator('.review-editor')).toBeVisible();
+  expect(syncRequests).toHaveLength(0);
+});
+
+test('Google review sync preserves edits and new drafts created while its request is pending', async ({
+  page,
+}) => {
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const syncRequests = [];
+  await mockAdmin(page);
+  await page.route('**/api/admin/google-reviews/sync', async (route) => {
+    syncRequests.push(route.request());
+    await gate;
+    await route.fulfill({
+      json: {
+        importedCount: 1,
+        totalFiveStar: 2,
+        reviews: [
+          ...fixture().home.reviews,
+          { name: 'Synced guest', stars: '★★★★★', text: 'A newly imported Google review.' },
+        ],
+      },
+    });
+  });
+  await page.goto('/admin.html');
+  const entries = page.locator('#reviews-container .review-entry');
+  await expect(entries.first().locator('.review-summary')).toBeVisible();
+  const syncButton = page.locator('#sync-google-reviews');
+  await syncButton.click();
+  await expect(syncButton).toBeDisabled();
+  await expect.poll(() => syncRequests.length).toBe(1);
+  await entries.first().getByRole('button', { name: 'Edit review by Guest', exact: true }).click();
+  await entries.first().locator('[name="reviewText[]"]').fill('Edited while Google was responding.');
+  await page.locator('#add-review-btn').click();
+  await entries.last().locator('[name="reviewName[]"]').fill('New local guest');
+  await entries.last().locator('[name="reviewText[]"]').fill('A new local draft made during sync.');
+  release();
+  await expect(syncButton).toBeEnabled();
+  await expect(entries).toHaveCount(2);
+  await expect(entries.first().locator('.review-editor')).toBeVisible();
+  await expect(entries.first().locator('[name="reviewText[]"]')).toHaveValue('Edited while Google was responding.');
+  await expect(entries.last().locator('.review-editor')).toBeVisible();
+  await expect(entries.last().locator('[name="reviewName[]"]')).toHaveValue('New local guest');
+  await expect(entries.last().locator('[name="reviewText[]"]')).toHaveValue('A new local draft made during sync.');
+  await expect(page.locator('#reviews-container .review-summary-name').filter({ hasText: 'Synced guest' })).toHaveCount(0);
+});
+
 test('Food and Bar imports replace their own categories and retain all settings on publish', async ({
   page,
 }) => {
